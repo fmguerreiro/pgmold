@@ -1,3 +1,4 @@
+pub mod apply;
 pub mod diff;
 pub mod drift;
 pub mod lint;
