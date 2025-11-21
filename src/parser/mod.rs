@@ -85,7 +85,10 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     name: name.to_string(),
                     table: tbl_name.clone(),
                     command: parse_policy_command(&command),
-                    roles: to.iter().flat_map(|owners| owners.iter().map(|o| o.to_string())).collect(),
+                    roles: to
+                        .iter()
+                        .flat_map(|owners| owners.iter().map(|o| o.to_string()))
+                        .collect(),
                     using_expr: using.as_ref().map(|e| e.to_string()),
                     check_expr: with_check.as_ref().map(|e| e.to_string()),
                 };
@@ -94,7 +97,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     table.policies.sort();
                 }
             }
-            Statement::AlterTable { name, operations, .. } => {
+            Statement::AlterTable {
+                name, operations, ..
+            } => {
                 let tbl_name = name.to_string();
                 for op in operations {
                     match op {

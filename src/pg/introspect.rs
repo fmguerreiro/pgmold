@@ -313,7 +313,9 @@ async fn introspect_rls_enabled(connection: &PgConnection, table_name: &str) -> 
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch RLS status: {}", e)))?;
 
-    Ok(row.map(|r| r.get::<bool, _>("relrowsecurity")).unwrap_or(false))
+    Ok(row
+        .map(|r| r.get::<bool, _>("relrowsecurity"))
+        .unwrap_or(false))
 }
 
 async fn introspect_policies(connection: &PgConnection, table_name: &str) -> Result<Vec<Policy>> {

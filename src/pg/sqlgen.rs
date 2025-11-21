@@ -102,11 +102,9 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
 
         MigrationOp::CreateFunction(func) => vec![generate_create_function(func)],
 
-        MigrationOp::DropFunction { name, args } => vec![format!(
-            "DROP FUNCTION {}({});",
-            quote_ident(name),
-            args
-        )],
+        MigrationOp::DropFunction { name, args } => {
+            vec![format!("DROP FUNCTION {}({});", quote_ident(name), args)]
+        }
 
         MigrationOp::AlterFunction { new_function, .. } => {
             vec![generate_create_or_replace_function(new_function)]

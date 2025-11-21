@@ -1,6 +1,8 @@
 pub mod planner;
 
-use crate::model::{Column, EnumType, ForeignKey, Function, Index, PgType, Policy, PrimaryKey, Table};
+use crate::model::{
+    Column, EnumType, ForeignKey, Function, Index, PgType, Policy, PrimaryKey, Table,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOp {
@@ -398,7 +400,7 @@ fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{IndexType, ReferentialAction, Volatility, SecurityType};
+    use crate::model::{IndexType, ReferentialAction, SecurityType, Volatility};
     use std::collections::BTreeMap;
 
     fn empty_schema() -> Schema {

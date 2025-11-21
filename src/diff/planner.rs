@@ -19,6 +19,14 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut drop_columns = Vec::new();
     let mut drop_tables = Vec::new();
     let mut drop_enums = Vec::new();
+    let mut enable_rls = Vec::new();
+    let mut disable_rls = Vec::new();
+    let mut create_policies = Vec::new();
+    let mut drop_policies = Vec::new();
+    let mut alter_policies = Vec::new();
+    let mut create_functions = Vec::new();
+    let mut drop_functions = Vec::new();
+    let mut alter_functions = Vec::new();
 
     for op in ops {
         match op {
@@ -35,6 +43,14 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::DropColumn { .. } => drop_columns.push(op),
             MigrationOp::DropTable(_) => drop_tables.push(op),
             MigrationOp::DropEnum(_) => drop_enums.push(op),
+            MigrationOp::EnableRls { .. } => enable_rls.push(op),
+            MigrationOp::DisableRls { .. } => disable_rls.push(op),
+            MigrationOp::CreatePolicy(_) => create_policies.push(op),
+            MigrationOp::DropPolicy { .. } => drop_policies.push(op),
+            MigrationOp::AlterPolicy { .. } => alter_policies.push(op),
+            MigrationOp::CreateFunction(_) => create_functions.push(op),
+            MigrationOp::DropFunction { .. } => drop_functions.push(op),
+            MigrationOp::AlterFunction { .. } => alter_functions.push(op),
         }
     }
 
@@ -44,18 +60,26 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut result = Vec::new();
 
     result.extend(create_enums);
+    result.extend(create_functions);
     result.extend(create_tables);
     result.extend(add_columns);
     result.extend(add_primary_keys);
     result.extend(add_indexes);
     result.extend(alter_columns);
     result.extend(add_foreign_keys);
+    result.extend(enable_rls);
+    result.extend(create_policies);
+    result.extend(alter_policies);
+    result.extend(alter_functions);
 
+    result.extend(drop_policies);
+    result.extend(disable_rls);
     result.extend(drop_foreign_keys);
     result.extend(drop_indexes);
     result.extend(drop_primary_keys);
     result.extend(drop_columns);
     result.extend(drop_tables);
+    result.extend(drop_functions);
     result.extend(drop_enums);
 
     result
@@ -199,6 +223,8 @@ mod tests {
             primary_key: None,
             foreign_keys,
             comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
         }
     }
 
