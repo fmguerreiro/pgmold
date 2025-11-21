@@ -104,3 +104,50 @@ impl Schema {
         hex::encode(hash)
     }
 }
+
+impl Default for Schema {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_schema_produces_same_fingerprint() {
+        let schema1 = Schema::new();
+        let schema2 = Schema::new();
+        assert_eq!(schema1.fingerprint(), schema2.fingerprint());
+
+        let mut schema3 = Schema::new();
+        schema3.tables.insert(
+            "users".to_string(),
+            Table {
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: Vec::new(),
+                primary_key: None,
+                foreign_keys: Vec::new(),
+                comment: None,
+            },
+        );
+
+        let mut schema4 = Schema::new();
+        schema4.tables.insert(
+            "users".to_string(),
+            Table {
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: Vec::new(),
+                primary_key: None,
+                foreign_keys: Vec::new(),
+                comment: None,
+            },
+        );
+
+        assert_eq!(schema3.fingerprint(), schema4.fingerprint());
+        assert_ne!(schema1.fingerprint(), schema3.fingerprint());
+    }
+}

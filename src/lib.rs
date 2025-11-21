@@ -1,3 +1,4 @@
 pub mod model;
-pub mod parser;
+// TODO: re-enable when parser is fixed for sqlparser 0.43
+// pub mod parser;
 pub mod util;
