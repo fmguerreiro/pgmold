@@ -123,6 +123,24 @@ pub struct Function {
     pub security: SecurityType,
 }
 
+impl Function {
+    /// Compares two functions ignoring whitespace differences in their bodies.
+    pub fn semantically_equals(&self, other: &Function) -> bool {
+        self.name == other.name
+            && self.schema == other.schema
+            && self.arguments == other.arguments
+            && self.return_type == other.return_type
+            && self.language == other.language
+            && self.volatility == other.volatility
+            && self.security == other.security
+            && normalize_sql_body(&self.body) == normalize_sql_body(&other.body)
+    }
+}
+
+fn normalize_sql_body(body: &str) -> String {
+    body.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FunctionArg {
     pub name: Option<String>,

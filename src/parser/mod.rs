@@ -29,7 +29,8 @@ fn preprocess_sql(sql: &str) -> (String, bool) {
     let security_definer_re = Regex::new(r"(?i)\bSECURITY\s+DEFINER\b").unwrap();
     let security_invoker_re = Regex::new(r"(?i)\bSECURITY\s+INVOKER\b").unwrap();
     // Match SET search_path until newline or AS keyword
-    let set_search_path_re = Regex::new(r"(?i)\bSET\s+search_path\s+TO\s+'[^']*'(?:\s*,\s*'[^']*')*").unwrap();
+    let set_search_path_re =
+        Regex::new(r"(?i)\bSET\s+search_path\s+TO\s+'[^']*'(?:\s*,\s*'[^']*')*").unwrap();
     // Remove ALTER FUNCTION statements (ownership, etc.)
     let alter_function_re = Regex::new(r"(?i)ALTER\s+FUNCTION\s+[^;]+;").unwrap();
 
@@ -75,21 +76,17 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             }
             Statement::CreateType {
                 name,
-                representation,
+                representation: sqlparser::ast::UserDefinedTypeRepresentation::Enum { labels },
                 ..
             } => {
-                if let sqlparser::ast::UserDefinedTypeRepresentation::Enum { labels } =
-                    representation
-                {
-                    let enum_type = EnumType {
-                        name: name.to_string(),
-                        values: labels
-                            .iter()
-                            .map(|l| l.to_string().trim_matches('\'').to_string())
-                            .collect(),
-                    };
-                    schema.enums.insert(enum_type.name.clone(), enum_type);
-                }
+                let enum_type = EnumType {
+                    name: name.to_string(),
+                    values: labels
+                        .iter()
+                        .map(|l| l.to_string().trim_matches('\'').to_string())
+                        .collect(),
+                };
+                schema.enums.insert(enum_type.name.clone(), enum_type);
             }
             Statement::CreatePolicy {
                 name,

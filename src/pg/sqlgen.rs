@@ -232,7 +232,7 @@ fn format_column(column: &Column) -> String {
     }
 
     if let Some(ref default) = column.default {
-        parts.push(format!("DEFAULT {}", default));
+        parts.push(format!("DEFAULT {default}"));
     }
 
     parts.join(" ")
@@ -243,7 +243,7 @@ fn format_pg_type(pg_type: &PgType) -> String {
         PgType::Integer => "INTEGER".to_string(),
         PgType::BigInt => "BIGINT".to_string(),
         PgType::SmallInt => "SMALLINT".to_string(),
-        PgType::Varchar(Some(len)) => format!("VARCHAR({})", len),
+        PgType::Varchar(Some(len)) => format!("VARCHAR({len})"),
         PgType::Varchar(None) => "VARCHAR".to_string(),
         PgType::Text => "TEXT".to_string(),
         PgType::Boolean => "BOOLEAN".to_string(),
@@ -305,11 +305,11 @@ fn generate_create_policy(policy: &Policy) -> String {
     }
 
     if let Some(ref using_expr) = policy.using_expr {
-        sql.push_str(&format!(" USING ({})", using_expr));
+        sql.push_str(&format!(" USING ({using_expr})"));
     }
 
     if let Some(ref check_expr) = policy.check_expr {
-        sql.push_str(&format!(" WITH CHECK ({})", check_expr));
+        sql.push_str(&format!(" WITH CHECK ({check_expr})"));
     }
 
     sql.push(';');
@@ -332,28 +332,22 @@ fn generate_alter_policy(table: &str, name: &str, changes: &PolicyChanges) -> Ve
         ));
     }
 
-    if let Some(ref using_expr) = changes.using_expr {
-        match using_expr {
-            Some(expr) => statements.push(format!(
-                "ALTER POLICY {} ON {} USING ({});",
-                quote_ident(name),
-                quote_ident(table),
-                expr
-            )),
-            None => {}
-        }
+    if let Some(Some(expr)) = &changes.using_expr {
+        statements.push(format!(
+            "ALTER POLICY {} ON {} USING ({});",
+            quote_ident(name),
+            quote_ident(table),
+            expr
+        ))
     }
 
-    if let Some(ref check_expr) = changes.check_expr {
-        match check_expr {
-            Some(expr) => statements.push(format!(
-                "ALTER POLICY {} ON {} WITH CHECK ({});",
-                quote_ident(name),
-                quote_ident(table),
-                expr
-            )),
-            None => {}
-        }
+    if let Some(Some(expr)) = &changes.check_expr {
+        statements.push(format!(
+            "ALTER POLICY {} ON {} WITH CHECK ({});",
+            quote_ident(name),
+            quote_ident(table),
+            expr
+        ))
     }
 
     statements
@@ -394,7 +388,7 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
             }
             parts.push(arg.data_type.clone());
             if let Some(ref default) = arg.default {
-                parts.push(format!("DEFAULT {}", default));
+                parts.push(format!("DEFAULT {default}"));
             }
             parts.join(" ")
         })

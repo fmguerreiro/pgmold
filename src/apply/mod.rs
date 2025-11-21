@@ -7,19 +7,10 @@ use crate::pg::sqlgen::generate_sql;
 use crate::util::{Result, SchemaError};
 use sqlx::Executor;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ApplyOptions {
     pub dry_run: bool,
     pub allow_destructive: bool,
-}
-
-impl Default for ApplyOptions {
-    fn default() -> Self {
-        Self {
-            dry_run: false,
-            allow_destructive: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -68,22 +59,23 @@ pub async fn apply_migration(
         });
     }
 
-    let mut transaction =
-        connection.pool().begin().await.map_err(|e| {
-            SchemaError::DatabaseError(format!("Failed to begin transaction: {}", e))
-        })?;
+    let mut transaction = connection
+        .pool()
+        .begin()
+        .await
+        .map_err(|e| SchemaError::DatabaseError(format!("Failed to begin transaction: {e}")))?;
 
     for statement in &sql {
         transaction
             .execute(statement.as_str())
             .await
-            .map_err(|e| SchemaError::DatabaseError(format!("Failed to execute SQL: {}", e)))?;
+            .map_err(|e| SchemaError::DatabaseError(format!("Failed to execute SQL: {e}")))?;
     }
 
     transaction
         .commit()
         .await
-        .map_err(|e| SchemaError::DatabaseError(format!("Failed to commit transaction: {}", e)))?;
+        .map_err(|e| SchemaError::DatabaseError(format!("Failed to commit transaction: {e}")))?;
 
     Ok(ApplyResult {
         operations: ops,

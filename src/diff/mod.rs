@@ -152,7 +152,7 @@ fn diff_functions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
 
     for (sig, func) in &to.functions {
         if let Some(from_func) = from.functions.get(sig) {
-            if from_func != func {
+            if !from_func.semantically_equals(func) {
                 ops.push(MigrationOp::AlterFunction {
                     name: func.name.clone(),
                     args: func
@@ -685,5 +685,40 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "add_numbers"));
+    }
+
+    #[test]
+    fn ignores_whitespace_differences_in_function_body() {
+        let mut from = empty_schema();
+        let func1 = Function {
+            name: "foo".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "void".to_string(),
+            language: "sql".to_string(),
+            body: "BEGIN END;".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+        from.functions.insert(func1.signature(), func1);
+
+        let mut to = empty_schema();
+        let func2 = Function {
+            name: "foo".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "void".to_string(),
+            language: "sql".to_string(),
+            body: "BEGIN\n    END;".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+        to.functions.insert(func2.signature(), func2);
+
+        let ops = compute_diff(&from, &to);
+        assert!(
+            ops.is_empty(),
+            "Should not report differences for whitespace-only changes"
+        );
     }
 }
