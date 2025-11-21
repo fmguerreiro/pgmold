@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="pgmold" width="200">
+</p>
+
 # pgmold
 
 PostgreSQL schema-as-code management tool. Define schemas in native PostgreSQL DDL, diff against live databases, plan migrations, and apply them safely.
