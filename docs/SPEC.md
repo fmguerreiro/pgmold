@@ -1005,3 +1005,158 @@ async fn empty_to_simple_schema() {
 - [ ] All 4 test scenarios pass
 - [ ] Tests are isolated (fresh container each)
 - [ ] Tests run in CI
+
+---
+
+## Task 13: PostgreSQL Function Support
+
+### Model Changes
+
+Add to `src/model/mod.rs`:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Function {
+    pub name: String,
+    pub schema: String,
+    pub arguments: Vec<FunctionArg>,
+    pub return_type: String,
+    pub language: String,
+    pub body: String,
+    pub volatility: Volatility,
+    pub security: SecurityType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FunctionArg {
+    pub name: Option<String>,
+    pub data_type: String,
+    pub mode: ArgMode,
+    pub default: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ArgMode { In, Out, InOut, Variadic }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Volatility { Immutable, Stable, Volatile }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SecurityType { Invoker, Definer }
+```
+
+Add to Schema:
+```rust
+pub functions: BTreeMap<String, Function>,
+```
+
+### Parser Changes
+
+Parse `CREATE FUNCTION` statements using sqlparser.
+
+### Introspection Query
+
+```sql
+SELECT 
+    p.proname as name,
+    n.nspname as schema,
+    pg_get_function_arguments(p.oid) as arguments,
+    pg_get_function_result(p.oid) as return_type,
+    l.lanname as language,
+    p.prosrc as body,
+    p.provolatile as volatility,
+    p.prosecdef as security_definer
+FROM pg_proc p
+JOIN pg_namespace n ON p.pronamespace = n.oid
+JOIN pg_language l ON p.prolang = l.oid
+WHERE n.nspname = 'public'
+```
+
+### MigrationOp
+
+```rust
+CreateFunction(Function),
+DropFunction { name: String, args: String },
+AlterFunction { name: String, args: String, changes: FunctionChanges },
+```
+
+### Acceptance Criteria
+
+- [ ] Parse CREATE FUNCTION with args, return type, language, body
+- [ ] Introspect functions from pg_proc
+- [ ] Diff detects added/removed/modified functions
+- [ ] Generate CREATE/DROP FUNCTION DDL
+
+---
+
+## Task 14: RLS Policy Support
+
+### Model Changes
+
+Add to `src/model/mod.rs`:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Policy {
+    pub name: String,
+    pub table: String,
+    pub command: PolicyCommand,
+    pub roles: Vec<String>,
+    pub using_expr: Option<String>,
+    pub check_expr: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PolicyCommand { All, Select, Insert, Update, Delete }
+```
+
+Add to Table:
+```rust
+pub row_level_security: bool,
+pub policies: Vec<Policy>,
+```
+
+### Parser Changes
+
+Parse:
+- `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`
+- `CREATE POLICY name ON table ...`
+
+### Introspection Query
+
+```sql
+SELECT 
+    pol.polname as name,
+    c.relname as table_name,
+    pol.polcmd as command,
+    pol.polroles as roles,
+    pg_get_expr(pol.polqual, pol.polrelid) as using_expr,
+    pg_get_expr(pol.polwithcheck, pol.polrelid) as check_expr
+FROM pg_policy pol
+JOIN pg_class c ON pol.polrelid = c.oid
+JOIN pg_namespace n ON c.relnamespace = n.oid
+WHERE n.nspname = 'public'
+```
+
+RLS enabled check:
+```sql
+SELECT relrowsecurity FROM pg_class WHERE relname = $1
+```
+
+### MigrationOp
+
+```rust
+EnableRls { table: String },
+DisableRls { table: String },
+CreatePolicy(Policy),
+DropPolicy { table: String, name: String },
+AlterPolicy { table: String, name: String, changes: PolicyChanges },
+```
+
+### Acceptance Criteria
+
+- [ ] Parse CREATE POLICY with USING/CHECK expressions
+- [ ] Parse ALTER TABLE ENABLE/DISABLE ROW LEVEL SECURITY
+- [ ] Introspect policies from pg_policy
+- [ ] Diff detects added/removed/modified policies and RLS status
+- [ ] Generate CREATE/DROP POLICY DDL
