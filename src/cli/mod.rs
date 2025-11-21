@@ -11,6 +11,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Compare two schemas and show differences
     Diff {
         #[arg(long)]
         from: String,
@@ -18,6 +19,7 @@ enum Commands {
         to: String,
     },
 
+    /// Generate migration plan
     Plan {
         #[arg(long)]
         schema: String,
@@ -25,6 +27,7 @@ enum Commands {
         database: String,
     },
 
+    /// Apply migrations
     Apply {
         #[arg(long)]
         schema: String,
@@ -36,6 +39,7 @@ enum Commands {
         allow_destructive: bool,
     },
 
+    /// Lint schema or migration plan
     Lint {
         #[arg(long)]
         schema: String,
@@ -43,6 +47,7 @@ enum Commands {
         database: Option<String>,
     },
 
+    /// Monitor for drift
     Monitor {
         #[arg(long)]
         schema: String,
@@ -56,11 +61,11 @@ pub async fn run() -> Result<()> {
 
     match cli.command {
         Commands::Diff { from, to } => {
-            println!("Diff: {} -> {}", from, to);
+            println!("Diff: {from} -> {to}");
             Ok(())
         }
         Commands::Plan { schema, database } => {
-            println!("Plan: {} -> {}", schema, database);
+            println!("Plan: {schema} -> {database}");
             Ok(())
         }
         Commands::Apply {
@@ -69,18 +74,15 @@ pub async fn run() -> Result<()> {
             dry_run,
             allow_destructive,
         } => {
-            println!(
-                "Apply: {} -> {} (dry_run={}, destructive={})",
-                schema, database, dry_run, allow_destructive
-            );
+            println!("Apply: {schema} -> {database} (dry_run={dry_run}, destructive={allow_destructive})");
             Ok(())
         }
         Commands::Lint { schema, database } => {
-            println!("Lint: {} (db={:?})", schema, database);
+            println!("Lint: {schema} (db={database:?})");
             Ok(())
         }
         Commands::Monitor { schema, database } => {
-            println!("Monitor: {} -> {}", schema, database);
+            println!("Monitor: {schema} -> {database}");
             Ok(())
         }
     }
