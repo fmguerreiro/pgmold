@@ -4,3 +4,4 @@ pub mod sqlgen;
 
 pub use connection::PgConnection;
 pub use introspect::introspect_schema;
+pub use sqlgen::{generate_sql, quote_ident};
