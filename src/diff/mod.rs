@@ -8,15 +8,42 @@ pub enum MigrationOp {
     DropEnum(String),
     CreateTable(Table),
     DropTable(String),
-    AddColumn { table: String, column: Column },
-    DropColumn { table: String, column: String },
-    AlterColumn { table: String, column: String, changes: ColumnChanges },
-    AddPrimaryKey { table: String, primary_key: PrimaryKey },
-    DropPrimaryKey { table: String },
-    AddIndex { table: String, index: Index },
-    DropIndex { table: String, index_name: String },
-    AddForeignKey { table: String, foreign_key: ForeignKey },
-    DropForeignKey { table: String, foreign_key_name: String },
+    AddColumn {
+        table: String,
+        column: Column,
+    },
+    DropColumn {
+        table: String,
+        column: String,
+    },
+    AlterColumn {
+        table: String,
+        column: String,
+        changes: ColumnChanges,
+    },
+    AddPrimaryKey {
+        table: String,
+        primary_key: PrimaryKey,
+    },
+    DropPrimaryKey {
+        table: String,
+    },
+    AddIndex {
+        table: String,
+        index: Index,
+    },
+    DropIndex {
+        table: String,
+        index_name: String,
+    },
+    AddForeignKey {
+        table: String,
+        foreign_key: ForeignKey,
+    },
+    DropForeignKey {
+        table: String,
+        foreign_key_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,7 +115,10 @@ fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     for (name, column) in &to_table.columns {
         if let Some(from_column) = from_table.columns.get(name) {
             let changes = compute_column_changes(from_column, column);
-            if changes.data_type.is_some() || changes.nullable.is_some() || changes.default.is_some() {
+            if changes.data_type.is_some()
+                || changes.nullable.is_some()
+                || changes.default.is_some()
+            {
                 ops.push(MigrationOp::AlterColumn {
                     table: to_table.name.clone(),
                     column: name.clone(),
@@ -193,7 +223,11 @@ fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for foreign_key in &to_table.foreign_keys {
-        if !from_table.foreign_keys.iter().any(|fk| fk.name == foreign_key.name) {
+        if !from_table
+            .foreign_keys
+            .iter()
+            .any(|fk| fk.name == foreign_key.name)
+        {
             ops.push(MigrationOp::AddForeignKey {
                 table: to_table.name.clone(),
                 foreign_key: foreign_key.clone(),
@@ -202,7 +236,11 @@ fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     }
 
     for foreign_key in &from_table.foreign_keys {
-        if !to_table.foreign_keys.iter().any(|fk| fk.name == foreign_key.name) {
+        if !to_table
+            .foreign_keys
+            .iter()
+            .any(|fk| fk.name == foreign_key.name)
+        {
             ops.push(MigrationOp::DropForeignKey {
                 table: from_table.name.clone(),
                 foreign_key_name: foreign_key.name.clone(),
@@ -292,7 +330,8 @@ mod tests {
     #[test]
     fn detects_removed_table() {
         let mut from = empty_schema();
-        from.tables.insert("users".to_string(), simple_table("users"));
+        from.tables
+            .insert("users".to_string(), simple_table("users"));
         let to = empty_schema();
 
         let ops = compute_diff(&from, &to);
@@ -303,23 +342,30 @@ mod tests {
     #[test]
     fn detects_added_column() {
         let mut from = empty_schema();
-        from.tables.insert("users".to_string(), simple_table("users"));
+        from.tables
+            .insert("users".to_string(), simple_table("users"));
 
         let mut to = empty_schema();
         let mut table = simple_table("users");
-        table.columns.insert("email".to_string(), simple_column("email", PgType::Text));
+        table
+            .columns
+            .insert("email".to_string(), simple_column("email", PgType::Text));
         to.tables.insert("users".to_string(), table);
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], MigrationOp::AddColumn { table, column } if table == "users" && column.name == "email"));
+        assert!(
+            matches!(&ops[0], MigrationOp::AddColumn { table, column } if table == "users" && column.name == "email")
+        );
     }
 
     #[test]
     fn detects_removed_column() {
         let mut from = empty_schema();
         let mut table = simple_table("users");
-        table.columns.insert("email".to_string(), simple_column("email", PgType::Text));
+        table
+            .columns
+            .insert("email".to_string(), simple_column("email", PgType::Text));
         from.tables.insert("users".to_string(), table);
 
         let mut to = empty_schema();
@@ -327,19 +373,25 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], MigrationOp::DropColumn { table, column } if table == "users" && column == "email"));
+        assert!(
+            matches!(&ops[0], MigrationOp::DropColumn { table, column } if table == "users" && column == "email")
+        );
     }
 
     #[test]
     fn detects_altered_column_type() {
         let mut from = empty_schema();
         let mut from_table = simple_table("users");
-        from_table.columns.insert("age".to_string(), simple_column("age", PgType::Integer));
+        from_table
+            .columns
+            .insert("age".to_string(), simple_column("age", PgType::Integer));
         from.tables.insert("users".to_string(), from_table);
 
         let mut to = empty_schema();
         let mut to_table = simple_table("users");
-        to_table.columns.insert("age".to_string(), simple_column("age", PgType::BigInt));
+        to_table
+            .columns
+            .insert("age".to_string(), simple_column("age", PgType::BigInt));
         to.tables.insert("users".to_string(), to_table);
 
         let ops = compute_diff(&from, &to);
@@ -354,7 +406,8 @@ mod tests {
     #[test]
     fn detects_added_index() {
         let mut from = empty_schema();
-        from.tables.insert("users".to_string(), simple_table("users"));
+        from.tables
+            .insert("users".to_string(), simple_table("users"));
 
         let mut to = empty_schema();
         let mut table = simple_table("users");
@@ -368,7 +421,9 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], MigrationOp::AddIndex { table, index } if table == "users" && index.name == "users_email_idx"));
+        assert!(
+            matches!(&ops[0], MigrationOp::AddIndex { table, index } if table == "users" && index.name == "users_email_idx")
+        );
     }
 
     #[test]
@@ -388,13 +443,16 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], MigrationOp::DropIndex { table, index_name } if table == "users" && index_name == "users_email_idx"));
+        assert!(
+            matches!(&ops[0], MigrationOp::DropIndex { table, index_name } if table == "users" && index_name == "users_email_idx")
+        );
     }
 
     #[test]
     fn detects_added_foreign_key() {
         let mut from = empty_schema();
-        from.tables.insert("posts".to_string(), simple_table("posts"));
+        from.tables
+            .insert("posts".to_string(), simple_table("posts"));
 
         let mut to = empty_schema();
         let mut table = simple_table("posts");
@@ -410,7 +468,9 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], MigrationOp::AddForeignKey { table, foreign_key } if table == "posts" && foreign_key.name == "posts_user_id_fkey"));
+        assert!(
+            matches!(&ops[0], MigrationOp::AddForeignKey { table, foreign_key } if table == "posts" && foreign_key.name == "posts_user_id_fkey")
+        );
     }
 
     #[test]
@@ -432,6 +492,8 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], MigrationOp::DropForeignKey { table, foreign_key_name } if table == "posts" && foreign_key_name == "posts_user_id_fkey"));
+        assert!(
+            matches!(&ops[0], MigrationOp::DropForeignKey { table, foreign_key_name } if table == "posts" && foreign_key_name == "posts_user_id_fkey")
+        );
     }
 }
