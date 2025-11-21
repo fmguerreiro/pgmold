@@ -2,6 +2,11 @@
 name = "pgmold"
 version = "0.1.0"
 edition = "2021"
+description = "PostgreSQL schema-as-code management tool"
+license = "MIT"
+repository = "https://github.com/fmguerreiro/pgmold"
+keywords = ["postgresql", "schema", "migrations", "database", "cli"]
+categories = ["command-line-utilities", "database"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
