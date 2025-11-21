@@ -51,8 +51,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
                     rule: "deny_drop_column".to_string(),
                     severity: LintSeverity::Error,
                     message: format!(
-                        "Dropping column {}.{} requires --allow-destructive flag",
-                        table, column
+                        "Dropping column {table}.{column} requires --allow-destructive flag"
                     ),
                 });
             }
@@ -64,15 +63,14 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
                     rule: "deny_drop_table_in_prod".to_string(),
                     severity: LintSeverity::Error,
                     message: format!(
-                        "Dropping table {} is not allowed in production (PGMOLD_PROD=1)",
-                        name
+                        "Dropping table {name} is not allowed in production (PGMOLD_PROD=1)"
                     ),
                 });
             } else if !options.allow_destructive {
                 results.push(LintResult {
                     rule: "deny_drop_table".to_string(),
                     severity: LintSeverity::Error,
-                    message: format!("Dropping table {} requires --allow-destructive flag", name),
+                    message: format!("Dropping table {name} requires --allow-destructive flag"),
                 });
             }
         }
@@ -88,8 +86,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
                         rule: "warn_type_narrowing".to_string(),
                         severity: LintSeverity::Warning,
                         message: format!(
-                            "Altering column {}.{} to a smaller type may cause data loss",
-                            table, column
+                            "Altering column {table}.{column} to a smaller type may cause data loss"
                         ),
                     });
                 }
@@ -100,8 +97,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
                     rule: "warn_set_not_null".to_string(),
                     severity: LintSeverity::Warning,
                     message: format!(
-                        "Setting column {}.{} to NOT NULL may fail if existing rows have NULL values",
-                        table, column
+                        "Setting column {table}.{column} to NOT NULL may fail if existing rows have NULL values"
                     ),
                 });
             }

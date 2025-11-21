@@ -51,7 +51,7 @@ async fn introspect_enums(connection: &PgConnection) -> Result<BTreeMap<String, 
     )
     .fetch_all(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch enums: {}", e)))?;
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch enums: {e}")))?;
 
     let mut enums = BTreeMap::new();
     for row in rows {
@@ -79,7 +79,7 @@ async fn introspect_tables(connection: &PgConnection) -> Result<BTreeMap<String,
     )
     .fetch_all(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch tables: {}", e)))?;
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch tables: {e}")))?;
 
     let mut tables = BTreeMap::new();
     for row in rows {
@@ -118,7 +118,7 @@ async fn introspect_columns(
     .bind(table_name)
     .fetch_all(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch columns: {}", e)))?;
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch columns: {e}")))?;
 
     let mut columns = BTreeMap::new();
     for row in rows {
@@ -183,7 +183,7 @@ async fn introspect_primary_key(
     .bind(table_name)
     .fetch_optional(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch primary key: {}", e)))?;
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch primary key: {e}")))?;
 
     Ok(row.map(|r| {
         let columns: Vec<String> = r.get("columns");
@@ -209,7 +209,7 @@ async fn introspect_indexes(connection: &PgConnection, table_name: &str) -> Resu
     .bind(table_name)
     .fetch_all(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch indexes: {}", e)))?;
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch indexes: {e}")))?;
 
     let mut indexes = Vec::new();
     for row in rows {
@@ -264,7 +264,7 @@ async fn introspect_foreign_keys(
     .bind(table_name)
     .fetch_all(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch foreign keys: {}", e)))?;
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch foreign keys: {e}")))?;
 
     let mut foreign_keys = Vec::new();
     for row in rows {
@@ -311,7 +311,7 @@ async fn introspect_rls_enabled(connection: &PgConnection, table_name: &str) -> 
     .bind(table_name)
     .fetch_optional(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch RLS status: {}", e)))?;
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch RLS status: {e}")))?;
 
     Ok(row
         .map(|r| r.get::<bool, _>("relrowsecurity"))
@@ -339,7 +339,7 @@ async fn introspect_policies(connection: &PgConnection, table_name: &str) -> Res
     .bind(table_name)
     .fetch_all(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch policies: {}", e)))?;
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch policies: {e}")))?;
 
     let mut policies = Vec::new();
     for row in rows {
@@ -394,7 +394,7 @@ async fn introspect_functions(connection: &PgConnection) -> Result<BTreeMap<Stri
     )
     .fetch_all(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch functions: {}", e)))?;
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch functions: {e}")))?;
 
     let mut functions = BTreeMap::new();
     for row in rows {

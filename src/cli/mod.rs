@@ -68,16 +68,15 @@ enum Commands {
 
 async fn parse_source(source: &str) -> Result<Schema> {
     if let Some(path) = source.strip_prefix("sql:") {
-        parse_sql_file(path).map_err(|e| anyhow!("{}", e))
+        parse_sql_file(path).map_err(|e| anyhow!("{e}"))
     } else if let Some(url) = source.strip_prefix("db:") {
-        let connection = PgConnection::new(url).await.map_err(|e| anyhow!("{}", e))?;
+        let connection = PgConnection::new(url).await.map_err(|e| anyhow!("{e}"))?;
         introspect_schema(&connection)
             .await
-            .map_err(|e| anyhow!("{}", e))
+            .map_err(|e| anyhow!("{e}"))
     } else {
         Err(anyhow!(
-            "Unknown source format: {}. Use 'sql:path' or 'db:url' prefix.",
-            source
+            "Unknown source format: {source}. Use 'sql:path' or 'db:url' prefix."
         ))
     }
 }
@@ -96,19 +95,19 @@ pub async fn run() -> Result<()> {
             } else {
                 println!("Differences ({} operations):", ops.len());
                 for op in &ops {
-                    println!("  {:?}", op);
+                    println!("  {op:?}");
                 }
             }
             Ok(())
         }
         Commands::Plan { schema, database } => {
-            let target = parse_sql_file(&schema).map_err(|e| anyhow!("{}", e))?;
+            let target = parse_sql_file(&schema).map_err(|e| anyhow!("{e}"))?;
             let connection = PgConnection::new(&database)
                 .await
-                .map_err(|e| anyhow!("{}", e))?;
+                .map_err(|e| anyhow!("{e}"))?;
             let current = introspect_schema(&connection)
                 .await
-                .map_err(|e| anyhow!("{}", e))?;
+                .map_err(|e| anyhow!("{e}"))?;
 
             let ops = plan_migration(compute_diff(&current, &target));
             let sql = generate_sql(&ops);
@@ -118,7 +117,7 @@ pub async fn run() -> Result<()> {
             } else {
                 println!("Migration plan ({} statements):", sql.len());
                 for statement in &sql {
-                    println!("{}", statement);
+                    println!("{statement}");
                     println!();
                 }
             }
@@ -132,7 +131,7 @@ pub async fn run() -> Result<()> {
         } => {
             let connection = PgConnection::new(&database)
                 .await
-                .map_err(|e| anyhow!("{}", e))?;
+                .map_err(|e| anyhow!("{e}"))?;
 
             let options = ApplyOptions {
                 dry_run,
@@ -141,7 +140,7 @@ pub async fn run() -> Result<()> {
 
             let result = apply_migration(&schema, &connection, options)
                 .await
-                .map_err(|e| anyhow!("{}", e))?;
+                .map_err(|e| anyhow!("{e}"))?;
 
             for lint_result in &result.lint_results {
                 let severity = match lint_result.severity {
@@ -164,7 +163,7 @@ pub async fn run() -> Result<()> {
             } else if dry_run {
                 println!("\nDry run - SQL that would be executed:");
                 for statement in &result.sql_statements {
-                    println!("{}", statement);
+                    println!("{statement}");
                 }
             } else if result.applied {
                 println!(
@@ -175,15 +174,15 @@ pub async fn run() -> Result<()> {
             Ok(())
         }
         Commands::Lint { schema, database } => {
-            let target = parse_sql_file(&schema).map_err(|e| anyhow!("{}", e))?;
+            let target = parse_sql_file(&schema).map_err(|e| anyhow!("{e}"))?;
 
             let ops = if let Some(db_url) = database {
                 let connection = PgConnection::new(&db_url)
                     .await
-                    .map_err(|e| anyhow!("{}", e))?;
+                    .map_err(|e| anyhow!("{e}"))?;
                 let current = introspect_schema(&connection)
                     .await
-                    .map_err(|e| anyhow!("{}", e))?;
+                    .map_err(|e| anyhow!("{e}"))?;
                 plan_migration(compute_diff(&current, &target))
             } else {
                 vec![]
@@ -212,11 +211,11 @@ pub async fn run() -> Result<()> {
         Commands::Monitor { schema, database } => {
             let connection = PgConnection::new(&database)
                 .await
-                .map_err(|e| anyhow!("{}", e))?;
+                .map_err(|e| anyhow!("{e}"))?;
 
             let report = detect_drift(&schema, &connection)
                 .await
-                .map_err(|e| anyhow!("{}", e))?;
+                .map_err(|e| anyhow!("{e}"))?;
 
             if report.has_drift {
                 println!("Drift detected!");
@@ -224,7 +223,7 @@ pub async fn run() -> Result<()> {
                 println!("Actual fingerprint:   {}", report.actual_fingerprint);
                 println!("\nDifferences ({} operations):", report.differences.len());
                 for op in &report.differences {
-                    println!("  {:?}", op);
+                    println!("  {op:?}");
                 }
                 std::process::exit(1);
             } else {

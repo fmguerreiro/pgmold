@@ -12,7 +12,7 @@ impl PgConnection {
             .max_connections(5)
             .connect(connection_string)
             .await
-            .map_err(|e| SchemaError::DatabaseError(format!("Failed to connect: {}", e)))?;
+            .map_err(|e| SchemaError::DatabaseError(format!("Failed to connect: {e}")))?;
 
         Ok(PgConnection { pool })
     }

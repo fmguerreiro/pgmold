@@ -13,7 +13,7 @@ use testcontainers_modules::postgres::Postgres;
 async fn setup_postgres() -> (ContainerAsync<Postgres>, String) {
     let container = Postgres::default().start().await.unwrap();
     let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let url = format!("postgres://postgres:postgres@localhost:{}/postgres", port);
+    let url = format!("postgres://postgres:postgres@localhost:{port}/postgres");
     (container, url)
 }
 

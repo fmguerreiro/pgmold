@@ -230,7 +230,7 @@ mod tests {
 
     fn make_fk(referenced_table: &str) -> ForeignKey {
         ForeignKey {
-            name: format!("fk_{}", referenced_table),
+            name: format!("fk_{referenced_table}"),
             columns: vec!["id".to_string()],
             referenced_table: referenced_table.to_string(),
             referenced_columns: vec!["id".to_string()],
