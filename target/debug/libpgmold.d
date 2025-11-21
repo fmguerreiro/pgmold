@@ -1,0 +1,1 @@
+/Users/fmguerreiro/projects/pgmold/target/debug/libpgmold.rlib: /Users/fmguerreiro/projects/pgmold/src/lib.rs /Users/fmguerreiro/projects/pgmold/src/model/mod.rs /Users/fmguerreiro/projects/pgmold/src/parser/mod.rs /Users/fmguerreiro/projects/pgmold/src/util/mod.rs

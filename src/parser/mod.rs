@@ -21,30 +21,22 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
 
     for statement in statements {
         match statement {
-            Statement::CreateTable(create_table) => {
-                let table = parse_create_table(
-                    &create_table.name.to_string(),
-                    &create_table.columns,
-                    &create_table.constraints,
-                )?;
+            Statement::CreateTable(ct) => {
+                let table = parse_create_table(&ct.name.to_string(), &ct.columns, &ct.constraints)?;
                 schema.tables.insert(table.name.clone(), table);
             }
-            Statement::CreateIndex(create_index) => {
-                let idx_name = create_index
+            Statement::CreateIndex(ci) => {
+                let idx_name = ci
                     .name
                     .map(|n| n.to_string())
                     .ok_or_else(|| SchemaError::ParseError("Index must have name".into()))?;
-                let tbl_name = create_index.table_name.to_string();
+                let tbl_name = ci.table_name.to_string();
 
                 if let Some(table) = schema.tables.get_mut(&tbl_name) {
                     table.indexes.push(Index {
                         name: idx_name,
-                        columns: create_index
-                            .columns
-                            .iter()
-                            .map(|c| c.expr.to_string())
-                            .collect(),
-                        unique: create_index.unique,
+                        columns: ci.columns.iter().map(|c| c.expr.to_string()).collect(),
+                        unique: ci.unique,
                         index_type: IndexType::BTree,
                     });
                     table.indexes.sort();
@@ -94,6 +86,7 @@ fn parse_create_table(
         table.columns.insert(column.name.clone(), column);
     }
 
+    // Check for inline PRIMARY KEY in column options
     for col_def in columns {
         for option in &col_def.options {
             if let ColumnOption::Unique {
@@ -107,6 +100,7 @@ fn parse_create_table(
         }
     }
 
+    // Parse table-level constraints
     for constraint in constraints {
         match constraint {
             TableConstraint::PrimaryKey { columns, .. } => {
@@ -219,7 +213,7 @@ mod tests {
 
     #[test]
     fn parse_simple_schema() {
-        let sql = "
+        let sql = r#"
 CREATE TYPE user_role AS ENUM ('admin', 'user', 'guest');
 
 CREATE TABLE users (
@@ -243,7 +237,7 @@ CREATE TABLE posts (
 );
 
 CREATE INDEX posts_user_id_idx ON posts (user_id);
-";
+"#;
 
         let schema = parse_sql_string(sql).expect("Should parse");
 
