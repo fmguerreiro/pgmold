@@ -11,7 +11,9 @@ impl Default for LintOptions {
     fn default() -> Self {
         Self {
             allow_destructive: false,
-            is_production: std::env::var("PGMOLD_PROD").map(|v| v == "1").unwrap_or(false),
+            is_production: std::env::var("PGMOLD_PROD")
+                .map(|v| v == "1")
+                .unwrap_or(false),
         }
     }
 }
@@ -70,10 +72,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
                 results.push(LintResult {
                     rule: "deny_drop_table".to_string(),
                     severity: LintSeverity::Error,
-                    message: format!(
-                        "Dropping table {} requires --allow-destructive flag",
-                        name
-                    ),
+                    message: format!("Dropping table {} requires --allow-destructive flag", name),
                 });
             }
         }

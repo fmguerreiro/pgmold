@@ -23,9 +23,29 @@ pub fn parse_sql_file(path: &str) -> Result<Schema> {
     parse_sql_string(&content)
 }
 
+/// Preprocess SQL to remove/normalize syntax not supported by sqlparser 0.52
+fn preprocess_sql(sql: &str) -> (String, bool) {
+    use regex::Regex;
+    let security_definer_re = Regex::new(r"(?i)\bSECURITY\s+DEFINER\b").unwrap();
+    let security_invoker_re = Regex::new(r"(?i)\bSECURITY\s+INVOKER\b").unwrap();
+    // Match SET search_path until newline or AS keyword
+    let set_search_path_re = Regex::new(r"(?i)\bSET\s+search_path\s+TO\s+'[^']*'(?:\s*,\s*'[^']*')*").unwrap();
+    // Remove ALTER FUNCTION statements (ownership, etc.)
+    let alter_function_re = Regex::new(r"(?i)ALTER\s+FUNCTION\s+[^;]+;").unwrap();
+
+    let has_security_definer = security_definer_re.is_match(sql);
+    let processed = security_definer_re.replace_all(sql, "");
+    let processed = security_invoker_re.replace_all(&processed, "");
+    let processed = set_search_path_re.replace_all(&processed, "");
+    let processed = alter_function_re.replace_all(&processed, "");
+
+    (processed.to_string(), has_security_definer)
+}
+
 pub fn parse_sql_string(sql: &str) -> Result<Schema> {
+    let (preprocessed_sql, _has_security_definer) = preprocess_sql(sql);
     let dialect = PostgreSqlDialect {};
-    let statements = Parser::parse_sql(&dialect, sql)
+    let statements = Parser::parse_sql(&dialect, &preprocessed_sql)
         .map_err(|e| SchemaError::ParseError(format!("SQL parse error: {e}")))?;
 
     let mut schema = Schema::new();

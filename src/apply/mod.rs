@@ -68,11 +68,10 @@ pub async fn apply_migration(
         });
     }
 
-    let mut transaction = connection
-        .pool()
-        .begin()
-        .await
-        .map_err(|e| SchemaError::DatabaseError(format!("Failed to begin transaction: {}", e)))?;
+    let mut transaction =
+        connection.pool().begin().await.map_err(|e| {
+            SchemaError::DatabaseError(format!("Failed to begin transaction: {}", e))
+        })?;
 
     for statement in &sql {
         transaction
