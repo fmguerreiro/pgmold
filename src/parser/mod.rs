@@ -6,6 +6,17 @@ use sqlparser::parser::Parser;
 use std::collections::BTreeMap;
 use std::fs;
 
+fn parse_policy_command(cmd: &Option<sqlparser::ast::CreatePolicyCommand>) -> PolicyCommand {
+    match cmd {
+        Some(sqlparser::ast::CreatePolicyCommand::All) => PolicyCommand::All,
+        Some(sqlparser::ast::CreatePolicyCommand::Select) => PolicyCommand::Select,
+        Some(sqlparser::ast::CreatePolicyCommand::Insert) => PolicyCommand::Insert,
+        Some(sqlparser::ast::CreatePolicyCommand::Update) => PolicyCommand::Update,
+        Some(sqlparser::ast::CreatePolicyCommand::Delete) => PolicyCommand::Delete,
+        None => PolicyCommand::All,
+    }
+}
+
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
     let content = fs::read_to_string(path)
         .map_err(|e| SchemaError::ParseError(format!("Failed to read file: {e}")))?;
@@ -60,6 +71,67 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     schema.enums.insert(enum_type.name.clone(), enum_type);
                 }
             }
+            Statement::CreatePolicy {
+                name,
+                table_name,
+                command,
+                to,
+                using,
+                with_check,
+                ..
+            } => {
+                let tbl_name = table_name.to_string();
+                let policy = Policy {
+                    name: name.to_string(),
+                    table: tbl_name.clone(),
+                    command: parse_policy_command(&command),
+                    roles: to.iter().flat_map(|owners| owners.iter().map(|o| o.to_string())).collect(),
+                    using_expr: using.as_ref().map(|e| e.to_string()),
+                    check_expr: with_check.as_ref().map(|e| e.to_string()),
+                };
+                if let Some(table) = schema.tables.get_mut(&tbl_name) {
+                    table.policies.push(policy);
+                    table.policies.sort();
+                }
+            }
+            Statement::AlterTable { name, operations, .. } => {
+                let tbl_name = name.to_string();
+                for op in operations {
+                    match op {
+                        sqlparser::ast::AlterTableOperation::EnableRowLevelSecurity => {
+                            if let Some(table) = schema.tables.get_mut(&tbl_name) {
+                                table.row_level_security = true;
+                            }
+                        }
+                        sqlparser::ast::AlterTableOperation::DisableRowLevelSecurity => {
+                            if let Some(table) = schema.tables.get_mut(&tbl_name) {
+                                table.row_level_security = false;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Statement::CreateFunction {
+                name,
+                args,
+                return_type,
+                function_body,
+                language,
+                behavior,
+                ..
+            } => {
+                if let Some(func) = parse_create_function(
+                    &name.to_string(),
+                    args.as_deref(),
+                    return_type.as_ref(),
+                    function_body.as_ref(),
+                    language.as_ref(),
+                    behavior.as_ref(),
+                ) {
+                    schema.functions.insert(func.signature(), func);
+                }
+            }
             _ => {}
         }
     }
@@ -79,6 +151,8 @@ fn parse_create_table(
         primary_key: None,
         foreign_keys: Vec::new(),
         comment: None,
+        row_level_security: false,
+        policies: Vec::new(),
     };
 
     for col_def in columns {
@@ -205,6 +279,70 @@ fn parse_referential_action(
         Some(sqlparser::ast::ReferentialAction::SetDefault) => ReferentialAction::SetDefault,
         None => ReferentialAction::NoAction,
     }
+}
+
+fn parse_create_function(
+    name: &str,
+    args: Option<&[sqlparser::ast::OperateFunctionArg]>,
+    return_type: Option<&sqlparser::ast::DataType>,
+    function_body: Option<&sqlparser::ast::CreateFunctionBody>,
+    language: Option<&sqlparser::ast::Ident>,
+    behavior: Option<&sqlparser::ast::FunctionBehavior>,
+) -> Option<Function> {
+    let return_type_str = return_type.map(|rt| rt.to_string()).unwrap_or_default();
+
+    let language_str = language
+        .map(|l| l.to_string().to_lowercase())
+        .unwrap_or_else(|| "sql".to_string());
+
+    let body = function_body
+        .map(|fb| match fb {
+            sqlparser::ast::CreateFunctionBody::AsBeforeOptions(expr) => expr.to_string(),
+            sqlparser::ast::CreateFunctionBody::AsAfterOptions(expr) => expr.to_string(),
+            sqlparser::ast::CreateFunctionBody::Return(expr) => expr.to_string(),
+        })
+        .unwrap_or_default();
+
+    let volatility = behavior
+        .map(|b| match b {
+            sqlparser::ast::FunctionBehavior::Immutable => Volatility::Immutable,
+            sqlparser::ast::FunctionBehavior::Stable => Volatility::Stable,
+            sqlparser::ast::FunctionBehavior::Volatile => Volatility::Volatile,
+        })
+        .unwrap_or_default();
+
+    let arguments: Vec<FunctionArg> = args
+        .map(|arg_list| {
+            arg_list
+                .iter()
+                .map(|arg| {
+                    let mode = match arg.mode {
+                        Some(sqlparser::ast::ArgMode::In) => ArgMode::In,
+                        Some(sqlparser::ast::ArgMode::Out) => ArgMode::Out,
+                        Some(sqlparser::ast::ArgMode::InOut) => ArgMode::InOut,
+                        None => ArgMode::In,
+                    };
+                    FunctionArg {
+                        name: arg.name.as_ref().map(|n| n.to_string()),
+                        data_type: arg.data_type.to_string(),
+                        mode,
+                        default: arg.default_expr.as_ref().map(|e| e.to_string()),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(Function {
+        name: name.to_string(),
+        schema: "public".to_string(),
+        arguments,
+        return_type: return_type_str,
+        language: language_str,
+        body,
+        volatility,
+        security: SecurityType::default(),
+    })
 }
 
 #[cfg(test)]

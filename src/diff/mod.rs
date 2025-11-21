@@ -1,6 +1,6 @@
 pub mod planner;
 
-use crate::model::{Column, EnumType, ForeignKey, Index, PgType, PrimaryKey, Table};
+use crate::model::{Column, EnumType, ForeignKey, Function, Index, PgType, Policy, PrimaryKey, Table};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOp {
@@ -44,6 +44,39 @@ pub enum MigrationOp {
         table: String,
         foreign_key_name: String,
     },
+    EnableRls {
+        table: String,
+    },
+    DisableRls {
+        table: String,
+    },
+    CreatePolicy(Policy),
+    DropPolicy {
+        table: String,
+        name: String,
+    },
+    AlterPolicy {
+        table: String,
+        name: String,
+        changes: PolicyChanges,
+    },
+    CreateFunction(Function),
+    DropFunction {
+        name: String,
+        args: String,
+    },
+    AlterFunction {
+        name: String,
+        args: String,
+        new_function: Function,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyChanges {
+    pub roles: Option<Vec<String>>,
+    pub using_expr: Option<Option<String>>,
+    pub check_expr: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +93,7 @@ pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
 
     ops.extend(diff_enums(from, to));
     ops.extend(diff_tables(from, to));
+    ops.extend(diff_functions(from, to));
 
     for (name, to_table) in &to.tables {
         if let Some(from_table) = from.tables.get(name) {
@@ -67,6 +101,8 @@ pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
             ops.extend(diff_primary_keys(from_table, to_table));
             ops.extend(diff_indexes(from_table, to_table));
             ops.extend(diff_foreign_keys(from_table, to_table));
+            ops.extend(diff_rls(from_table, to_table));
+            ops.extend(diff_policies(from_table, to_table));
         }
     }
 
@@ -103,6 +139,45 @@ fn diff_tables(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     for name in from.tables.keys() {
         if !to.tables.contains_key(name) {
             ops.push(MigrationOp::DropTable(name.clone()));
+        }
+    }
+
+    ops
+}
+
+fn diff_functions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for (sig, func) in &to.functions {
+        if let Some(from_func) = from.functions.get(sig) {
+            if from_func != func {
+                ops.push(MigrationOp::AlterFunction {
+                    name: func.name.clone(),
+                    args: func
+                        .arguments
+                        .iter()
+                        .map(|a| a.data_type.clone())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    new_function: func.clone(),
+                });
+            }
+        } else {
+            ops.push(MigrationOp::CreateFunction(func.clone()));
+        }
+    }
+
+    for (sig, func) in &from.functions {
+        if !to.functions.contains_key(sig) {
+            ops.push(MigrationOp::DropFunction {
+                name: func.name.clone(),
+                args: func
+                    .arguments
+                    .iter()
+                    .map(|a| a.data_type.clone())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            });
         }
     }
 
@@ -251,10 +326,79 @@ fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     ops
 }
 
+fn diff_rls(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    if !from_table.row_level_security && to_table.row_level_security {
+        ops.push(MigrationOp::EnableRls {
+            table: to_table.name.clone(),
+        });
+    } else if from_table.row_level_security && !to_table.row_level_security {
+        ops.push(MigrationOp::DisableRls {
+            table: to_table.name.clone(),
+        });
+    }
+
+    ops
+}
+
+fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for policy in &to_table.policies {
+        if let Some(from_policy) = from_table.policies.iter().find(|p| p.name == policy.name) {
+            let changes = compute_policy_changes(from_policy, policy);
+            if changes.roles.is_some()
+                || changes.using_expr.is_some()
+                || changes.check_expr.is_some()
+            {
+                ops.push(MigrationOp::AlterPolicy {
+                    table: to_table.name.clone(),
+                    name: policy.name.clone(),
+                    changes,
+                });
+            }
+        } else {
+            ops.push(MigrationOp::CreatePolicy(policy.clone()));
+        }
+    }
+
+    for policy in &from_table.policies {
+        if !to_table.policies.iter().any(|p| p.name == policy.name) {
+            ops.push(MigrationOp::DropPolicy {
+                table: from_table.name.clone(),
+                name: policy.name.clone(),
+            });
+        }
+    }
+
+    ops
+}
+
+fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
+    PolicyChanges {
+        roles: if from.roles != to.roles {
+            Some(to.roles.clone())
+        } else {
+            None
+        },
+        using_expr: if from.using_expr != to.using_expr {
+            Some(to.using_expr.clone())
+        } else {
+            None
+        },
+        check_expr: if from.check_expr != to.check_expr {
+            Some(to.check_expr.clone())
+        } else {
+            None
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{IndexType, ReferentialAction};
+    use crate::model::{IndexType, ReferentialAction, Volatility, SecurityType};
     use std::collections::BTreeMap;
 
     fn empty_schema() -> Schema {
@@ -269,6 +413,8 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
         }
     }
 
@@ -495,5 +641,47 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropForeignKey { table, foreign_key_name } if table == "posts" && foreign_key_name == "posts_user_id_fkey")
         );
+    }
+
+    #[test]
+    fn detects_added_function() {
+        let from = empty_schema();
+        let mut to = empty_schema();
+        let func = Function {
+            name: "add_numbers".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "integer".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT 1 + 1".to_string(),
+            volatility: Volatility::Immutable,
+            security: SecurityType::Invoker,
+        };
+        to.functions.insert(func.signature(), func);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], MigrationOp::CreateFunction(f) if f.name == "add_numbers"));
+    }
+
+    #[test]
+    fn detects_removed_function() {
+        let mut from = empty_schema();
+        let func = Function {
+            name: "add_numbers".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "integer".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT 1 + 1".to_string(),
+            volatility: Volatility::Immutable,
+            security: SecurityType::Invoker,
+        };
+        from.functions.insert(func.signature(), func);
+        let to = empty_schema();
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "add_numbers"));
     }
 }

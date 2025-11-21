@@ -9,6 +9,7 @@ pub async fn introspect_schema(connection: &PgConnection) -> Result<Schema> {
 
     schema.enums = introspect_enums(connection).await?;
     schema.tables = introspect_tables(connection).await?;
+    schema.functions = introspect_functions(connection).await?;
 
     let table_names: Vec<String> = schema.tables.keys().cloned().collect();
     for table_name in table_names {
@@ -20,11 +21,17 @@ pub async fn introspect_schema(connection: &PgConnection) -> Result<Schema> {
         indexes.sort();
         foreign_keys.sort();
 
+        let row_level_security = introspect_rls_enabled(connection, &table_name).await?;
+        let mut policies = introspect_policies(connection, &table_name).await?;
+        policies.sort();
+
         if let Some(table) = schema.tables.get_mut(&table_name) {
             table.columns = columns;
             table.primary_key = primary_key;
             table.indexes = indexes;
             table.foreign_keys = foreign_keys;
+            table.row_level_security = row_level_security;
+            table.policies = policies;
         }
     }
 
@@ -86,6 +93,8 @@ async fn introspect_tables(connection: &PgConnection) -> Result<BTreeMap<String,
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 comment: None,
+                row_level_security: false,
+                policies: Vec::new(),
             },
         );
     }
@@ -288,4 +297,170 @@ fn map_referential_action(action: char) -> ReferentialAction {
         'd' => ReferentialAction::SetDefault,
         _ => ReferentialAction::NoAction,
     }
+}
+
+async fn introspect_rls_enabled(connection: &PgConnection, table_name: &str) -> Result<bool> {
+    let row = sqlx::query(
+        r#"
+        SELECT c.relrowsecurity
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relname = $1 AND n.nspname = 'public'
+        "#,
+    )
+    .bind(table_name)
+    .fetch_optional(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch RLS status: {}", e)))?;
+
+    Ok(row.map(|r| r.get::<bool, _>("relrowsecurity")).unwrap_or(false))
+}
+
+async fn introspect_policies(connection: &PgConnection, table_name: &str) -> Result<Vec<Policy>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            pol.polname as name,
+            pol.polcmd as command,
+            COALESCE(
+                ARRAY(SELECT rolname FROM pg_roles WHERE oid = ANY(pol.polroles)),
+                ARRAY[]::text[]
+            ) as roles,
+            pg_get_expr(pol.polqual, pol.polrelid) as using_expr,
+            pg_get_expr(pol.polwithcheck, pol.polrelid) as check_expr
+        FROM pg_policy pol
+        JOIN pg_class c ON pol.polrelid = c.oid
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE c.relname = $1 AND n.nspname = 'public'
+        "#,
+    )
+    .bind(table_name)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch policies: {}", e)))?;
+
+    let mut policies = Vec::new();
+    for row in rows {
+        let name: String = row.get("name");
+        let command: i8 = row.get::<i8, _>("command");
+        let roles: Vec<String> = row.get("roles");
+        let using_expr: Option<String> = row.get("using_expr");
+        let check_expr: Option<String> = row.get("check_expr");
+
+        policies.push(Policy {
+            name,
+            table: table_name.to_string(),
+            command: map_policy_command(command as u8 as char),
+            roles,
+            using_expr,
+            check_expr,
+        });
+    }
+
+    Ok(policies)
+}
+
+fn map_policy_command(cmd: char) -> PolicyCommand {
+    match cmd {
+        '*' => PolicyCommand::All,
+        'r' => PolicyCommand::Select,
+        'a' => PolicyCommand::Insert,
+        'w' => PolicyCommand::Update,
+        'd' => PolicyCommand::Delete,
+        _ => PolicyCommand::All,
+    }
+}
+
+async fn introspect_functions(connection: &PgConnection) -> Result<BTreeMap<String, Function>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            p.proname as name,
+            n.nspname as schema,
+            pg_get_function_arguments(p.oid) as arguments,
+            pg_get_function_result(p.oid) as return_type,
+            l.lanname as language,
+            p.prosrc as body,
+            p.provolatile as volatility,
+            p.prosecdef as security_definer
+        FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        JOIN pg_language l ON p.prolang = l.oid
+        WHERE n.nspname = 'public'
+          AND p.prokind = 'f'
+        "#,
+    )
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch functions: {}", e)))?;
+
+    let mut functions = BTreeMap::new();
+    for row in rows {
+        let name: String = row.get("name");
+        let schema: String = row.get("schema");
+        let arguments_str: String = row.get("arguments");
+        let return_type: String = row.get("return_type");
+        let language: String = row.get("language");
+        let body: String = row.get("body");
+        let volatility_char: i8 = row.get::<i8, _>("volatility");
+        let security_definer: bool = row.get("security_definer");
+
+        let volatility = match volatility_char as u8 as char {
+            'i' => Volatility::Immutable,
+            's' => Volatility::Stable,
+            _ => Volatility::Volatile,
+        };
+
+        let security = if security_definer {
+            SecurityType::Definer
+        } else {
+            SecurityType::Invoker
+        };
+
+        let arguments = parse_function_arguments(&arguments_str);
+
+        let func = Function {
+            name: name.clone(),
+            schema,
+            arguments,
+            return_type,
+            language,
+            body,
+            volatility,
+            security,
+        };
+
+        functions.insert(func.signature(), func);
+    }
+
+    Ok(functions)
+}
+
+fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
+    if args_str.is_empty() {
+        return Vec::new();
+    }
+
+    args_str
+        .split(',')
+        .map(|arg| {
+            let arg = arg.trim();
+            let parts: Vec<&str> = arg.splitn(2, ' ').collect();
+            if parts.len() == 2 {
+                FunctionArg {
+                    name: Some(parts[0].to_string()),
+                    data_type: parts[1].to_string(),
+                    mode: ArgMode::In,
+                    default: None,
+                }
+            } else {
+                FunctionArg {
+                    name: None,
+                    data_type: arg.to_string(),
+                    mode: ArgMode::In,
+                    default: None,
+                }
+            }
+        })
+        .collect()
 }

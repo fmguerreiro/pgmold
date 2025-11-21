@@ -1,5 +1,8 @@
-use crate::diff::{ColumnChanges, MigrationOp};
-use crate::model::{Column, ForeignKey, Index, IndexType, PgType, ReferentialAction, Table};
+use crate::diff::{ColumnChanges, MigrationOp, PolicyChanges};
+use crate::model::{
+    Column, ForeignKey, Function, Index, IndexType, PgType, Policy, PolicyCommand,
+    ReferentialAction, SecurityType, Table, Volatility,
+};
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
     ops.iter().flat_map(generate_op_sql).collect()
@@ -72,20 +75,55 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             quote_ident(table),
             quote_ident(foreign_key_name)
         )],
+
+        MigrationOp::EnableRls { table } => vec![format!(
+            "ALTER TABLE {} ENABLE ROW LEVEL SECURITY;",
+            quote_ident(table)
+        )],
+
+        MigrationOp::DisableRls { table } => vec![format!(
+            "ALTER TABLE {} DISABLE ROW LEVEL SECURITY;",
+            quote_ident(table)
+        )],
+
+        MigrationOp::CreatePolicy(policy) => vec![generate_create_policy(policy)],
+
+        MigrationOp::DropPolicy { table, name } => vec![format!(
+            "DROP POLICY {} ON {};",
+            quote_ident(name),
+            quote_ident(table)
+        )],
+
+        MigrationOp::AlterPolicy {
+            table,
+            name,
+            changes,
+        } => generate_alter_policy(table, name, changes),
+
+        MigrationOp::CreateFunction(func) => vec![generate_create_function(func)],
+
+        MigrationOp::DropFunction { name, args } => vec![format!(
+            "DROP FUNCTION {}({});",
+            quote_ident(name),
+            args
+        )],
+
+        MigrationOp::AlterFunction { new_function, .. } => {
+            vec![generate_create_or_replace_function(new_function)]
+        }
     }
 }
 
 fn generate_create_table(table: &Table) -> Vec<String> {
     let mut statements = Vec::new();
 
-    let mut column_defs: Vec<String> = table
-        .columns
-        .values()
-        .map(format_column)
-        .collect();
+    let mut column_defs: Vec<String> = table.columns.values().map(format_column).collect();
 
     if let Some(ref primary_key) = table.primary_key {
-        column_defs.push(format!("PRIMARY KEY ({})", format_column_list(&primary_key.columns)));
+        column_defs.push(format!(
+            "PRIMARY KEY ({})",
+            format_column_list(&primary_key.columns)
+        ));
     }
 
     statements.push(format!(
@@ -189,10 +227,7 @@ fn generate_alter_column(table: &str, column: &str, changes: &ColumnChanges) -> 
 }
 
 fn format_column(column: &Column) -> String {
-    let mut parts = vec![
-        quote_ident(&column.name),
-        format_pg_type(&column.data_type),
-    ];
+    let mut parts = vec![quote_ident(&column.name), format_pg_type(&column.data_type)];
 
     if !column.nullable {
         parts.push("NOT NULL".to_string());
@@ -248,6 +283,148 @@ pub fn quote_ident(identifier: &str) -> String {
 
 fn escape_string(value: &str) -> String {
     value.replace('\'', "''")
+}
+
+fn generate_create_policy(policy: &Policy) -> String {
+    let mut sql = format!(
+        "CREATE POLICY {} ON {}",
+        quote_ident(&policy.name),
+        quote_ident(&policy.table)
+    );
+
+    sql.push_str(&format!(" FOR {}", format_policy_command(&policy.command)));
+
+    if !policy.roles.is_empty() {
+        sql.push_str(&format!(
+            " TO {}",
+            policy
+                .roles
+                .iter()
+                .map(|r| quote_ident(r))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    if let Some(ref using_expr) = policy.using_expr {
+        sql.push_str(&format!(" USING ({})", using_expr));
+    }
+
+    if let Some(ref check_expr) = policy.check_expr {
+        sql.push_str(&format!(" WITH CHECK ({})", check_expr));
+    }
+
+    sql.push(';');
+    sql
+}
+
+fn generate_alter_policy(table: &str, name: &str, changes: &PolicyChanges) -> Vec<String> {
+    let mut statements = Vec::new();
+
+    if let Some(ref roles) = changes.roles {
+        statements.push(format!(
+            "ALTER POLICY {} ON {} TO {};",
+            quote_ident(name),
+            quote_ident(table),
+            roles
+                .iter()
+                .map(|r| quote_ident(r))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    if let Some(ref using_expr) = changes.using_expr {
+        match using_expr {
+            Some(expr) => statements.push(format!(
+                "ALTER POLICY {} ON {} USING ({});",
+                quote_ident(name),
+                quote_ident(table),
+                expr
+            )),
+            None => {}
+        }
+    }
+
+    if let Some(ref check_expr) = changes.check_expr {
+        match check_expr {
+            Some(expr) => statements.push(format!(
+                "ALTER POLICY {} ON {} WITH CHECK ({});",
+                quote_ident(name),
+                quote_ident(table),
+                expr
+            )),
+            None => {}
+        }
+    }
+
+    statements
+}
+
+fn format_policy_command(command: &PolicyCommand) -> &'static str {
+    match command {
+        PolicyCommand::All => "ALL",
+        PolicyCommand::Select => "SELECT",
+        PolicyCommand::Insert => "INSERT",
+        PolicyCommand::Update => "UPDATE",
+        PolicyCommand::Delete => "DELETE",
+    }
+}
+
+fn generate_create_function(func: &Function) -> String {
+    generate_function_ddl(func, false)
+}
+
+fn generate_create_or_replace_function(func: &Function) -> String {
+    generate_function_ddl(func, true)
+}
+
+fn generate_function_ddl(func: &Function, replace: bool) -> String {
+    let create_stmt = if replace {
+        "CREATE OR REPLACE FUNCTION"
+    } else {
+        "CREATE FUNCTION"
+    };
+
+    let args = func
+        .arguments
+        .iter()
+        .map(|arg| {
+            let mut parts = Vec::new();
+            if let Some(ref name) = arg.name {
+                parts.push(quote_ident(name));
+            }
+            parts.push(arg.data_type.clone());
+            if let Some(ref default) = arg.default {
+                parts.push(format!("DEFAULT {}", default));
+            }
+            parts.join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let volatility = match func.volatility {
+        Volatility::Immutable => "IMMUTABLE",
+        Volatility::Stable => "STABLE",
+        Volatility::Volatile => "VOLATILE",
+    };
+
+    let security = match func.security {
+        SecurityType::Definer => "SECURITY DEFINER",
+        SecurityType::Invoker => "SECURITY INVOKER",
+    };
+
+    format!(
+        "{} {}({}) RETURNS {} LANGUAGE {} {} {} AS $${}$$;",
+        create_stmt,
+        quote_ident(&func.name),
+        args,
+        func.return_type,
+        func.language,
+        volatility,
+        security,
+        func.body
+    )
 }
 
 #[cfg(test)]
@@ -346,6 +523,8 @@ mod tests {
             }),
             foreign_keys: vec![],
             comment: None,
+            row_level_security: false,
+            policies: vec![],
         })];
 
         let sql = generate_sql(&ops);

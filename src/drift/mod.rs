@@ -64,6 +64,8 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
         };
         table.columns.insert(
             "email".to_string(),

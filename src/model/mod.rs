@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 pub struct Schema {
     pub tables: BTreeMap<String, Table>,
     pub enums: BTreeMap<String, EnumType>,
+    pub functions: BTreeMap<String, Function>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -15,6 +16,8 @@ pub struct Table {
     pub primary_key: Option<PrimaryKey>,
     pub foreign_keys: Vec<ForeignKey>,
     pub comment: Option<String>,
+    pub row_level_security: bool,
+    pub policies: Vec<Policy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -89,11 +92,75 @@ pub struct EnumType {
     pub values: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Policy {
+    pub name: String,
+    pub table: String,
+    pub command: PolicyCommand,
+    pub roles: Vec<String>,
+    pub using_expr: Option<String>,
+    pub check_expr: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PolicyCommand {
+    All,
+    Select,
+    Insert,
+    Update,
+    Delete,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Function {
+    pub name: String,
+    pub schema: String,
+    pub arguments: Vec<FunctionArg>,
+    pub return_type: String,
+    pub language: String,
+    pub body: String,
+    pub volatility: Volatility,
+    pub security: SecurityType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FunctionArg {
+    pub name: Option<String>,
+    pub data_type: String,
+    pub mode: ArgMode,
+    pub default: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum ArgMode {
+    #[default]
+    In,
+    Out,
+    InOut,
+    Variadic,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum Volatility {
+    Immutable,
+    Stable,
+    #[default]
+    Volatile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum SecurityType {
+    #[default]
+    Invoker,
+    Definer,
+}
+
 impl Schema {
     pub fn new() -> Self {
         Schema {
             tables: BTreeMap::new(),
             enums: BTreeMap::new(),
+            functions: BTreeMap::new(),
         }
     }
 
@@ -108,6 +175,18 @@ impl Schema {
 impl Default for Schema {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Function {
+    pub fn signature(&self) -> String {
+        let args = self
+            .arguments
+            .iter()
+            .map(|a| a.data_type.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{}({})", self.name, args)
     }
 }
 
@@ -131,6 +210,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 comment: None,
+                row_level_security: false,
+                policies: Vec::new(),
             },
         );
 
@@ -144,6 +225,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 comment: None,
+                row_level_security: false,
+                policies: Vec::new(),
             },
         );
 
