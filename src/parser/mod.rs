@@ -8,45 +8,43 @@ use std::fs;
 
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
     let content = fs::read_to_string(path)
-        .map_err(|e| SchemaError::ParseError(format!("Failed to read file: {}", e)))?;
+        .map_err(|e| SchemaError::ParseError(format!("Failed to read file: {e}")))?;
     parse_sql_string(&content)
 }
 
 pub fn parse_sql_string(sql: &str) -> Result<Schema> {
     let dialect = PostgreSqlDialect {};
     let statements = Parser::parse_sql(&dialect, sql)
-        .map_err(|e| SchemaError::ParseError(format!("SQL parse error: {}", e)))?;
+        .map_err(|e| SchemaError::ParseError(format!("SQL parse error: {e}")))?;
 
     let mut schema = Schema::new();
 
     for statement in statements {
         match statement {
-            Statement::CreateTable {
-                name,
-                columns,
-                constraints,
-                ..
-            } => {
-                let table = parse_create_table(&name.to_string(), &columns, &constraints)?;
+            Statement::CreateTable(create_table) => {
+                let table = parse_create_table(
+                    &create_table.name.to_string(),
+                    &create_table.columns,
+                    &create_table.constraints,
+                )?;
                 schema.tables.insert(table.name.clone(), table);
             }
-            Statement::CreateIndex {
-                index_name,
-                table_name,
-                columns,
-                unique,
-                ..
-            } => {
-                let idx_name = index_name
+            Statement::CreateIndex(create_index) => {
+                let idx_name = create_index
+                    .name
                     .map(|n| n.to_string())
                     .ok_or_else(|| SchemaError::ParseError("Index must have name".into()))?;
-                let tbl_name = table_name.to_string();
+                let tbl_name = create_index.table_name.to_string();
 
                 if let Some(table) = schema.tables.get_mut(&tbl_name) {
                     table.indexes.push(Index {
                         name: idx_name,
-                        columns: columns.iter().map(|c| c.expr.to_string()).collect(),
-                        unique,
+                        columns: create_index
+                            .columns
+                            .iter()
+                            .map(|c| c.expr.to_string())
+                            .collect(),
+                        unique: create_index.unique,
                         index_type: IndexType::BTree,
                     });
                     table.indexes.sort();
@@ -98,7 +96,10 @@ fn parse_create_table(
 
     for col_def in columns {
         for option in &col_def.options {
-            if let ColumnOption::Unique { is_primary: true, .. } = option.option {
+            if let ColumnOption::Unique {
+                is_primary: true, ..
+            } = option.option
+            {
                 table.primary_key = Some(PrimaryKey {
                     columns: vec![col_def.name.to_string()],
                 });
@@ -108,11 +109,7 @@ fn parse_create_table(
 
     for constraint in constraints {
         match constraint {
-            TableConstraint::Unique {
-                is_primary: true,
-                columns,
-                ..
-            } => {
+            TableConstraint::PrimaryKey { columns, .. } => {
                 table.primary_key = Some(PrimaryKey {
                     columns: columns.iter().map(|c| c.to_string()).collect(),
                 });
@@ -213,5 +210,65 @@ fn parse_referential_action(
         Some(sqlparser::ast::ReferentialAction::SetNull) => ReferentialAction::SetNull,
         Some(sqlparser::ast::ReferentialAction::SetDefault) => ReferentialAction::SetDefault,
         None => ReferentialAction::NoAction,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_simple_schema() {
+        let sql = "
+CREATE TYPE user_role AS ENUM ('admin', 'user', 'guest');
+
+CREATE TABLE users (
+    id BIGINT NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    role user_role NOT NULL DEFAULT 'guest',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX users_email_idx ON users (email);
+
+CREATE TABLE posts (
+    id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT,
+    PRIMARY KEY (id),
+    CONSTRAINT posts_user_id_fkey FOREIGN KEY (user_id)
+        REFERENCES users (id) ON DELETE CASCADE
+);
+
+CREATE INDEX posts_user_id_idx ON posts (user_id);
+";
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert_eq!(schema.enums.len(), 1);
+        assert!(schema.enums.contains_key("user_role"));
+        assert_eq!(
+            schema.enums["user_role"].values,
+            vec!["admin", "user", "guest"]
+        );
+
+        assert_eq!(schema.tables.len(), 2);
+        assert!(schema.tables.contains_key("users"));
+        assert!(schema.tables.contains_key("posts"));
+
+        let users = &schema.tables["users"];
+        assert_eq!(users.columns.len(), 4);
+        assert!(users.primary_key.is_some());
+        assert_eq!(users.primary_key.as_ref().unwrap().columns, vec!["id"]);
+        assert_eq!(users.indexes.len(), 1);
+        assert!(users.indexes[0].unique);
+
+        let posts = &schema.tables["posts"];
+        assert_eq!(posts.columns.len(), 4);
+        assert_eq!(posts.foreign_keys.len(), 1);
+        assert_eq!(posts.foreign_keys[0].name, "posts_user_id_fkey");
+        assert_eq!(posts.foreign_keys[0].on_delete, ReferentialAction::Cascade);
     }
 }
