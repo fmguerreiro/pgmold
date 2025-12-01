@@ -44,43 +44,38 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
     for (path, schema) in file_schemas {
         // Check tables
         for (name, table) in schema.tables {
-            if let Some(existing_path) = object_sources.get(&format!("table:{}", name)) {
+            if let Some(existing_path) = object_sources.get(&format!("table:{name}")) {
                 return Err(SchemaError::ParseError(format!(
-                    "Duplicate table \"{}\" defined in:\n  - {}\n  - {}",
-                    name,
+                    "Duplicate table \"{name}\" defined in:\n  - {}\n  - {}",
                     existing_path.display(),
                     path.display()
                 )));
             }
-            object_sources.insert(format!("table:{}", name), path.clone());
+            object_sources.insert(format!("table:{name}"), path.clone());
             merged.tables.insert(name, table);
         }
 
-        // Check enums
         for (name, enum_type) in schema.enums {
-            if let Some(existing_path) = object_sources.get(&format!("enum:{}", name)) {
+            if let Some(existing_path) = object_sources.get(&format!("enum:{name}")) {
                 return Err(SchemaError::ParseError(format!(
-                    "Duplicate enum \"{}\" defined in:\n  - {}\n  - {}",
-                    name,
+                    "Duplicate enum \"{name}\" defined in:\n  - {}\n  - {}",
                     existing_path.display(),
                     path.display()
                 )));
             }
-            object_sources.insert(format!("enum:{}", name), path.clone());
+            object_sources.insert(format!("enum:{name}"), path.clone());
             merged.enums.insert(name, enum_type);
         }
 
-        // Check functions
         for (sig, func) in schema.functions {
-            if let Some(existing_path) = object_sources.get(&format!("func:{}", sig)) {
+            if let Some(existing_path) = object_sources.get(&format!("func:{sig}")) {
                 return Err(SchemaError::ParseError(format!(
-                    "Duplicate function \"{}\" defined in:\n  - {}\n  - {}",
-                    sig,
+                    "Duplicate function \"{sig}\" defined in:\n  - {}\n  - {}",
                     existing_path.display(),
                     path.display()
                 )));
             }
-            object_sources.insert(format!("func:{}", sig), path.clone());
+            object_sources.insert(format!("func:{sig}"), path.clone());
             merged.functions.insert(sig, func);
         }
     }
@@ -127,61 +122,57 @@ fn resolve_glob(pattern: &str) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// Merge two schemas, erroring on conflicts.
-/// `base_path` and `other_path` are used for error messages.
-fn merge_schema(
-    mut base: Schema,
-    other: Schema,
-    base_path: &Path,
-    other_path: &Path,
-) -> Result<Schema> {
-    // Check for duplicate tables
-    for (name, table) in other.tables {
-        if base.tables.contains_key(&name) {
-            return Err(SchemaError::ParseError(format!(
-                "Duplicate table \"{}\" defined in:\n  - {}\n  - {}",
-                name,
-                base_path.display(),
-                other_path.display()
-            )));
-        }
-        base.tables.insert(name, table);
-    }
-
-    // Check for duplicate enums
-    for (name, enum_type) in other.enums {
-        if base.enums.contains_key(&name) {
-            return Err(SchemaError::ParseError(format!(
-                "Duplicate enum \"{}\" defined in:\n  - {}\n  - {}",
-                name,
-                base_path.display(),
-                other_path.display()
-            )));
-        }
-        base.enums.insert(name, enum_type);
-    }
-
-    // Check for duplicate functions
-    for (sig, func) in other.functions {
-        if base.functions.contains_key(&sig) {
-            return Err(SchemaError::ParseError(format!(
-                "Duplicate function \"{}\" defined in:\n  - {}\n  - {}",
-                sig,
-                base_path.display(),
-                other_path.display()
-            )));
-        }
-        base.functions.insert(sig, func);
-    }
-
-    Ok(base)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    /// Test helper: Merge two schemas, erroring on conflicts.
+    fn merge_schema(
+        mut base: Schema,
+        other: Schema,
+        base_path: &Path,
+        other_path: &Path,
+    ) -> Result<Schema> {
+        for (name, table) in other.tables {
+            if base.tables.contains_key(&name) {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate table \"{}\" defined in:\n  - {}\n  - {}",
+                    name,
+                    base_path.display(),
+                    other_path.display()
+                )));
+            }
+            base.tables.insert(name, table);
+        }
+
+        for (name, enum_type) in other.enums {
+            if base.enums.contains_key(&name) {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate enum \"{}\" defined in:\n  - {}\n  - {}",
+                    name,
+                    base_path.display(),
+                    other_path.display()
+                )));
+            }
+            base.enums.insert(name, enum_type);
+        }
+
+        for (sig, func) in other.functions {
+            if base.functions.contains_key(&sig) {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate function \"{}\" defined in:\n  - {}\n  - {}",
+                    sig,
+                    base_path.display(),
+                    other_path.display()
+                )));
+            }
+            base.functions.insert(sig, func);
+        }
+
+        Ok(base)
+    }
 
     #[test]
     fn resolve_single_file() {

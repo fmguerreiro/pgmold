@@ -252,11 +252,11 @@ pub async fn run() -> Result<()> {
 
             if ops.is_empty() {
                 println!("No drift detected. Schema is in sync.");
-                println!("Fingerprint: {}", target_fingerprint);
+                println!("Fingerprint: {target_fingerprint}");
             } else {
                 println!("Drift detected!");
-                println!("Expected fingerprint: {}", target_fingerprint);
-                println!("Actual fingerprint:   {}", current_fingerprint);
+                println!("Expected fingerprint: {target_fingerprint}");
+                println!("Actual fingerprint:   {current_fingerprint}");
                 println!("\nDifferences ({} operations):", ops.len());
                 for op in &ops {
                     println!("  {op:?}");
