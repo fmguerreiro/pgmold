@@ -50,6 +50,56 @@ fn resolve_glob(pattern: &str) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+/// Merge two schemas, erroring on conflicts.
+/// `base_path` and `other_path` are used for error messages.
+fn merge_schema(
+    mut base: Schema,
+    other: Schema,
+    base_path: &Path,
+    other_path: &Path,
+) -> Result<Schema> {
+    // Check for duplicate tables
+    for (name, table) in other.tables {
+        if base.tables.contains_key(&name) {
+            return Err(SchemaError::ParseError(format!(
+                "Duplicate table \"{}\" defined in:\n  - {}\n  - {}",
+                name,
+                base_path.display(),
+                other_path.display()
+            )));
+        }
+        base.tables.insert(name, table);
+    }
+
+    // Check for duplicate enums
+    for (name, enum_type) in other.enums {
+        if base.enums.contains_key(&name) {
+            return Err(SchemaError::ParseError(format!(
+                "Duplicate enum \"{}\" defined in:\n  - {}\n  - {}",
+                name,
+                base_path.display(),
+                other_path.display()
+            )));
+        }
+        base.enums.insert(name, enum_type);
+    }
+
+    // Check for duplicate functions
+    for (sig, func) in other.functions {
+        if base.functions.contains_key(&sig) {
+            return Err(SchemaError::ParseError(format!(
+                "Duplicate function \"{}\" defined in:\n  - {}\n  - {}",
+                sig,
+                base_path.display(),
+                other_path.display()
+            )));
+        }
+        base.functions.insert(sig, func);
+    }
+
+    Ok(base)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,5 +162,147 @@ mod tests {
         let result = resolve_source(&pattern);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("No SQL files found"));
+    }
+
+    #[test]
+    fn merge_schemas_no_conflict() {
+        let mut base = Schema::new();
+        base.tables.insert(
+            "users".to_string(),
+            crate::model::Table {
+                name: "users".to_string(),
+                columns: std::collections::BTreeMap::new(),
+                indexes: Vec::new(),
+                primary_key: None,
+                foreign_keys: Vec::new(),
+                comment: None,
+                row_level_security: false,
+                policies: Vec::new(),
+            },
+        );
+
+        let mut other = Schema::new();
+        other.tables.insert(
+            "posts".to_string(),
+            crate::model::Table {
+                name: "posts".to_string(),
+                columns: std::collections::BTreeMap::new(),
+                indexes: Vec::new(),
+                primary_key: None,
+                foreign_keys: Vec::new(),
+                comment: None,
+                row_level_security: false,
+                policies: Vec::new(),
+            },
+        );
+
+        let result = merge_schema(base, other, Path::new("a.sql"), Path::new("b.sql"));
+        assert!(result.is_ok());
+        let merged = result.unwrap();
+        assert_eq!(merged.tables.len(), 2);
+        assert!(merged.tables.contains_key("users"));
+        assert!(merged.tables.contains_key("posts"));
+    }
+
+    #[test]
+    fn merge_schemas_duplicate_table_errors() {
+        let mut base = Schema::new();
+        base.tables.insert(
+            "users".to_string(),
+            crate::model::Table {
+                name: "users".to_string(),
+                columns: std::collections::BTreeMap::new(),
+                indexes: Vec::new(),
+                primary_key: None,
+                foreign_keys: Vec::new(),
+                comment: None,
+                row_level_security: false,
+                policies: Vec::new(),
+            },
+        );
+
+        let mut other = Schema::new();
+        other.tables.insert(
+            "users".to_string(),
+            crate::model::Table {
+                name: "users".to_string(),
+                columns: std::collections::BTreeMap::new(),
+                indexes: Vec::new(),
+                primary_key: None,
+                foreign_keys: Vec::new(),
+                comment: None,
+                row_level_security: false,
+                policies: Vec::new(),
+            },
+        );
+
+        let result = merge_schema(base, other, Path::new("a.sql"), Path::new("b.sql"));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("users"));
+        assert!(err.contains("a.sql"));
+        assert!(err.contains("b.sql"));
+    }
+
+    #[test]
+    fn merge_schemas_duplicate_enum_errors() {
+        let mut base = Schema::new();
+        base.enums.insert(
+            "status".to_string(),
+            crate::model::EnumType {
+                name: "status".to_string(),
+                values: vec!["active".to_string()],
+            },
+        );
+
+        let mut other = Schema::new();
+        other.enums.insert(
+            "status".to_string(),
+            crate::model::EnumType {
+                name: "status".to_string(),
+                values: vec!["inactive".to_string()],
+            },
+        );
+
+        let result = merge_schema(base, other, Path::new("a.sql"), Path::new("b.sql"));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("status"));
+    }
+
+    #[test]
+    fn merge_schemas_duplicate_function_errors() {
+        let mut base = Schema::new();
+        base.functions.insert(
+            "my_func()".to_string(),
+            crate::model::Function {
+                name: "my_func".to_string(),
+                schema: "public".to_string(),
+                arguments: Vec::new(),
+                return_type: "void".to_string(),
+                language: "sql".to_string(),
+                body: "SELECT 1".to_string(),
+                volatility: crate::model::Volatility::Volatile,
+                security: crate::model::SecurityType::Invoker,
+            },
+        );
+
+        let mut other = Schema::new();
+        other.functions.insert(
+            "my_func()".to_string(),
+            crate::model::Function {
+                name: "my_func".to_string(),
+                schema: "public".to_string(),
+                arguments: Vec::new(),
+                return_type: "void".to_string(),
+                language: "sql".to_string(),
+                body: "SELECT 2".to_string(),
+                volatility: crate::model::Volatility::Volatile,
+                security: crate::model::SecurityType::Invoker,
+            },
+        );
+
+        let result = merge_schema(base, other, Path::new("a.sql"), Path::new("b.sql"));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("my_func"));
     }
 }
