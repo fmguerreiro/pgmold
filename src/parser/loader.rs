@@ -1,14 +1,91 @@
+use super::parse_sql_file;
 use crate::model::Schema;
 use crate::util::{Result, SchemaError};
 use glob::glob;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 /// Load schemas from multiple sources (files, directories, glob patterns).
 /// Returns a merged Schema or error on conflicts.
-pub fn load_schema_sources(_sources: &[String]) -> Result<Schema> {
-    // TODO: Implement in Task 4
-    Ok(Schema::new())
+pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
+    // Resolve all sources to file paths, deduplicating
+    let mut all_files: Vec<PathBuf> = Vec::new();
+    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+
+    for source in sources {
+        let files = resolve_source(source)?;
+        for file in files {
+            let canonical = file
+                .canonicalize()
+                .map_err(|e| SchemaError::ParseError(format!("Cannot resolve path: {e}")))?;
+            if seen.insert(canonical.clone()) {
+                all_files.push(file);
+            }
+        }
+    }
+
+    if all_files.is_empty() {
+        return Err(SchemaError::ParseError(
+            "No SQL files found in provided sources".to_string(),
+        ));
+    }
+
+    // Parse all files, tracking file paths for error messages
+    let mut file_schemas: Vec<(PathBuf, Schema)> = Vec::new();
+    for file in &all_files {
+        let schema = parse_sql_file(file.to_str().unwrap_or_default())?;
+        file_schemas.push((file.clone(), schema));
+    }
+
+    // Merge all schemas with conflict tracking
+    let mut merged = Schema::new();
+    let mut object_sources: HashMap<String, PathBuf> = HashMap::new();
+
+    for (path, schema) in file_schemas {
+        // Check tables
+        for (name, table) in schema.tables {
+            if let Some(existing_path) = object_sources.get(&format!("table:{}", name)) {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate table \"{}\" defined in:\n  - {}\n  - {}",
+                    name,
+                    existing_path.display(),
+                    path.display()
+                )));
+            }
+            object_sources.insert(format!("table:{}", name), path.clone());
+            merged.tables.insert(name, table);
+        }
+
+        // Check enums
+        for (name, enum_type) in schema.enums {
+            if let Some(existing_path) = object_sources.get(&format!("enum:{}", name)) {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate enum \"{}\" defined in:\n  - {}\n  - {}",
+                    name,
+                    existing_path.display(),
+                    path.display()
+                )));
+            }
+            object_sources.insert(format!("enum:{}", name), path.clone());
+            merged.enums.insert(name, enum_type);
+        }
+
+        // Check functions
+        for (sig, func) in schema.functions {
+            if let Some(existing_path) = object_sources.get(&format!("func:{}", sig)) {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate function \"{}\" defined in:\n  - {}\n  - {}",
+                    sig,
+                    existing_path.display(),
+                    path.display()
+                )));
+            }
+            object_sources.insert(format!("func:{}", sig), path.clone());
+            merged.functions.insert(sig, func);
+        }
+    }
+
+    Ok(merged)
 }
 
 /// Resolve a source pattern to a list of SQL file paths.
@@ -304,5 +381,41 @@ mod tests {
         let result = merge_schema(base, other, Path::new("a.sql"), Path::new("b.sql"));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("my_func"));
+    }
+
+    #[test]
+    fn load_multiple_files() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("enums.sql"),
+            "CREATE TYPE status AS ENUM ('active', 'inactive');",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("users.sql"),
+            "CREATE TABLE users (id BIGINT PRIMARY KEY, status status);",
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", dir.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        assert_eq!(schema.enums.len(), 1);
+        assert!(schema.enums.contains_key("status"));
+        assert_eq!(schema.tables.len(), 1);
+        assert!(schema.tables.contains_key("users"));
+    }
+
+    #[test]
+    fn load_detects_conflicts_across_files() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("a.sql"), "CREATE TABLE users (id INT);").unwrap();
+        fs::write(dir.path().join("b.sql"), "CREATE TABLE users (name TEXT);").unwrap();
+
+        let sources = vec![format!("{}/*.sql", dir.path().display())];
+        let result = load_schema_sources(&sources);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Duplicate table"));
     }
 }
