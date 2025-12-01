@@ -46,6 +46,34 @@ pgmold lint --schema schema.sql
 pgmold monitor --schema schema.sql --database postgres://localhost/mydb
 ```
 
+## Multi-File Schemas
+
+Organize your schema across multiple files using directories or glob patterns:
+
+```bash
+# Load all SQL files from a directory (recursive)
+pgmold apply --schema ./schema/ --database postgres://localhost/mydb
+
+# Use glob patterns
+pgmold apply --schema "schema/**/*.sql" --database postgres://localhost/mydb
+
+# Multiple sources
+pgmold apply --schema types.sql --schema "tables/*.sql" --database postgres://localhost/mydb
+```
+
+Example directory structure:
+```
+schema/
+├── enums.sql           # CREATE TYPE statements
+├── tables/
+│   ├── users.sql       # users table + indexes
+│   └── posts.sql       # posts table + foreign keys
+└── functions/
+    └── triggers.sql    # stored procedures
+```
+
+Duplicate definitions (same table/enum/function in multiple files) will error immediately with clear file locations.
+
 ## Schema Definition (PostgreSQL DDL)
 
 ```sql
