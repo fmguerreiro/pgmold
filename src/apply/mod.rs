@@ -1,6 +1,6 @@
 use crate::diff::{compute_diff, planner::plan_migration, MigrationOp};
 use crate::lint::{has_errors, lint_migration_plan, LintOptions, LintResult};
-use crate::parser::parse_sql_file;
+use crate::parser::load_schema_sources;
 use crate::pg::connection::PgConnection;
 use crate::pg::introspect::introspect_schema;
 use crate::pg::sqlgen::generate_sql;
@@ -22,11 +22,11 @@ pub struct ApplyResult {
 }
 
 pub async fn apply_migration(
-    schema_path: &str,
+    schema_sources: &[String],
     connection: &PgConnection,
     options: ApplyOptions,
 ) -> Result<ApplyResult> {
-    let target = parse_sql_file(schema_path)?;
+    let target = load_schema_sources(schema_sources)?;
     let current = introspect_schema(connection).await?;
 
     let ops = plan_migration(compute_diff(&current, &target));

@@ -151,9 +151,8 @@ async fn drift_detection() {
     )
     .unwrap();
 
-    let report = detect_drift(schema_file.path().to_str().unwrap(), &connection)
-        .await
-        .unwrap();
+    let sources = vec![schema_file.path().to_str().unwrap().to_string()];
+    let report = detect_drift(&sources, &connection).await.unwrap();
 
     assert!(!report.has_drift);
 
@@ -162,9 +161,7 @@ async fn drift_detection() {
         .await
         .unwrap();
 
-    let report_after = detect_drift(schema_file.path().to_str().unwrap(), &connection)
-        .await
-        .unwrap();
+    let report_after = detect_drift(&sources, &connection).await.unwrap();
 
     assert!(report_after.has_drift);
     assert!(!report_after.differences.is_empty());

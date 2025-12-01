@@ -1,5 +1,5 @@
 use crate::diff::{compute_diff, MigrationOp};
-use crate::parser::parse_sql_file;
+use crate::parser::load_schema_sources;
 use crate::pg::connection::PgConnection;
 use crate::pg::introspect::introspect_schema;
 use crate::util::Result;
@@ -12,8 +12,8 @@ pub struct DriftReport {
     pub differences: Vec<MigrationOp>,
 }
 
-pub async fn detect_drift(schema_path: &str, conn: &PgConnection) -> Result<DriftReport> {
-    let expected = parse_sql_file(schema_path)?;
+pub async fn detect_drift(schema_sources: &[String], conn: &PgConnection) -> Result<DriftReport> {
+    let expected = load_schema_sources(schema_sources)?;
     let actual = introspect_schema(conn).await?;
 
     let expected_fingerprint = expected.fingerprint();
