@@ -10,6 +10,7 @@ pub async fn introspect_schema(connection: &PgConnection) -> Result<Schema> {
     schema.enums = introspect_enums(connection).await?;
     schema.tables = introspect_tables(connection).await?;
     schema.functions = introspect_functions(connection).await?;
+    schema.views = introspect_views(connection).await?;
 
     let table_names: Vec<String> = schema.tables.keys().cloned().collect();
     for table_name in table_names {
@@ -465,4 +466,62 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
             }
         })
         .collect()
+}
+
+async fn introspect_views(connection: &PgConnection) -> Result<BTreeMap<String, View>> {
+    let mut views = BTreeMap::new();
+
+    let regular_views = sqlx::query(
+        r#"
+        SELECT viewname, definition
+        FROM pg_views
+        WHERE schemaname = 'public'
+        "#,
+    )
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch views: {e}")))?;
+
+    for row in regular_views {
+        let name: String = row.get("viewname");
+        let definition: String = row.get("definition");
+
+        views.insert(
+            name.clone(),
+            View {
+                name,
+                schema: "public".to_string(),
+                query: definition.trim().trim_end_matches(';').to_string(),
+                materialized: false,
+            },
+        );
+    }
+
+    let materialized_views = sqlx::query(
+        r#"
+        SELECT matviewname, definition
+        FROM pg_matviews
+        WHERE schemaname = 'public'
+        "#,
+    )
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch materialized views: {e}")))?;
+
+    for row in materialized_views {
+        let name: String = row.get("matviewname");
+        let definition: String = row.get("definition");
+
+        views.insert(
+            name.clone(),
+            View {
+                name,
+                schema: "public".to_string(),
+                query: definition.trim().trim_end_matches(';').to_string(),
+                materialized: true,
+            },
+        );
+    }
+
+    Ok(views)
 }

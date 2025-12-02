@@ -6,6 +6,7 @@ pub struct Schema {
     pub tables: BTreeMap<String, Table>,
     pub enums: BTreeMap<String, EnumType>,
     pub functions: BTreeMap<String, Function>,
+    pub views: BTreeMap<String, View>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -173,12 +174,21 @@ pub enum SecurityType {
     Definer,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct View {
+    pub name: String,
+    pub schema: String,
+    pub query: String,
+    pub materialized: bool,
+}
+
 impl Schema {
     pub fn new() -> Self {
         Schema {
             tables: BTreeMap::new(),
             enums: BTreeMap::new(),
             functions: BTreeMap::new(),
+            views: BTreeMap::new(),
         }
     }
 

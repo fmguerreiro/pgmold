@@ -101,8 +101,8 @@ fn resolve_source(source: &str) -> Result<Vec<PathBuf>> {
 }
 
 fn resolve_glob(pattern: &str) -> Result<Vec<PathBuf>> {
-    let entries = glob(pattern)
-        .map_err(|e| SchemaError::ParseError(format!("Invalid glob pattern: {e}")))?;
+    let entries =
+        glob(pattern).map_err(|e| SchemaError::ParseError(format!("Invalid glob pattern: {e}")))?;
 
     let mut files: Vec<PathBuf> = Vec::new();
     for entry in entries {
@@ -229,7 +229,10 @@ mod tests {
         let pattern = format!("{}/*.sql", dir.path().display());
         let result = resolve_source(&pattern);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No SQL files found"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No SQL files found"));
     }
 
     #[test]

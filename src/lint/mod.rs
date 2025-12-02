@@ -103,6 +103,28 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
             }
         }
 
+        MigrationOp::DropView { name, materialized } => {
+            if !options.allow_destructive {
+                let rule = if *materialized {
+                    "deny_drop_materialized_view"
+                } else {
+                    "deny_drop_view"
+                };
+                let view_type = if *materialized {
+                    "materialized view"
+                } else {
+                    "view"
+                };
+                results.push(LintResult {
+                    rule: rule.to_string(),
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping {view_type} {name} requires --allow-destructive flag"
+                    ),
+                });
+            }
+        }
+
         _ => {}
     }
 
@@ -223,5 +245,52 @@ mod tests {
             message: "Just a warning".to_string(),
         }];
         assert!(!has_errors(&results));
+    }
+
+    #[test]
+    fn blocks_drop_view_without_flag() {
+        let ops = vec![MigrationOp::DropView {
+            name: "active_users".to_string(),
+            materialized: false,
+        }];
+        let options = LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_view");
+    }
+
+    #[test]
+    fn allows_drop_view_with_flag() {
+        let ops = vec![MigrationOp::DropView {
+            name: "active_users".to_string(),
+            materialized: false,
+        }];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!has_errors(&results));
+    }
+
+    #[test]
+    fn blocks_drop_materialized_view_without_flag() {
+        let ops = vec![MigrationOp::DropView {
+            name: "user_stats".to_string(),
+            materialized: true,
+        }];
+        let options = LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_materialized_view");
     }
 }

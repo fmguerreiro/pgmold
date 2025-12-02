@@ -27,6 +27,9 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut create_functions = Vec::new();
     let mut drop_functions = Vec::new();
     let mut alter_functions = Vec::new();
+    let mut create_views = Vec::new();
+    let mut drop_views = Vec::new();
+    let mut alter_views = Vec::new();
 
     for op in ops {
         match op {
@@ -51,6 +54,9 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::CreateFunction(_) => create_functions.push(op),
             MigrationOp::DropFunction { .. } => drop_functions.push(op),
             MigrationOp::AlterFunction { .. } => alter_functions.push(op),
+            MigrationOp::CreateView(_) => create_views.push(op),
+            MigrationOp::DropView { .. } => drop_views.push(op),
+            MigrationOp::AlterView { .. } => alter_views.push(op),
         }
     }
 
@@ -71,7 +77,10 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(create_policies);
     result.extend(alter_policies);
     result.extend(alter_functions);
+    result.extend(create_views);
+    result.extend(alter_views);
 
+    result.extend(drop_views);
     result.extend(drop_policies);
     result.extend(disable_rls);
     result.extend(drop_foreign_keys);

@@ -157,6 +157,20 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     schema.functions.insert(func.signature(), func);
                 }
             }
+            Statement::CreateView {
+                name,
+                query,
+                materialized,
+                ..
+            } => {
+                let view = View {
+                    name: name.to_string(),
+                    schema: "public".to_string(),
+                    query: query.to_string(),
+                    materialized,
+                };
+                schema.views.insert(view.name.clone(), view);
+            }
             _ => {}
         }
     }
@@ -373,6 +387,55 @@ fn parse_create_function(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_simple_view() {
+        let sql = r#"
+CREATE TABLE users (
+    id BIGINT NOT NULL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT true
+);
+
+CREATE VIEW active_users AS
+SELECT id, email FROM users WHERE active = true;
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert_eq!(schema.views.len(), 1);
+        assert!(schema.views.contains_key("active_users"));
+
+        let view = &schema.views["active_users"];
+        assert_eq!(view.name, "active_users");
+        assert!(!view.materialized);
+        assert!(view.query.contains("SELECT"));
+    }
+
+    #[test]
+    fn parse_materialized_view() {
+        let sql = r#"
+CREATE TABLE orders (
+    id BIGINT NOT NULL PRIMARY KEY,
+    amount BIGINT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE MATERIALIZED VIEW order_totals AS
+SELECT DATE(created_at) as day, SUM(amount) as total
+FROM orders
+GROUP BY DATE(created_at);
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert_eq!(schema.views.len(), 1);
+        assert!(schema.views.contains_key("order_totals"));
+
+        let view = &schema.views["order_totals"];
+        assert_eq!(view.name, "order_totals");
+        assert!(view.materialized);
+    }
 
     #[test]
     fn parse_simple_schema() {

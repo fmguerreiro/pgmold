@@ -1,7 +1,7 @@
 pub mod planner;
 
 use crate::model::{
-    Column, EnumType, ForeignKey, Function, Index, PgType, Policy, PrimaryKey, Table,
+    Column, EnumType, ForeignKey, Function, Index, PgType, Policy, PrimaryKey, Table, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +72,15 @@ pub enum MigrationOp {
         args: String,
         new_function: Function,
     },
+    CreateView(View),
+    DropView {
+        name: String,
+        materialized: bool,
+    },
+    AlterView {
+        name: String,
+        new_view: View,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +105,7 @@ pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops.extend(diff_enums(from, to));
     ops.extend(diff_tables(from, to));
     ops.extend(diff_functions(from, to));
+    ops.extend(diff_views(from, to));
 
     for (name, to_table) in &to.tables {
         if let Some(from_table) = from.tables.get(name) {
@@ -179,6 +189,34 @@ fn diff_functions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                     .map(|a| a.data_type.clone())
                     .collect::<Vec<_>>()
                     .join(", "),
+            });
+        }
+    }
+
+    ops
+}
+
+fn diff_views(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for (name, view) in &to.views {
+        if let Some(from_view) = from.views.get(name) {
+            if from_view.query != view.query || from_view.materialized != view.materialized {
+                ops.push(MigrationOp::AlterView {
+                    name: view.name.clone(),
+                    new_view: view.clone(),
+                });
+            }
+        } else {
+            ops.push(MigrationOp::CreateView(view.clone()));
+        }
+    }
+
+    for (name, view) in &from.views {
+        if !to.views.contains_key(name) {
+            ops.push(MigrationOp::DropView {
+                name: view.name.clone(),
+                materialized: view.materialized,
             });
         }
     }
@@ -685,6 +723,96 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "add_numbers"));
+    }
+
+    #[test]
+    fn detects_added_view() {
+        let from = empty_schema();
+        let mut to = empty_schema();
+        to.views.insert(
+            "active_users".to_string(),
+            crate::model::View {
+                name: "active_users".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT * FROM users WHERE active = true".to_string(),
+                materialized: false,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], MigrationOp::CreateView(v) if v.name == "active_users"));
+    }
+
+    #[test]
+    fn detects_removed_view() {
+        let mut from = empty_schema();
+        from.views.insert(
+            "active_users".to_string(),
+            crate::model::View {
+                name: "active_users".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT * FROM users WHERE active = true".to_string(),
+                materialized: false,
+            },
+        );
+        let to = empty_schema();
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(
+            matches!(&ops[0], MigrationOp::DropView { name, materialized } if name == "active_users" && !materialized)
+        );
+    }
+
+    #[test]
+    fn detects_altered_view() {
+        let mut from = empty_schema();
+        from.views.insert(
+            "active_users".to_string(),
+            crate::model::View {
+                name: "active_users".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT * FROM users WHERE active = true".to_string(),
+                materialized: false,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.views.insert(
+            "active_users".to_string(),
+            crate::model::View {
+                name: "active_users".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id, email FROM users WHERE active = true".to_string(),
+                materialized: false,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], MigrationOp::AlterView { name, .. } if name == "active_users"));
+    }
+
+    #[test]
+    fn detects_added_materialized_view() {
+        let from = empty_schema();
+        let mut to = empty_schema();
+        to.views.insert(
+            "user_stats".to_string(),
+            crate::model::View {
+                name: "user_stats".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT COUNT(*) FROM users".to_string(),
+                materialized: true,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(
+            matches!(&ops[0], MigrationOp::CreateView(v) if v.name == "user_stats" && v.materialized)
+        );
     }
 
     #[test]

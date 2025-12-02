@@ -1,7 +1,7 @@
 use crate::diff::{ColumnChanges, MigrationOp, PolicyChanges};
 use crate::model::{
     Column, ForeignKey, Function, Index, IndexType, PgType, Policy, PolicyCommand,
-    ReferentialAction, SecurityType, Table, Volatility,
+    ReferentialAction, SecurityType, Table, View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -108,6 +108,21 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
 
         MigrationOp::AlterFunction { new_function, .. } => {
             vec![generate_create_or_replace_function(new_function)]
+        }
+
+        MigrationOp::CreateView(view) => vec![generate_create_view(view)],
+
+        MigrationOp::DropView { name, materialized } => {
+            let view_type = if *materialized {
+                "MATERIALIZED VIEW"
+            } else {
+                "VIEW"
+            };
+            vec![format!("DROP {} {};", view_type, quote_ident(name))]
+        }
+
+        MigrationOp::AlterView { new_view, .. } => {
+            vec![generate_create_or_replace_view(new_view)]
         }
     }
 }
@@ -419,6 +434,45 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
     )
 }
 
+fn generate_create_view(view: &View) -> String {
+    generate_view_ddl(view, false)
+}
+
+fn generate_create_or_replace_view(view: &View) -> String {
+    generate_view_ddl(view, true)
+}
+
+fn generate_view_ddl(view: &View, replace: bool) -> String {
+    if view.materialized {
+        if replace {
+            format!(
+                "DROP MATERIALIZED VIEW IF EXISTS {}; CREATE MATERIALIZED VIEW {} AS {};",
+                quote_ident(&view.name),
+                quote_ident(&view.name),
+                view.query
+            )
+        } else {
+            format!(
+                "CREATE MATERIALIZED VIEW {} AS {};",
+                quote_ident(&view.name),
+                view.query
+            )
+        }
+    } else {
+        let create_stmt = if replace {
+            "CREATE OR REPLACE VIEW"
+        } else {
+            "CREATE VIEW"
+        };
+        format!(
+            "{} {} AS {};",
+            create_stmt,
+            quote_ident(&view.name),
+            view.query
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,6 +625,64 @@ mod tests {
             sql[0],
             "ALTER TABLE \"users\" ALTER COLUMN \"name\" TYPE VARCHAR(100);"
         );
+    }
+
+    #[test]
+    fn create_view_generates_valid_sql() {
+        let ops = vec![MigrationOp::CreateView(View {
+            name: "active_users".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT * FROM users WHERE active = true".to_string(),
+            materialized: false,
+        })];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "CREATE VIEW \"active_users\" AS SELECT * FROM users WHERE active = true;"
+        );
+    }
+
+    #[test]
+    fn create_materialized_view_generates_valid_sql() {
+        let ops = vec![MigrationOp::CreateView(View {
+            name: "user_stats".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT COUNT(*) FROM users".to_string(),
+            materialized: true,
+        })];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "CREATE MATERIALIZED VIEW \"user_stats\" AS SELECT COUNT(*) FROM users;"
+        );
+    }
+
+    #[test]
+    fn drop_view_generates_valid_sql() {
+        let ops = vec![MigrationOp::DropView {
+            name: "active_users".to_string(),
+            materialized: false,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "DROP VIEW \"active_users\";");
+    }
+
+    #[test]
+    fn drop_materialized_view_generates_valid_sql() {
+        let ops = vec![MigrationOp::DropView {
+            name: "user_stats".to_string(),
+            materialized: true,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "DROP MATERIALIZED VIEW \"user_stats\";");
     }
 
     #[test]

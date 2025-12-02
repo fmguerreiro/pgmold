@@ -213,10 +213,19 @@ async fn multi_file_schema_loading() {
     // Verify core schema objects exist after apply
     let after = introspect_schema(&connection).await.unwrap();
     assert_eq!(after.enums.len(), 1, "Should have enum");
-    assert!(after.enums.contains_key("user_role"), "Should have user_role enum");
+    assert!(
+        after.enums.contains_key("user_role"),
+        "Should have user_role enum"
+    );
     assert_eq!(after.tables.len(), 2, "Should have 2 tables");
-    assert!(after.tables.contains_key("users"), "Should have users table");
-    assert!(after.tables.contains_key("posts"), "Should have posts table");
+    assert!(
+        after.tables.contains_key("users"),
+        "Should have users table"
+    );
+    assert!(
+        after.tables.contains_key("posts"),
+        "Should have posts table"
+    );
 
     // Verify foreign key exists
     let posts_after = after.tables.get("posts").unwrap();
