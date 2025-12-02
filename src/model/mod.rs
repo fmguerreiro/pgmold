@@ -139,7 +139,29 @@ impl Function {
 }
 
 fn normalize_sql_body(body: &str) -> String {
-    body.split_whitespace().collect::<Vec<_>>().join(" ")
+    let stripped = strip_dollar_quotes(body);
+    stripped.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Strips dollar-quote delimiters from a function body.
+/// Handles both `$$...$$` and `$tag$...$tag$` formats.
+fn strip_dollar_quotes(body: &str) -> String {
+    let trimmed = body.trim();
+
+    if !trimmed.starts_with('$') {
+        return body.to_string();
+    }
+
+    if let Some(tag_end) = trimmed[1..].find('$') {
+        let tag = &trimmed[..=tag_end + 1];
+        if let Some(content) = trimmed.strip_prefix(tag) {
+            if let Some(inner) = content.strip_suffix(tag) {
+                return inner.to_string();
+            }
+        }
+    }
+
+    body.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -260,5 +282,82 @@ mod tests {
 
         assert_eq!(schema3.fingerprint(), schema4.fingerprint());
         assert_ne!(schema1.fingerprint(), schema3.fingerprint());
+    }
+
+    #[test]
+    fn strip_dollar_quotes_simple() {
+        assert_eq!(strip_dollar_quotes("$$BEGIN END;$$"), "BEGIN END;");
+        assert_eq!(strip_dollar_quotes("$$ BEGIN END; $$"), " BEGIN END; ");
+    }
+
+    #[test]
+    fn strip_dollar_quotes_with_tag() {
+        assert_eq!(strip_dollar_quotes("$body$SELECT 1$body$"), "SELECT 1");
+    }
+
+    #[test]
+    fn strip_dollar_quotes_no_quotes() {
+        assert_eq!(strip_dollar_quotes("BEGIN END;"), "BEGIN END;");
+    }
+
+    #[test]
+    fn strip_dollar_quotes_with_whitespace() {
+        let body = "  $$\n    BEGIN\n        RETURN 42;\n    END;\n$$  ";
+        let expected = "\n    BEGIN\n        RETURN 42;\n    END;\n";
+        assert_eq!(strip_dollar_quotes(body), expected);
+    }
+
+    #[test]
+    fn function_semantically_equals_ignores_whitespace() {
+        let func1 = Function {
+            name: "test".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "INTEGER".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN\n    RETURN 42;\nEND;".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+
+        let func2 = Function {
+            name: "test".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "INTEGER".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN RETURN 42; END;".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+
+        assert!(func1.semantically_equals(&func2));
+    }
+
+    #[test]
+    fn function_semantically_equals_with_dollar_quotes() {
+        let parsed_body = Function {
+            name: "test".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "INTEGER".to_string(),
+            language: "plpgsql".to_string(),
+            body: "$$BEGIN RETURN 42; END;$$".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+
+        let introspected_body = Function {
+            name: "test".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "INTEGER".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN RETURN 42; END;".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+
+        assert!(parsed_body.semantically_equals(&introspected_body));
     }
 }
