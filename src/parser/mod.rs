@@ -171,6 +171,24 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 };
                 schema.views.insert(view.name.clone(), view);
             }
+            Statement::CreateExtension {
+                name,
+                version,
+                schema: ext_schema,
+                ..
+            } => {
+                let ext_name = name.to_string().trim_matches('"').to_string();
+                let ext = Extension {
+                    name: ext_name.clone(),
+                    version: version
+                        .as_ref()
+                        .map(|v| v.to_string().trim_matches('\'').to_string()),
+                    schema: ext_schema
+                        .as_ref()
+                        .map(|s| s.to_string().trim_matches('"').to_string()),
+                };
+                schema.extensions.insert(ext_name, ext);
+            }
             _ => {}
         }
     }
@@ -422,6 +440,23 @@ fn parse_create_function(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_extension() {
+        let sql = r#"
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert_eq!(schema.extensions.len(), 2);
+        assert!(schema.extensions.contains_key("uuid-ossp"));
+        assert!(schema.extensions.contains_key("pgcrypto"));
+
+        let uuid_ext = &schema.extensions["uuid-ossp"];
+        assert_eq!(uuid_ext.name, "uuid-ossp");
+    }
 
     #[test]
     fn parse_simple_view() {

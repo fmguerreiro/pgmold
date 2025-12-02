@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Schema {
+    pub extensions: BTreeMap<String, Extension>,
     pub tables: BTreeMap<String, Table>,
     pub enums: BTreeMap<String, EnumType>,
     pub functions: BTreeMap<String, Function>,
@@ -98,6 +99,13 @@ pub struct CheckConstraint {
 pub struct EnumType {
     pub name: String,
     pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Extension {
+    pub name: String,
+    pub version: Option<String>,
+    pub schema: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -214,6 +222,7 @@ pub struct View {
 impl Schema {
     pub fn new() -> Self {
         Schema {
+            extensions: BTreeMap::new(),
             tables: BTreeMap::new(),
             enums: BTreeMap::new(),
             functions: BTreeMap::new(),

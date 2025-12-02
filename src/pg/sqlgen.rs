@@ -10,6 +10,22 @@ pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
 
 fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
     match op {
+        MigrationOp::CreateExtension(ext) => {
+            let mut sql = format!("CREATE EXTENSION IF NOT EXISTS {}", quote_ident(&ext.name));
+            if let Some(ref schema) = ext.schema {
+                sql.push_str(&format!(" SCHEMA {}", quote_ident(schema)));
+            }
+            if let Some(ref version) = ext.version {
+                sql.push_str(&format!(" VERSION '{}'", escape_string(version)));
+            }
+            sql.push(';');
+            vec![sql]
+        }
+
+        MigrationOp::DropExtension(name) => {
+            vec![format!("DROP EXTENSION IF EXISTS {};", quote_ident(name))]
+        }
+
         MigrationOp::CreateEnum(enum_type) => vec![format!(
             "CREATE TYPE {} AS ENUM ({});",
             quote_ident(&enum_type.name),
@@ -851,5 +867,43 @@ mod tests {
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
         assert_eq!(sql[0], "ALTER TYPE \"status\" ADD VALUE 'it''s pending';");
+    }
+
+    #[test]
+    fn create_extension_generates_valid_sql() {
+        let ops = vec![MigrationOp::CreateExtension(crate::model::Extension {
+            name: "uuid-ossp".to_string(),
+            version: None,
+            schema: None,
+        })];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";");
+    }
+
+    #[test]
+    fn create_extension_with_version_and_schema() {
+        let ops = vec![MigrationOp::CreateExtension(crate::model::Extension {
+            name: "pgcrypto".to_string(),
+            version: Some("1.3".to_string()),
+            schema: Some("crypto".to_string()),
+        })];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "CREATE EXTENSION IF NOT EXISTS \"pgcrypto\" SCHEMA \"crypto\" VERSION '1.3';"
+        );
+    }
+
+    #[test]
+    fn drop_extension_generates_valid_sql() {
+        let ops = vec![MigrationOp::DropExtension("uuid-ossp".to_string())];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "DROP EXTENSION IF EXISTS \"uuid-ossp\";");
     }
 }

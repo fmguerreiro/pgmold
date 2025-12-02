@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 pub async fn introspect_schema(connection: &PgConnection) -> Result<Schema> {
     let mut schema = Schema::new();
 
+    schema.extensions = introspect_extensions(connection).await?;
     schema.enums = introspect_enums(connection).await?;
     schema.tables = introspect_tables(connection).await?;
     schema.functions = introspect_functions(connection).await?;
@@ -40,6 +41,41 @@ pub async fn introspect_schema(connection: &PgConnection) -> Result<Schema> {
     }
 
     Ok(schema)
+}
+
+async fn introspect_extensions(connection: &PgConnection) -> Result<BTreeMap<String, Extension>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            e.extname as name,
+            e.extversion as version,
+            n.nspname as schema
+        FROM pg_extension e
+        JOIN pg_namespace n ON e.extnamespace = n.oid
+        WHERE e.extname != 'plpgsql'
+        "#,
+    )
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch extensions: {e}")))?;
+
+    let mut extensions = BTreeMap::new();
+    for row in rows {
+        let name: String = row.get("name");
+        let version: Option<String> = row.get("version");
+        let schema: Option<String> = row.get::<Option<String>, _>("schema");
+
+        extensions.insert(
+            name.clone(),
+            Extension {
+                name,
+                version,
+                schema,
+            },
+        );
+    }
+
+    Ok(extensions)
 }
 
 async fn introspect_enums(connection: &PgConnection) -> Result<BTreeMap<String, EnumType>> {

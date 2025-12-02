@@ -1,12 +1,14 @@
 pub mod planner;
 
 use crate::model::{
-    CheckConstraint, Column, EnumType, ForeignKey, Function, Index, PgType, Policy, PrimaryKey,
-    Table, View,
+    CheckConstraint, Column, EnumType, Extension, ForeignKey, Function, Index, PgType, Policy,
+    PrimaryKey, Table, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOp {
+    CreateExtension(Extension),
+    DropExtension(String),
     CreateEnum(EnumType),
     DropEnum(String),
     AddEnumValue {
@@ -122,6 +124,7 @@ use crate::model::Schema;
 pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
+    ops.extend(diff_extensions(from, to));
     ops.extend(diff_enums(from, to));
     ops.extend(diff_tables(from, to));
     ops.extend(diff_functions(from, to));
@@ -136,6 +139,24 @@ pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
             ops.extend(diff_check_constraints(from_table, to_table));
             ops.extend(diff_rls(from_table, to_table));
             ops.extend(diff_policies(from_table, to_table));
+        }
+    }
+
+    ops
+}
+
+fn diff_extensions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for (name, ext) in &to.extensions {
+        if !from.extensions.contains_key(name) {
+            ops.push(MigrationOp::CreateExtension(ext.clone()));
+        }
+    }
+
+    for name in from.extensions.keys() {
+        if !to.extensions.contains_key(name) {
+            ops.push(MigrationOp::DropExtension(name.clone()));
         }
     }
 
@@ -1126,5 +1147,41 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 0);
+    }
+
+    #[test]
+    fn detects_added_extension() {
+        let from = empty_schema();
+        let mut to = empty_schema();
+        to.extensions.insert(
+            "uuid-ossp".to_string(),
+            crate::model::Extension {
+                name: "uuid-ossp".to_string(),
+                version: None,
+                schema: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], MigrationOp::CreateExtension(e) if e.name == "uuid-ossp"));
+    }
+
+    #[test]
+    fn detects_removed_extension() {
+        let mut from = empty_schema();
+        from.extensions.insert(
+            "pgcrypto".to_string(),
+            crate::model::Extension {
+                name: "pgcrypto".to_string(),
+                version: None,
+                schema: None,
+            },
+        );
+        let to = empty_schema();
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], MigrationOp::DropExtension(name) if name == "pgcrypto"));
     }
 }

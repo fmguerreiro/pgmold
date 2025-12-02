@@ -5,6 +5,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 /// Creates are ordered first (with tables topologically sorted by FK dependencies),
 /// then drops are ordered last (in reverse dependency order).
 pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+    let mut create_extensions = Vec::new();
+    let mut drop_extensions = Vec::new();
     let mut create_enums = Vec::new();
     let mut add_enum_values = Vec::new();
     let mut create_tables = Vec::new();
@@ -36,6 +38,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     for op in ops {
         match op {
+            MigrationOp::CreateExtension(_) => create_extensions.push(op),
+            MigrationOp::DropExtension(_) => drop_extensions.push(op),
             MigrationOp::CreateEnum(_) => create_enums.push(op),
             MigrationOp::AddEnumValue { .. } => add_enum_values.push(op),
             MigrationOp::CreateTable(_) => create_tables.push(op),
@@ -71,6 +75,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     let mut result = Vec::new();
 
+    result.extend(create_extensions);
     result.extend(create_enums);
     result.extend(add_enum_values);
     result.extend(create_functions);
@@ -99,6 +104,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(drop_tables);
     result.extend(drop_functions);
     result.extend(drop_enums);
+    result.extend(drop_extensions);
 
     result
 }
