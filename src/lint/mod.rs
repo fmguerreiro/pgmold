@@ -125,6 +125,16 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
             }
         }
 
+        MigrationOp::DropEnum(name) => {
+            if !options.allow_destructive {
+                results.push(LintResult {
+                    rule: "deny_drop_enum".to_string(),
+                    severity: LintSeverity::Error,
+                    message: format!("Dropping enum {name} requires --allow-destructive flag"),
+                });
+            }
+        }
+
         _ => {}
     }
 
@@ -292,5 +302,30 @@ mod tests {
         let results = lint_migration_plan(&ops, &options);
         assert!(has_errors(&results));
         assert_eq!(results[0].rule, "deny_drop_materialized_view");
+    }
+
+    #[test]
+    fn blocks_drop_enum_without_flag() {
+        let ops = vec![MigrationOp::DropEnum("user_role".to_string())];
+        let options = LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_enum");
+    }
+
+    #[test]
+    fn allows_drop_enum_with_flag() {
+        let ops = vec![MigrationOp::DropEnum("user_role".to_string())];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!has_errors(&results));
     }
 }

@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 /// then drops are ordered last (in reverse dependency order).
 pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut create_enums = Vec::new();
+    let mut add_enum_values = Vec::new();
     let mut create_tables = Vec::new();
     let mut add_columns = Vec::new();
     let mut add_primary_keys = Vec::new();
@@ -36,6 +37,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     for op in ops {
         match op {
             MigrationOp::CreateEnum(_) => create_enums.push(op),
+            MigrationOp::AddEnumValue { .. } => add_enum_values.push(op),
             MigrationOp::CreateTable(_) => create_tables.push(op),
             MigrationOp::AddColumn { .. } => add_columns.push(op),
             MigrationOp::AddPrimaryKey { .. } => add_primary_keys.push(op),
@@ -70,6 +72,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut result = Vec::new();
 
     result.extend(create_enums);
+    result.extend(add_enum_values);
     result.extend(create_functions);
     result.extend(create_tables);
     result.extend(add_columns);
@@ -450,5 +453,45 @@ mod tests {
         let ops: Vec<MigrationOp> = vec![];
         let planned = plan_migration(ops);
         assert!(planned.is_empty());
+    }
+
+    #[test]
+    fn add_enum_value_ordered_after_create_enum_before_tables() {
+        let ops = vec![
+            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::AddEnumValue {
+                enum_name: "user_role".to_string(),
+                value: "guest".to_string(),
+                position: None,
+            },
+            MigrationOp::CreateEnum(EnumType {
+                name: "user_role".to_string(),
+                values: vec!["admin".to_string(), "user".to_string()],
+            }),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_enum_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateEnum(_)))
+            .unwrap();
+        let add_enum_value_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddEnumValue { .. }))
+            .unwrap();
+        let create_table_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .unwrap();
+
+        assert!(
+            create_enum_pos < add_enum_value_pos,
+            "CreateEnum must come before AddEnumValue"
+        );
+        assert!(
+            add_enum_value_pos < create_table_pos,
+            "AddEnumValue must come before CreateTable"
+        );
     }
 }

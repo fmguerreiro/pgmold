@@ -1,4 +1,4 @@
-use crate::diff::{ColumnChanges, MigrationOp, PolicyChanges};
+use crate::diff::{ColumnChanges, EnumValuePosition, MigrationOp, PolicyChanges};
 use crate::model::{
     CheckConstraint, Column, ForeignKey, Function, Index, IndexType, PgType, Policy, PolicyCommand,
     ReferentialAction, SecurityType, Table, View, Volatility,
@@ -22,6 +22,32 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         )],
 
         MigrationOp::DropEnum(name) => vec![format!("DROP TYPE {};", quote_ident(name))],
+
+        MigrationOp::AddEnumValue {
+            enum_name,
+            value,
+            position,
+        } => {
+            let mut sql = format!(
+                "ALTER TYPE {} ADD VALUE '{}'",
+                quote_ident(enum_name),
+                escape_string(value)
+            );
+
+            if let Some(pos) = position {
+                match pos {
+                    EnumValuePosition::Before(ref v) => {
+                        sql.push_str(&format!(" BEFORE '{}'", escape_string(v)));
+                    }
+                    EnumValuePosition::After(ref v) => {
+                        sql.push_str(&format!(" AFTER '{}'", escape_string(v)));
+                    }
+                }
+            }
+
+            sql.push(';');
+            vec![sql]
+        }
 
         MigrationOp::CreateTable(table) => generate_create_table(table),
 
@@ -767,5 +793,63 @@ mod tests {
             sql[0],
             "ALTER TABLE \"products\" DROP CONSTRAINT \"price_positive\";"
         );
+    }
+
+    #[test]
+    fn add_enum_value_generates_valid_sql() {
+        let ops = vec![MigrationOp::AddEnumValue {
+            enum_name: "status".to_string(),
+            value: "pending".to_string(),
+            position: None,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "ALTER TYPE \"status\" ADD VALUE 'pending';");
+    }
+
+    #[test]
+    fn add_enum_value_with_after_position() {
+        let ops = vec![MigrationOp::AddEnumValue {
+            enum_name: "status".to_string(),
+            value: "pending".to_string(),
+            position: Some(EnumValuePosition::After("active".to_string())),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TYPE \"status\" ADD VALUE 'pending' AFTER 'active';"
+        );
+    }
+
+    #[test]
+    fn add_enum_value_with_before_position() {
+        let ops = vec![MigrationOp::AddEnumValue {
+            enum_name: "status".to_string(),
+            value: "pending".to_string(),
+            position: Some(EnumValuePosition::Before("active".to_string())),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TYPE \"status\" ADD VALUE 'pending' BEFORE 'active';"
+        );
+    }
+
+    #[test]
+    fn add_enum_value_escapes_quotes() {
+        let ops = vec![MigrationOp::AddEnumValue {
+            enum_name: "status".to_string(),
+            value: "it's pending".to_string(),
+            position: None,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "ALTER TYPE \"status\" ADD VALUE 'it''s pending';");
     }
 }

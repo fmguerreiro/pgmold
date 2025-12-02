@@ -9,6 +9,11 @@ use crate::model::{
 pub enum MigrationOp {
     CreateEnum(EnumType),
     DropEnum(String),
+    AddEnumValue {
+        enum_name: String,
+        value: String,
+        position: Option<EnumValuePosition>,
+    },
     CreateTable(Table),
     DropTable(String),
     AddColumn {
@@ -106,6 +111,12 @@ pub struct ColumnChanges {
     pub default: Option<Option<String>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnumValuePosition {
+    Before(String),
+    After(String),
+}
+
 use crate::model::Schema;
 
 pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
@@ -134,15 +145,41 @@ pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
 fn diff_enums(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
-    for (name, enum_type) in &to.enums {
-        if !from.enums.contains_key(name) {
-            ops.push(MigrationOp::CreateEnum(enum_type.clone()));
+    for (name, to_enum) in &to.enums {
+        if let Some(from_enum) = from.enums.get(name) {
+            ops.extend(diff_enum_values(name, from_enum, to_enum));
+        } else {
+            ops.push(MigrationOp::CreateEnum(to_enum.clone()));
         }
     }
 
     for name in from.enums.keys() {
         if !to.enums.contains_key(name) {
             ops.push(MigrationOp::DropEnum(name.clone()));
+        }
+    }
+
+    ops
+}
+
+fn diff_enum_values(name: &str, from: &EnumType, to: &EnumType) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for (idx, value) in to.values.iter().enumerate() {
+        if !from.values.contains(value) {
+            let position = if idx > 0 {
+                Some(EnumValuePosition::After(to.values[idx - 1].clone()))
+            } else if to.values.len() > 1 {
+                Some(EnumValuePosition::Before(to.values[1].clone()))
+            } else {
+                None
+            };
+
+            ops.push(MigrationOp::AddEnumValue {
+                enum_name: name.to_string(),
+                value: value.clone(),
+                position,
+            });
         }
     }
 
@@ -935,5 +972,159 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropCheckConstraint { table, constraint_name } if table == "products" && constraint_name == "price_positive")
         );
+    }
+
+    #[test]
+    fn detects_added_enum_value() {
+        let mut from = empty_schema();
+        from.enums.insert(
+            "status".to_string(),
+            EnumType {
+                name: "status".to_string(),
+                values: vec!["active".to_string(), "inactive".to_string()],
+            },
+        );
+
+        let mut to = empty_schema();
+        to.enums.insert(
+            "status".to_string(),
+            EnumType {
+                name: "status".to_string(),
+                values: vec![
+                    "active".to_string(),
+                    "pending".to_string(),
+                    "inactive".to_string(),
+                ],
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(
+            matches!(&ops[0], MigrationOp::AddEnumValue { enum_name, value, position }
+                if enum_name == "status"
+                && value == "pending"
+                && matches!(position, Some(EnumValuePosition::After(v)) if v == "active"))
+        );
+    }
+
+    #[test]
+    fn detects_enum_value_added_at_beginning() {
+        let mut from = empty_schema();
+        from.enums.insert(
+            "status".to_string(),
+            EnumType {
+                name: "status".to_string(),
+                values: vec!["active".to_string(), "inactive".to_string()],
+            },
+        );
+
+        let mut to = empty_schema();
+        to.enums.insert(
+            "status".to_string(),
+            EnumType {
+                name: "status".to_string(),
+                values: vec![
+                    "pending".to_string(),
+                    "active".to_string(),
+                    "inactive".to_string(),
+                ],
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(
+            matches!(&ops[0], MigrationOp::AddEnumValue { enum_name, value, position }
+                if enum_name == "status"
+                && value == "pending"
+                && matches!(position, Some(EnumValuePosition::Before(v)) if v == "active"))
+        );
+    }
+
+    #[test]
+    fn detects_enum_value_added_at_end() {
+        let mut from = empty_schema();
+        from.enums.insert(
+            "status".to_string(),
+            EnumType {
+                name: "status".to_string(),
+                values: vec!["active".to_string(), "inactive".to_string()],
+            },
+        );
+
+        let mut to = empty_schema();
+        to.enums.insert(
+            "status".to_string(),
+            EnumType {
+                name: "status".to_string(),
+                values: vec![
+                    "active".to_string(),
+                    "inactive".to_string(),
+                    "archived".to_string(),
+                ],
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(
+            matches!(&ops[0], MigrationOp::AddEnumValue { enum_name, value, position }
+                if enum_name == "status"
+                && value == "archived"
+                && matches!(position, Some(EnumValuePosition::After(v)) if v == "inactive"))
+        );
+    }
+
+    #[test]
+    fn detects_multiple_enum_values_added() {
+        let mut from = empty_schema();
+        from.enums.insert(
+            "status".to_string(),
+            EnumType {
+                name: "status".to_string(),
+                values: vec!["active".to_string()],
+            },
+        );
+
+        let mut to = empty_schema();
+        to.enums.insert(
+            "status".to_string(),
+            EnumType {
+                name: "status".to_string(),
+                values: vec![
+                    "pending".to_string(),
+                    "active".to_string(),
+                    "archived".to_string(),
+                ],
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 2);
+    }
+
+    #[test]
+    fn no_change_when_enum_values_unchanged() {
+        let mut from = empty_schema();
+        from.enums.insert(
+            "status".to_string(),
+            EnumType {
+                name: "status".to_string(),
+                values: vec!["active".to_string(), "inactive".to_string()],
+            },
+        );
+
+        let mut to = empty_schema();
+        to.enums.insert(
+            "status".to_string(),
+            EnumType {
+                name: "status".to_string(),
+                values: vec!["active".to_string(), "inactive".to_string()],
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 0);
     }
 }
