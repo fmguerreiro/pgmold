@@ -1,6 +1,6 @@
 use crate::diff::{ColumnChanges, MigrationOp, PolicyChanges};
 use crate::model::{
-    Column, ForeignKey, Function, Index, IndexType, PgType, Policy, PolicyCommand,
+    CheckConstraint, Column, ForeignKey, Function, Index, IndexType, PgType, Policy, PolicyCommand,
     ReferentialAction, SecurityType, Table, View, Volatility,
 };
 
@@ -74,6 +74,20 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             "ALTER TABLE {} DROP CONSTRAINT {};",
             quote_ident(table),
             quote_ident(foreign_key_name)
+        )],
+
+        MigrationOp::AddCheckConstraint {
+            table,
+            check_constraint,
+        } => vec![generate_add_check_constraint(table, check_constraint)],
+
+        MigrationOp::DropCheckConstraint {
+            table,
+            constraint_name,
+        } => vec![format!(
+            "ALTER TABLE {} DROP CONSTRAINT {};",
+            quote_ident(table),
+            quote_ident(constraint_name)
         )],
 
         MigrationOp::EnableRls { table } => vec![format!(
@@ -153,6 +167,10 @@ fn generate_create_table(table: &Table) -> Vec<String> {
         statements.push(generate_add_foreign_key(&table.name, foreign_key));
     }
 
+    for check_constraint in &table.check_constraints {
+        statements.push(generate_add_check_constraint(&table.name, check_constraint));
+    }
+
     statements
 }
 
@@ -185,6 +203,15 @@ fn generate_add_foreign_key(table: &str, foreign_key: &ForeignKey) -> String {
         format_column_list(&foreign_key.referenced_columns),
         format_referential_action(&foreign_key.on_delete),
         format_referential_action(&foreign_key.on_update)
+    )
+}
+
+fn generate_add_check_constraint(table: &str, check_constraint: &CheckConstraint) -> String {
+    format!(
+        "ALTER TABLE {} ADD CONSTRAINT {} CHECK ({});",
+        quote_ident(table),
+        quote_ident(&check_constraint.name),
+        check_constraint.expression
     )
 }
 
@@ -568,6 +595,7 @@ mod tests {
                 columns: vec!["id".to_string()],
             }),
             foreign_keys: vec![],
+            check_constraints: vec![],
             comment: None,
             row_level_security: false,
             policies: vec![],
@@ -706,5 +734,38 @@ mod tests {
         assert!(sql[0].contains("REFERENCES \"users\" (\"id\")"));
         assert!(sql[0].contains("ON DELETE CASCADE"));
         assert!(sql[0].contains("ON UPDATE NO ACTION"));
+    }
+
+    #[test]
+    fn add_check_constraint_generates_valid_sql() {
+        let ops = vec![MigrationOp::AddCheckConstraint {
+            table: "products".to_string(),
+            check_constraint: CheckConstraint {
+                name: "price_positive".to_string(),
+                expression: "price > 0".to_string(),
+            },
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"products\" ADD CONSTRAINT \"price_positive\" CHECK (price > 0);"
+        );
+    }
+
+    #[test]
+    fn drop_check_constraint_generates_valid_sql() {
+        let ops = vec![MigrationOp::DropCheckConstraint {
+            table: "products".to_string(),
+            constraint_name: "price_positive".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"products\" DROP CONSTRAINT \"price_positive\";"
+        );
     }
 }

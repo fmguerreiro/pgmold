@@ -12,7 +12,9 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut add_indexes = Vec::new();
     let mut alter_columns = Vec::new();
     let mut add_foreign_keys = Vec::new();
+    let mut add_check_constraints = Vec::new();
 
+    let mut drop_check_constraints = Vec::new();
     let mut drop_foreign_keys = Vec::new();
     let mut drop_indexes = Vec::new();
     let mut drop_primary_keys = Vec::new();
@@ -40,6 +42,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::AddIndex { .. } => add_indexes.push(op),
             MigrationOp::AlterColumn { .. } => alter_columns.push(op),
             MigrationOp::AddForeignKey { .. } => add_foreign_keys.push(op),
+            MigrationOp::AddCheckConstraint { .. } => add_check_constraints.push(op),
+            MigrationOp::DropCheckConstraint { .. } => drop_check_constraints.push(op),
             MigrationOp::DropForeignKey { .. } => drop_foreign_keys.push(op),
             MigrationOp::DropIndex { .. } => drop_indexes.push(op),
             MigrationOp::DropPrimaryKey { .. } => drop_primary_keys.push(op),
@@ -73,6 +77,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(add_indexes);
     result.extend(alter_columns);
     result.extend(add_foreign_keys);
+    result.extend(add_check_constraints);
     result.extend(enable_rls);
     result.extend(create_policies);
     result.extend(alter_policies);
@@ -83,6 +88,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(drop_views);
     result.extend(drop_policies);
     result.extend(disable_rls);
+    result.extend(drop_check_constraints);
     result.extend(drop_foreign_keys);
     result.extend(drop_indexes);
     result.extend(drop_primary_keys);
@@ -231,6 +237,7 @@ mod tests {
             indexes: Vec::new(),
             primary_key: None,
             foreign_keys,
+            check_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             policies: Vec::new(),

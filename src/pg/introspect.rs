@@ -18,9 +18,11 @@ pub async fn introspect_schema(connection: &PgConnection) -> Result<Schema> {
         let primary_key = introspect_primary_key(connection, &table_name).await?;
         let mut indexes = introspect_indexes(connection, &table_name).await?;
         let mut foreign_keys = introspect_foreign_keys(connection, &table_name).await?;
+        let mut check_constraints = introspect_check_constraints(connection, &table_name).await?;
 
         indexes.sort();
         foreign_keys.sort();
+        check_constraints.sort();
 
         let row_level_security = introspect_rls_enabled(connection, &table_name).await?;
         let mut policies = introspect_policies(connection, &table_name).await?;
@@ -31,6 +33,7 @@ pub async fn introspect_schema(connection: &PgConnection) -> Result<Schema> {
             table.primary_key = primary_key;
             table.indexes = indexes;
             table.foreign_keys = foreign_keys;
+            table.check_constraints = check_constraints;
             table.row_level_security = row_level_security;
             table.policies = policies;
         }
@@ -93,6 +96,7 @@ async fn introspect_tables(connection: &PgConnection) -> Result<BTreeMap<String,
                 indexes: Vec::new(),
                 primary_key: None,
                 foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
                 policies: Vec::new(),
@@ -287,6 +291,44 @@ async fn introspect_foreign_keys(
     }
 
     Ok(foreign_keys)
+}
+
+async fn introspect_check_constraints(
+    connection: &PgConnection,
+    table_name: &str,
+) -> Result<Vec<CheckConstraint>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            con.conname as name,
+            pg_get_constraintdef(con.oid) as definition
+        FROM pg_constraint con
+        JOIN pg_class class ON con.conrelid = class.oid
+        JOIN pg_namespace n ON n.oid = class.relnamespace
+        WHERE class.relname = $1 AND n.nspname = 'public' AND con.contype = 'c'
+        "#,
+    )
+    .bind(table_name)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch check constraints: {e}")))?;
+
+    let mut check_constraints = Vec::new();
+    for row in rows {
+        let name: String = row.get("name");
+        let definition: String = row.get("definition");
+
+        // pg_get_constraintdef returns "CHECK ((expression))" - extract the inner expression
+        let expression = definition
+            .strip_prefix("CHECK (")
+            .and_then(|s| s.strip_suffix(")"))
+            .map(|s| s.to_string())
+            .unwrap_or(definition);
+
+        check_constraints.push(CheckConstraint { name, expression });
+    }
+
+    Ok(check_constraints)
 }
 
 fn map_referential_action(action: char) -> ReferentialAction {

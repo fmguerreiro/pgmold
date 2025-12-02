@@ -16,6 +16,7 @@ pub struct Table {
     pub indexes: Vec<Index>,
     pub primary_key: Option<PrimaryKey>,
     pub foreign_keys: Vec<ForeignKey>,
+    pub check_constraints: Vec<CheckConstraint>,
     pub comment: Option<String>,
     pub row_level_security: bool,
     pub policies: Vec<Policy>,
@@ -85,6 +86,12 @@ pub enum ReferentialAction {
     Cascade,
     SetNull,
     SetDefault,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CheckConstraint {
+    pub name: String,
+    pub expression: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -259,6 +266,7 @@ mod tests {
                 indexes: Vec::new(),
                 primary_key: None,
                 foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
                 policies: Vec::new(),
@@ -274,6 +282,7 @@ mod tests {
                 indexes: Vec::new(),
                 primary_key: None,
                 foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
                 policies: Vec::new(),

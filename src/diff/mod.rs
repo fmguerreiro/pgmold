@@ -1,7 +1,8 @@
 pub mod planner;
 
 use crate::model::{
-    Column, EnumType, ForeignKey, Function, Index, PgType, Policy, PrimaryKey, Table, View,
+    CheckConstraint, Column, EnumType, ForeignKey, Function, Index, PgType, Policy, PrimaryKey,
+    Table, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +46,14 @@ pub enum MigrationOp {
     DropForeignKey {
         table: String,
         foreign_key_name: String,
+    },
+    AddCheckConstraint {
+        table: String,
+        check_constraint: CheckConstraint,
+    },
+    DropCheckConstraint {
+        table: String,
+        constraint_name: String,
     },
     EnableRls {
         table: String,
@@ -113,6 +122,7 @@ pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
             ops.extend(diff_primary_keys(from_table, to_table));
             ops.extend(diff_indexes(from_table, to_table));
             ops.extend(diff_foreign_keys(from_table, to_table));
+            ops.extend(diff_check_constraints(from_table, to_table));
             ops.extend(diff_rls(from_table, to_table));
             ops.extend(diff_policies(from_table, to_table));
         }
@@ -366,6 +376,38 @@ fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     ops
 }
 
+fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for check_constraint in &to_table.check_constraints {
+        if !from_table
+            .check_constraints
+            .iter()
+            .any(|cc| cc.name == check_constraint.name)
+        {
+            ops.push(MigrationOp::AddCheckConstraint {
+                table: to_table.name.clone(),
+                check_constraint: check_constraint.clone(),
+            });
+        }
+    }
+
+    for check_constraint in &from_table.check_constraints {
+        if !to_table
+            .check_constraints
+            .iter()
+            .any(|cc| cc.name == check_constraint.name)
+        {
+            ops.push(MigrationOp::DropCheckConstraint {
+                table: from_table.name.clone(),
+                constraint_name: check_constraint.name.clone(),
+            });
+        }
+    }
+
+    ops
+}
+
 fn diff_rls(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
@@ -452,6 +494,7 @@ mod tests {
             indexes: Vec::new(),
             primary_key: None,
             foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             policies: Vec::new(),
@@ -847,6 +890,50 @@ mod tests {
         assert!(
             ops.is_empty(),
             "Should not report differences for whitespace-only changes"
+        );
+    }
+
+    #[test]
+    fn detects_added_check_constraint() {
+        let mut from = empty_schema();
+        from.tables
+            .insert("products".to_string(), simple_table("products"));
+
+        let mut to = empty_schema();
+        let mut table = simple_table("products");
+        table.check_constraints.push(crate::model::CheckConstraint {
+            name: "price_positive".to_string(),
+            expression: "price > 0".to_string(),
+        });
+        to.tables.insert("products".to_string(), table);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(
+            matches!(&ops[0], MigrationOp::AddCheckConstraint { table, check_constraint } if table == "products" && check_constraint.name == "price_positive")
+        );
+    }
+
+    #[test]
+    fn detects_removed_check_constraint() {
+        let mut from = empty_schema();
+        let mut from_table = simple_table("products");
+        from_table
+            .check_constraints
+            .push(crate::model::CheckConstraint {
+                name: "price_positive".to_string(),
+                expression: "price > 0".to_string(),
+            });
+        from.tables.insert("products".to_string(), from_table);
+
+        let mut to = empty_schema();
+        to.tables
+            .insert("products".to_string(), simple_table("products"));
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(
+            matches!(&ops[0], MigrationOp::DropCheckConstraint { table, constraint_name } if table == "products" && constraint_name == "price_positive")
         );
     }
 }

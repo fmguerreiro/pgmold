@@ -189,6 +189,7 @@ fn parse_create_table(
         indexes: Vec::new(),
         primary_key: None,
         foreign_keys: Vec::new(),
+        check_constraints: Vec::new(),
         comment: None,
         row_level_security: false,
         policies: Vec::new(),
@@ -244,11 +245,23 @@ fn parse_create_table(
                     on_update: parse_referential_action(on_update),
                 });
             }
+            TableConstraint::Check { name, expr } => {
+                let constraint_name = name
+                    .as_ref()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| format!("{}_check", table.name));
+
+                table.check_constraints.push(CheckConstraint {
+                    name: constraint_name,
+                    expression: expr.to_string(),
+                });
+            }
             _ => {}
         }
     }
 
     table.foreign_keys.sort();
+    table.check_constraints.sort();
 
     Ok(table)
 }
@@ -512,5 +525,37 @@ CREATE INDEX posts_user_id_idx ON posts (user_id);
         assert_eq!(posts.foreign_keys.len(), 1);
         assert_eq!(posts.foreign_keys[0].name, "posts_user_id_fkey");
         assert_eq!(posts.foreign_keys[0].on_delete, ReferentialAction::Cascade);
+    }
+
+    #[test]
+    fn parse_check_constraint() {
+        let sql = r#"
+CREATE TABLE products (
+    id BIGINT NOT NULL PRIMARY KEY,
+    price BIGINT NOT NULL,
+    quantity INTEGER NOT NULL,
+    CONSTRAINT price_positive CHECK (price > 0),
+    CONSTRAINT quantity_non_negative CHECK (quantity >= 0)
+);
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let products = &schema.tables["products"];
+        assert_eq!(products.check_constraints.len(), 2);
+
+        let price_check = products
+            .check_constraints
+            .iter()
+            .find(|c| c.name == "price_positive")
+            .expect("price_positive constraint should exist");
+        assert_eq!(price_check.expression, "price > 0");
+
+        let quantity_check = products
+            .check_constraints
+            .iter()
+            .find(|c| c.name == "quantity_non_negative")
+            .expect("quantity_non_negative constraint should exist");
+        assert_eq!(quantity_check.expression, "quantity >= 0");
     }
 }
