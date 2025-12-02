@@ -219,6 +219,21 @@ pub struct View {
     pub materialized: bool,
 }
 
+/// Creates a qualified name from schema and object name.
+/// Used as map keys for schema-aware lookups.
+pub fn qualified_name(schema: &str, name: &str) -> String {
+    format!("{schema}.{name}")
+}
+
+/// Parses a qualified name into (schema, name) tuple.
+/// Defaults to "public" schema if no dot separator found.
+pub fn parse_qualified_name(qname: &str) -> (String, String) {
+    match qname.split_once('.') {
+        Some((schema, name)) => (schema.to_string(), name.to_string()),
+        None => ("public".to_string(), qname.to_string()),
+    }
+}
+
 impl Schema {
     pub fn new() -> Self {
         Schema {
@@ -377,5 +392,31 @@ mod tests {
         };
 
         assert!(parsed_body.semantically_equals(&introspected_body));
+    }
+
+    #[test]
+    fn qualified_name_combines_schema_and_name() {
+        assert_eq!(qualified_name("public", "users"), "public.users");
+        assert_eq!(qualified_name("auth", "accounts"), "auth.accounts");
+    }
+
+    #[test]
+    fn parse_qualified_name_splits_correctly() {
+        assert_eq!(
+            parse_qualified_name("public.users"),
+            ("public".to_string(), "users".to_string())
+        );
+        assert_eq!(
+            parse_qualified_name("auth.accounts"),
+            ("auth".to_string(), "accounts".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_qualified_name_defaults_to_public() {
+        assert_eq!(
+            parse_qualified_name("users"),
+            ("public".to_string(), "users".to_string())
+        );
     }
 }
