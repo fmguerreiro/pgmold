@@ -114,6 +114,38 @@ By default, pgmold blocks destructive operations:
 
 Set `PGMOLD_PROD=1` to enable production mode, which blocks table drops entirely.
 
+## Comparison with Other Tools
+
+| Feature | pgmold | dbmate | goose | golang-migrate | Flyway | Sqitch |
+|---------|--------|--------|-------|----------------|--------|--------|
+| **Approach** | Declarative | Migration-based | Migration-based | Migration-based | Migration-based | Change-based |
+| **Schema Definition** | Native SQL | Raw SQL | SQL/Go | Raw SQL | SQL/Java | Native SQL |
+| **Auto-generates Migrations** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Multi-DB Support** | PostgreSQL only | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Drift Detection** | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| **Safety Linting** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Production Mode** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **RLS Policy Support** | ✅ | Manual | Manual | Manual | Manual | Manual |
+| **Dependency Ordering** | ✅ Auto | Timestamp | Version | Version | Version | Declared |
+| **Transactional DDL** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+### When to Choose pgmold
+
+- **PostgreSQL-only** projects where deep PG integration matters
+- **Declarative schema management** (like Terraform for databases)
+- **CI/CD drift detection** to catch manual schema changes
+- **Safety-first** workflows with destructive operation guardrails
+- **RLS policies** as first-class citizens
+
+### When to Choose Alternatives
+
+- **Multi-database support** → [dbmate](https://github.com/amacneil/dbmate), [golang-migrate](https://github.com/golang-migrate/migrate), [Flyway](https://flywaydb.org)
+- **Go code in migrations** → [goose](https://github.com/pressly/goose)
+- **Enterprise features** → [Flyway](https://flywaydb.org)
+- **Complex dependency graphs** → [Sqitch](https://sqitch.org)
+- **Rails ecosystem** → [ActiveRecord Migrations](https://guides.rubyonrails.org/active_record_migrations.html)
+- **Node.js ORM** → [Sequelize](https://sequelize.org/docs/v6/other-topics/migrations/)
+
 ## Development
 
 ```bash
