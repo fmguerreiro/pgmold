@@ -1,3 +1,6 @@
+mod loader;
+pub use loader::load_schema_sources;
+
 use crate::model::*;
 use crate::util::{Result, SchemaError};
 use sqlparser::ast::{ColumnDef, ColumnOption, DataType, Statement, TableConstraint};

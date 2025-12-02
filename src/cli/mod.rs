@@ -1,12 +1,11 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
+use sqlx::Executor;
 
-use pgmold::apply::{apply_migration, ApplyOptions};
 use pgmold::diff::{compute_diff, planner::plan_migration};
-use pgmold::drift::detect_drift;
 use pgmold::lint::{has_errors, lint_migration_plan, LintOptions, LintSeverity};
 use pgmold::model::Schema;
-use pgmold::parser::parse_sql_file;
+use pgmold::parser::load_schema_sources;
 use pgmold::pg::connection::PgConnection;
 use pgmold::pg::introspect::introspect_schema;
 use pgmold::pg::sqlgen::generate_sql;
@@ -31,16 +30,16 @@ enum Commands {
 
     /// Generate migration plan
     Plan {
-        #[arg(long)]
-        schema: String,
+        #[arg(long, required = true)]
+        schema: Vec<String>,
         #[arg(long)]
         database: String,
     },
 
     /// Apply migrations
     Apply {
-        #[arg(long)]
-        schema: String,
+        #[arg(long, required = true)]
+        schema: Vec<String>,
         #[arg(long)]
         database: String,
         #[arg(long)]
@@ -51,34 +50,39 @@ enum Commands {
 
     /// Lint schema or migration plan
     Lint {
-        #[arg(long)]
-        schema: String,
+        #[arg(long, required = true)]
+        schema: Vec<String>,
         #[arg(long)]
         database: Option<String>,
     },
 
     /// Monitor for drift
     Monitor {
-        #[arg(long)]
-        schema: String,
+        #[arg(long, required = true)]
+        schema: Vec<String>,
         #[arg(long)]
         database: String,
     },
 }
 
-async fn parse_source(source: &str) -> Result<Schema> {
-    if let Some(path) = source.strip_prefix("sql:") {
-        parse_sql_file(path).map_err(|e| anyhow!("{e}"))
-    } else if let Some(url) = source.strip_prefix("db:") {
-        let connection = PgConnection::new(url).await.map_err(|e| anyhow!("{e}"))?;
-        introspect_schema(&connection)
-            .await
-            .map_err(|e| anyhow!("{e}"))
-    } else {
-        Err(anyhow!(
-            "Unknown source format: {source}. Use 'sql:path' or 'db:url' prefix."
-        ))
-    }
+fn parse_db_source(source: &str) -> Result<String> {
+    source
+        .strip_prefix("db:")
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow!("Database source must start with 'db:' prefix: {source}"))
+}
+
+fn load_sql_schema(sources: &[String]) -> Result<Schema> {
+    let paths: Vec<String> = sources
+        .iter()
+        .map(|s| {
+            s.strip_prefix("sql:")
+                .map(|p| p.to_string())
+                .ok_or_else(|| anyhow!("Schema source must start with 'sql:' prefix: {s}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    load_schema_sources(&paths).map_err(|e| anyhow!("{e}"))
 }
 
 pub async fn run() -> Result<()> {
@@ -86,8 +90,8 @@ pub async fn run() -> Result<()> {
 
     match cli.command {
         Commands::Diff { from, to } => {
-            let from_schema = parse_source(&from).await?;
-            let to_schema = parse_source(&to).await?;
+            let from_schema = load_sql_schema(&[from])?;
+            let to_schema = load_sql_schema(&[to])?;
             let ops = compute_diff(&from_schema, &to_schema);
 
             if ops.is_empty() {
@@ -101,8 +105,9 @@ pub async fn run() -> Result<()> {
             Ok(())
         }
         Commands::Plan { schema, database } => {
-            let target = parse_sql_file(&schema).map_err(|e| anyhow!("{e}"))?;
-            let connection = PgConnection::new(&database)
+            let target = load_sql_schema(&schema)?;
+            let db_url = parse_db_source(&database)?;
+            let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
             let current = introspect_schema(&connection)
@@ -129,20 +134,24 @@ pub async fn run() -> Result<()> {
             dry_run,
             allow_destructive,
         } => {
-            let connection = PgConnection::new(&database)
+            let db_url = parse_db_source(&database)?;
+            let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
-            let options = ApplyOptions {
-                dry_run,
+            let target = load_sql_schema(&schema)?;
+            let current = introspect_schema(&connection)
+                .await
+                .map_err(|e| anyhow!("{e}"))?;
+
+            let ops = plan_migration(compute_diff(&current, &target));
+            let lint_options = LintOptions {
                 allow_destructive,
+                ..Default::default()
             };
+            let lint_results = lint_migration_plan(&ops, &lint_options);
 
-            let result = apply_migration(&schema, &connection, options)
-                .await
-                .map_err(|e| anyhow!("{e}"))?;
-
-            for lint_result in &result.lint_results {
+            for lint_result in &lint_results {
                 let severity = match lint_result.severity {
                     LintSeverity::Error => "ERROR",
                     LintSeverity::Warning => "WARNING",
@@ -153,30 +162,48 @@ pub async fn run() -> Result<()> {
                 );
             }
 
-            if has_errors(&result.lint_results) {
+            if has_errors(&lint_results) {
                 println!("\nMigration blocked due to lint errors.");
                 return Ok(());
             }
 
-            if result.sql_statements.is_empty() {
+            let sql = generate_sql(&ops);
+
+            if sql.is_empty() {
                 println!("No changes to apply.");
             } else if dry_run {
                 println!("\nDry run - SQL that would be executed:");
-                for statement in &result.sql_statements {
+                for statement in &sql {
                     println!("{statement}");
                 }
-            } else if result.applied {
-                println!(
-                    "\nSuccessfully applied {} statements.",
-                    result.sql_statements.len()
-                );
+            } else {
+                let mut transaction = connection
+                    .pool()
+                    .begin()
+                    .await
+                    .map_err(|e| anyhow!("Failed to begin transaction: {e}"))?;
+
+                for statement in &sql {
+                    transaction
+                        .execute(statement.as_str())
+                        .await
+                        .map_err(|e| anyhow!("Failed to execute SQL: {e}"))?;
+                }
+
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|e| anyhow!("Failed to commit transaction: {e}"))?;
+
+                println!("\nSuccessfully applied {} statements.", sql.len());
             }
             Ok(())
         }
         Commands::Lint { schema, database } => {
-            let target = parse_sql_file(&schema).map_err(|e| anyhow!("{e}"))?;
+            let target = load_sql_schema(&schema)?;
 
-            let ops = if let Some(db_url) = database {
+            let ops = if let Some(db_source) = database {
+                let db_url = parse_db_source(&db_source)?;
                 let connection = PgConnection::new(&db_url)
                     .await
                     .map_err(|e| anyhow!("{e}"))?;
@@ -209,26 +236,32 @@ pub async fn run() -> Result<()> {
             Ok(())
         }
         Commands::Monitor { schema, database } => {
-            let connection = PgConnection::new(&database)
+            let db_url = parse_db_source(&database)?;
+            let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
-            let report = detect_drift(&schema, &connection)
+            let target = load_sql_schema(&schema)?;
+            let current = introspect_schema(&connection)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
-            if report.has_drift {
+            let ops = compute_diff(&current, &target);
+            let target_fingerprint = target.fingerprint();
+            let current_fingerprint = current.fingerprint();
+
+            if ops.is_empty() {
+                println!("No drift detected. Schema is in sync.");
+                println!("Fingerprint: {target_fingerprint}");
+            } else {
                 println!("Drift detected!");
-                println!("Expected fingerprint: {}", report.expected_fingerprint);
-                println!("Actual fingerprint:   {}", report.actual_fingerprint);
-                println!("\nDifferences ({} operations):", report.differences.len());
-                for op in &report.differences {
+                println!("Expected fingerprint: {target_fingerprint}");
+                println!("Actual fingerprint:   {current_fingerprint}");
+                println!("\nDifferences ({} operations):", ops.len());
+                for op in &ops {
                     println!("  {op:?}");
                 }
                 std::process::exit(1);
-            } else {
-                println!("No drift detected. Schema is in sync.");
-                println!("Fingerprint: {}", report.expected_fingerprint);
             }
             Ok(())
         }
