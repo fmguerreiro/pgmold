@@ -552,6 +552,7 @@ mod tests {
     fn create_enum_generates_valid_sql() {
         let ops = vec![MigrationOp::CreateEnum(EnumType {
             name: "user_role".to_string(),
+            schema: "public".to_string(),
             values: vec!["admin".to_string(), "user".to_string(), "guest".to_string()],
         })];
 
@@ -631,6 +632,7 @@ mod tests {
 
         let ops = vec![MigrationOp::CreateTable(Table {
             name: "users".to_string(),
+            schema: "public".to_string(),
             columns,
             indexes: vec![],
             primary_key: Some(PrimaryKey {
@@ -763,6 +765,7 @@ mod tests {
                 name: "posts_user_id_fkey".to_string(),
                 columns: vec!["user_id".to_string()],
                 referenced_table: "users".to_string(),
+                referenced_schema: "public".to_string(),
                 referenced_columns: vec!["id".to_string()],
                 on_delete: ReferentialAction::Cascade,
                 on_update: ReferentialAction::NoAction,

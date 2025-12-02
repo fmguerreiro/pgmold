@@ -242,6 +242,7 @@ mod tests {
     fn make_table(name: &str, foreign_keys: Vec<ForeignKey>) -> Table {
         Table {
             name: name.to_string(),
+            schema: "public".to_string(),
             columns: BTreeMap::new(),
             indexes: Vec::new(),
             primary_key: None,
@@ -258,6 +259,7 @@ mod tests {
             name: format!("fk_{referenced_table}"),
             columns: vec!["id".to_string()],
             referenced_table: referenced_table.to_string(),
+            referenced_schema: "public".to_string(),
             referenced_columns: vec!["id".to_string()],
             on_delete: ReferentialAction::NoAction,
             on_update: ReferentialAction::NoAction,
@@ -433,6 +435,7 @@ mod tests {
             MigrationOp::CreateTable(make_table("users", vec![])),
             MigrationOp::CreateEnum(EnumType {
                 name: "user_role".to_string(),
+                schema: "public".to_string(),
                 values: vec!["admin".to_string(), "user".to_string()],
             }),
         ];
@@ -472,6 +475,7 @@ mod tests {
             },
             MigrationOp::CreateEnum(EnumType {
                 name: "user_role".to_string(),
+                schema: "public".to_string(),
                 values: vec!["admin".to_string(), "user".to_string()],
             }),
         ];

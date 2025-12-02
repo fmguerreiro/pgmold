@@ -242,6 +242,7 @@ mod tests {
             "users".to_string(),
             crate::model::Table {
                 name: "users".to_string(),
+                schema: "public".to_string(),
                 columns: std::collections::BTreeMap::new(),
                 indexes: Vec::new(),
                 primary_key: None,
@@ -258,6 +259,7 @@ mod tests {
             "posts".to_string(),
             crate::model::Table {
                 name: "posts".to_string(),
+                schema: "public".to_string(),
                 columns: std::collections::BTreeMap::new(),
                 indexes: Vec::new(),
                 primary_key: None,
@@ -284,6 +286,7 @@ mod tests {
             "users".to_string(),
             crate::model::Table {
                 name: "users".to_string(),
+                schema: "public".to_string(),
                 columns: std::collections::BTreeMap::new(),
                 indexes: Vec::new(),
                 primary_key: None,
@@ -300,6 +303,7 @@ mod tests {
             "users".to_string(),
             crate::model::Table {
                 name: "users".to_string(),
+                schema: "public".to_string(),
                 columns: std::collections::BTreeMap::new(),
                 indexes: Vec::new(),
                 primary_key: None,
@@ -326,6 +330,7 @@ mod tests {
             "status".to_string(),
             crate::model::EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec!["active".to_string()],
             },
         );
@@ -335,6 +340,7 @@ mod tests {
             "status".to_string(),
             crate::model::EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec!["inactive".to_string()],
             },
         );

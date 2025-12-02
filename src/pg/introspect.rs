@@ -101,6 +101,7 @@ async fn introspect_enums(connection: &PgConnection) -> Result<BTreeMap<String, 
             name.clone(),
             EnumType {
                 name,
+                schema: "public".to_string(),
                 values: labels,
             },
         );
@@ -128,6 +129,7 @@ async fn introspect_tables(connection: &PgConnection) -> Result<BTreeMap<String,
             name.clone(),
             Table {
                 name,
+                schema: "public".to_string(),
                 columns: BTreeMap::new(),
                 indexes: Vec::new(),
                 primary_key: None,
@@ -320,6 +322,7 @@ async fn introspect_foreign_keys(
             name,
             columns,
             referenced_table,
+            referenced_schema: "public".to_string(),
             referenced_columns,
             on_delete: map_referential_action(confdeltype as u8 as char),
             on_update: map_referential_action(confupdtype as u8 as char),
@@ -431,6 +434,7 @@ async fn introspect_policies(connection: &PgConnection, table_name: &str) -> Res
         policies.push(Policy {
             name,
             table: table_name.to_string(),
+            table_schema: "public".to_string(),
             command: map_policy_command(command as u8 as char),
             roles,
             using_expr,

@@ -59,6 +59,7 @@ mod tests {
     fn drift_report_with_differences() {
         let mut table = Table {
             name: "users".to_string(),
+            schema: "public".to_string(),
             columns: BTreeMap::new(),
             indexes: Vec::new(),
             primary_key: None,

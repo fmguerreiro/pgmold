@@ -548,6 +548,7 @@ mod tests {
     fn simple_table(name: &str) -> Table {
         Table {
             name: name.to_string(),
+            schema: "public".to_string(),
             columns: BTreeMap::new(),
             indexes: Vec::new(),
             primary_key: None,
@@ -577,6 +578,7 @@ mod tests {
             "status".to_string(),
             EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
             },
         );
@@ -593,6 +595,7 @@ mod tests {
             "status".to_string(),
             EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec!["active".to_string()],
             },
         );
@@ -747,6 +750,7 @@ mod tests {
             name: "posts_user_id_fkey".to_string(),
             columns: vec!["user_id".to_string()],
             referenced_table: "users".to_string(),
+            referenced_schema: "public".to_string(),
             referenced_columns: vec!["id".to_string()],
             on_delete: ReferentialAction::Cascade,
             on_update: ReferentialAction::NoAction,
@@ -768,6 +772,7 @@ mod tests {
             name: "posts_user_id_fkey".to_string(),
             columns: vec!["user_id".to_string()],
             referenced_table: "users".to_string(),
+            referenced_schema: "public".to_string(),
             referenced_columns: vec!["id".to_string()],
             on_delete: ReferentialAction::Cascade,
             on_update: ReferentialAction::NoAction,
@@ -1002,6 +1007,7 @@ mod tests {
             "status".to_string(),
             EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
             },
         );
@@ -1011,6 +1017,7 @@ mod tests {
             "status".to_string(),
             EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec![
                     "active".to_string(),
                     "pending".to_string(),
@@ -1036,6 +1043,7 @@ mod tests {
             "status".to_string(),
             EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
             },
         );
@@ -1045,6 +1053,7 @@ mod tests {
             "status".to_string(),
             EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec![
                     "pending".to_string(),
                     "active".to_string(),
@@ -1070,6 +1079,7 @@ mod tests {
             "status".to_string(),
             EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
             },
         );
@@ -1079,6 +1089,7 @@ mod tests {
             "status".to_string(),
             EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec![
                     "active".to_string(),
                     "inactive".to_string(),
@@ -1104,6 +1115,7 @@ mod tests {
             "status".to_string(),
             EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec!["active".to_string()],
             },
         );
@@ -1113,6 +1125,7 @@ mod tests {
             "status".to_string(),
             EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec![
                     "pending".to_string(),
                     "active".to_string(),
@@ -1132,6 +1145,7 @@ mod tests {
             "status".to_string(),
             EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
             },
         );
@@ -1141,6 +1155,7 @@ mod tests {
             "status".to_string(),
             EnumType {
                 name: "status".to_string(),
+                schema: "public".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
             },
         );

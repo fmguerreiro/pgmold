@@ -84,6 +84,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             } => {
                 let enum_type = EnumType {
                     name: name.to_string(),
+                    schema: "public".to_string(),
                     values: labels
                         .iter()
                         .map(|l| l.to_string().trim_matches('\'').to_string())
@@ -104,6 +105,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 let policy = Policy {
                     name: name.to_string(),
                     table: tbl_name.clone(),
+                    table_schema: "public".to_string(),
                     command: parse_policy_command(&command),
                     roles: to
                         .iter()
@@ -203,6 +205,7 @@ fn parse_create_table(
 ) -> Result<Table> {
     let mut table = Table {
         name: name.to_string(),
+        schema: "public".to_string(),
         columns: BTreeMap::new(),
         indexes: Vec::new(),
         primary_key: None,
@@ -258,6 +261,7 @@ fn parse_create_table(
                     name: fk_name,
                     columns: columns.iter().map(|c| c.to_string()).collect(),
                     referenced_table: foreign_table.to_string(),
+                    referenced_schema: "public".to_string(),
                     referenced_columns: referred_columns.iter().map(|c| c.to_string()).collect(),
                     on_delete: parse_referential_action(on_delete),
                     on_update: parse_referential_action(on_update),
