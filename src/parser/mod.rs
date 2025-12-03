@@ -423,6 +423,20 @@ fn parse_column(col_def: &ColumnDef) -> Result<Column> {
     })
 }
 
+fn detect_serial_type(dt: &DataType) -> Option<SequenceDataType> {
+    if let DataType::Custom(name, _) = dt {
+        let type_name = name.to_string().to_lowercase();
+        match type_name.as_str() {
+            "serial" => Some(SequenceDataType::Integer),
+            "bigserial" => Some(SequenceDataType::BigInt),
+            "smallserial" => Some(SequenceDataType::SmallInt),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
 fn parse_data_type(dt: &DataType) -> Result<PgType> {
     match dt {
         DataType::Integer(_) | DataType::Int(_) => Ok(PgType::Integer),
@@ -1095,3 +1109,26 @@ CREATE TRIGGER batch_notify
         assert_eq!(seq.start, Some(-1));
     }
 }
+
+    #[test]
+    fn is_serial_type_detection() {
+        use sqlparser::ast::DataType;
+        use sqlparser::ast::ObjectName;
+        use sqlparser::ast::Ident;
+
+        // SERIAL
+        let serial = DataType::Custom(ObjectName(vec![Ident::new("serial")]), vec![]);
+        assert_eq!(detect_serial_type(&serial), Some(SequenceDataType::Integer));
+
+        // BIGSERIAL
+        let bigserial = DataType::Custom(ObjectName(vec![Ident::new("bigserial")]), vec![]);
+        assert_eq!(detect_serial_type(&bigserial), Some(SequenceDataType::BigInt));
+
+        // SMALLSERIAL
+        let smallserial = DataType::Custom(ObjectName(vec![Ident::new("smallserial")]), vec![]);
+        assert_eq!(detect_serial_type(&smallserial), Some(SequenceDataType::SmallInt));
+
+        // Not serial
+        let integer = DataType::Integer(None);
+        assert_eq!(detect_serial_type(&integer), None);
+    }
