@@ -16,6 +16,7 @@ pub async fn introspect_schema(
     schema.functions = introspect_functions(connection, target_schemas).await?;
     schema.views = introspect_views(connection, target_schemas).await?;
     schema.triggers = introspect_triggers(connection, target_schemas).await?;
+    schema.sequences = introspect_sequences(connection, target_schemas).await?;
 
     let table_keys: Vec<(String, String)> = schema
         .tables
@@ -754,4 +755,94 @@ fn extract_when_clause(trigger_def: &str) -> Option<String> {
         }
     }
     None
+}
+
+async fn introspect_sequences(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Sequence>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            s.schemaname as schema,
+            s.sequencename as name,
+            s.data_type,
+            s.start_value,
+            s.increment_by,
+            s.min_value,
+            s.max_value,
+            s.cycle,
+            s.cache_size,
+            c.relname as owned_table,
+            cn.nspname as owned_schema,
+            a.attname as owned_column
+        FROM pg_sequences s
+        JOIN pg_namespace n ON n.nspname = s.schemaname
+        LEFT JOIN pg_class seq_class ON seq_class.relname = s.sequencename
+            AND seq_class.relnamespace = n.oid
+            AND seq_class.relkind = 'S'
+        LEFT JOIN pg_depend d ON d.objid = seq_class.oid
+            AND d.deptype = 'a'
+        LEFT JOIN pg_class c ON c.oid = d.refobjid
+        LEFT JOIN pg_namespace cn ON cn.oid = c.relnamespace
+        LEFT JOIN pg_attribute a ON a.attrelid = d.refobjid
+            AND a.attnum = d.refobjsubid
+        WHERE s.schemaname = ANY($1::text[])
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch sequences: {e}")))?;
+
+    let mut sequences = BTreeMap::new();
+    for row in rows {
+        let schema: String = row.get("schema");
+        let name: String = row.get("name");
+        let data_type: String = row.get("data_type");
+        let start_value: Option<i64> = row.get("start_value");
+        let increment_by: Option<i64> = row.get("increment_by");
+        let min_value: Option<i64> = row.get("min_value");
+        let max_value: Option<i64> = row.get("max_value");
+        let cycle: Option<bool> = row.get("cycle");
+        let cache_size: Option<i64> = row.get("cache_size");
+        
+        let owned_table: Option<String> = row.get("owned_table");
+        let owned_schema: Option<String> = row.get("owned_schema");
+        let owned_column: Option<String> = row.get("owned_column");
+        
+        let owned_by = match (owned_schema, owned_table, owned_column) {
+            (Some(ts), Some(t), Some(c)) => Some(SequenceOwner {
+                table_schema: ts,
+                table_name: t,
+                column_name: c,
+            }),
+            _ => None,
+        };
+        
+        let seq_data_type = match data_type.as_str() {
+            "smallint" => SequenceDataType::SmallInt,
+            "bigint" => SequenceDataType::BigInt,
+            _ => SequenceDataType::Integer,
+        };
+        
+        let qualified_name = format!("{schema}.{name}");
+        sequences.insert(
+            qualified_name,
+            Sequence {
+                name,
+                schema,
+                data_type: seq_data_type,
+                start: start_value,
+                increment: increment_by,
+                min_value,
+                max_value,
+                cycle: cycle.unwrap_or(false),
+                cache: cache_size,
+                owned_by,
+            },
+        );
+    }
+
+    Ok(sequences)
 }
