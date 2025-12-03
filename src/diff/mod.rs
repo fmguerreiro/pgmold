@@ -154,6 +154,7 @@ pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops.extend(diff_functions(from, to));
     ops.extend(diff_views(from, to));
     ops.extend(diff_triggers(from, to));
+    ops.extend(diff_sequences(from, to));
 
     for (name, to_table) in &to.tables {
         if let Some(from_table) = from.tables.get(name) {
@@ -346,6 +347,78 @@ fn diff_triggers(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     }
 
     ops
+}
+
+fn diff_sequences(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for (name, to_seq) in &to.sequences {
+        match from.sequences.get(name) {
+            None => {
+                ops.push(MigrationOp::CreateSequence(to_seq.clone()));
+            }
+            Some(from_seq) => {
+                if let Some(changes) = compute_sequence_changes(from_seq, to_seq) {
+                    ops.push(MigrationOp::AlterSequence {
+                        name: name.clone(),
+                        changes,
+                    });
+                }
+            }
+        }
+    }
+
+    for name in from.sequences.keys() {
+        if !to.sequences.contains_key(name) {
+            ops.push(MigrationOp::DropSequence(name.clone()));
+        }
+    }
+
+    ops
+}
+
+fn compute_sequence_changes(from: &Sequence, to: &Sequence) -> Option<SequenceChanges> {
+    let mut changes = SequenceChanges::default();
+    let mut has_changes = false;
+
+    if from.data_type != to.data_type {
+        changes.data_type = Some(to.data_type.clone());
+        has_changes = true;
+    }
+    if from.increment != to.increment {
+        changes.increment = to.increment;
+        has_changes = true;
+    }
+    if from.min_value != to.min_value {
+        changes.min_value = Some(to.min_value);
+        has_changes = true;
+    }
+    if from.max_value != to.max_value {
+        changes.max_value = Some(to.max_value);
+        has_changes = true;
+    }
+    if from.start != to.start {
+        changes.restart = to.start;
+        has_changes = true;
+    }
+    if from.cache != to.cache {
+        changes.cache = to.cache;
+        has_changes = true;
+    }
+    if from.cycle != to.cycle {
+        changes.cycle = Some(to.cycle);
+        has_changes = true;
+    }
+    if from.owned_by != to.owned_by {
+        changes.owned_by = Some(to.owned_by.clone());
+        has_changes = true;
+    }
+
+    if has_changes {
+        Some(changes)
+    } else {
+        None
+    }
 }
 
 fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
@@ -601,7 +674,7 @@ fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{IndexType, ReferentialAction, SecurityType, Volatility};
+    use crate::model::{IndexType, ReferentialAction, SecurityType, SequenceDataType, Volatility};
     use std::collections::BTreeMap;
 
     fn empty_schema() -> Schema {
@@ -1330,5 +1403,181 @@ mod tests {
         assert_eq!(ops.len(), 2);
         assert!(ops.iter().any(|op| matches!(op, MigrationOp::DropTrigger { name, .. } if name == "audit_trigger")));
         assert!(ops.iter().any(|op| matches!(op, MigrationOp::CreateTrigger(t) if t.name == "audit_trigger")));
+    }
+
+    #[test]
+    fn diff_create_sequence() {
+        let from = empty_schema();
+        let mut to = empty_schema();
+        to.sequences.insert(
+            "public.users_id_seq".to_string(),
+            Sequence {
+                name: "users_id_seq".to_string(),
+                schema: "public".to_string(),
+                data_type: SequenceDataType::BigInt,
+                start: None,
+                increment: None,
+                min_value: None,
+                max_value: None,
+                cycle: false,
+                cache: None,
+                owned_by: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.iter().any(|op| matches!(op, MigrationOp::CreateSequence(_))));
+    }
+
+    #[test]
+    fn diff_drop_sequence() {
+        let mut from = empty_schema();
+        from.sequences.insert(
+            "public.old_seq".to_string(),
+            Sequence {
+                name: "old_seq".to_string(),
+                schema: "public".to_string(),
+                data_type: SequenceDataType::Integer,
+                start: None,
+                increment: None,
+                min_value: None,
+                max_value: None,
+                cycle: false,
+                cache: None,
+                owned_by: None,
+            },
+        );
+        let to = empty_schema();
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::DropSequence(n) if n == "public.old_seq")));
+    }
+
+    #[test]
+    fn diff_alter_sequence() {
+        let mut from = empty_schema();
+        from.sequences.insert(
+            "public.counter".to_string(),
+            Sequence {
+                name: "counter".to_string(),
+                schema: "public".to_string(),
+                data_type: SequenceDataType::BigInt,
+                start: None,
+                increment: Some(1),
+                min_value: None,
+                max_value: None,
+                cycle: false,
+                cache: None,
+                owned_by: None,
+            },
+        );
+        let mut to = empty_schema();
+        to.sequences.insert(
+            "public.counter".to_string(),
+            Sequence {
+                name: "counter".to_string(),
+                schema: "public".to_string(),
+                data_type: SequenceDataType::BigInt,
+                start: None,
+                increment: Some(5),
+                min_value: None,
+                max_value: None,
+                cycle: false,
+                cache: None,
+                owned_by: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.iter().any(
+            |op| matches!(op, MigrationOp::AlterSequence { changes, .. } if changes.increment == Some(5))
+        ));
+    }
+
+    #[test]
+    fn diff_sequence_no_change() {
+        let mut from = empty_schema();
+        from.sequences.insert(
+            "public.seq".to_string(),
+            Sequence {
+                name: "seq".to_string(),
+                schema: "public".to_string(),
+                data_type: SequenceDataType::BigInt,
+                start: None,
+                increment: Some(1),
+                min_value: None,
+                max_value: None,
+                cycle: false,
+                cache: None,
+                owned_by: None,
+            },
+        );
+        let mut to = empty_schema();
+        to.sequences.insert(
+            "public.seq".to_string(),
+            Sequence {
+                name: "seq".to_string(),
+                schema: "public".to_string(),
+                data_type: SequenceDataType::BigInt,
+                start: None,
+                increment: Some(1),
+                min_value: None,
+                max_value: None,
+                cycle: false,
+                cache: None,
+                owned_by: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert!(!ops.iter().any(|op| matches!(
+            op,
+            MigrationOp::CreateSequence(_)
+                | MigrationOp::DropSequence(_)
+                | MigrationOp::AlterSequence { .. }
+        )));
+    }
+
+    #[test]
+    fn diff_alter_sequence_start_to_restart() {
+        let mut from = empty_schema();
+        from.sequences.insert(
+            "public.seq".to_string(),
+            Sequence {
+                name: "seq".to_string(),
+                schema: "public".to_string(),
+                data_type: SequenceDataType::BigInt,
+                start: Some(1),
+                increment: None,
+                min_value: None,
+                max_value: None,
+                cycle: false,
+                cache: None,
+                owned_by: None,
+            },
+        );
+        let mut to = empty_schema();
+        to.sequences.insert(
+            "public.seq".to_string(),
+            Sequence {
+                name: "seq".to_string(),
+                schema: "public".to_string(),
+                data_type: SequenceDataType::BigInt,
+                start: Some(100),
+                increment: None,
+                min_value: None,
+                max_value: None,
+                cycle: false,
+                cache: None,
+                owned_by: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.iter().any(|op| matches!(op,
+            MigrationOp::AlterSequence { changes, .. } if changes.restart == Some(100)
+        )));
     }
 }
