@@ -623,16 +623,54 @@ fn parse_create_sequence(
         }
     });
 
+    let final_increment = increment.or(Some(1));
+    let inc = final_increment.unwrap_or(1);
+    let is_ascending = inc > 0;
+
+    let final_cache = cache.or(Some(1));
+
+    let final_min_value = min_value.or_else(|| {
+        if is_ascending {
+            Some(1)
+        } else {
+            match seq_data_type {
+                SequenceDataType::SmallInt => Some(-32768),
+                SequenceDataType::Integer => Some(-2147483648),
+                SequenceDataType::BigInt => Some(-9223372036854775808),
+            }
+        }
+    });
+
+    let final_max_value = max_value.or_else(|| {
+        if is_ascending {
+            match seq_data_type {
+                SequenceDataType::SmallInt => Some(32767),
+                SequenceDataType::Integer => Some(2147483647),
+                SequenceDataType::BigInt => Some(9223372036854775807),
+            }
+        } else {
+            Some(-1)
+        }
+    });
+
+    let final_start = start.or_else(|| {
+        if is_ascending {
+            final_min_value
+        } else {
+            final_max_value
+        }
+    });
+
     Ok(Sequence {
         name: name.to_string(),
         schema: schema.to_string(),
         data_type: seq_data_type,
-        start,
-        increment,
-        min_value,
-        max_value,
+        start: final_start,
+        increment: final_increment,
+        min_value: final_min_value,
+        max_value: final_max_value,
         cycle,
-        cache,
+        cache: final_cache,
         owned_by: owned_by_parsed,
     })
 }
@@ -1044,5 +1082,16 @@ CREATE TRIGGER batch_notify
         let schema = parse_sql_string(sql).unwrap();
         let seq = schema.sequences.get("test.desc_seq").unwrap();
         assert_eq!(seq.min_value, Some(-1000));
+    }
+
+    #[test]
+    fn parse_create_sequence_descending_defaults() {
+        let sql = "CREATE SEQUENCE public.desc_seq INCREMENT BY -1;";
+        let schema = parse_sql_string(sql).unwrap();
+        let seq = schema.sequences.get("public.desc_seq").unwrap();
+        assert_eq!(seq.increment, Some(-1));
+        assert_eq!(seq.min_value, Some(-2147483648));
+        assert_eq!(seq.max_value, Some(-1));
+        assert_eq!(seq.start, Some(-1));
     }
 }

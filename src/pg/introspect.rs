@@ -766,7 +766,7 @@ async fn introspect_sequences(
         SELECT
             s.schemaname as schema,
             s.sequencename as name,
-            s.data_type,
+            s.data_type::text,
             s.start_value,
             s.increment_by,
             s.min_value,
