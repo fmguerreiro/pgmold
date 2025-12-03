@@ -9,6 +9,7 @@ pub struct Schema {
     pub functions: BTreeMap<String, Function>,
     pub views: BTreeMap<String, View>,
     pub triggers: BTreeMap<String, Trigger>,
+    pub sequences: BTreeMap<String, Sequence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -254,6 +255,34 @@ pub struct Trigger {
     pub function_args: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SequenceOwner {
+    pub table_schema: String,
+    pub table_name: String,
+    pub column_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Sequence {
+    pub name: String,
+    pub schema: String,
+    pub data_type: SequenceDataType,
+    pub start: Option<i64>,
+    pub increment: Option<i64>,
+    pub min_value: Option<i64>,
+    pub max_value: Option<i64>,
+    pub cycle: bool,
+    pub cache: Option<i64>,
+    pub owned_by: Option<SequenceOwner>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SequenceDataType {
+    SmallInt,
+    Integer,
+    BigInt,
+}
+
 /// Creates a qualified name from schema and object name.
 /// Used as map keys for schema-aware lookups.
 pub fn qualified_name(schema: &str, name: &str) -> String {
@@ -278,6 +307,7 @@ impl Schema {
             functions: BTreeMap::new(),
             views: BTreeMap::new(),
             triggers: BTreeMap::new(),
+            sequences: BTreeMap::new(),
         }
     }
 
@@ -588,5 +618,54 @@ mod tests {
         });
 
         assert_ne!(schema1.fingerprint(), schema2.fingerprint());
+    }
+
+    #[test]
+    fn sequence_serialization_roundtrip() {
+        let sequence = Sequence {
+            name: "user_id_seq".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            cache: Some(1),
+            owned_by: Some(SequenceOwner {
+                table_schema: "public".to_string(),
+                table_name: "users".to_string(),
+                column_name: "id".to_string(),
+            }),
+        };
+
+        let json = serde_json::to_string(&sequence).expect("Failed to serialize");
+        let deserialized: Sequence = serde_json::from_str(&json).expect("Failed to deserialize");
+        assert_eq!(sequence, deserialized);
+    }
+
+    #[test]
+    fn schema_new_has_empty_sequences() {
+        let schema = Schema::new();
+        assert_eq!(schema.sequences.len(), 0);
+    }
+
+    #[test]
+    fn sequence_data_type_serialization() {
+        let small_int = SequenceDataType::SmallInt;
+        let integer = SequenceDataType::Integer;
+        let big_int = SequenceDataType::BigInt;
+
+        let small_json = serde_json::to_string(&small_int).expect("Failed to serialize SmallInt");
+        let int_json = serde_json::to_string(&integer).expect("Failed to serialize Integer");
+        let big_json = serde_json::to_string(&big_int).expect("Failed to serialize BigInt");
+
+        let small_deserialized: SequenceDataType = serde_json::from_str(&small_json).expect("Failed to deserialize SmallInt");
+        let int_deserialized: SequenceDataType = serde_json::from_str(&int_json).expect("Failed to deserialize Integer");
+        let big_deserialized: SequenceDataType = serde_json::from_str(&big_json).expect("Failed to deserialize BigInt");
+
+        assert_eq!(small_int, small_deserialized);
+        assert_eq!(integer, int_deserialized);
+        assert_eq!(big_int, big_deserialized);
     }
 }
