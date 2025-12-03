@@ -27,7 +27,7 @@ pub async fn apply_migration(
     options: ApplyOptions,
 ) -> Result<ApplyResult> {
     let target = load_schema_sources(schema_sources)?;
-    let current = introspect_schema(connection).await?;
+    let current = introspect_schema(connection, &[String::from("public")]).await?;
 
     let ops = plan_migration(compute_diff(&current, &target));
 

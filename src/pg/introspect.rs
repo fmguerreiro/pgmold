@@ -4,32 +4,40 @@ use crate::util::{Result, SchemaError};
 use sqlx::Row;
 use std::collections::BTreeMap;
 
-pub async fn introspect_schema(connection: &PgConnection) -> Result<Schema> {
+pub async fn introspect_schema(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<Schema> {
     let mut schema = Schema::new();
 
     schema.extensions = introspect_extensions(connection).await?;
-    schema.enums = introspect_enums(connection).await?;
-    schema.tables = introspect_tables(connection).await?;
-    schema.functions = introspect_functions(connection).await?;
-    schema.views = introspect_views(connection).await?;
+    schema.enums = introspect_enums(connection, target_schemas).await?;
+    schema.tables = introspect_tables(connection, target_schemas).await?;
+    schema.functions = introspect_functions(connection, target_schemas).await?;
+    schema.views = introspect_views(connection, target_schemas).await?;
 
-    let table_names: Vec<String> = schema.tables.keys().cloned().collect();
-    for table_name in table_names {
-        let columns = introspect_columns(connection, &table_name).await?;
-        let primary_key = introspect_primary_key(connection, &table_name).await?;
-        let mut indexes = introspect_indexes(connection, &table_name).await?;
-        let mut foreign_keys = introspect_foreign_keys(connection, &table_name).await?;
-        let mut check_constraints = introspect_check_constraints(connection, &table_name).await?;
+    let table_keys: Vec<(String, String)> = schema
+        .tables
+        .values()
+        .map(|t| (t.schema.clone(), t.name.clone()))
+        .collect();
+    for (table_schema, table_name) in table_keys {
+        let columns = introspect_columns(connection, target_schemas, &table_schema, &table_name).await?;
+        let primary_key = introspect_primary_key(connection, &table_schema, &table_name).await?;
+        let mut indexes = introspect_indexes(connection, &table_schema, &table_name).await?;
+        let mut foreign_keys = introspect_foreign_keys(connection, &table_schema, &table_name).await?;
+        let mut check_constraints = introspect_check_constraints(connection, &table_schema, &table_name).await?;
 
         indexes.sort();
         foreign_keys.sort();
         check_constraints.sort();
 
-        let row_level_security = introspect_rls_enabled(connection, &table_name).await?;
-        let mut policies = introspect_policies(connection, &table_name).await?;
+        let row_level_security = introspect_rls_enabled(connection, &table_schema, &table_name).await?;
+        let mut policies = introspect_policies(connection, &table_schema, &table_name).await?;
         policies.sort();
 
-        if let Some(table) = schema.tables.get_mut(&table_name) {
+        let qualified_name = format!("{table_schema}.{table_name}");
+        if let Some(table) = schema.tables.get_mut(&qualified_name) {
             table.columns = columns;
             table.primary_key = primary_key;
             table.indexes = indexes;
@@ -78,68 +86,70 @@ async fn introspect_extensions(connection: &PgConnection) -> Result<BTreeMap<Str
     Ok(extensions)
 }
 
-async fn introspect_enums(connection: &PgConnection) -> Result<BTreeMap<String, EnumType>> {
+async fn introspect_enums(connection: &PgConnection, target_schemas: &[String]) -> Result<BTreeMap<String, EnumType>> {
     let rows = sqlx::query(
         r#"
-        SELECT t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) as labels
+        SELECT n.nspname, t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) as labels
         FROM pg_type t
         JOIN pg_enum e ON t.oid = e.enumtypid
         JOIN pg_namespace n ON t.typnamespace = n.oid
-        WHERE n.nspname = 'public'
-        GROUP BY t.typname
+        WHERE n.nspname = ANY($1::text[])
+        GROUP BY n.nspname, t.typname
         "#,
     )
+    .bind(target_schemas)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch enums: {e}")))?;
 
     let mut enums = BTreeMap::new();
     for row in rows {
+        let schema: String = row.get("nspname");
         let name: String = row.get("typname");
         let labels: Vec<String> = row.get("labels");
-        enums.insert(
-            name.clone(),
-            EnumType {
-                name,
-                schema: "public".to_string(),
-                values: labels,
-            },
-        );
+        let enum_type = EnumType {
+            name: name.clone(),
+            schema: schema.clone(),
+            values: labels,
+        };
+        let qualified_name = format!("{schema}.{name}");
+        enums.insert(qualified_name, enum_type);
     }
 
     Ok(enums)
 }
 
-async fn introspect_tables(connection: &PgConnection) -> Result<BTreeMap<String, Table>> {
+async fn introspect_tables(connection: &PgConnection, target_schemas: &[String]) -> Result<BTreeMap<String, Table>> {
     let rows = sqlx::query(
         r#"
-        SELECT table_name
+        SELECT table_schema, table_name
         FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        WHERE table_schema = ANY($1::text[]) AND table_type = 'BASE TABLE'
         "#,
     )
+    .bind(target_schemas)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch tables: {e}")))?;
 
     let mut tables = BTreeMap::new();
     for row in rows {
+        let schema: String = row.get("table_schema");
         let name: String = row.get("table_name");
-        tables.insert(
-            name.clone(),
-            Table {
-                name,
-                schema: "public".to_string(),
-                columns: BTreeMap::new(),
-                indexes: Vec::new(),
-                primary_key: None,
-                foreign_keys: Vec::new(),
-                check_constraints: Vec::new(),
-                comment: None,
-                row_level_security: false,
-                policies: Vec::new(),
-            },
-        );
+        let table = Table {
+            name: name.clone(),
+            schema: schema.clone(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+        };
+        let qualified_name = format!("{schema}.{name}");
+        tables.insert(qualified_name, table);
     }
 
     Ok(tables)
@@ -147,6 +157,8 @@ async fn introspect_tables(connection: &PgConnection) -> Result<BTreeMap<String,
 
 async fn introspect_columns(
     connection: &PgConnection,
+    _target_schemas: &[String],
+    table_schema: &str,
     table_name: &str,
 ) -> Result<BTreeMap<String, Column>> {
     let rows = sqlx::query(
@@ -154,10 +166,11 @@ async fn introspect_columns(
         SELECT column_name, data_type, character_maximum_length,
                is_nullable, column_default, udt_name
         FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = $1
+        WHERE table_schema = $1 AND table_name = $2
         ORDER BY ordinal_position
         "#,
     )
+    .bind(table_schema)
     .bind(table_name)
     .fetch_all(connection.pool())
     .await
@@ -210,6 +223,7 @@ fn map_pg_type(data_type: &str, char_max_length: Option<i32>, udt_name: &str) ->
 
 async fn introspect_primary_key(
     connection: &PgConnection,
+    table_schema: &str,
     table_name: &str,
 ) -> Result<Option<PrimaryKey>> {
     let row = sqlx::query(
@@ -219,11 +233,12 @@ async fn introspect_primary_key(
         JOIN pg_class c ON c.oid = i.indrelid
         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey)
         JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relname = $1 AND n.nspname = 'public' AND i.indisprimary
+        WHERE c.relname = $1 AND n.nspname = $2 AND i.indisprimary
         GROUP BY i.indexrelid
         "#,
     )
     .bind(table_name)
+    .bind(table_schema)
     .fetch_optional(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch primary key: {e}")))?;
@@ -234,7 +249,7 @@ async fn introspect_primary_key(
     }))
 }
 
-async fn introspect_indexes(connection: &PgConnection, table_name: &str) -> Result<Vec<Index>> {
+async fn introspect_indexes(connection: &PgConnection, table_schema: &str, table_name: &str) -> Result<Vec<Index>> {
     let rows = sqlx::query(
         r#"
         SELECT i.relname as index_name, ix.indisunique, am.amname,
@@ -245,11 +260,12 @@ async fn introspect_indexes(connection: &PgConnection, table_name: &str) -> Resu
         JOIN pg_am am ON am.oid = i.relam
         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
         JOIN pg_namespace n ON n.oid = t.relnamespace
-        WHERE t.relname = $1 AND n.nspname = 'public' AND NOT ix.indisprimary
+        WHERE t.relname = $1 AND n.nspname = $2 AND NOT ix.indisprimary
         GROUP BY i.relname, ix.indisunique, am.amname
         "#,
     )
     .bind(table_name)
+    .bind(table_schema)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch indexes: {e}")))?;
@@ -282,6 +298,7 @@ async fn introspect_indexes(connection: &PgConnection, table_name: &str) -> Resu
 
 async fn introspect_foreign_keys(
     connection: &PgConnection,
+    table_schema: &str,
     table_name: &str,
 ) -> Result<Vec<ForeignKey>> {
     let rows = sqlx::query(
@@ -289,6 +306,7 @@ async fn introspect_foreign_keys(
         SELECT
             con.conname as name,
             ref_class.relname as referenced_table,
+            ref_n.nspname as referenced_schema,
             array_agg(att.attname ORDER BY u.attposition) as columns,
             array_agg(ref_att.attname ORDER BY u.attposition) as referenced_columns,
             con.confdeltype,
@@ -297,14 +315,16 @@ async fn introspect_foreign_keys(
         JOIN pg_class class ON con.conrelid = class.oid
         JOIN pg_class ref_class ON con.confrelid = ref_class.oid
         JOIN pg_namespace n ON n.oid = class.relnamespace
+        JOIN pg_namespace ref_n ON ref_n.oid = ref_class.relnamespace
         CROSS JOIN LATERAL unnest(con.conkey, con.confkey) WITH ORDINALITY AS u(attnum, ref_attnum, attposition)
         JOIN pg_attribute att ON att.attrelid = class.oid AND att.attnum = u.attnum
         JOIN pg_attribute ref_att ON ref_att.attrelid = ref_class.oid AND ref_att.attnum = u.ref_attnum
-        WHERE class.relname = $1 AND n.nspname = 'public' AND con.contype = 'f'
-        GROUP BY con.conname, ref_class.relname, con.confdeltype, con.confupdtype
+        WHERE class.relname = $1 AND n.nspname = $2 AND con.contype = 'f'
+        GROUP BY con.conname, ref_class.relname, ref_n.nspname, con.confdeltype, con.confupdtype
         "#,
     )
     .bind(table_name)
+    .bind(table_schema)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch foreign keys: {e}")))?;
@@ -313,6 +333,7 @@ async fn introspect_foreign_keys(
     for row in rows {
         let name: String = row.get("name");
         let referenced_table: String = row.get("referenced_table");
+        let referenced_schema: String = row.get("referenced_schema");
         let columns: Vec<String> = row.get("columns");
         let referenced_columns: Vec<String> = row.get("referenced_columns");
         let confdeltype: i8 = row.get::<i8, _>("confdeltype");
@@ -322,7 +343,7 @@ async fn introspect_foreign_keys(
             name,
             columns,
             referenced_table,
-            referenced_schema: "public".to_string(),
+            referenced_schema,
             referenced_columns,
             on_delete: map_referential_action(confdeltype as u8 as char),
             on_update: map_referential_action(confupdtype as u8 as char),
@@ -334,6 +355,7 @@ async fn introspect_foreign_keys(
 
 async fn introspect_check_constraints(
     connection: &PgConnection,
+    table_schema: &str,
     table_name: &str,
 ) -> Result<Vec<CheckConstraint>> {
     let rows = sqlx::query(
@@ -344,10 +366,11 @@ async fn introspect_check_constraints(
         FROM pg_constraint con
         JOIN pg_class class ON con.conrelid = class.oid
         JOIN pg_namespace n ON n.oid = class.relnamespace
-        WHERE class.relname = $1 AND n.nspname = 'public' AND con.contype = 'c'
+        WHERE class.relname = $1 AND n.nspname = $2 AND con.contype = 'c'
         "#,
     )
     .bind(table_name)
+    .bind(table_schema)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch check constraints: {e}")))?;
@@ -381,16 +404,17 @@ fn map_referential_action(action: char) -> ReferentialAction {
     }
 }
 
-async fn introspect_rls_enabled(connection: &PgConnection, table_name: &str) -> Result<bool> {
+async fn introspect_rls_enabled(connection: &PgConnection, table_schema: &str, table_name: &str) -> Result<bool> {
     let row = sqlx::query(
         r#"
         SELECT c.relrowsecurity
         FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relname = $1 AND n.nspname = 'public'
+        WHERE c.relname = $1 AND n.nspname = $2
         "#,
     )
     .bind(table_name)
+    .bind(table_schema)
     .fetch_optional(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch RLS status: {e}")))?;
@@ -400,7 +424,7 @@ async fn introspect_rls_enabled(connection: &PgConnection, table_name: &str) -> 
         .unwrap_or(false))
 }
 
-async fn introspect_policies(connection: &PgConnection, table_name: &str) -> Result<Vec<Policy>> {
+async fn introspect_policies(connection: &PgConnection, table_schema: &str, table_name: &str) -> Result<Vec<Policy>> {
     let rows = sqlx::query(
         r#"
         SELECT
@@ -415,10 +439,11 @@ async fn introspect_policies(connection: &PgConnection, table_name: &str) -> Res
         FROM pg_policy pol
         JOIN pg_class c ON pol.polrelid = c.oid
         JOIN pg_namespace n ON c.relnamespace = n.oid
-        WHERE c.relname = $1 AND n.nspname = 'public'
+        WHERE c.relname = $1 AND n.nspname = $2
         "#,
     )
     .bind(table_name)
+    .bind(table_schema)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch policies: {e}")))?;
@@ -434,7 +459,7 @@ async fn introspect_policies(connection: &PgConnection, table_name: &str) -> Res
         policies.push(Policy {
             name,
             table: table_name.to_string(),
-            table_schema: "public".to_string(),
+            table_schema: table_schema.to_string(),
             command: map_policy_command(command as u8 as char),
             roles,
             using_expr,
@@ -456,7 +481,7 @@ fn map_policy_command(cmd: char) -> PolicyCommand {
     }
 }
 
-async fn introspect_functions(connection: &PgConnection) -> Result<BTreeMap<String, Function>> {
+async fn introspect_functions(connection: &PgConnection, target_schemas: &[String]) -> Result<BTreeMap<String, Function>> {
     let rows = sqlx::query(
         r#"
         SELECT
@@ -471,10 +496,11 @@ async fn introspect_functions(connection: &PgConnection) -> Result<BTreeMap<Stri
         FROM pg_proc p
         JOIN pg_namespace n ON p.pronamespace = n.oid
         JOIN pg_language l ON p.prolang = l.oid
-        WHERE n.nspname = 'public'
+        WHERE n.nspname = ANY($1::text[])
           AND p.prokind = 'f'
         "#,
     )
+    .bind(target_schemas)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch functions: {e}")))?;
@@ -550,59 +576,61 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
         .collect()
 }
 
-async fn introspect_views(connection: &PgConnection) -> Result<BTreeMap<String, View>> {
+async fn introspect_views(connection: &PgConnection, target_schemas: &[String]) -> Result<BTreeMap<String, View>> {
     let mut views = BTreeMap::new();
 
     let regular_views = sqlx::query(
         r#"
-        SELECT viewname, definition
+        SELECT schemaname, viewname, definition
         FROM pg_views
-        WHERE schemaname = 'public'
+        WHERE schemaname = ANY($1::text[])
         "#,
     )
+    .bind(target_schemas)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch views: {e}")))?;
 
     for row in regular_views {
+        let schema: String = row.get("schemaname");
         let name: String = row.get("viewname");
         let definition: String = row.get("definition");
 
-        views.insert(
-            name.clone(),
-            View {
-                name,
-                schema: "public".to_string(),
-                query: definition.trim().trim_end_matches(';').to_string(),
-                materialized: false,
-            },
-        );
+        let view = View {
+            name: name.clone(),
+            schema: schema.clone(),
+            query: definition.trim().trim_end_matches(';').to_string(),
+            materialized: false,
+        };
+        let qualified_name = format!("{schema}.{name}");
+        views.insert(qualified_name, view);
     }
 
     let materialized_views = sqlx::query(
         r#"
-        SELECT matviewname, definition
+        SELECT schemaname, matviewname, definition
         FROM pg_matviews
-        WHERE schemaname = 'public'
+        WHERE schemaname = ANY($1::text[])
         "#,
     )
+    .bind(target_schemas)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch materialized views: {e}")))?;
 
     for row in materialized_views {
+        let schema: String = row.get("schemaname");
         let name: String = row.get("matviewname");
         let definition: String = row.get("definition");
 
-        views.insert(
-            name.clone(),
-            View {
-                name,
-                schema: "public".to_string(),
-                query: definition.trim().trim_end_matches(';').to_string(),
-                materialized: true,
-            },
-        );
+        let view = View {
+            name: name.clone(),
+            schema: schema.clone(),
+            query: definition.trim().trim_end_matches(';').to_string(),
+            materialized: true,
+        };
+        let qualified_name = format!("{schema}.{name}");
+        views.insert(qualified_name, view);
     }
 
     Ok(views)

@@ -110,7 +110,7 @@ pub async fn run() -> Result<()> {
             let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
-            let current = introspect_schema(&connection)
+            let current = introspect_schema(&connection, &[String::from("public")])
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
@@ -140,7 +140,7 @@ pub async fn run() -> Result<()> {
                 .map_err(|e| anyhow!("{e}"))?;
 
             let target = load_sql_schema(&schema)?;
-            let current = introspect_schema(&connection)
+            let current = introspect_schema(&connection, &[String::from("public")])
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
@@ -207,7 +207,7 @@ pub async fn run() -> Result<()> {
                 let connection = PgConnection::new(&db_url)
                     .await
                     .map_err(|e| anyhow!("{e}"))?;
-                let current = introspect_schema(&connection)
+                let current = introspect_schema(&connection, &[String::from("public")])
                     .await
                     .map_err(|e| anyhow!("{e}"))?;
                 plan_migration(compute_diff(&current, &target))
@@ -242,7 +242,7 @@ pub async fn run() -> Result<()> {
                 .map_err(|e| anyhow!("{e}"))?;
 
             let target = load_sql_schema(&schema)?;
-            let current = introspect_schema(&connection)
+            let current = introspect_schema(&connection, &[String::from("public")])
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 

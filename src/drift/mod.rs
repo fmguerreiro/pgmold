@@ -14,7 +14,7 @@ pub struct DriftReport {
 
 pub async fn detect_drift(schema_sources: &[String], conn: &PgConnection) -> Result<DriftReport> {
     let expected = load_schema_sources(schema_sources)?;
-    let actual = introspect_schema(conn).await?;
+    let actual = introspect_schema(conn, &[String::from("public")]).await?;
 
     let expected_fingerprint = expected.fingerprint();
     let actual_fingerprint = actual.fingerprint();
