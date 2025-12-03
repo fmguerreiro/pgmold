@@ -3,7 +3,7 @@ pub use loader::load_schema_sources;
 
 use crate::model::*;
 use crate::util::{Result, SchemaError};
-use sqlparser::ast::{ColumnDef, ColumnOption, DataType, Statement, TableConstraint};
+use sqlparser::ast::{ColumnDef, ColumnOption, DataType, Expr, SequenceOptions, Statement, TableConstraint};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use std::collections::BTreeMap;
@@ -284,6 +284,24 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 let key = format!("{}.{}.{}", tbl_schema, tbl_name, trigger_name);
                 schema.triggers.insert(key, trigger);
             }
+            Statement::CreateSequence {
+                name,
+                data_type,
+                sequence_options,
+                owned_by,
+                ..
+            } => {
+                let (seq_schema, seq_name) = extract_qualified_name(&name);
+                let sequence = parse_create_sequence(
+                    &seq_schema,
+                    &seq_name,
+                    data_type.as_ref(),
+                    &sequence_options,
+                    owned_by.as_ref(),
+                )?;
+                let key = qualified_name(&seq_schema, &seq_name);
+                schema.sequences.insert(key, sequence);
+            }
             _ => {}
         }
     }
@@ -535,6 +553,102 @@ fn parse_create_function(
         volatility,
         security: SecurityType::default(),
     })
+}
+
+fn parse_create_sequence(
+    schema: &str,
+    name: &str,
+    data_type: Option<&DataType>,
+    sequence_options: &[SequenceOptions],
+    owned_by: Option<&sqlparser::ast::ObjectName>,
+) -> Result<Sequence> {
+    let seq_data_type = data_type
+        .map(|dt| match dt {
+            DataType::SmallInt(_) => SequenceDataType::SmallInt,
+            DataType::BigInt(_) => SequenceDataType::BigInt,
+            DataType::Integer(_) | DataType::Int(_) => SequenceDataType::Integer,
+            _ => SequenceDataType::Integer,
+        })
+        .unwrap_or(SequenceDataType::Integer);
+
+    let mut start: Option<i64> = None;
+    let mut increment: Option<i64> = None;
+    let mut min_value: Option<i64> = None;
+    let mut max_value: Option<i64> = None;
+    let mut cycle = false;
+    let mut cache: Option<i64> = None;
+
+    for option in sequence_options {
+        match option {
+            SequenceOptions::IncrementBy(expr, _) => {
+                increment = extract_i64_from_expr(expr);
+            }
+            SequenceOptions::MinValue(Some(expr)) => {
+                min_value = extract_i64_from_expr(expr);
+            }
+            SequenceOptions::MaxValue(Some(expr)) => {
+                max_value = extract_i64_from_expr(expr);
+            }
+            SequenceOptions::StartWith(expr, _) => {
+                start = extract_i64_from_expr(expr);
+            }
+            SequenceOptions::Cache(expr) => {
+                cache = extract_i64_from_expr(expr);
+            }
+            SequenceOptions::Cycle(c) => {
+                cycle = *c;
+            }
+            _ => {}
+        }
+    }
+
+    let owned_by_parsed = owned_by.and_then(|obj_name| {
+        let parts: Vec<&str> = obj_name
+            .0
+            .iter()
+            .map(|ident| ident.value.as_str())
+            .collect();
+        match parts.as_slice() {
+            [table_schema, table_name, column_name] => Some(SequenceOwner {
+                table_schema: table_schema.to_string(),
+                table_name: table_name.to_string(),
+                column_name: column_name.to_string(),
+            }),
+            [table_name, column_name] => Some(SequenceOwner {
+                table_schema: "public".to_string(),
+                table_name: table_name.to_string(),
+                column_name: column_name.to_string(),
+            }),
+            _ => None,
+        }
+    });
+
+    Ok(Sequence {
+        name: name.to_string(),
+        schema: schema.to_string(),
+        data_type: seq_data_type,
+        start,
+        increment,
+        min_value,
+        max_value,
+        cycle,
+        cache,
+        owned_by: owned_by_parsed,
+    })
+}
+
+fn extract_i64_from_expr(expr: &Expr) -> Option<i64> {
+    match expr {
+        Expr::Value(sqlparser::ast::Value::Number(n, _)) => n.parse::<i64>().ok(),
+        Expr::UnaryOp { op, expr } => {
+            if matches!(op, sqlparser::ast::UnaryOperator::Minus) {
+                extract_i64_from_expr(expr).map(|n| -n)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -854,5 +968,81 @@ CREATE TRIGGER batch_notify
         let trigger = schema.triggers.get("public.events.batch_notify").unwrap();
 
         assert!(!trigger.for_each_row);
+    }
+
+    #[test]
+    fn parse_create_sequence_minimal() {
+        let sql = "CREATE SEQUENCE users_id_seq;";
+        let schema = parse_sql_string(sql).unwrap();
+        assert!(schema.sequences.contains_key("public.users_id_seq"));
+        let seq = schema.sequences.get("public.users_id_seq").unwrap();
+        assert_eq!(seq.name, "users_id_seq");
+        assert_eq!(seq.schema, "public");
+    }
+
+    #[test]
+    fn parse_create_sequence_with_schema() {
+        let sql = "CREATE SEQUENCE auth.counter_seq;";
+        let schema = parse_sql_string(sql).unwrap();
+        assert!(schema.sequences.contains_key("auth.counter_seq"));
+    }
+
+    #[test]
+    fn parse_create_sequence_with_data_type() {
+        let sql = "CREATE SEQUENCE myschema.counter_seq AS bigint;";
+        let schema = parse_sql_string(sql).unwrap();
+        let seq = schema.sequences.get("myschema.counter_seq").unwrap();
+        assert_eq!(seq.data_type, SequenceDataType::BigInt);
+    }
+
+    #[test]
+    fn parse_create_sequence_with_start() {
+        let sql = "CREATE SEQUENCE myschema.counter_seq START WITH 100;";
+        let schema = parse_sql_string(sql).unwrap();
+        let seq = schema.sequences.get("myschema.counter_seq").unwrap();
+        assert_eq!(seq.start, Some(100));
+    }
+
+    #[test]
+    fn parse_create_sequence_with_increment() {
+        let sql = "CREATE SEQUENCE myschema.counter_seq INCREMENT BY 5;";
+        let schema = parse_sql_string(sql).unwrap();
+        let seq = schema.sequences.get("myschema.counter_seq").unwrap();
+        assert_eq!(seq.increment, Some(5));
+    }
+
+    #[test]
+    fn parse_create_sequence_owned_by() {
+        let sql = "CREATE SEQUENCE public.users_id_seq OWNED BY public.users.id;";
+        let schema = parse_sql_string(sql).unwrap();
+        let seq = schema.sequences.get("public.users_id_seq").unwrap();
+        let owner = seq.owned_by.as_ref().unwrap();
+        assert_eq!(owner.table_schema, "public");
+        assert_eq!(owner.table_name, "users");
+        assert_eq!(owner.column_name, "id");
+    }
+
+    #[test]
+    fn parse_create_sequence_with_negative_start() {
+        let sql = "CREATE SEQUENCE test.desc_seq START WITH -1;";
+        let schema = parse_sql_string(sql).unwrap();
+        let seq = schema.sequences.get("test.desc_seq").unwrap();
+        assert_eq!(seq.start, Some(-1));
+    }
+
+    #[test]
+    fn parse_create_sequence_with_negative_increment() {
+        let sql = "CREATE SEQUENCE test.desc_seq INCREMENT BY -1;";
+        let schema = parse_sql_string(sql).unwrap();
+        let seq = schema.sequences.get("test.desc_seq").unwrap();
+        assert_eq!(seq.increment, Some(-1));
+    }
+
+    #[test]
+    fn parse_create_sequence_with_negative_minvalue() {
+        let sql = "CREATE SEQUENCE test.desc_seq MINVALUE -1000;";
+        let schema = parse_sql_string(sql).unwrap();
+        let seq = schema.sequences.get("test.desc_seq").unwrap();
+        assert_eq!(seq.min_value, Some(-1000));
     }
 }
