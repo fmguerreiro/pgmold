@@ -1228,4 +1228,30 @@ CREATE TRIGGER batch_notify
         let col = table.columns.get("id").unwrap();
         assert_eq!(col.default, Some("nextval('public.test_id_seq'::regclass)".to_string()));
     }
+
+    #[test]
+    fn parse_bigserial_column() {
+        let sql = "CREATE TABLE events (id BIGSERIAL PRIMARY KEY);";
+        let schema = parse_sql_string(sql).unwrap();
+
+        let table = schema.tables.get("public.events").unwrap();
+        let id_col = table.columns.get("id").unwrap();
+        assert_eq!(id_col.data_type, PgType::BigInt);
+
+        let seq = schema.sequences.get("public.events_id_seq").unwrap();
+        assert_eq!(seq.data_type, SequenceDataType::BigInt);
+    }
+
+    #[test]
+    fn parse_smallserial_column() {
+        let sql = "CREATE TABLE counters (id SMALLSERIAL PRIMARY KEY);";
+        let schema = parse_sql_string(sql).unwrap();
+
+        let table = schema.tables.get("public.counters").unwrap();
+        let id_col = table.columns.get("id").unwrap();
+        assert_eq!(id_col.data_type, PgType::SmallInt);
+
+        let seq = schema.sequences.get("public.counters_id_seq").unwrap();
+        assert_eq!(seq.data_type, SequenceDataType::SmallInt);
+    }
 }
