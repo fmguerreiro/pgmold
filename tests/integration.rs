@@ -83,7 +83,7 @@ async fn add_column() {
 
     assert!(ops.iter().any(|op| matches!(
         op,
-        MigrationOp::AddColumn { table, column } if table == "users" && column.name == "bio"
+        MigrationOp::AddColumn { table, column } if table == "public.users" && column.name == "bio"
     )));
 }
 
@@ -116,7 +116,7 @@ async fn drop_column_blocked() {
 
     assert!(ops.iter().any(|op| matches!(
         op,
-        MigrationOp::DropColumn { table, column } if table == "users" && column == "bio"
+        MigrationOp::DropColumn { table, column } if table == "public.users" && column == "bio"
     )));
 
     let lint_options = LintOptions {
@@ -181,13 +181,13 @@ async fn multi_file_schema_loading() {
 
     // Verify all objects were loaded
     assert_eq!(target.enums.len(), 1);
-    assert!(target.enums.contains_key("user_role"));
+    assert!(target.enums.contains_key("public.user_role"));
     assert_eq!(target.tables.len(), 2);
-    assert!(target.tables.contains_key("users"));
-    assert!(target.tables.contains_key("posts"));
+    assert!(target.tables.contains_key("public.users"));
+    assert!(target.tables.contains_key("public.posts"));
 
     // Verify FK was parsed correctly
-    let posts = target.tables.get("posts").unwrap();
+    let posts = target.tables.get("public.posts").unwrap();
     assert_eq!(posts.foreign_keys.len(), 1);
     assert_eq!(posts.foreign_keys[0].referenced_table, "users");
 

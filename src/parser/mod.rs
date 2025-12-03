@@ -9,6 +9,15 @@ use sqlparser::parser::Parser;
 use std::collections::BTreeMap;
 use std::fs;
 
+fn extract_qualified_name(name: &sqlparser::ast::ObjectName) -> (String, String) {
+    let parts: Vec<&str> = name.0.iter().map(|ident| ident.value.as_str()).collect();
+    match parts.as_slice() {
+        [schema, table] => (schema.to_string(), table.to_string()),
+        [table] => ("public".to_string(), table.to_string()),
+        _ => panic!("Unexpected object name format: {:?}", name),
+    }
+}
+
 fn parse_policy_command(cmd: &Option<sqlparser::ast::CreatePolicyCommand>) -> PolicyCommand {
     match cmd {
         Some(sqlparser::ast::CreatePolicyCommand::All) => PolicyCommand::All,
@@ -57,17 +66,20 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
     for statement in statements {
         match statement {
             Statement::CreateTable(ct) => {
-                let table = parse_create_table(&ct.name.to_string(), &ct.columns, &ct.constraints)?;
-                schema.tables.insert(table.name.clone(), table);
+                let (table_schema, table_name) = extract_qualified_name(&ct.name);
+                let table = parse_create_table(&table_schema, &table_name, &ct.columns, &ct.constraints)?;
+                let key = qualified_name(&table_schema, &table_name);
+                schema.tables.insert(key, table);
             }
             Statement::CreateIndex(ci) => {
                 let idx_name = ci
                     .name
                     .map(|n| n.to_string())
                     .ok_or_else(|| SchemaError::ParseError("Index must have name".into()))?;
-                let tbl_name = ci.table_name.to_string();
+                let (tbl_schema, tbl_name) = extract_qualified_name(&ci.table_name);
+                let tbl_key = qualified_name(&tbl_schema, &tbl_name);
 
-                if let Some(table) = schema.tables.get_mut(&tbl_name) {
+                if let Some(table) = schema.tables.get_mut(&tbl_key) {
                     table.indexes.push(Index {
                         name: idx_name,
                         columns: ci.columns.iter().map(|c| c.expr.to_string()).collect(),
@@ -82,15 +94,17 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 representation: sqlparser::ast::UserDefinedTypeRepresentation::Enum { labels },
                 ..
             } => {
+                let (enum_schema, enum_name) = extract_qualified_name(&name);
                 let enum_type = EnumType {
-                    name: name.to_string(),
-                    schema: "public".to_string(),
+                    schema: enum_schema.clone(),
+                    name: enum_name.clone(),
                     values: labels
                         .iter()
                         .map(|l| l.to_string().trim_matches('\'').to_string())
                         .collect(),
                 };
-                schema.enums.insert(enum_type.name.clone(), enum_type);
+                let key = qualified_name(&enum_schema, &enum_name);
+                schema.enums.insert(key, enum_type);
             }
             Statement::CreatePolicy {
                 name,
@@ -101,11 +115,12 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 with_check,
                 ..
             } => {
-                let tbl_name = table_name.to_string();
+                let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
+                let tbl_key = qualified_name(&tbl_schema, &tbl_name);
                 let policy = Policy {
                     name: name.to_string(),
-                    table: tbl_name.clone(),
-                    table_schema: "public".to_string(),
+                    table_schema: tbl_schema,
+                    table: tbl_name,
                     command: parse_policy_command(&command),
                     roles: to
                         .iter()
@@ -114,7 +129,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     using_expr: using.as_ref().map(|e| e.to_string()),
                     check_expr: with_check.as_ref().map(|e| e.to_string()),
                 };
-                if let Some(table) = schema.tables.get_mut(&tbl_name) {
+                if let Some(table) = schema.tables.get_mut(&tbl_key) {
                     table.policies.push(policy);
                     table.policies.sort();
                 }
@@ -122,16 +137,17 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             Statement::AlterTable {
                 name, operations, ..
             } => {
-                let tbl_name = name.to_string();
+                let (tbl_schema, tbl_name) = extract_qualified_name(&name);
+                let tbl_key = qualified_name(&tbl_schema, &tbl_name);
                 for op in operations {
                     match op {
                         sqlparser::ast::AlterTableOperation::EnableRowLevelSecurity => {
-                            if let Some(table) = schema.tables.get_mut(&tbl_name) {
+                            if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 table.row_level_security = true;
                             }
                         }
                         sqlparser::ast::AlterTableOperation::DisableRowLevelSecurity => {
-                            if let Some(table) = schema.tables.get_mut(&tbl_name) {
+                            if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 table.row_level_security = false;
                             }
                         }
@@ -148,15 +164,18 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 behavior,
                 ..
             } => {
+                let (func_schema, func_name) = extract_qualified_name(&name);
                 if let Some(func) = parse_create_function(
-                    &name.to_string(),
+                    &func_schema,
+                    &func_name,
                     args.as_deref(),
                     return_type.as_ref(),
                     function_body.as_ref(),
                     language.as_ref(),
                     behavior.as_ref(),
                 ) {
-                    schema.functions.insert(func.signature(), func);
+                    let key = qualified_name(&func_schema, &func.signature());
+                    schema.functions.insert(key, func);
                 }
             }
             Statement::CreateView {
@@ -165,13 +184,15 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 materialized,
                 ..
             } => {
+                let (view_schema, view_name) = extract_qualified_name(&name);
                 let view = View {
-                    name: name.to_string(),
-                    schema: "public".to_string(),
+                    schema: view_schema.clone(),
+                    name: view_name.clone(),
                     query: query.to_string(),
                     materialized,
                 };
-                schema.views.insert(view.name.clone(), view);
+                let key = qualified_name(&view_schema, &view_name);
+                schema.views.insert(key, view);
             }
             Statement::CreateExtension {
                 name,
@@ -199,13 +220,14 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
 }
 
 fn parse_create_table(
+    schema: &str,
     name: &str,
     columns: &[ColumnDef],
     constraints: &[TableConstraint],
 ) -> Result<Table> {
     let mut table = Table {
+        schema: schema.to_string(),
         name: name.to_string(),
-        schema: "public".to_string(),
         columns: BTreeMap::new(),
         indexes: Vec::new(),
         primary_key: None,
@@ -257,11 +279,12 @@ fn parse_create_table(
                     .map(|n| n.to_string())
                     .unwrap_or_else(|| format!("{}_{}_fkey", table.name, columns[0]));
 
+                let (ref_schema, ref_table) = extract_qualified_name(foreign_table);
                 table.foreign_keys.push(ForeignKey {
                     name: fk_name,
                     columns: columns.iter().map(|c| c.to_string()).collect(),
-                    referenced_table: foreign_table.to_string(),
-                    referenced_schema: "public".to_string(),
+                    referenced_schema: ref_schema,
+                    referenced_table: ref_table,
                     referenced_columns: referred_columns.iter().map(|c| c.to_string()).collect(),
                     on_delete: parse_referential_action(on_delete),
                     on_update: parse_referential_action(on_update),
@@ -377,6 +400,7 @@ fn strip_dollar_quotes(body: &str) -> String {
 }
 
 fn parse_create_function(
+    schema: &str,
     name: &str,
     args: Option<&[sqlparser::ast::OperateFunctionArg]>,
     return_type: Option<&sqlparser::ast::DataType>,
@@ -430,8 +454,8 @@ fn parse_create_function(
         .unwrap_or_default();
 
     Some(Function {
+        schema: schema.to_string(),
         name: name.to_string(),
-        schema: "public".to_string(),
         arguments,
         return_type: return_type_str,
         language: language_str,
@@ -478,9 +502,9 @@ SELECT id, email FROM users WHERE active = true;
         let schema = parse_sql_string(sql).expect("Should parse");
 
         assert_eq!(schema.views.len(), 1);
-        assert!(schema.views.contains_key("active_users"));
+        assert!(schema.views.contains_key("public.active_users"));
 
-        let view = &schema.views["active_users"];
+        let view = &schema.views["public.active_users"];
         assert_eq!(view.name, "active_users");
         assert!(!view.materialized);
         assert!(view.query.contains("SELECT"));
@@ -504,9 +528,9 @@ GROUP BY DATE(created_at);
         let schema = parse_sql_string(sql).expect("Should parse");
 
         assert_eq!(schema.views.len(), 1);
-        assert!(schema.views.contains_key("order_totals"));
+        assert!(schema.views.contains_key("public.order_totals"));
 
-        let view = &schema.views["order_totals"];
+        let view = &schema.views["public.order_totals"];
         assert_eq!(view.name, "order_totals");
         assert!(view.materialized);
     }
@@ -542,24 +566,24 @@ CREATE INDEX posts_user_id_idx ON posts (user_id);
         let schema = parse_sql_string(sql).expect("Should parse");
 
         assert_eq!(schema.enums.len(), 1);
-        assert!(schema.enums.contains_key("user_role"));
+        assert!(schema.enums.contains_key("public.user_role"));
         assert_eq!(
-            schema.enums["user_role"].values,
+            schema.enums["public.user_role"].values,
             vec!["admin", "user", "guest"]
         );
 
         assert_eq!(schema.tables.len(), 2);
-        assert!(schema.tables.contains_key("users"));
-        assert!(schema.tables.contains_key("posts"));
+        assert!(schema.tables.contains_key("public.users"));
+        assert!(schema.tables.contains_key("public.posts"));
 
-        let users = &schema.tables["users"];
+        let users = &schema.tables["public.users"];
         assert_eq!(users.columns.len(), 4);
         assert!(users.primary_key.is_some());
         assert_eq!(users.primary_key.as_ref().unwrap().columns, vec!["id"]);
         assert_eq!(users.indexes.len(), 1);
         assert!(users.indexes[0].unique);
 
-        let posts = &schema.tables["posts"];
+        let posts = &schema.tables["public.posts"];
         assert_eq!(posts.columns.len(), 4);
         assert_eq!(posts.foreign_keys.len(), 1);
         assert_eq!(posts.foreign_keys[0].name, "posts_user_id_fkey");
@@ -580,7 +604,7 @@ CREATE TABLE products (
 
         let schema = parse_sql_string(sql).expect("Should parse");
 
-        let products = &schema.tables["products"];
+        let products = &schema.tables["public.products"];
         assert_eq!(products.check_constraints.len(), 2);
 
         let price_check = products
@@ -596,5 +620,69 @@ CREATE TABLE products (
             .find(|c| c.name == "quantity_non_negative")
             .expect("quantity_non_negative constraint should exist");
         assert_eq!(quantity_check.expression, "quantity >= 0");
+    }
+
+    #[test]
+    fn parses_qualified_table_name() {
+        let sql = "CREATE TABLE auth.users (id INTEGER PRIMARY KEY);";
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("auth.users").unwrap();
+        assert_eq!(table.schema, "auth");
+        assert_eq!(table.name, "users");
+    }
+
+    #[test]
+    fn parses_unqualified_table_defaults_to_public() {
+        let sql = "CREATE TABLE users (id INTEGER PRIMARY KEY);";
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.schema, "public");
+        assert_eq!(table.name, "users");
+    }
+
+    #[test]
+    fn parses_cross_schema_foreign_key() {
+        let sql = r#"
+            CREATE TABLE public.orders (
+                id INTEGER PRIMARY KEY,
+                user_id INTEGER,
+                FOREIGN KEY (user_id) REFERENCES auth.users(id)
+            );
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.orders").unwrap();
+        let fk = &table.foreign_keys[0];
+        assert_eq!(fk.referenced_schema, "auth");
+        assert_eq!(fk.referenced_table, "users");
+    }
+
+    #[test]
+    fn parses_qualified_view_name() {
+        let sql = "CREATE VIEW reporting.active_users AS SELECT * FROM public.users WHERE active = true;";
+        let schema = parse_sql_string(sql).unwrap();
+        let view = schema.views.get("reporting.active_users").unwrap();
+        assert_eq!(view.schema, "reporting");
+        assert_eq!(view.name, "active_users");
+    }
+
+    #[test]
+    fn parses_qualified_function_name() {
+        let sql = r#"
+            CREATE FUNCTION utils.add_one(x INTEGER) RETURNS INTEGER
+            LANGUAGE SQL AS $$ SELECT x + 1 $$;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let func = schema.functions.get("utils.add_one(INTEGER)").unwrap();
+        assert_eq!(func.schema, "utils");
+        assert_eq!(func.name, "add_one");
+    }
+
+    #[test]
+    fn parses_qualified_enum_name() {
+        let sql = "CREATE TYPE auth.role AS ENUM ('admin', 'user');";
+        let schema = parse_sql_string(sql).unwrap();
+        let enum_type = schema.enums.get("auth.role").unwrap();
+        assert_eq!(enum_type.schema, "auth");
+        assert_eq!(enum_type.name, "role");
     }
 }

@@ -12,6 +12,7 @@ pub struct Schema {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Table {
+    pub schema: String,
     pub name: String,
     pub columns: BTreeMap<String, Column>,
     pub indexes: Vec<Index>,
@@ -74,6 +75,7 @@ pub struct PrimaryKey {
 pub struct ForeignKey {
     pub name: String,
     pub columns: Vec<String>,
+    pub referenced_schema: String,
     pub referenced_table: String,
     pub referenced_columns: Vec<String>,
     pub on_delete: ReferentialAction,
@@ -97,6 +99,7 @@ pub struct CheckConstraint {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EnumType {
+    pub schema: String,
     pub name: String,
     pub values: Vec<String>,
 }
@@ -111,6 +114,7 @@ pub struct Extension {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Policy {
     pub name: String,
+    pub table_schema: String,
     pub table: String,
     pub command: PolicyCommand,
     pub roles: Vec<String>,
@@ -285,6 +289,7 @@ mod tests {
         schema3.tables.insert(
             "users".to_string(),
             Table {
+                schema: "public".to_string(),
                 name: "users".to_string(),
                 columns: BTreeMap::new(),
                 indexes: Vec::new(),
@@ -301,6 +306,7 @@ mod tests {
         schema4.tables.insert(
             "users".to_string(),
             Table {
+                schema: "public".to_string(),
                 name: "users".to_string(),
                 columns: BTreeMap::new(),
                 indexes: Vec::new(),
@@ -418,5 +424,60 @@ mod tests {
             parse_qualified_name("users"),
             ("public".to_string(), "users".to_string())
         );
+    }
+
+    #[test]
+    fn table_has_schema_field() {
+        let table = Table {
+            schema: "auth".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+        };
+        assert_eq!(table.schema, "auth");
+    }
+
+    #[test]
+    fn enum_type_has_schema_field() {
+        let enum_type = EnumType {
+            schema: "auth".to_string(),
+            name: "role".to_string(),
+            values: vec!["admin".to_string(), "user".to_string()],
+        };
+        assert_eq!(enum_type.schema, "auth");
+    }
+
+    #[test]
+    fn foreign_key_has_referenced_schema() {
+        let fk = ForeignKey {
+            name: "fk_user".to_string(),
+            columns: vec!["user_id".to_string()],
+            referenced_schema: "auth".to_string(),
+            referenced_table: "users".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete: ReferentialAction::Cascade,
+            on_update: ReferentialAction::NoAction,
+        };
+        assert_eq!(fk.referenced_schema, "auth");
+    }
+
+    #[test]
+    fn policy_has_table_schema() {
+        let policy = Policy {
+            name: "user_isolation".to_string(),
+            table_schema: "auth".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::All,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("user_id = current_user_id()".to_string()),
+            check_expr: None,
+        };
+        assert_eq!(policy.table_schema, "auth");
     }
 }

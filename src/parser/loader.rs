@@ -405,9 +405,9 @@ mod tests {
         let schema = load_schema_sources(&sources).unwrap();
 
         assert_eq!(schema.enums.len(), 1);
-        assert!(schema.enums.contains_key("status"));
+        assert!(schema.enums.contains_key("public.status"));
         assert_eq!(schema.tables.len(), 1);
-        assert!(schema.tables.contains_key("users"));
+        assert!(schema.tables.contains_key("public.users"));
     }
 
     #[test]
