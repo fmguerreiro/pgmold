@@ -1254,4 +1254,21 @@ CREATE TRIGGER batch_notify
         let seq = schema.sequences.get("public.counters_id_seq").unwrap();
         assert_eq!(seq.data_type, SequenceDataType::SmallInt);
     }
+
+    #[test]
+    fn parse_serial_with_schema() {
+        let sql = "CREATE TABLE auth.users (id SERIAL PRIMARY KEY, name TEXT);";
+        let schema = parse_sql_string(sql).unwrap();
+
+        assert!(schema.tables.contains_key("auth.users"));
+        let table = schema.tables.get("auth.users").unwrap();
+        let id_col = table.columns.get("id").unwrap();
+        assert_eq!(id_col.default, Some("nextval('auth.users_id_seq'::regclass)".to_string()));
+
+        assert!(schema.sequences.contains_key("auth.users_id_seq"));
+        let seq = schema.sequences.get("auth.users_id_seq").unwrap();
+        assert_eq!(seq.schema, "auth");
+        let owner = seq.owned_by.as_ref().unwrap();
+        assert_eq!(owner.table_schema, "auth");
+    }
 }
