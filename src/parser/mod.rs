@@ -438,13 +438,13 @@ fn parse_column_with_serial(
         let seq_name = format!("{}_{}_seq", table_name, col_name);
         let seq_qualified = qualified_name(table_schema, &seq_name);
 
-        let pg_type = match &seq_data_type {
+        let pg_type = match seq_data_type {
             SequenceDataType::SmallInt => PgType::SmallInt,
             SequenceDataType::Integer => PgType::Integer,
             SequenceDataType::BigInt => PgType::BigInt,
         };
 
-        let max_value = match &seq_data_type {
+        let max_value = match seq_data_type {
             SequenceDataType::SmallInt => Some(32767),
             SequenceDataType::Integer => Some(2147483647),
             SequenceDataType::BigInt => Some(9223372036854775807),
@@ -1218,5 +1218,14 @@ CREATE TRIGGER batch_notify
         assert_eq!(owner.table_schema, "public");
         assert_eq!(owner.table_name, "users");
         assert_eq!(owner.column_name, "id");
+    }
+
+    #[test]
+    fn parse_serial_ignores_explicit_default() {
+        let sql = "CREATE TABLE test (id SERIAL DEFAULT 999);";
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.test").unwrap();
+        let col = table.columns.get("id").unwrap();
+        assert_eq!(col.default, Some("nextval('public.test_id_seq'::regclass)".to_string()));
     }
 }
