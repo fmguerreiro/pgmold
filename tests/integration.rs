@@ -25,7 +25,7 @@ async fn empty_to_simple_schema() {
 
     let connection = PgConnection::new(&url).await.unwrap();
 
-    let empty_schema = introspect_schema(&connection).await.unwrap();
+    let empty_schema = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
     assert!(empty_schema.tables.is_empty());
 
     let target_schema = parse_sql_string(
@@ -58,11 +58,11 @@ async fn add_column() {
         .await
         .unwrap();
 
-    let current_schema = introspect_schema(&connection).await.unwrap();
-    assert!(current_schema.tables.contains_key("users"));
+    let current_schema = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    assert!(current_schema.tables.contains_key("public.users"));
     assert!(!current_schema
         .tables
-        .get("users")
+        .get("public.users")
         .unwrap()
         .columns
         .contains_key("bio"));
@@ -192,7 +192,7 @@ async fn multi_file_schema_loading() {
     assert_eq!(posts.foreign_keys[0].referenced_table, "users");
 
     // Test that apply works with multi-file
-    let current = introspect_schema(&connection).await.unwrap();
+    let current = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
     let ops = compute_diff(&current, &target);
 
     // Should have operations to create enum, tables, indexes, FK
@@ -211,24 +211,24 @@ async fn multi_file_schema_loading() {
     transaction.commit().await.unwrap();
 
     // Verify core schema objects exist after apply
-    let after = introspect_schema(&connection).await.unwrap();
+    let after = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
     assert_eq!(after.enums.len(), 1, "Should have enum");
     assert!(
-        after.enums.contains_key("user_role"),
+        after.enums.contains_key("public.user_role"),
         "Should have user_role enum"
     );
     assert_eq!(after.tables.len(), 2, "Should have 2 tables");
     assert!(
-        after.tables.contains_key("users"),
+        after.tables.contains_key("public.users"),
         "Should have users table"
     );
     assert!(
-        after.tables.contains_key("posts"),
+        after.tables.contains_key("public.posts"),
         "Should have posts table"
     );
 
     // Verify foreign key exists
-    let posts_after = after.tables.get("posts").unwrap();
+    let posts_after = after.tables.get("public.posts").unwrap();
     assert_eq!(posts_after.foreign_keys.len(), 1, "Posts should have FK");
     assert_eq!(
         posts_after.foreign_keys[0].referenced_table, "users",
@@ -247,9 +247,9 @@ async fn add_enum_value() {
         .await
         .unwrap();
 
-    let current_schema = introspect_schema(&connection).await.unwrap();
-    assert!(current_schema.enums.contains_key("status"));
-    assert_eq!(current_schema.enums.get("status").unwrap().values.len(), 2);
+    let current_schema = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    assert!(current_schema.enums.contains_key("public.status"));
+    assert_eq!(current_schema.enums.get("public.status").unwrap().values.len(), 2);
 
     let target_schema = parse_sql_string(
         r#"
@@ -264,7 +264,7 @@ async fn add_enum_value() {
     assert!(matches!(
         &ops[0],
         MigrationOp::AddEnumValue { enum_name, value, .. }
-        if enum_name == "status" && value == "pending"
+        if enum_name == "public.status" && value == "pending"
     ));
 
     let planned = plan_migration(ops);
@@ -282,8 +282,8 @@ async fn add_enum_value() {
             .unwrap();
     }
 
-    let after_schema = introspect_schema(&connection).await.unwrap();
-    let status_enum = after_schema.enums.get("status").unwrap();
+    let after_schema = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let status_enum = after_schema.enums.get("public.status").unwrap();
     assert_eq!(status_enum.values.len(), 3);
     assert!(status_enum.values.contains(&"pending".to_string()));
 }

@@ -1,7 +1,7 @@
 use crate::diff::{ColumnChanges, EnumValuePosition, MigrationOp, PolicyChanges};
 use crate::model::{
-    CheckConstraint, Column, ForeignKey, Function, Index, IndexType, PgType, Policy, PolicyCommand,
-    ReferentialAction, SecurityType, Table, View, Volatility,
+    parse_qualified_name, CheckConstraint, Column, ForeignKey, Function, Index, IndexType, PgType,
+    Policy, PolicyCommand, ReferentialAction, SecurityType, Table, View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -28,7 +28,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
 
         MigrationOp::CreateEnum(enum_type) => vec![format!(
             "CREATE TYPE {} AS ENUM ({});",
-            quote_ident(&enum_type.name),
+            quote_qualified(&enum_type.schema, &enum_type.name),
             enum_type
                 .values
                 .iter()
@@ -37,16 +37,20 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                 .join(", ")
         )],
 
-        MigrationOp::DropEnum(name) => vec![format!("DROP TYPE {};", quote_ident(name))],
+        MigrationOp::DropEnum(name) => {
+            let (schema, enum_name) = parse_qualified_name(name);
+            vec![format!("DROP TYPE {};", quote_qualified(&schema, &enum_name))]
+        }
 
         MigrationOp::AddEnumValue {
             enum_name,
             value,
             position,
         } => {
+            let (schema, name) = parse_qualified_name(enum_name);
             let mut sql = format!(
                 "ALTER TYPE {} ADD VALUE '{}'",
-                quote_ident(enum_name),
+                quote_qualified(&schema, &name),
                 escape_string(value)
             );
 
@@ -67,19 +71,28 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
 
         MigrationOp::CreateTable(table) => generate_create_table(table),
 
-        MigrationOp::DropTable(name) => vec![format!("DROP TABLE {};", quote_ident(name))],
+        MigrationOp::DropTable(name) => {
+            let (schema, table_name) = parse_qualified_name(name);
+            vec![format!("DROP TABLE {};", quote_qualified(&schema, &table_name))]
+        }
 
-        MigrationOp::AddColumn { table, column } => vec![format!(
-            "ALTER TABLE {} ADD COLUMN {};",
-            quote_ident(table),
-            format_column(column)
-        )],
+        MigrationOp::AddColumn { table, column } => {
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![format!(
+                "ALTER TABLE {} ADD COLUMN {};",
+                quote_qualified(&schema, &table_name),
+                format_column(column)
+            )]
+        }
 
-        MigrationOp::DropColumn { table, column } => vec![format!(
-            "ALTER TABLE {} DROP COLUMN {};",
-            quote_ident(table),
-            quote_ident(column)
-        )],
+        MigrationOp::DropColumn { table, column } => {
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![format!(
+                "ALTER TABLE {} DROP COLUMN {};",
+                quote_qualified(&schema, &table_name),
+                quote_ident(column)
+            )]
+        }
 
         MigrationOp::AlterColumn {
             table,
@@ -87,68 +100,96 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             changes,
         } => generate_alter_column(table, column, changes),
 
-        MigrationOp::AddPrimaryKey { table, primary_key } => vec![format!(
-            "ALTER TABLE {} ADD PRIMARY KEY ({});",
-            quote_ident(table),
-            format_column_list(&primary_key.columns)
-        )],
+        MigrationOp::AddPrimaryKey { table, primary_key } => {
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![format!(
+                "ALTER TABLE {} ADD PRIMARY KEY ({});",
+                quote_qualified(&schema, &table_name),
+                format_column_list(&primary_key.columns)
+            )]
+        }
 
-        MigrationOp::DropPrimaryKey { table } => vec![format!(
-            "ALTER TABLE {} DROP CONSTRAINT {}_pkey;",
-            quote_ident(table),
-            quote_ident(table)
-        )],
+        MigrationOp::DropPrimaryKey { table } => {
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![format!(
+                "ALTER TABLE {} DROP CONSTRAINT {}_pkey;",
+                quote_qualified(&schema, &table_name),
+                quote_ident(&table_name)
+            )]
+        }
 
-        MigrationOp::AddIndex { table, index } => vec![generate_create_index(table, index)],
+        MigrationOp::AddIndex { table, index } => {
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![generate_create_index(&schema, &table_name, index)]
+        }
 
         MigrationOp::DropIndex { index_name, .. } => {
             vec![format!("DROP INDEX {};", quote_ident(index_name))]
         }
 
         MigrationOp::AddForeignKey { table, foreign_key } => {
-            vec![generate_add_foreign_key(table, foreign_key)]
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![generate_add_foreign_key(&schema, &table_name, foreign_key)]
         }
 
         MigrationOp::DropForeignKey {
             table,
             foreign_key_name,
-        } => vec![format!(
-            "ALTER TABLE {} DROP CONSTRAINT {};",
-            quote_ident(table),
-            quote_ident(foreign_key_name)
-        )],
+        } => {
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![format!(
+                "ALTER TABLE {} DROP CONSTRAINT {};",
+                quote_qualified(&schema, &table_name),
+                quote_ident(foreign_key_name)
+            )]
+        }
 
         MigrationOp::AddCheckConstraint {
             table,
             check_constraint,
-        } => vec![generate_add_check_constraint(table, check_constraint)],
+        } => {
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![generate_add_check_constraint(&schema, &table_name, check_constraint)]
+        }
 
         MigrationOp::DropCheckConstraint {
             table,
             constraint_name,
-        } => vec![format!(
-            "ALTER TABLE {} DROP CONSTRAINT {};",
-            quote_ident(table),
-            quote_ident(constraint_name)
-        )],
+        } => {
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![format!(
+                "ALTER TABLE {} DROP CONSTRAINT {};",
+                quote_qualified(&schema, &table_name),
+                quote_ident(constraint_name)
+            )]
+        }
 
-        MigrationOp::EnableRls { table } => vec![format!(
-            "ALTER TABLE {} ENABLE ROW LEVEL SECURITY;",
-            quote_ident(table)
-        )],
+        MigrationOp::EnableRls { table } => {
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![format!(
+                "ALTER TABLE {} ENABLE ROW LEVEL SECURITY;",
+                quote_qualified(&schema, &table_name)
+            )]
+        }
 
-        MigrationOp::DisableRls { table } => vec![format!(
-            "ALTER TABLE {} DISABLE ROW LEVEL SECURITY;",
-            quote_ident(table)
-        )],
+        MigrationOp::DisableRls { table } => {
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![format!(
+                "ALTER TABLE {} DISABLE ROW LEVEL SECURITY;",
+                quote_qualified(&schema, &table_name)
+            )]
+        }
 
         MigrationOp::CreatePolicy(policy) => vec![generate_create_policy(policy)],
 
-        MigrationOp::DropPolicy { table, name } => vec![format!(
-            "DROP POLICY {} ON {};",
-            quote_ident(name),
-            quote_ident(table)
-        )],
+        MigrationOp::DropPolicy { table, name } => {
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![format!(
+                "DROP POLICY {} ON {};",
+                quote_ident(name),
+                quote_qualified(&schema, &table_name)
+            )]
+        }
 
         MigrationOp::AlterPolicy {
             table,
@@ -159,7 +200,8 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         MigrationOp::CreateFunction(func) => vec![generate_create_function(func)],
 
         MigrationOp::DropFunction { name, args } => {
-            vec![format!("DROP FUNCTION {}({});", quote_ident(name), args)]
+            let (schema, func_name) = parse_qualified_name(name);
+            vec![format!("DROP FUNCTION {}({});", quote_qualified(&schema, &func_name), args)]
         }
 
         MigrationOp::AlterFunction { new_function, .. } => {
@@ -169,12 +211,13 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         MigrationOp::CreateView(view) => vec![generate_create_view(view)],
 
         MigrationOp::DropView { name, materialized } => {
+            let (schema, view_name) = parse_qualified_name(name);
             let view_type = if *materialized {
                 "MATERIALIZED VIEW"
             } else {
                 "VIEW"
             };
-            vec![format!("DROP {} {};", view_type, quote_ident(name))]
+            vec![format!("DROP {} {};", view_type, quote_qualified(&schema, &view_name))]
         }
 
         MigrationOp::AlterView { new_view, .. } => {
@@ -195,28 +238,29 @@ fn generate_create_table(table: &Table) -> Vec<String> {
         ));
     }
 
+    let qualified_name = quote_qualified(&table.schema, &table.name);
     statements.push(format!(
         "CREATE TABLE {} (\n    {}\n);",
-        quote_ident(&table.name),
+        qualified_name,
         column_defs.join(",\n    ")
     ));
 
     for index in &table.indexes {
-        statements.push(generate_create_index(&table.name, index));
+        statements.push(generate_create_index(&table.schema, &table.name, index));
     }
 
     for foreign_key in &table.foreign_keys {
-        statements.push(generate_add_foreign_key(&table.name, foreign_key));
+        statements.push(generate_add_foreign_key(&table.schema, &table.name, foreign_key));
     }
 
     for check_constraint in &table.check_constraints {
-        statements.push(generate_add_check_constraint(&table.name, check_constraint));
+        statements.push(generate_add_check_constraint(&table.schema, &table.name, check_constraint));
     }
 
     statements
 }
 
-fn generate_create_index(table: &str, index: &Index) -> String {
+fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {
     let unique = if index.unique { "UNIQUE " } else { "" };
     let index_type = match index.index_type {
         IndexType::BTree => "",
@@ -230,40 +274,42 @@ fn generate_create_index(table: &str, index: &Index) -> String {
         unique,
         quote_ident(&index.name),
         index_type,
-        quote_ident(table),
+        quote_qualified(schema, table),
         format_column_list(&index.columns)
     )
 }
 
-fn generate_add_foreign_key(table: &str, foreign_key: &ForeignKey) -> String {
+fn generate_add_foreign_key(schema: &str, table: &str, foreign_key: &ForeignKey) -> String {
     format!(
         "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({}) ON DELETE {} ON UPDATE {};",
-        quote_ident(table),
+        quote_qualified(schema, table),
         quote_ident(&foreign_key.name),
         format_column_list(&foreign_key.columns),
-        quote_ident(&foreign_key.referenced_table),
+        quote_qualified(&foreign_key.referenced_schema, &foreign_key.referenced_table),
         format_column_list(&foreign_key.referenced_columns),
         format_referential_action(&foreign_key.on_delete),
         format_referential_action(&foreign_key.on_update)
     )
 }
 
-fn generate_add_check_constraint(table: &str, check_constraint: &CheckConstraint) -> String {
+fn generate_add_check_constraint(schema: &str, table: &str, check_constraint: &CheckConstraint) -> String {
     format!(
         "ALTER TABLE {} ADD CONSTRAINT {} CHECK ({});",
-        quote_ident(table),
+        quote_qualified(schema, table),
         quote_ident(&check_constraint.name),
         check_constraint.expression
     )
 }
 
 fn generate_alter_column(table: &str, column: &str, changes: &ColumnChanges) -> Vec<String> {
+    let (schema, table_name) = parse_qualified_name(table);
+    let qualified = quote_qualified(&schema, &table_name);
     let mut statements = Vec::new();
 
     if let Some(ref data_type) = changes.data_type {
         statements.push(format!(
             "ALTER TABLE {} ALTER COLUMN {} TYPE {};",
-            quote_ident(table),
+            qualified,
             quote_ident(column),
             format_pg_type(data_type)
         ));
@@ -273,13 +319,13 @@ fn generate_alter_column(table: &str, column: &str, changes: &ColumnChanges) -> 
         if nullable {
             statements.push(format!(
                 "ALTER TABLE {} ALTER COLUMN {} DROP NOT NULL;",
-                quote_ident(table),
+                qualified,
                 quote_ident(column)
             ));
         } else {
             statements.push(format!(
                 "ALTER TABLE {} ALTER COLUMN {} SET NOT NULL;",
-                quote_ident(table),
+                qualified,
                 quote_ident(column)
             ));
         }
@@ -290,7 +336,7 @@ fn generate_alter_column(table: &str, column: &str, changes: &ColumnChanges) -> 
             Some(value) => {
                 statements.push(format!(
                     "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {};",
-                    quote_ident(table),
+                    qualified,
                     quote_ident(column),
                     value
                 ));
@@ -298,7 +344,7 @@ fn generate_alter_column(table: &str, column: &str, changes: &ColumnChanges) -> 
             None => {
                 statements.push(format!(
                     "ALTER TABLE {} ALTER COLUMN {} DROP DEFAULT;",
-                    quote_ident(table),
+                    qualified,
                     quote_ident(column)
                 ));
             }
@@ -337,7 +383,10 @@ fn format_pg_type(pg_type: &PgType) -> String {
         PgType::Uuid => "UUID".to_string(),
         PgType::Json => "JSON".to_string(),
         PgType::Jsonb => "JSONB".to_string(),
-        PgType::CustomEnum(name) => quote_ident(name),
+        PgType::CustomEnum(name) => {
+            let (schema, enum_name) = parse_qualified_name(name);
+            quote_qualified(&schema, &enum_name)
+        }
     }
 }
 
@@ -363,6 +412,10 @@ pub fn quote_ident(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
+fn quote_qualified(schema: &str, name: &str) -> String {
+    format!("{}.{}", quote_ident(schema), quote_ident(name))
+}
+
 fn escape_string(value: &str) -> String {
     value.replace('\'', "''")
 }
@@ -371,7 +424,7 @@ fn generate_create_policy(policy: &Policy) -> String {
     let mut sql = format!(
         "CREATE POLICY {} ON {}",
         quote_ident(&policy.name),
-        quote_ident(&policy.table)
+        quote_qualified(&policy.table_schema, &policy.table)
     );
 
     sql.push_str(&format!(" FOR {}", format_policy_command(&policy.command)));
@@ -401,13 +454,15 @@ fn generate_create_policy(policy: &Policy) -> String {
 }
 
 fn generate_alter_policy(table: &str, name: &str, changes: &PolicyChanges) -> Vec<String> {
+    let (schema, table_name) = parse_qualified_name(table);
+    let qualified = quote_qualified(&schema, &table_name);
     let mut statements = Vec::new();
 
     if let Some(ref roles) = changes.roles {
         statements.push(format!(
             "ALTER POLICY {} ON {} TO {};",
             quote_ident(name),
-            quote_ident(table),
+            qualified,
             roles
                 .iter()
                 .map(|r| quote_ident(r))
@@ -420,7 +475,7 @@ fn generate_alter_policy(table: &str, name: &str, changes: &PolicyChanges) -> Ve
         statements.push(format!(
             "ALTER POLICY {} ON {} USING ({});",
             quote_ident(name),
-            quote_ident(table),
+            qualified,
             expr
         ))
     }
@@ -429,7 +484,7 @@ fn generate_alter_policy(table: &str, name: &str, changes: &PolicyChanges) -> Ve
         statements.push(format!(
             "ALTER POLICY {} ON {} WITH CHECK ({});",
             quote_ident(name),
-            quote_ident(table),
+            qualified,
             expr
         ))
     }
@@ -493,7 +548,7 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
     format!(
         "{} {}({}) RETURNS {} LANGUAGE {} {} {} AS $${}$$;",
         create_stmt,
-        quote_ident(&func.name),
+        quote_qualified(&func.schema, &func.name),
         args,
         func.return_type,
         func.language,
@@ -512,18 +567,19 @@ fn generate_create_or_replace_view(view: &View) -> String {
 }
 
 fn generate_view_ddl(view: &View, replace: bool) -> String {
+    let qualified_name = quote_qualified(&view.schema, &view.name);
     if view.materialized {
         if replace {
             format!(
                 "DROP MATERIALIZED VIEW IF EXISTS {}; CREATE MATERIALIZED VIEW {} AS {};",
-                quote_ident(&view.name),
-                quote_ident(&view.name),
+                qualified_name,
+                qualified_name,
                 view.query
             )
         } else {
             format!(
                 "CREATE MATERIALIZED VIEW {} AS {};",
-                quote_ident(&view.name),
+                qualified_name,
                 view.query
             )
         }
@@ -536,7 +592,7 @@ fn generate_view_ddl(view: &View, replace: bool) -> String {
         format!(
             "{} {} AS {};",
             create_stmt,
-            quote_ident(&view.name),
+            qualified_name,
             view.query
         )
     }
@@ -560,23 +616,23 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "CREATE TYPE \"user_role\" AS ENUM ('admin', 'user', 'guest');"
+            "CREATE TYPE \"public\".\"user_role\" AS ENUM ('admin', 'user', 'guest');"
         );
     }
 
     #[test]
     fn drop_enum_generates_valid_sql() {
-        let ops = vec![MigrationOp::DropEnum("user_role".to_string())];
+        let ops = vec![MigrationOp::DropEnum("public.user_role".to_string())];
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert_eq!(sql[0], "DROP TYPE \"user_role\";");
+        assert_eq!(sql[0], "DROP TYPE \"public\".\"user_role\";");
     }
 
     #[test]
     fn add_column_generates_valid_sql() {
         let ops = vec![MigrationOp::AddColumn {
-            table: "users".to_string(),
+            table: "public.users".to_string(),
             column: Column {
                 name: "email".to_string(),
                 data_type: PgType::Varchar(Some(255)),
@@ -590,20 +646,20 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER TABLE \"users\" ADD COLUMN \"email\" VARCHAR(255) NOT NULL;"
+            "ALTER TABLE \"public\".\"users\" ADD COLUMN \"email\" VARCHAR(255) NOT NULL;"
         );
     }
 
     #[test]
     fn drop_column_generates_valid_sql() {
         let ops = vec![MigrationOp::DropColumn {
-            table: "users".to_string(),
+            table: "public.users".to_string(),
             column: "email".to_string(),
         }];
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert_eq!(sql[0], "ALTER TABLE \"users\" DROP COLUMN \"email\";");
+        assert_eq!(sql[0], "ALTER TABLE \"public\".\"users\" DROP COLUMN \"email\";");
     }
 
     #[test]
@@ -647,7 +703,7 @@ mod tests {
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert!(sql[0].contains("CREATE TABLE \"users\""));
+        assert!(sql[0].contains("CREATE TABLE \"public\".\"users\""));
         assert!(sql[0].contains("\"id\" BIGINT NOT NULL"));
         assert!(sql[0].contains("\"name\" TEXT"));
         assert!(sql[0].contains("PRIMARY KEY (\"id\")"));
@@ -662,7 +718,7 @@ mod tests {
     #[test]
     fn add_index_generates_valid_sql() {
         let ops = vec![MigrationOp::AddIndex {
-            table: "users".to_string(),
+            table: "public.users".to_string(),
             index: Index {
                 name: "users_email_idx".to_string(),
                 columns: vec!["email".to_string()],
@@ -675,14 +731,14 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "CREATE UNIQUE INDEX \"users_email_idx\" ON \"users\" (\"email\");"
+            "CREATE UNIQUE INDEX \"users_email_idx\" ON \"public\".\"users\" (\"email\");"
         );
     }
 
     #[test]
     fn alter_column_type_generates_valid_sql() {
         let ops = vec![MigrationOp::AlterColumn {
-            table: "users".to_string(),
+            table: "public.users".to_string(),
             column: "name".to_string(),
             changes: ColumnChanges {
                 data_type: Some(PgType::Varchar(Some(100))),
@@ -695,7 +751,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER TABLE \"users\" ALTER COLUMN \"name\" TYPE VARCHAR(100);"
+            "ALTER TABLE \"public\".\"users\" ALTER COLUMN \"name\" TYPE VARCHAR(100);"
         );
     }
 
@@ -712,7 +768,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "CREATE VIEW \"active_users\" AS SELECT * FROM users WHERE active = true;"
+            "CREATE VIEW \"public\".\"active_users\" AS SELECT * FROM users WHERE active = true;"
         );
     }
 
@@ -729,38 +785,38 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "CREATE MATERIALIZED VIEW \"user_stats\" AS SELECT COUNT(*) FROM users;"
+            "CREATE MATERIALIZED VIEW \"public\".\"user_stats\" AS SELECT COUNT(*) FROM users;"
         );
     }
 
     #[test]
     fn drop_view_generates_valid_sql() {
         let ops = vec![MigrationOp::DropView {
-            name: "active_users".to_string(),
+            name: "public.active_users".to_string(),
             materialized: false,
         }];
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert_eq!(sql[0], "DROP VIEW \"active_users\";");
+        assert_eq!(sql[0], "DROP VIEW \"public\".\"active_users\";");
     }
 
     #[test]
     fn drop_materialized_view_generates_valid_sql() {
         let ops = vec![MigrationOp::DropView {
-            name: "user_stats".to_string(),
+            name: "public.user_stats".to_string(),
             materialized: true,
         }];
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert_eq!(sql[0], "DROP MATERIALIZED VIEW \"user_stats\";");
+        assert_eq!(sql[0], "DROP MATERIALIZED VIEW \"public\".\"user_stats\";");
     }
 
     #[test]
     fn add_foreign_key_generates_valid_sql() {
         let ops = vec![MigrationOp::AddForeignKey {
-            table: "posts".to_string(),
+            table: "public.posts".to_string(),
             foreign_key: ForeignKey {
                 name: "posts_user_id_fkey".to_string(),
                 columns: vec!["user_id".to_string()],
@@ -774,9 +830,9 @@ mod tests {
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert!(sql[0].contains("ALTER TABLE \"posts\" ADD CONSTRAINT \"posts_user_id_fkey\""));
+        assert!(sql[0].contains("ALTER TABLE \"public\".\"posts\" ADD CONSTRAINT \"posts_user_id_fkey\""));
         assert!(sql[0].contains("FOREIGN KEY (\"user_id\")"));
-        assert!(sql[0].contains("REFERENCES \"users\" (\"id\")"));
+        assert!(sql[0].contains("REFERENCES \"public\".\"users\" (\"id\")"));
         assert!(sql[0].contains("ON DELETE CASCADE"));
         assert!(sql[0].contains("ON UPDATE NO ACTION"));
     }
@@ -784,7 +840,7 @@ mod tests {
     #[test]
     fn add_check_constraint_generates_valid_sql() {
         let ops = vec![MigrationOp::AddCheckConstraint {
-            table: "products".to_string(),
+            table: "public.products".to_string(),
             check_constraint: CheckConstraint {
                 name: "price_positive".to_string(),
                 expression: "price > 0".to_string(),
@@ -795,14 +851,14 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER TABLE \"products\" ADD CONSTRAINT \"price_positive\" CHECK (price > 0);"
+            "ALTER TABLE \"public\".\"products\" ADD CONSTRAINT \"price_positive\" CHECK (price > 0);"
         );
     }
 
     #[test]
     fn drop_check_constraint_generates_valid_sql() {
         let ops = vec![MigrationOp::DropCheckConstraint {
-            table: "products".to_string(),
+            table: "public.products".to_string(),
             constraint_name: "price_positive".to_string(),
         }];
 
@@ -810,27 +866,27 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER TABLE \"products\" DROP CONSTRAINT \"price_positive\";"
+            "ALTER TABLE \"public\".\"products\" DROP CONSTRAINT \"price_positive\";"
         );
     }
 
     #[test]
     fn add_enum_value_generates_valid_sql() {
         let ops = vec![MigrationOp::AddEnumValue {
-            enum_name: "status".to_string(),
+            enum_name: "public.status".to_string(),
             value: "pending".to_string(),
             position: None,
         }];
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert_eq!(sql[0], "ALTER TYPE \"status\" ADD VALUE 'pending';");
+        assert_eq!(sql[0], "ALTER TYPE \"public\".\"status\" ADD VALUE 'pending';");
     }
 
     #[test]
     fn add_enum_value_with_after_position() {
         let ops = vec![MigrationOp::AddEnumValue {
-            enum_name: "status".to_string(),
+            enum_name: "public.status".to_string(),
             value: "pending".to_string(),
             position: Some(EnumValuePosition::After("active".to_string())),
         }];
@@ -839,14 +895,14 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER TYPE \"status\" ADD VALUE 'pending' AFTER 'active';"
+            "ALTER TYPE \"public\".\"status\" ADD VALUE 'pending' AFTER 'active';"
         );
     }
 
     #[test]
     fn add_enum_value_with_before_position() {
         let ops = vec![MigrationOp::AddEnumValue {
-            enum_name: "status".to_string(),
+            enum_name: "public.status".to_string(),
             value: "pending".to_string(),
             position: Some(EnumValuePosition::Before("active".to_string())),
         }];
@@ -855,21 +911,21 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER TYPE \"status\" ADD VALUE 'pending' BEFORE 'active';"
+            "ALTER TYPE \"public\".\"status\" ADD VALUE 'pending' BEFORE 'active';"
         );
     }
 
     #[test]
     fn add_enum_value_escapes_quotes() {
         let ops = vec![MigrationOp::AddEnumValue {
-            enum_name: "status".to_string(),
+            enum_name: "public.status".to_string(),
             value: "it's pending".to_string(),
             position: None,
         }];
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert_eq!(sql[0], "ALTER TYPE \"status\" ADD VALUE 'it''s pending';");
+        assert_eq!(sql[0], "ALTER TYPE \"public\".\"status\" ADD VALUE 'it''s pending';");
     }
 
     #[test]
@@ -908,5 +964,40 @@ mod tests {
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
         assert_eq!(sql[0], "DROP EXTENSION IF EXISTS \"uuid-ossp\";");
+    }
+
+    #[test]
+    fn generates_qualified_create_table() {
+        let mut columns = BTreeMap::new();
+        columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::BigInt,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+
+        let table = Table {
+            schema: "auth".to_string(),
+            name: "users".to_string(),
+            columns,
+            indexes: vec![],
+            primary_key: Some(PrimaryKey {
+                columns: vec!["id".to_string()],
+            }),
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            comment: None,
+            row_level_security: false,
+            policies: vec![],
+        };
+
+        let op = MigrationOp::CreateTable(table);
+        let sql = generate_sql(&vec![op]);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains(r#"CREATE TABLE "auth"."users""#));
     }
 }
