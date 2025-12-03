@@ -151,6 +151,30 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
             }
         }
 
+        MigrationOp::DropSequence(name) => {
+            if !options.allow_destructive {
+                results.push(LintResult {
+                    rule: "deny_drop_sequence".to_string(),
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping sequence \"{name}\" requires --allow-destructive flag"
+                    ),
+                });
+            }
+        }
+
+        MigrationOp::AlterSequence { name, changes } => {
+            if changes.restart.is_some() {
+                results.push(LintResult {
+                    rule: "warn_sequence_restart".to_string(),
+                    severity: LintSeverity::Warning,
+                    message: format!(
+                        "Restarting sequence \"{name}\" may cause duplicate key violations"
+                    ),
+                });
+            }
+        }
+
         _ => {}
     }
 
@@ -377,5 +401,66 @@ mod tests {
 
         let results = lint_migration_plan(&ops, &options);
         assert!(!has_errors(&results));
+    }
+
+    #[test]
+    fn blocks_drop_sequence_without_flag() {
+        let ops = vec![MigrationOp::DropSequence("user_id_seq".to_string())];
+        let options = LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_sequence");
+    }
+
+    #[test]
+    fn allows_drop_sequence_with_flag() {
+        let ops = vec![MigrationOp::DropSequence("user_id_seq".to_string())];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!has_errors(&results));
+    }
+
+    #[test]
+    fn warns_on_sequence_restart() {
+        use crate::diff::SequenceChanges;
+
+        let ops = vec![MigrationOp::AlterSequence {
+            name: "user_id_seq".to_string(),
+            changes: SequenceChanges {
+                restart: Some(1),
+                ..Default::default()
+            },
+        }];
+        let options = LintOptions::default();
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!has_errors(&results));
+        assert_eq!(results[0].rule, "warn_sequence_restart");
+        assert!(matches!(results[0].severity, LintSeverity::Warning));
+    }
+
+    #[test]
+    fn allows_alter_sequence_without_restart() {
+        use crate::diff::SequenceChanges;
+
+        let ops = vec![MigrationOp::AlterSequence {
+            name: "user_id_seq".to_string(),
+            changes: SequenceChanges {
+                increment: Some(2),
+                ..Default::default()
+            },
+        }];
+        let options = LintOptions::default();
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(results.is_empty());
     }
 }
