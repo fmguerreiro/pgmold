@@ -34,6 +34,8 @@ enum Commands {
         schema: Vec<String>,
         #[arg(long)]
         database: String,
+        #[arg(long, default_value = "public", value_delimiter = ',')]
+        target_schemas: Vec<String>,
     },
 
     /// Apply migrations
@@ -46,6 +48,8 @@ enum Commands {
         dry_run: bool,
         #[arg(long)]
         allow_destructive: bool,
+        #[arg(long, default_value = "public", value_delimiter = ',')]
+        target_schemas: Vec<String>,
     },
 
     /// Lint schema or migration plan
@@ -54,6 +58,8 @@ enum Commands {
         schema: Vec<String>,
         #[arg(long)]
         database: Option<String>,
+        #[arg(long, default_value = "public", value_delimiter = ',')]
+        target_schemas: Vec<String>,
     },
 
     /// Monitor for drift
@@ -62,6 +68,8 @@ enum Commands {
         schema: Vec<String>,
         #[arg(long)]
         database: String,
+        #[arg(long, default_value = "public", value_delimiter = ',')]
+        target_schemas: Vec<String>,
     },
 }
 
@@ -104,13 +112,13 @@ pub async fn run() -> Result<()> {
             }
             Ok(())
         }
-        Commands::Plan { schema, database } => {
+        Commands::Plan { schema, database, target_schemas } => {
             let target = load_sql_schema(&schema)?;
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
-            let current = introspect_schema(&connection, &[String::from("public")])
+            let current = introspect_schema(&connection, &target_schemas)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
@@ -133,6 +141,7 @@ pub async fn run() -> Result<()> {
             database,
             dry_run,
             allow_destructive,
+            target_schemas,
         } => {
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
@@ -140,7 +149,7 @@ pub async fn run() -> Result<()> {
                 .map_err(|e| anyhow!("{e}"))?;
 
             let target = load_sql_schema(&schema)?;
-            let current = introspect_schema(&connection, &[String::from("public")])
+            let current = introspect_schema(&connection, &target_schemas)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
@@ -199,7 +208,7 @@ pub async fn run() -> Result<()> {
             }
             Ok(())
         }
-        Commands::Lint { schema, database } => {
+        Commands::Lint { schema, database, target_schemas } => {
             let target = load_sql_schema(&schema)?;
 
             let ops = if let Some(db_source) = database {
@@ -207,7 +216,7 @@ pub async fn run() -> Result<()> {
                 let connection = PgConnection::new(&db_url)
                     .await
                     .map_err(|e| anyhow!("{e}"))?;
-                let current = introspect_schema(&connection, &[String::from("public")])
+                let current = introspect_schema(&connection, &target_schemas)
                     .await
                     .map_err(|e| anyhow!("{e}"))?;
                 plan_migration(compute_diff(&current, &target))
@@ -235,14 +244,14 @@ pub async fn run() -> Result<()> {
             }
             Ok(())
         }
-        Commands::Monitor { schema, database } => {
+        Commands::Monitor { schema, database, target_schemas } => {
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
             let target = load_sql_schema(&schema)?;
-            let current = introspect_schema(&connection, &[String::from("public")])
+            let current = introspect_schema(&connection, &target_schemas)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 

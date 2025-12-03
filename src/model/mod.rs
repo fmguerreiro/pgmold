@@ -480,4 +480,37 @@ mod tests {
         };
         assert_eq!(policy.table_schema, "auth");
     }
+
+    #[test]
+    fn fingerprint_differs_by_schema() {
+        let mut schema1 = Schema::new();
+        schema1.tables.insert("public.users".to_string(), Table {
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+        });
+
+        let mut schema2 = Schema::new();
+        schema2.tables.insert("auth.users".to_string(), Table {
+            schema: "auth".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+        });
+
+        assert_ne!(schema1.fingerprint(), schema2.fingerprint());
+    }
 }

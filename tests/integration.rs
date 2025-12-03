@@ -287,3 +287,53 @@ async fn add_enum_value() {
     assert_eq!(status_enum.values.len(), 3);
     assert!(status_enum.values.contains(&"pending".to_string()));
 }
+
+#[tokio::test]
+async fn multi_schema_table_management() {
+    let (_container, url) = setup_postgres().await;
+
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE SCHEMA auth")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+    sqlx::query("CREATE SCHEMA api")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let sql = r#"
+        CREATE TABLE auth.users (
+            id INTEGER PRIMARY KEY,
+            email TEXT NOT NULL
+        );
+
+        CREATE TABLE api.sessions (
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER,
+            token TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES auth.users(id)
+        );
+    "#;
+
+    let desired = parse_sql_string(sql).unwrap();
+    let current = introspect_schema(&connection, &["auth".to_string(), "api".to_string()]).await.unwrap();
+
+    let ops = compute_diff(&current, &desired);
+    let planned = plan_migration(ops);
+    let sql_stmts = generate_sql(&planned);
+
+    for stmt in &sql_stmts {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    let final_schema = introspect_schema(&connection, &["auth".to_string(), "api".to_string()]).await.unwrap();
+    assert!(final_schema.tables.contains_key("auth.users"));
+    assert!(final_schema.tables.contains_key("api.sessions"));
+
+    let sessions = final_schema.tables.get("api.sessions").unwrap();
+    assert_eq!(sessions.foreign_keys.len(), 1);
+    assert_eq!(sessions.foreign_keys[0].referenced_schema, "auth");
+    assert_eq!(sessions.foreign_keys[0].referenced_table, "users");
+}
