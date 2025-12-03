@@ -8,6 +8,7 @@ pub struct Schema {
     pub enums: BTreeMap<String, EnumType>,
     pub functions: BTreeMap<String, Function>,
     pub views: BTreeMap<String, View>,
+    pub triggers: BTreeMap<String, Trigger>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -223,6 +224,36 @@ pub struct View {
     pub materialized: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TriggerTiming {
+    Before,
+    After,
+    InsteadOf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TriggerEvent {
+    Insert,
+    Update,
+    Delete,
+    Truncate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Trigger {
+    pub name: String,
+    pub table_schema: String,
+    pub table: String,
+    pub timing: TriggerTiming,
+    pub events: Vec<TriggerEvent>,
+    pub update_columns: Vec<String>,
+    pub for_each_row: bool,
+    pub when_clause: Option<String>,
+    pub function_schema: String,
+    pub function_name: String,
+    pub function_args: Vec<String>,
+}
+
 /// Creates a qualified name from schema and object name.
 /// Used as map keys for schema-aware lookups.
 pub fn qualified_name(schema: &str, name: &str) -> String {
@@ -246,6 +277,7 @@ impl Schema {
             enums: BTreeMap::new(),
             functions: BTreeMap::new(),
             views: BTreeMap::new(),
+            triggers: BTreeMap::new(),
         }
     }
 
@@ -479,6 +511,50 @@ mod tests {
             check_expr: None,
         };
         assert_eq!(policy.table_schema, "auth");
+    }
+
+    #[test]
+    fn trigger_struct_captures_all_fields() {
+        let trigger = Trigger {
+            name: "audit_log".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Insert, TriggerEvent::Update],
+            update_columns: vec!["email".to_string(), "name".to_string()],
+            for_each_row: true,
+            when_clause: Some("NEW.updated_at IS NOT NULL".to_string()),
+            function_schema: "public".to_string(),
+            function_name: "audit_trigger_fn".to_string(),
+            function_args: vec![],
+        };
+
+        assert_eq!(trigger.name, "audit_log");
+        assert_eq!(trigger.table_schema, "public");
+        assert_eq!(trigger.timing, TriggerTiming::After);
+        assert_eq!(trigger.events.len(), 2);
+        assert_eq!(trigger.update_columns, vec!["email", "name"]);
+        assert!(trigger.for_each_row);
+    }
+
+    #[test]
+    fn schema_has_triggers_field() {
+        let mut schema = Schema::new();
+        let trigger = Trigger {
+            name: "audit_log".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            timing: TriggerTiming::Before,
+            events: vec![TriggerEvent::Delete],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "prevent_delete".to_string(),
+            function_args: vec![],
+        };
+        schema.triggers.insert("public.users.audit_log".to_string(), trigger);
+        assert_eq!(schema.triggers.len(), 1);
     }
 
     #[test]

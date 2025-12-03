@@ -1,7 +1,8 @@
 use crate::diff::{ColumnChanges, EnumValuePosition, MigrationOp, PolicyChanges};
 use crate::model::{
     parse_qualified_name, CheckConstraint, Column, ForeignKey, Function, Index, IndexType, PgType,
-    Policy, PolicyCommand, ReferentialAction, SecurityType, Table, View, Volatility,
+    Policy, PolicyCommand, ReferentialAction, SecurityType, Table, Trigger, TriggerEvent,
+    TriggerTiming, View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -222,6 +223,20 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
 
         MigrationOp::AlterView { new_view, .. } => {
             vec![generate_create_or_replace_view(new_view)]
+        }
+
+        MigrationOp::CreateTrigger(trigger) => vec![generate_create_trigger(trigger)],
+
+        MigrationOp::DropTrigger {
+            table_schema,
+            table,
+            name,
+        } => {
+            vec![format!(
+                "DROP TRIGGER {} ON {};",
+                quote_ident(name),
+                quote_qualified(table_schema, table)
+            )]
         }
     }
 }
@@ -596,6 +611,75 @@ fn generate_view_ddl(view: &View, replace: bool) -> String {
             view.query
         )
     }
+}
+
+fn generate_create_trigger(trigger: &Trigger) -> String {
+    let mut sql = format!("CREATE TRIGGER {}", quote_ident(&trigger.name));
+
+    let timing = match trigger.timing {
+        TriggerTiming::Before => "BEFORE",
+        TriggerTiming::After => "AFTER",
+        TriggerTiming::InsteadOf => "INSTEAD OF",
+    };
+
+    let events: Vec<String> = trigger
+        .events
+        .iter()
+        .map(|e| {
+            match e {
+                TriggerEvent::Insert => "INSERT".to_string(),
+                TriggerEvent::Update => {
+                    if trigger.update_columns.is_empty() {
+                        "UPDATE".to_string()
+                    } else {
+                        format!(
+                            "UPDATE OF {}",
+                            trigger
+                                .update_columns
+                                .iter()
+                                .map(|c| quote_ident(c))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    }
+                }
+                TriggerEvent::Delete => "DELETE".to_string(),
+                TriggerEvent::Truncate => "TRUNCATE".to_string(),
+            }
+        })
+        .collect();
+
+    sql.push_str(&format!(" {} {}", timing, events.join(" OR ")));
+    sql.push_str(&format!(
+        " ON {}",
+        quote_qualified(&trigger.table_schema, &trigger.table)
+    ));
+
+    if trigger.for_each_row {
+        sql.push_str(" FOR EACH ROW");
+    } else {
+        sql.push_str(" FOR EACH STATEMENT");
+    }
+
+    if let Some(ref when_clause) = trigger.when_clause {
+        sql.push_str(&format!(" WHEN ({})", when_clause));
+    }
+
+    sql.push_str(&format!(
+        " EXECUTE FUNCTION {}",
+        quote_qualified(&trigger.function_schema, &trigger.function_name)
+    ));
+
+    if trigger.function_args.is_empty() {
+        sql.push_str("();");
+    } else {
+        sql.push_str(&format!(
+            "({});",
+            trigger.function_args.join(", ")
+        ));
+    }
+
+    sql
 }
 
 #[cfg(test)]
@@ -999,5 +1083,122 @@ mod tests {
         let sql = generate_sql(&vec![op]);
         assert_eq!(sql.len(), 1);
         assert!(sql[0].contains(r#"CREATE TABLE "auth"."users""#));
+    }
+
+    #[test]
+    fn create_simple_trigger() {
+        use crate::model::{Trigger, TriggerEvent, TriggerTiming};
+
+        let trigger = Trigger {
+            name: "audit_trigger".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Insert],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "audit_fn".to_string(),
+            function_args: vec![],
+        };
+
+        let ops = vec![MigrationOp::CreateTrigger(trigger)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("CREATE TRIGGER"));
+        assert!(sql[0].contains("\"audit_trigger\""));
+        assert!(sql[0].contains("AFTER INSERT"));
+        assert!(sql[0].contains("ON \"public\".\"users\""));
+        assert!(sql[0].contains("FOR EACH ROW"));
+        assert!(sql[0].contains("EXECUTE FUNCTION"));
+        assert!(sql[0].contains("\"audit_fn\""));
+    }
+
+    #[test]
+    fn create_trigger_with_update_of_columns() {
+        use crate::model::{Trigger, TriggerEvent, TriggerTiming};
+
+        let trigger = Trigger {
+            name: "notify_change".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            timing: TriggerTiming::Before,
+            events: vec![TriggerEvent::Update],
+            update_columns: vec!["email".to_string(), "name".to_string()],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "notify_fn".to_string(),
+            function_args: vec![],
+        };
+
+        let ops = vec![MigrationOp::CreateTrigger(trigger)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("BEFORE UPDATE OF"));
+        assert!(sql[0].contains("\"email\""));
+        assert!(sql[0].contains("\"name\""));
+    }
+
+    #[test]
+    fn create_trigger_with_multiple_events() {
+        use crate::model::{Trigger, TriggerEvent, TriggerTiming};
+
+        let trigger = Trigger {
+            name: "log_changes".to_string(),
+            table_schema: "public".to_string(),
+            table: "orders".to_string(),
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Insert, TriggerEvent::Update, TriggerEvent::Delete],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "log_fn".to_string(),
+            function_args: vec![],
+        };
+
+        let ops = vec![MigrationOp::CreateTrigger(trigger)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("INSERT OR UPDATE OR DELETE"));
+    }
+
+    #[test]
+    fn create_trigger_with_when_clause() {
+        use crate::model::{Trigger, TriggerEvent, TriggerTiming};
+
+        let trigger = Trigger {
+            name: "check_amount".to_string(),
+            table_schema: "public".to_string(),
+            table: "orders".to_string(),
+            timing: TriggerTiming::Before,
+            events: vec![TriggerEvent::Insert],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: Some("NEW.amount > 1000".to_string()),
+            function_schema: "public".to_string(),
+            function_name: "check_fn".to_string(),
+            function_args: vec![],
+        };
+
+        let ops = vec![MigrationOp::CreateTrigger(trigger)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("WHEN (NEW.amount > 1000)"));
+    }
+
+    #[test]
+    fn drop_trigger() {
+        let ops = vec![MigrationOp::DropTrigger {
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            name: "audit_trigger".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], r#"DROP TRIGGER "audit_trigger" ON "public"."users";"#);
     }
 }

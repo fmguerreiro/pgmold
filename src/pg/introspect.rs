@@ -15,6 +15,7 @@ pub async fn introspect_schema(
     schema.tables = introspect_tables(connection, target_schemas).await?;
     schema.functions = introspect_functions(connection, target_schemas).await?;
     schema.views = introspect_views(connection, target_schemas).await?;
+    schema.triggers = introspect_triggers(connection, target_schemas).await?;
 
     let table_keys: Vec<(String, String)> = schema
         .tables
@@ -634,4 +635,123 @@ async fn introspect_views(connection: &PgConnection, target_schemas: &[String]) 
     }
 
     Ok(views)
+}
+
+async fn introspect_triggers(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Trigger>> {
+    let mut triggers = BTreeMap::new();
+
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            t.tgname AS trigger_name,
+            ns.nspname AS table_schema,
+            c.relname AS table_name,
+            t.tgtype AS trigger_type,
+            pns.nspname AS function_schema,
+            p.proname AS function_name,
+            pg_get_triggerdef(t.oid) AS trigger_def,
+            (
+                SELECT array_agg(a.attname ORDER BY a.attnum)
+                FROM unnest(t.tgattr) AS attr_num
+                JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = attr_num
+            ) AS update_columns
+        FROM pg_trigger t
+        JOIN pg_class c ON t.tgrelid = c.oid
+        JOIN pg_namespace ns ON c.relnamespace = ns.oid
+        JOIN pg_proc p ON t.tgfoid = p.oid
+        JOIN pg_namespace pns ON p.pronamespace = pns.oid
+        WHERE NOT t.tgisinternal
+          AND ns.nspname = ANY($1::text[])
+        ORDER BY ns.nspname, c.relname, t.tgname
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch triggers: {e}")))?;
+
+    for row in rows {
+        let trigger_name: String = row.get("trigger_name");
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
+        let tgtype: i16 = row.get("trigger_type");
+        let function_schema: String = row.get("function_schema");
+        let function_name: String = row.get("function_name");
+        let trigger_def: String = row.get("trigger_def");
+        let update_columns: Option<Vec<String>> = row.get("update_columns");
+
+        let timing = if tgtype & 0x0040 != 0 {
+            TriggerTiming::InsteadOf
+        } else if tgtype & 0x0002 != 0 {
+            TriggerTiming::Before
+        } else {
+            TriggerTiming::After
+        };
+
+        let for_each_row = tgtype & 0x0001 != 0;
+
+        let mut events = Vec::new();
+        if tgtype & 0x0004 != 0 {
+            events.push(TriggerEvent::Insert);
+        }
+        if tgtype & 0x0010 != 0 {
+            events.push(TriggerEvent::Update);
+        }
+        if tgtype & 0x0008 != 0 {
+            events.push(TriggerEvent::Delete);
+        }
+        if tgtype & 0x0020 != 0 {
+            events.push(TriggerEvent::Truncate);
+        }
+
+        let when_clause = extract_when_clause(&trigger_def);
+
+        let trigger = Trigger {
+            name: trigger_name.clone(),
+            table_schema: table_schema.clone(),
+            table: table_name.clone(),
+            timing,
+            events,
+            update_columns: update_columns.unwrap_or_default(),
+            for_each_row,
+            when_clause,
+            function_schema,
+            function_name,
+            function_args: vec![],
+        };
+
+        let key = format!("{}.{}.{}", table_schema, table_name, trigger_name);
+        triggers.insert(key, trigger);
+    }
+
+    Ok(triggers)
+}
+
+fn extract_when_clause(trigger_def: &str) -> Option<String> {
+    let upper = trigger_def.to_uppercase();
+    if let Some(when_pos) = upper.find(" WHEN (") {
+        let after_when = &trigger_def[when_pos + 7..];
+        let mut depth = 1;
+        let mut end_pos = 0;
+        for (i, c) in after_when.chars().enumerate() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end_pos = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if end_pos > 0 {
+            return Some(after_when[..end_pos].to_string());
+        }
+    }
+    None
 }

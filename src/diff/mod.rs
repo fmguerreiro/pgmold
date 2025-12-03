@@ -2,7 +2,7 @@ pub mod planner;
 
 use crate::model::{
     qualified_name, CheckConstraint, Column, EnumType, Extension, ForeignKey, Function, Index,
-    PgType, Policy, PrimaryKey, Table, View,
+    PgType, Policy, PrimaryKey, Table, Trigger, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +97,12 @@ pub enum MigrationOp {
         name: String,
         new_view: View,
     },
+    CreateTrigger(Trigger),
+    DropTrigger {
+        table_schema: String,
+        table: String,
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,6 +135,7 @@ pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops.extend(diff_tables(from, to));
     ops.extend(diff_functions(from, to));
     ops.extend(diff_views(from, to));
+    ops.extend(diff_triggers(from, to));
 
     for (name, to_table) in &to.tables {
         if let Some(from_table) = from.tables.get(name) {
@@ -285,6 +292,37 @@ fn diff_views(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
             ops.push(MigrationOp::DropView {
                 name: view.name.clone(),
                 materialized: view.materialized,
+            });
+        }
+    }
+
+    ops
+}
+
+fn diff_triggers(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for (name, trigger) in &to.triggers {
+        if let Some(from_trigger) = from.triggers.get(name) {
+            if from_trigger != trigger {
+                ops.push(MigrationOp::DropTrigger {
+                    table_schema: from_trigger.table_schema.clone(),
+                    table: from_trigger.table.clone(),
+                    name: from_trigger.name.clone(),
+                });
+                ops.push(MigrationOp::CreateTrigger(trigger.clone()));
+            }
+        } else {
+            ops.push(MigrationOp::CreateTrigger(trigger.clone()));
+        }
+    }
+
+    for (name, trigger) in &from.triggers {
+        if !to.triggers.contains_key(name) {
+            ops.push(MigrationOp::DropTrigger {
+                table_schema: trigger.table_schema.clone(),
+                table: trigger.table.clone(),
+                name: trigger.name.clone(),
             });
         }
     }
@@ -1205,5 +1243,74 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], MigrationOp::DropExtension(name) if name == "pgcrypto"));
+    }
+
+    fn make_trigger(name: &str, table: &str) -> crate::model::Trigger {
+        crate::model::Trigger {
+            name: name.to_string(),
+            table_schema: "public".to_string(),
+            table: table.to_string(),
+            timing: crate::model::TriggerTiming::After,
+            events: vec![crate::model::TriggerEvent::Insert],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "audit_fn".to_string(),
+            function_args: vec![],
+        }
+    }
+
+    #[test]
+    fn detects_new_trigger() {
+        let from = empty_schema();
+        let mut to = empty_schema();
+        to.triggers.insert(
+            "public.users.audit_trigger".to_string(),
+            make_trigger("audit_trigger", "users"),
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], MigrationOp::CreateTrigger(t) if t.name == "audit_trigger"));
+    }
+
+    #[test]
+    fn detects_removed_trigger() {
+        let mut from = empty_schema();
+        from.triggers.insert(
+            "public.users.audit_trigger".to_string(),
+            make_trigger("audit_trigger", "users"),
+        );
+        let to = empty_schema();
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::DropTrigger { name, table, .. } if name == "audit_trigger" && table == "users"
+        ));
+    }
+
+    #[test]
+    fn detects_modified_trigger() {
+        let mut from = empty_schema();
+        from.triggers.insert(
+            "public.users.audit_trigger".to_string(),
+            make_trigger("audit_trigger", "users"),
+        );
+
+        let mut to = empty_schema();
+        let mut modified_trigger = make_trigger("audit_trigger", "users");
+        modified_trigger.timing = crate::model::TriggerTiming::Before;
+        to.triggers.insert(
+            "public.users.audit_trigger".to_string(),
+            modified_trigger,
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 2);
+        assert!(ops.iter().any(|op| matches!(op, MigrationOp::DropTrigger { name, .. } if name == "audit_trigger")));
+        assert!(ops.iter().any(|op| matches!(op, MigrationOp::CreateTrigger(t) if t.name == "audit_trigger")));
     }
 }

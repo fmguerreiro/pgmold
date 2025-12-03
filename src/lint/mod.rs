@@ -135,6 +135,22 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
             }
         }
 
+        MigrationOp::DropTrigger {
+            table_schema,
+            table,
+            name,
+        } => {
+            if !options.allow_destructive {
+                results.push(LintResult {
+                    rule: "deny_drop_trigger".to_string(),
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping trigger \"{table_schema}\".\"{table}\".{name} requires --allow-destructive flag"
+                    ),
+                });
+            }
+        }
+
         _ => {}
     }
 
@@ -320,6 +336,40 @@ mod tests {
     #[test]
     fn allows_drop_enum_with_flag() {
         let ops = vec![MigrationOp::DropEnum("user_role".to_string())];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!has_errors(&results));
+    }
+
+
+    #[test]
+    fn blocks_drop_trigger_without_flag() {
+        let ops = vec![MigrationOp::DropTrigger {
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            name: "update_timestamp".to_string(),
+        }];
+        let options = LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_trigger");
+    }
+
+    #[test]
+    fn allows_drop_trigger_with_flag() {
+        let ops = vec![MigrationOp::DropTrigger {
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            name: "update_timestamp".to_string(),
+        }];
         let options = LintOptions {
             allow_destructive: true,
             is_production: false,

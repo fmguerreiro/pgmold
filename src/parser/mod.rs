@@ -212,6 +212,78 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 };
                 schema.extensions.insert(ext_name, ext);
             }
+            Statement::CreateTrigger {
+                name,
+                period,
+                events,
+                table_name,
+                trigger_object,
+                condition,
+                exec_body,
+                ..
+            } => {
+                let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
+                let trigger_name = name.to_string();
+                let (func_schema, func_name) = extract_qualified_name(&exec_body.func_desc.name);
+
+                let timing = match period {
+                    sqlparser::ast::TriggerPeriod::Before => TriggerTiming::Before,
+                    sqlparser::ast::TriggerPeriod::After => TriggerTiming::After,
+                    sqlparser::ast::TriggerPeriod::InsteadOf => TriggerTiming::InsteadOf,
+                };
+
+                let mut trigger_events = Vec::new();
+                let mut update_columns = Vec::new();
+
+                for event in &events {
+                    match event {
+                        sqlparser::ast::TriggerEvent::Insert => {
+                            trigger_events.push(TriggerEvent::Insert);
+                        }
+                        sqlparser::ast::TriggerEvent::Update(cols) => {
+                            trigger_events.push(TriggerEvent::Update);
+                            update_columns.extend(cols.iter().map(|c| c.value.clone()));
+                        }
+                        sqlparser::ast::TriggerEvent::Delete => {
+                            trigger_events.push(TriggerEvent::Delete);
+                        }
+                        sqlparser::ast::TriggerEvent::Truncate => {
+                            trigger_events.push(TriggerEvent::Truncate);
+                        }
+                    }
+                }
+
+                let for_each_row = matches!(
+                    trigger_object,
+                    sqlparser::ast::TriggerObject::Row
+                );
+
+                let when_clause = condition.as_ref().map(|e| e.to_string());
+
+                let function_args = exec_body
+                    .func_desc
+                    .args
+                    .as_ref()
+                    .map(|args| args.iter().map(|a| a.to_string()).collect())
+                    .unwrap_or_default();
+
+                let trigger = Trigger {
+                    name: trigger_name.clone(),
+                    table_schema: tbl_schema.clone(),
+                    table: tbl_name.clone(),
+                    timing,
+                    events: trigger_events,
+                    update_columns,
+                    for_each_row,
+                    when_clause,
+                    function_schema: func_schema,
+                    function_name: func_name,
+                    function_args,
+                };
+
+                let key = format!("{}.{}.{}", tbl_schema, tbl_name, trigger_name);
+                schema.triggers.insert(key, trigger);
+            }
             _ => {}
         }
     }
@@ -684,5 +756,103 @@ CREATE TABLE products (
         let enum_type = schema.enums.get("auth.role").unwrap();
         assert_eq!(enum_type.schema, "auth");
         assert_eq!(enum_type.name, "role");
+    }
+
+    #[test]
+    fn parses_simple_trigger() {
+        let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER audit_trigger
+    AFTER INSERT ON users
+    FOR EACH ROW
+    EXECUTE FUNCTION audit_fn();
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        assert_eq!(schema.triggers.len(), 1);
+
+        let trigger = schema.triggers.get("public.users.audit_trigger").unwrap();
+        assert_eq!(trigger.name, "audit_trigger");
+        assert_eq!(trigger.table_schema, "public");
+        assert_eq!(trigger.table, "users");
+        assert_eq!(trigger.timing, TriggerTiming::After);
+        assert_eq!(trigger.events, vec![TriggerEvent::Insert]);
+        assert!(trigger.for_each_row);
+        assert_eq!(trigger.function_name, "audit_fn");
+    }
+
+    #[test]
+    fn parses_trigger_with_update_of_columns() {
+        let sql = r#"
+CREATE FUNCTION notify_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+
+CREATE TRIGGER notify_email_change
+    BEFORE UPDATE OF email, name ON users
+    FOR EACH ROW
+    EXECUTE FUNCTION notify_fn();
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let trigger = schema.triggers.get("public.users.notify_email_change").unwrap();
+
+        assert_eq!(trigger.timing, TriggerTiming::Before);
+        assert_eq!(trigger.events, vec![TriggerEvent::Update]);
+        assert_eq!(trigger.update_columns, vec!["email", "name"]);
+    }
+
+    #[test]
+    fn parses_trigger_with_multiple_events() {
+        let sql = r#"
+CREATE FUNCTION log_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+
+CREATE TRIGGER log_changes
+    AFTER INSERT OR UPDATE OR DELETE ON orders
+    FOR EACH ROW
+    EXECUTE FUNCTION log_fn();
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let trigger = schema.triggers.get("public.orders.log_changes").unwrap();
+
+        assert_eq!(trigger.events.len(), 3);
+        assert!(trigger.events.contains(&TriggerEvent::Insert));
+        assert!(trigger.events.contains(&TriggerEvent::Update));
+        assert!(trigger.events.contains(&TriggerEvent::Delete));
+    }
+
+    #[test]
+    fn parses_trigger_with_when_clause() {
+        let sql = r#"
+CREATE FUNCTION check_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+
+CREATE TRIGGER check_amount
+    BEFORE INSERT ON orders
+    FOR EACH ROW
+    WHEN (NEW.amount > 1000)
+    EXECUTE FUNCTION check_fn();
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let trigger = schema.triggers.get("public.orders.check_amount").unwrap();
+
+        assert!(trigger.when_clause.is_some());
+        assert!(trigger.when_clause.as_ref().unwrap().contains("amount"));
+    }
+
+    #[test]
+    fn parses_trigger_for_each_statement() {
+        let sql = r#"
+CREATE FUNCTION batch_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
+
+CREATE TRIGGER batch_notify
+    AFTER INSERT ON events
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION batch_fn();
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let trigger = schema.triggers.get("public.events.batch_notify").unwrap();
+
+        assert!(!trigger.for_each_row);
     }
 }
