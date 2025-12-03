@@ -1,8 +1,8 @@
 pub mod planner;
 
 use crate::model::{
-    CheckConstraint, Column, EnumType, Extension, ForeignKey, Function, Index, PgType, Policy,
-    PrimaryKey, Table, View,
+    qualified_name, CheckConstraint, Column, EnumType, Extension, ForeignKey, Function, Index,
+    PgType, Policy, PrimaryKey, Table, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -294,6 +294,7 @@ fn diff_views(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
 
 fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
+    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
 
     for (name, column) in &to_table.columns {
         if let Some(from_column) = from_table.columns.get(name) {
@@ -303,14 +304,14 @@ fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
                 || changes.default.is_some()
             {
                 ops.push(MigrationOp::AlterColumn {
-                    table: to_table.name.clone(),
+                    table: qualified_table_name.clone(),
                     column: name.clone(),
                     changes,
                 });
             }
         } else {
             ops.push(MigrationOp::AddColumn {
-                table: to_table.name.clone(),
+                table: qualified_table_name.clone(),
                 column: column.clone(),
             });
         }
@@ -319,7 +320,7 @@ fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     for name in from_table.columns.keys() {
         if !to_table.columns.contains_key(name) {
             ops.push(MigrationOp::DropColumn {
-                table: from_table.name.clone(),
+                table: qualified_name(&from_table.schema, &from_table.name),
                 column: name.clone(),
             });
         }
@@ -350,25 +351,26 @@ fn compute_column_changes(from: &Column, to: &Column) -> ColumnChanges {
 
 fn diff_primary_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
+    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
 
     match (&from_table.primary_key, &to_table.primary_key) {
         (None, Some(pk)) => {
             ops.push(MigrationOp::AddPrimaryKey {
-                table: to_table.name.clone(),
+                table: qualified_table_name,
                 primary_key: pk.clone(),
             });
         }
         (Some(_), None) => {
             ops.push(MigrationOp::DropPrimaryKey {
-                table: from_table.name.clone(),
+                table: qualified_name(&from_table.schema, &from_table.name),
             });
         }
         (Some(from_pk), Some(to_pk)) if from_pk != to_pk => {
             ops.push(MigrationOp::DropPrimaryKey {
-                table: from_table.name.clone(),
+                table: qualified_name(&from_table.schema, &from_table.name),
             });
             ops.push(MigrationOp::AddPrimaryKey {
-                table: to_table.name.clone(),
+                table: qualified_table_name,
                 primary_key: to_pk.clone(),
             });
         }
@@ -380,11 +382,12 @@ fn diff_primary_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
 
 fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
+    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
 
     for index in &to_table.indexes {
         if !from_table.indexes.iter().any(|i| i.name == index.name) {
             ops.push(MigrationOp::AddIndex {
-                table: to_table.name.clone(),
+                table: qualified_table_name.clone(),
                 index: index.clone(),
             });
         }
@@ -393,7 +396,7 @@ fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     for index in &from_table.indexes {
         if !to_table.indexes.iter().any(|i| i.name == index.name) {
             ops.push(MigrationOp::DropIndex {
-                table: from_table.name.clone(),
+                table: qualified_name(&from_table.schema, &from_table.name),
                 index_name: index.name.clone(),
             });
         }
@@ -404,6 +407,7 @@ fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
 
 fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
+    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
 
     for foreign_key in &to_table.foreign_keys {
         if !from_table
@@ -412,7 +416,7 @@ fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
             .any(|fk| fk.name == foreign_key.name)
         {
             ops.push(MigrationOp::AddForeignKey {
-                table: to_table.name.clone(),
+                table: qualified_table_name.clone(),
                 foreign_key: foreign_key.clone(),
             });
         }
@@ -425,7 +429,7 @@ fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
             .any(|fk| fk.name == foreign_key.name)
         {
             ops.push(MigrationOp::DropForeignKey {
-                table: from_table.name.clone(),
+                table: qualified_name(&from_table.schema, &from_table.name),
                 foreign_key_name: foreign_key.name.clone(),
             });
         }
@@ -436,6 +440,7 @@ fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
 
 fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
+    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
 
     for check_constraint in &to_table.check_constraints {
         if !from_table
@@ -444,7 +449,7 @@ fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Vec<Migration
             .any(|cc| cc.name == check_constraint.name)
         {
             ops.push(MigrationOp::AddCheckConstraint {
-                table: to_table.name.clone(),
+                table: qualified_table_name.clone(),
                 check_constraint: check_constraint.clone(),
             });
         }
@@ -457,7 +462,7 @@ fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Vec<Migration
             .any(|cc| cc.name == check_constraint.name)
         {
             ops.push(MigrationOp::DropCheckConstraint {
-                table: from_table.name.clone(),
+                table: qualified_name(&from_table.schema, &from_table.name),
                 constraint_name: check_constraint.name.clone(),
             });
         }
@@ -468,14 +473,15 @@ fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Vec<Migration
 
 fn diff_rls(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
+    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
 
     if !from_table.row_level_security && to_table.row_level_security {
         ops.push(MigrationOp::EnableRls {
-            table: to_table.name.clone(),
+            table: qualified_table_name,
         });
     } else if from_table.row_level_security && !to_table.row_level_security {
         ops.push(MigrationOp::DisableRls {
-            table: to_table.name.clone(),
+            table: qualified_name(&to_table.schema, &to_table.name),
         });
     }
 
@@ -484,6 +490,7 @@ fn diff_rls(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
 
 fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
+    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
 
     for policy in &to_table.policies {
         if let Some(from_policy) = from_table.policies.iter().find(|p| p.name == policy.name) {
@@ -493,7 +500,7 @@ fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
                 || changes.check_expr.is_some()
             {
                 ops.push(MigrationOp::AlterPolicy {
-                    table: to_table.name.clone(),
+                    table: qualified_table_name.clone(),
                     name: policy.name.clone(),
                     changes,
                 });
@@ -506,7 +513,7 @@ fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     for policy in &from_table.policies {
         if !to_table.policies.iter().any(|p| p.name == policy.name) {
             ops.push(MigrationOp::DropPolicy {
-                table: from_table.name.clone(),
+                table: qualified_name(&from_table.schema, &from_table.name),
                 name: policy.name.clone(),
             });
         }
@@ -645,7 +652,7 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(
-            matches!(&ops[0], MigrationOp::AddColumn { table, column } if table == "users" && column.name == "email")
+            matches!(&ops[0], MigrationOp::AddColumn { table, column } if table == "public.users" && column.name == "email")
         );
     }
 
@@ -664,7 +671,7 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(
-            matches!(&ops[0], MigrationOp::DropColumn { table, column } if table == "users" && column == "email")
+            matches!(&ops[0], MigrationOp::DropColumn { table, column } if table == "public.users" && column == "email")
         );
     }
 
@@ -689,7 +696,7 @@ mod tests {
         assert!(matches!(
             &ops[0],
             MigrationOp::AlterColumn { table, column, changes }
-            if table == "users" && column == "age" && changes.data_type == Some(PgType::BigInt)
+            if table == "public.users" && column == "age" && changes.data_type == Some(PgType::BigInt)
         ));
     }
 
@@ -712,7 +719,7 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(
-            matches!(&ops[0], MigrationOp::AddIndex { table, index } if table == "users" && index.name == "users_email_idx")
+            matches!(&ops[0], MigrationOp::AddIndex { table, index } if table == "public.users" && index.name == "users_email_idx")
         );
     }
 
@@ -734,7 +741,7 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(
-            matches!(&ops[0], MigrationOp::DropIndex { table, index_name } if table == "users" && index_name == "users_email_idx")
+            matches!(&ops[0], MigrationOp::DropIndex { table, index_name } if table == "public.users" && index_name == "users_email_idx")
         );
     }
 
@@ -760,7 +767,7 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(
-            matches!(&ops[0], MigrationOp::AddForeignKey { table, foreign_key } if table == "posts" && foreign_key.name == "posts_user_id_fkey")
+            matches!(&ops[0], MigrationOp::AddForeignKey { table, foreign_key } if table == "public.posts" && foreign_key.name == "posts_user_id_fkey")
         );
     }
 
@@ -785,7 +792,7 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(
-            matches!(&ops[0], MigrationOp::DropForeignKey { table, foreign_key_name } if table == "posts" && foreign_key_name == "posts_user_id_fkey")
+            matches!(&ops[0], MigrationOp::DropForeignKey { table, foreign_key_name } if table == "public.posts" && foreign_key_name == "posts_user_id_fkey")
         );
     }
 
@@ -973,7 +980,7 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(
-            matches!(&ops[0], MigrationOp::AddCheckConstraint { table, check_constraint } if table == "products" && check_constraint.name == "price_positive")
+            matches!(&ops[0], MigrationOp::AddCheckConstraint { table, check_constraint } if table == "public.products" && check_constraint.name == "price_positive")
         );
     }
 
@@ -996,7 +1003,7 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(
-            matches!(&ops[0], MigrationOp::DropCheckConstraint { table, constraint_name } if table == "products" && constraint_name == "price_positive")
+            matches!(&ops[0], MigrationOp::DropCheckConstraint { table, constraint_name } if table == "public.products" && constraint_name == "price_positive")
         );
     }
 

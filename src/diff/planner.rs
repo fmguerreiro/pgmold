@@ -1,4 +1,5 @@
 use super::MigrationOp;
+use crate::model::qualified_name;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Plan and order migration operations for safe execution.
@@ -121,15 +122,17 @@ fn order_table_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     for op in ops {
         if let MigrationOp::CreateTable(ref table) = op {
-            let table_name = table.name.clone();
+            let qualified_table_name = qualified_name(&table.schema, &table.name);
             let mut deps = HashSet::new();
             for fk in &table.foreign_keys {
-                if fk.referenced_table != table_name {
-                    deps.insert(fk.referenced_table.clone());
+                let qualified_ref =
+                    qualified_name(&fk.referenced_schema, &fk.referenced_table);
+                if qualified_ref != qualified_table_name {
+                    deps.insert(qualified_ref);
                 }
             }
-            dependencies.insert(table_name.clone(), deps);
-            table_ops.insert(table_name, op);
+            dependencies.insert(qualified_table_name.clone(), deps);
+            table_ops.insert(qualified_table_name, op);
         }
     }
 
