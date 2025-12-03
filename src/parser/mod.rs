@@ -67,9 +67,13 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
         match statement {
             Statement::CreateTable(ct) => {
                 let (table_schema, table_name) = extract_qualified_name(&ct.name);
-                let table = parse_create_table(&table_schema, &table_name, &ct.columns, &ct.constraints)?;
+                let parsed = parse_create_table(&table_schema, &table_name, &ct.columns, &ct.constraints)?;
                 let key = qualified_name(&table_schema, &table_name);
-                schema.tables.insert(key, table);
+                schema.tables.insert(key, parsed.table);
+                for seq in parsed.sequences {
+                    let seq_key = qualified_name(&seq.schema, &seq.name);
+                    schema.sequences.insert(seq_key, seq);
+                }
             }
             Statement::CreateIndex(ci) => {
                 let idx_name = ci
@@ -309,12 +313,17 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
     Ok(schema)
 }
 
+struct ParsedTable {
+    table: Table,
+    sequences: Vec<Sequence>,
+}
+
 fn parse_create_table(
     schema: &str,
     name: &str,
     columns: &[ColumnDef],
     constraints: &[TableConstraint],
-) -> Result<Table> {
+) -> Result<ParsedTable> {
     let mut table = Table {
         schema: schema.to_string(),
         name: name.to_string(),
@@ -328,9 +337,14 @@ fn parse_create_table(
         policies: Vec::new(),
     };
 
+    let mut sequences = Vec::new();
+
     for col_def in columns {
-        let column = parse_column(col_def)?;
+        let (column, maybe_sequence) = parse_column_with_serial(schema, name, col_def)?;
         table.columns.insert(column.name.clone(), column);
+        if let Some(seq) = maybe_sequence {
+            sequences.push(seq);
+        }
     }
 
     // Check for inline PRIMARY KEY in column options
@@ -398,10 +412,14 @@ fn parse_create_table(
     table.foreign_keys.sort();
     table.check_constraints.sort();
 
-    Ok(table)
+    Ok(ParsedTable { table, sequences })
 }
 
-fn parse_column(col_def: &ColumnDef) -> Result<Column> {
+fn parse_column_with_serial(
+    table_schema: &str,
+    table_name: &str,
+    col_def: &ColumnDef,
+) -> Result<(Column, Option<Sequence>)> {
     let mut nullable = true;
     let mut default = None;
 
@@ -414,13 +432,60 @@ fn parse_column(col_def: &ColumnDef) -> Result<Column> {
         }
     }
 
-    Ok(Column {
-        name: col_def.name.to_string(),
-        data_type: parse_data_type(&col_def.data_type)?,
-        nullable,
-        default,
-        comment: None,
-    })
+    let col_name = col_def.name.to_string();
+
+    if let Some(seq_data_type) = detect_serial_type(&col_def.data_type) {
+        let seq_name = format!("{}_{}_seq", table_name, col_name);
+        let seq_qualified = qualified_name(table_schema, &seq_name);
+
+        let pg_type = match &seq_data_type {
+            SequenceDataType::SmallInt => PgType::SmallInt,
+            SequenceDataType::Integer => PgType::Integer,
+            SequenceDataType::BigInt => PgType::BigInt,
+        };
+
+        let max_value = match &seq_data_type {
+            SequenceDataType::SmallInt => Some(32767),
+            SequenceDataType::Integer => Some(2147483647),
+            SequenceDataType::BigInt => Some(9223372036854775807),
+        };
+
+        let column = Column {
+            name: col_name.clone(),
+            data_type: pg_type,
+            nullable,
+            default: Some(format!("nextval('{}'::regclass)", seq_qualified)),
+            comment: None,
+        };
+
+        let sequence = Sequence {
+            name: seq_name,
+            schema: table_schema.to_string(),
+            data_type: seq_data_type,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value,
+            cycle: false,
+            cache: Some(1),
+            owned_by: Some(SequenceOwner {
+                table_schema: table_schema.to_string(),
+                table_name: table_name.to_string(),
+                column_name: col_name,
+            }),
+        };
+
+        Ok((column, Some(sequence)))
+    } else {
+        let column = Column {
+            name: col_name,
+            data_type: parse_data_type(&col_def.data_type)?,
+            nullable,
+            default,
+            comment: None,
+        };
+        Ok((column, None))
+    }
 }
 
 fn detect_serial_type(dt: &DataType) -> Option<SequenceDataType> {
@@ -1108,7 +1173,6 @@ CREATE TRIGGER batch_notify
         assert_eq!(seq.max_value, Some(-1));
         assert_eq!(seq.start, Some(-1));
     }
-}
 
     #[test]
     fn is_serial_type_detection() {
@@ -1132,3 +1196,27 @@ CREATE TRIGGER batch_notify
         let integer = DataType::Integer(None);
         assert_eq!(detect_serial_type(&integer), None);
     }
+
+    #[test]
+    fn parse_serial_column_creates_sequence() {
+        let sql = "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT);";
+        let schema = parse_sql_string(sql).unwrap();
+
+        // Table should exist with integer column
+        assert!(schema.tables.contains_key("public.users"));
+        let table = schema.tables.get("public.users").unwrap();
+        let id_col = table.columns.get("id").unwrap();
+        assert_eq!(id_col.data_type, PgType::Integer);
+        assert_eq!(id_col.default, Some("nextval('public.users_id_seq'::regclass)".to_string()));
+
+        // Sequence should exist
+        assert!(schema.sequences.contains_key("public.users_id_seq"));
+        let seq = schema.sequences.get("public.users_id_seq").unwrap();
+        assert_eq!(seq.data_type, SequenceDataType::Integer);
+        assert!(seq.owned_by.is_some());
+        let owner = seq.owned_by.as_ref().unwrap();
+        assert_eq!(owner.table_schema, "public");
+        assert_eq!(owner.table_name, "users");
+        assert_eq!(owner.column_name, "id");
+    }
+}
