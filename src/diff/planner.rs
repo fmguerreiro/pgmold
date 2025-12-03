@@ -38,6 +38,9 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut alter_views = Vec::new();
     let mut create_triggers = Vec::new();
     let mut drop_triggers = Vec::new();
+    let mut create_sequences = Vec::new();
+    let mut drop_sequences = Vec::new();
+    let mut alter_sequences = Vec::new();
 
     for op in ops {
         match op {
@@ -72,6 +75,31 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::AlterView { .. } => alter_views.push(op),
             MigrationOp::CreateTrigger(_) => create_triggers.push(op),
             MigrationOp::DropTrigger { .. } => drop_triggers.push(op),
+            MigrationOp::CreateSequence(_) => create_sequences.push(op),
+            MigrationOp::DropSequence(_) => drop_sequences.push(op),
+            MigrationOp::AlterSequence { .. } => alter_sequences.push(op),
+        }
+    }
+
+    let mut create_sequences_without_owner = Vec::new();
+    let mut set_sequence_owners = Vec::new();
+
+    for op in create_sequences {
+        if let MigrationOp::CreateSequence(ref seq) = op {
+            if let Some(ref owned_by) = seq.owned_by {
+                let mut seq_without_owner = seq.clone();
+                seq_without_owner.owned_by = None;
+                create_sequences_without_owner.push(MigrationOp::CreateSequence(seq_without_owner));
+
+                let mut changes = super::SequenceChanges::default();
+                changes.owned_by = Some(Some(owned_by.clone()));
+                set_sequence_owners.push(MigrationOp::AlterSequence {
+                    name: qualified_name(&seq.schema, &seq.name),
+                    changes,
+                });
+            } else {
+                create_sequences_without_owner.push(op);
+            }
         }
     }
 
@@ -83,6 +111,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(create_extensions);
     result.extend(create_enums);
     result.extend(add_enum_values);
+    result.extend(create_sequences_without_owner);
     result.extend(create_functions);
     result.extend(create_tables);
     result.extend(add_columns);
@@ -91,9 +120,11 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(alter_columns);
     result.extend(add_foreign_keys);
     result.extend(add_check_constraints);
+    result.extend(set_sequence_owners);
     result.extend(enable_rls);
     result.extend(create_policies);
     result.extend(alter_policies);
+    result.extend(alter_sequences);
     result.extend(alter_functions);
     result.extend(create_views);
     result.extend(alter_views);
@@ -110,6 +141,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(drop_columns);
     result.extend(drop_tables);
     result.extend(drop_functions);
+    result.extend(drop_sequences);
     result.extend(drop_enums);
     result.extend(drop_extensions);
 
@@ -511,6 +543,59 @@ mod tests {
         assert!(
             add_enum_value_pos < create_table_pos,
             "AddEnumValue must come before CreateTable"
+        );
+    }
+
+    #[test]
+    fn sequences_with_owned_by_after_tables() {
+        let seq = Sequence {
+            name: "users_id_seq".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            cache: Some(1),
+            owned_by: Some(SequenceOwner {
+                table_schema: "public".to_string(),
+                table_name: "users".to_string(),
+                column_name: "id".to_string(),
+            }),
+        };
+        let table = make_table("users", vec![]);
+
+        let ops = vec![
+            MigrationOp::CreateSequence(seq.clone()),
+            MigrationOp::CreateTable(table),
+        ];
+        let result = plan_migration(ops);
+
+        let create_seq_pos = result
+            .iter()
+            .position(|op| {
+                matches!(op, MigrationOp::CreateSequence(s) if s.name == "users_id_seq" && s.owned_by.is_none())
+            })
+            .expect("CreateSequence without OWNED BY should exist");
+        let create_table_pos = result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "users"))
+            .expect("CreateTable should exist");
+        let alter_seq_pos = result
+            .iter()
+            .position(|op| {
+                matches!(op, MigrationOp::AlterSequence { name, changes } if name == "public.users_id_seq" && changes.owned_by.is_some())
+            })
+            .expect("AlterSequence to set OWNED BY should exist");
+
+        assert!(
+            create_seq_pos < create_table_pos,
+            "CreateSequence (without OWNED BY) must come before CreateTable"
+        );
+        assert!(
+            create_table_pos < alter_seq_pos,
+            "AlterSequence (setting OWNED BY) must come after CreateTable"
         );
     }
 }

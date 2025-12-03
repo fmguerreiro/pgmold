@@ -2,7 +2,7 @@ pub mod planner;
 
 use crate::model::{
     qualified_name, CheckConstraint, Column, EnumType, Extension, ForeignKey, Function, Index,
-    PgType, Policy, PrimaryKey, Table, Trigger, View,
+    PgType, Policy, PrimaryKey, Sequence, SequenceDataType, SequenceOwner, Table, Trigger, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +103,12 @@ pub enum MigrationOp {
         table: String,
         name: String,
     },
+    CreateSequence(Sequence),
+    DropSequence(String),
+    AlterSequence {
+        name: String,
+        changes: SequenceChanges,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +123,18 @@ pub struct ColumnChanges {
     pub data_type: Option<PgType>,
     pub nullable: Option<bool>,
     pub default: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SequenceChanges {
+    pub data_type: Option<SequenceDataType>,
+    pub increment: Option<i64>,
+    pub min_value: Option<Option<i64>>,
+    pub max_value: Option<Option<i64>>,
+    pub restart: Option<i64>,
+    pub cache: Option<i64>,
+    pub cycle: Option<bool>,
+    pub owned_by: Option<Option<SequenceOwner>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

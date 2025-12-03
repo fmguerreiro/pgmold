@@ -1,8 +1,8 @@
-use crate::diff::{ColumnChanges, EnumValuePosition, MigrationOp, PolicyChanges};
+use crate::diff::{ColumnChanges, EnumValuePosition, MigrationOp, PolicyChanges, SequenceChanges};
 use crate::model::{
     parse_qualified_name, CheckConstraint, Column, ForeignKey, Function, Index, IndexType, PgType,
-    Policy, PolicyCommand, ReferentialAction, SecurityType, Table, Trigger, TriggerEvent,
-    TriggerTiming, View, Volatility,
+    Policy, PolicyCommand, ReferentialAction, SecurityType, Sequence, SequenceDataType, Table,
+    Trigger, TriggerEvent, TriggerTiming, View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -237,6 +237,17 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                 quote_ident(name),
                 quote_qualified(table_schema, table)
             )]
+        }
+
+        MigrationOp::CreateSequence(seq) => vec![generate_create_sequence(seq)],
+
+        MigrationOp::DropSequence(name) => {
+            let (schema, seq_name) = parse_qualified_name(name);
+            vec![format!("DROP SEQUENCE {};", quote_qualified(&schema, &seq_name))]
+        }
+
+        MigrationOp::AlterSequence { name, changes } => {
+            vec![generate_alter_sequence(name, changes)]
         }
     }
 }
@@ -611,6 +622,122 @@ fn generate_view_ddl(view: &View, replace: bool) -> String {
             view.query
         )
     }
+}
+
+fn generate_create_sequence(seq: &Sequence) -> String {
+    let mut parts = vec![
+        "CREATE SEQUENCE".to_string(),
+        quote_qualified(&seq.schema, &seq.name),
+    ];
+
+    let data_type_str = match seq.data_type {
+        SequenceDataType::SmallInt => "smallint",
+        SequenceDataType::Integer => "integer",
+        SequenceDataType::BigInt => "bigint",
+    };
+    parts.push(format!("AS {}", data_type_str));
+
+    if let Some(start) = seq.start {
+        parts.push(format!("START WITH {}", start));
+    }
+
+    if let Some(increment) = seq.increment {
+        parts.push(format!("INCREMENT BY {}", increment));
+    }
+
+    if let Some(min_value) = seq.min_value {
+        parts.push(format!("MINVALUE {}", min_value));
+    }
+
+    if let Some(max_value) = seq.max_value {
+        parts.push(format!("MAXVALUE {}", max_value));
+    }
+
+    if seq.cycle {
+        parts.push("CYCLE".to_string());
+    }
+
+    if let Some(cache) = seq.cache {
+        parts.push(format!("CACHE {}", cache));
+    }
+
+    if let Some(ref owner) = seq.owned_by {
+        parts.push(format!(
+            "OWNED BY {}.{}.{}",
+            quote_ident(&owner.table_schema),
+            quote_ident(&owner.table_name),
+            quote_ident(&owner.column_name)
+        ));
+    }
+
+    format!("{};", parts.join(" "))
+}
+
+fn generate_alter_sequence(name: &str, changes: &SequenceChanges) -> String {
+    let (schema, seq_name) = parse_qualified_name(name);
+    let mut parts = vec![
+        "ALTER SEQUENCE".to_string(),
+        quote_qualified(&schema, &seq_name),
+    ];
+
+    if let Some(ref data_type) = changes.data_type {
+        let data_type_str = match data_type {
+            SequenceDataType::SmallInt => "smallint",
+            SequenceDataType::Integer => "integer",
+            SequenceDataType::BigInt => "bigint",
+        };
+        parts.push(format!("AS {}", data_type_str));
+    }
+
+    if let Some(increment) = changes.increment {
+        parts.push(format!("INCREMENT BY {}", increment));
+    }
+
+    if let Some(ref min_value) = changes.min_value {
+        match min_value {
+            Some(val) => parts.push(format!("MINVALUE {}", val)),
+            None => parts.push("NO MINVALUE".to_string()),
+        }
+    }
+
+    if let Some(ref max_value) = changes.max_value {
+        match max_value {
+            Some(val) => parts.push(format!("MAXVALUE {}", val)),
+            None => parts.push("NO MAXVALUE".to_string()),
+        }
+    }
+
+    if let Some(restart) = changes.restart {
+        parts.push(format!("RESTART WITH {}", restart));
+    }
+
+    if let Some(cache) = changes.cache {
+        parts.push(format!("CACHE {}", cache));
+    }
+
+    if let Some(cycle) = changes.cycle {
+        if cycle {
+            parts.push("CYCLE".to_string());
+        } else {
+            parts.push("NO CYCLE".to_string());
+        }
+    }
+
+    if let Some(ref owned_by) = changes.owned_by {
+        match owned_by {
+            Some(owner) => {
+                parts.push(format!(
+                    "OWNED BY {}.{}.{}",
+                    quote_ident(&owner.table_schema),
+                    quote_ident(&owner.table_name),
+                    quote_ident(&owner.column_name)
+                ));
+            }
+            None => parts.push("OWNED BY NONE".to_string()),
+        }
+    }
+
+    format!("{};", parts.join(" "))
 }
 
 fn generate_create_trigger(trigger: &Trigger) -> String {
@@ -1200,5 +1327,146 @@ mod tests {
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
         assert_eq!(sql[0], r#"DROP TRIGGER "audit_trigger" ON "public"."users";"#);
+    }
+
+    #[test]
+    fn sqlgen_create_sequence_minimal() {
+        use crate::model::{Sequence, SequenceDataType};
+
+        let seq = Sequence {
+            name: "users_id_seq".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: None,
+            increment: None,
+            min_value: None,
+            max_value: None,
+            cycle: false,
+            cache: None,
+            owned_by: None,
+        };
+        let op = MigrationOp::CreateSequence(seq);
+        let sql = generate_sql(&vec![op]);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "CREATE SEQUENCE \"public\".\"users_id_seq\" AS bigint;");
+    }
+
+    #[test]
+    fn sqlgen_create_sequence_full() {
+        use crate::model::{Sequence, SequenceDataType, SequenceOwner};
+
+        let seq = Sequence {
+            name: "counter_seq".to_string(),
+            schema: "auth".to_string(),
+            data_type: SequenceDataType::Integer,
+            start: Some(100),
+            increment: Some(5),
+            min_value: Some(1),
+            max_value: Some(1000),
+            cycle: true,
+            cache: Some(10),
+            owned_by: Some(SequenceOwner {
+                table_schema: "auth".to_string(),
+                table_name: "users".to_string(),
+                column_name: "id".to_string(),
+            }),
+        };
+        let op = MigrationOp::CreateSequence(seq);
+        let sql = generate_sql(&vec![op]);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("CREATE SEQUENCE \"auth\".\"counter_seq\""));
+        assert!(sql[0].contains("AS integer"));
+        assert!(sql[0].contains("START WITH 100"));
+        assert!(sql[0].contains("INCREMENT BY 5"));
+        assert!(sql[0].contains("MINVALUE 1"));
+        assert!(sql[0].contains("MAXVALUE 1000"));
+        assert!(sql[0].contains("CYCLE"));
+        assert!(sql[0].contains("CACHE 10"));
+        assert!(sql[0].contains("OWNED BY \"auth\".\"users\".\"id\""));
+    }
+
+    #[test]
+    fn sqlgen_drop_sequence() {
+        let op = MigrationOp::DropSequence("public.users_id_seq".to_string());
+        let sql = generate_sql(&vec![op]);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "DROP SEQUENCE \"public\".\"users_id_seq\";");
+    }
+
+    #[test]
+    fn sqlgen_alter_sequence_increment() {
+        use crate::diff::SequenceChanges;
+
+        let mut changes = SequenceChanges::default();
+        changes.increment = Some(10);
+        let op = MigrationOp::AlterSequence {
+            name: "public.counter_seq".to_string(),
+            changes,
+        };
+        let sql = generate_sql(&vec![op]);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("ALTER SEQUENCE \"public\".\"counter_seq\""));
+        assert!(sql[0].contains("INCREMENT BY 10"));
+    }
+
+    #[test]
+    fn sqlgen_alter_sequence_multiple_changes() {
+        use crate::diff::SequenceChanges;
+        use crate::model::SequenceDataType;
+
+        let changes = SequenceChanges {
+            data_type: Some(SequenceDataType::BigInt),
+            increment: Some(2),
+            min_value: Some(Some(10)),
+            max_value: Some(None),
+            restart: Some(50),
+            cache: Some(20),
+            cycle: Some(true),
+            owned_by: None,
+        };
+        let op = MigrationOp::AlterSequence {
+            name: "public.my_seq".to_string(),
+            changes,
+        };
+        let sql = generate_sql(&vec![op]);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("ALTER SEQUENCE \"public\".\"my_seq\""));
+        assert!(sql[0].contains("AS bigint"));
+        assert!(sql[0].contains("INCREMENT BY 2"));
+        assert!(sql[0].contains("MINVALUE 10"));
+        assert!(sql[0].contains("NO MAXVALUE"));
+        assert!(sql[0].contains("RESTART WITH 50"));
+        assert!(sql[0].contains("CACHE 20"));
+        assert!(sql[0].contains("CYCLE"));
+    }
+
+    #[test]
+    fn sqlgen_alter_sequence_no_minvalue() {
+        use crate::diff::SequenceChanges;
+
+        let mut changes = SequenceChanges::default();
+        changes.min_value = Some(None);
+        let op = MigrationOp::AlterSequence {
+            name: "public.seq".to_string(),
+            changes,
+        };
+        let sql = generate_sql(&vec![op]);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("NO MINVALUE"));
+    }
+
+    #[test]
+    fn sqlgen_alter_sequence_owned_by_none() {
+        use crate::diff::SequenceChanges;
+
+        let mut changes = SequenceChanges::default();
+        changes.owned_by = Some(None);
+        let op = MigrationOp::AlterSequence {
+            name: "public.seq".to_string(),
+            changes,
+        };
+        let sql = generate_sql(&vec![op]);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("OWNED BY NONE"));
     }
 }
