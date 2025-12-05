@@ -40,7 +40,10 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
 
         MigrationOp::DropEnum(name) => {
             let (schema, enum_name) = parse_qualified_name(name);
-            vec![format!("DROP TYPE {};", quote_qualified(&schema, &enum_name))]
+            vec![format!(
+                "DROP TYPE {};",
+                quote_qualified(&schema, &enum_name)
+            )]
         }
 
         MigrationOp::AddEnumValue {
@@ -74,7 +77,10 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
 
         MigrationOp::DropTable(name) => {
             let (schema, table_name) = parse_qualified_name(name);
-            vec![format!("DROP TABLE {};", quote_qualified(&schema, &table_name))]
+            vec![format!(
+                "DROP TABLE {};",
+                quote_qualified(&schema, &table_name)
+            )]
         }
 
         MigrationOp::AddColumn { table, column } => {
@@ -150,7 +156,11 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             check_constraint,
         } => {
             let (schema, table_name) = parse_qualified_name(table);
-            vec![generate_add_check_constraint(&schema, &table_name, check_constraint)]
+            vec![generate_add_check_constraint(
+                &schema,
+                &table_name,
+                check_constraint,
+            )]
         }
 
         MigrationOp::DropCheckConstraint {
@@ -202,7 +212,11 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
 
         MigrationOp::DropFunction { name, args } => {
             let (schema, func_name) = parse_qualified_name(name);
-            vec![format!("DROP FUNCTION {}({});", quote_qualified(&schema, &func_name), args)]
+            vec![format!(
+                "DROP FUNCTION {}({});",
+                quote_qualified(&schema, &func_name),
+                args
+            )]
         }
 
         MigrationOp::AlterFunction { new_function, .. } => {
@@ -218,7 +232,11 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             } else {
                 "VIEW"
             };
-            vec![format!("DROP {} {};", view_type, quote_qualified(&schema, &view_name))]
+            vec![format!(
+                "DROP {} {};",
+                view_type,
+                quote_qualified(&schema, &view_name)
+            )]
         }
 
         MigrationOp::AlterView { new_view, .. } => {
@@ -243,7 +261,10 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
 
         MigrationOp::DropSequence(name) => {
             let (schema, seq_name) = parse_qualified_name(name);
-            vec![format!("DROP SEQUENCE {};", quote_qualified(&schema, &seq_name))]
+            vec![format!(
+                "DROP SEQUENCE {};",
+                quote_qualified(&schema, &seq_name)
+            )]
         }
 
         MigrationOp::AlterSequence { name, changes } => {
@@ -276,11 +297,19 @@ fn generate_create_table(table: &Table) -> Vec<String> {
     }
 
     for foreign_key in &table.foreign_keys {
-        statements.push(generate_add_foreign_key(&table.schema, &table.name, foreign_key));
+        statements.push(generate_add_foreign_key(
+            &table.schema,
+            &table.name,
+            foreign_key,
+        ));
     }
 
     for check_constraint in &table.check_constraints {
-        statements.push(generate_add_check_constraint(&table.schema, &table.name, check_constraint));
+        statements.push(generate_add_check_constraint(
+            &table.schema,
+            &table.name,
+            check_constraint,
+        ));
     }
 
     statements
@@ -318,7 +347,11 @@ fn generate_add_foreign_key(schema: &str, table: &str, foreign_key: &ForeignKey)
     )
 }
 
-fn generate_add_check_constraint(schema: &str, table: &str, check_constraint: &CheckConstraint) -> String {
+fn generate_add_check_constraint(
+    schema: &str,
+    table: &str,
+    check_constraint: &CheckConstraint,
+) -> String {
     format!(
         "ALTER TABLE {} ADD CONSTRAINT {} CHECK ({});",
         quote_qualified(schema, table),
@@ -598,15 +631,12 @@ fn generate_view_ddl(view: &View, replace: bool) -> String {
         if replace {
             format!(
                 "DROP MATERIALIZED VIEW IF EXISTS {}; CREATE MATERIALIZED VIEW {} AS {};",
-                qualified_name,
-                qualified_name,
-                view.query
+                qualified_name, qualified_name, view.query
             )
         } else {
             format!(
                 "CREATE MATERIALIZED VIEW {} AS {};",
-                qualified_name,
-                view.query
+                qualified_name, view.query
             )
         }
     } else {
@@ -615,12 +645,7 @@ fn generate_view_ddl(view: &View, replace: bool) -> String {
         } else {
             "CREATE VIEW"
         };
-        format!(
-            "{} {} AS {};",
-            create_stmt,
-            qualified_name,
-            view.query
-        )
+        format!("{} {} AS {};", create_stmt, qualified_name, view.query)
     }
 }
 
@@ -752,27 +777,25 @@ fn generate_create_trigger(trigger: &Trigger) -> String {
     let events: Vec<String> = trigger
         .events
         .iter()
-        .map(|e| {
-            match e {
-                TriggerEvent::Insert => "INSERT".to_string(),
-                TriggerEvent::Update => {
-                    if trigger.update_columns.is_empty() {
-                        "UPDATE".to_string()
-                    } else {
-                        format!(
-                            "UPDATE OF {}",
-                            trigger
-                                .update_columns
-                                .iter()
-                                .map(|c| quote_ident(c))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )
-                    }
+        .map(|e| match e {
+            TriggerEvent::Insert => "INSERT".to_string(),
+            TriggerEvent::Update => {
+                if trigger.update_columns.is_empty() {
+                    "UPDATE".to_string()
+                } else {
+                    format!(
+                        "UPDATE OF {}",
+                        trigger
+                            .update_columns
+                            .iter()
+                            .map(|c| quote_ident(c))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
                 }
-                TriggerEvent::Delete => "DELETE".to_string(),
-                TriggerEvent::Truncate => "TRUNCATE".to_string(),
             }
+            TriggerEvent::Delete => "DELETE".to_string(),
+            TriggerEvent::Truncate => "TRUNCATE".to_string(),
         })
         .collect();
 
@@ -800,10 +823,7 @@ fn generate_create_trigger(trigger: &Trigger) -> String {
     if trigger.function_args.is_empty() {
         sql.push_str("();");
     } else {
-        sql.push_str(&format!(
-            "({});",
-            trigger.function_args.join(", ")
-        ));
+        sql.push_str(&format!("({});", trigger.function_args.join(", ")));
     }
 
     sql
@@ -870,7 +890,10 @@ mod tests {
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert_eq!(sql[0], "ALTER TABLE \"public\".\"users\" DROP COLUMN \"email\";");
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"users\" DROP COLUMN \"email\";"
+        );
     }
 
     #[test]
@@ -1041,7 +1064,8 @@ mod tests {
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert!(sql[0].contains("ALTER TABLE \"public\".\"posts\" ADD CONSTRAINT \"posts_user_id_fkey\""));
+        assert!(sql[0]
+            .contains("ALTER TABLE \"public\".\"posts\" ADD CONSTRAINT \"posts_user_id_fkey\""));
         assert!(sql[0].contains("FOREIGN KEY (\"user_id\")"));
         assert!(sql[0].contains("REFERENCES \"public\".\"users\" (\"id\")"));
         assert!(sql[0].contains("ON DELETE CASCADE"));
@@ -1091,7 +1115,10 @@ mod tests {
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert_eq!(sql[0], "ALTER TYPE \"public\".\"status\" ADD VALUE 'pending';");
+        assert_eq!(
+            sql[0],
+            "ALTER TYPE \"public\".\"status\" ADD VALUE 'pending';"
+        );
     }
 
     #[test]
@@ -1136,7 +1163,10 @@ mod tests {
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert_eq!(sql[0], "ALTER TYPE \"public\".\"status\" ADD VALUE 'it''s pending';");
+        assert_eq!(
+            sql[0],
+            "ALTER TYPE \"public\".\"status\" ADD VALUE 'it''s pending';"
+        );
     }
 
     #[test]
@@ -1277,7 +1307,11 @@ mod tests {
             table_schema: "public".to_string(),
             table: "orders".to_string(),
             timing: TriggerTiming::After,
-            events: vec![TriggerEvent::Insert, TriggerEvent::Update, TriggerEvent::Delete],
+            events: vec![
+                TriggerEvent::Insert,
+                TriggerEvent::Update,
+                TriggerEvent::Delete,
+            ],
             update_columns: vec![],
             for_each_row: true,
             when_clause: None,
@@ -1326,7 +1360,10 @@ mod tests {
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert_eq!(sql[0], r#"DROP TRIGGER "audit_trigger" ON "public"."users";"#);
+        assert_eq!(
+            sql[0],
+            r#"DROP TRIGGER "audit_trigger" ON "public"."users";"#
+        );
     }
 
     #[test]
@@ -1348,7 +1385,10 @@ mod tests {
         let op = MigrationOp::CreateSequence(seq);
         let sql = generate_sql(&vec![op]);
         assert_eq!(sql.len(), 1);
-        assert_eq!(sql[0], "CREATE SEQUENCE \"public\".\"users_id_seq\" AS bigint;");
+        assert_eq!(
+            sql[0],
+            "CREATE SEQUENCE \"public\".\"users_id_seq\" AS bigint;"
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 pub mod apply;
 pub mod diff;
 pub mod drift;
+pub mod dump;
 pub mod lint;
 pub mod model;
 pub mod parser;

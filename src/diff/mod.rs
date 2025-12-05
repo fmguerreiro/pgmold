@@ -1394,15 +1394,17 @@ mod tests {
         let mut to = empty_schema();
         let mut modified_trigger = make_trigger("audit_trigger", "users");
         modified_trigger.timing = crate::model::TriggerTiming::Before;
-        to.triggers.insert(
-            "public.users.audit_trigger".to_string(),
-            modified_trigger,
-        );
+        to.triggers
+            .insert("public.users.audit_trigger".to_string(), modified_trigger);
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 2);
-        assert!(ops.iter().any(|op| matches!(op, MigrationOp::DropTrigger { name, .. } if name == "audit_trigger")));
-        assert!(ops.iter().any(|op| matches!(op, MigrationOp::CreateTrigger(t) if t.name == "audit_trigger")));
+        assert!(ops.iter().any(
+            |op| matches!(op, MigrationOp::DropTrigger { name, .. } if name == "audit_trigger")
+        ));
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::CreateTrigger(t) if t.name == "audit_trigger")));
     }
 
     #[test]
@@ -1426,7 +1428,9 @@ mod tests {
         );
 
         let ops = compute_diff(&from, &to);
-        assert!(ops.iter().any(|op| matches!(op, MigrationOp::CreateSequence(_))));
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::CreateSequence(_))));
     }
 
     #[test]

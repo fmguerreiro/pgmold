@@ -98,7 +98,10 @@ fn resolve_source(source: &str) -> Result<Vec<PathBuf>> {
     if path.is_dir() {
         let pattern = path.join("**/*.sql");
         let pattern_str = pattern.to_str().ok_or_else(|| {
-            SchemaError::ParseError(format!("Path contains invalid UTF-8: {}", pattern.display()))
+            SchemaError::ParseError(format!(
+                "Path contains invalid UTF-8: {}",
+                pattern.display()
+            ))
         })?;
         return resolve_glob(pattern_str);
     }

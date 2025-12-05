@@ -583,39 +583,47 @@ mod tests {
             function_name: "prevent_delete".to_string(),
             function_args: vec![],
         };
-        schema.triggers.insert("public.users.audit_log".to_string(), trigger);
+        schema
+            .triggers
+            .insert("public.users.audit_log".to_string(), trigger);
         assert_eq!(schema.triggers.len(), 1);
     }
 
     #[test]
     fn fingerprint_differs_by_schema() {
         let mut schema1 = Schema::new();
-        schema1.tables.insert("public.users".to_string(), Table {
-            schema: "public".to_string(),
-            name: "users".to_string(),
-            columns: BTreeMap::new(),
-            indexes: Vec::new(),
-            primary_key: None,
-            foreign_keys: Vec::new(),
-            check_constraints: Vec::new(),
-            comment: None,
-            row_level_security: false,
-            policies: Vec::new(),
-        });
+        schema1.tables.insert(
+            "public.users".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: Vec::new(),
+                primary_key: None,
+                foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
+                comment: None,
+                row_level_security: false,
+                policies: Vec::new(),
+            },
+        );
 
         let mut schema2 = Schema::new();
-        schema2.tables.insert("auth.users".to_string(), Table {
-            schema: "auth".to_string(),
-            name: "users".to_string(),
-            columns: BTreeMap::new(),
-            indexes: Vec::new(),
-            primary_key: None,
-            foreign_keys: Vec::new(),
-            check_constraints: Vec::new(),
-            comment: None,
-            row_level_security: false,
-            policies: Vec::new(),
-        });
+        schema2.tables.insert(
+            "auth.users".to_string(),
+            Table {
+                schema: "auth".to_string(),
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: Vec::new(),
+                primary_key: None,
+                foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
+                comment: None,
+                row_level_security: false,
+                policies: Vec::new(),
+            },
+        );
 
         assert_ne!(schema1.fingerprint(), schema2.fingerprint());
     }
@@ -660,9 +668,12 @@ mod tests {
         let int_json = serde_json::to_string(&integer).expect("Failed to serialize Integer");
         let big_json = serde_json::to_string(&big_int).expect("Failed to serialize BigInt");
 
-        let small_deserialized: SequenceDataType = serde_json::from_str(&small_json).expect("Failed to deserialize SmallInt");
-        let int_deserialized: SequenceDataType = serde_json::from_str(&int_json).expect("Failed to deserialize Integer");
-        let big_deserialized: SequenceDataType = serde_json::from_str(&big_json).expect("Failed to deserialize BigInt");
+        let small_deserialized: SequenceDataType =
+            serde_json::from_str(&small_json).expect("Failed to deserialize SmallInt");
+        let int_deserialized: SequenceDataType =
+            serde_json::from_str(&int_json).expect("Failed to deserialize Integer");
+        let big_deserialized: SequenceDataType =
+            serde_json::from_str(&big_json).expect("Failed to deserialize BigInt");
 
         assert_eq!(small_int, small_deserialized);
         assert_eq!(integer, int_deserialized);

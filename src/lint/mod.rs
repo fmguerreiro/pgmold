@@ -369,7 +369,6 @@ mod tests {
         assert!(!has_errors(&results));
     }
 
-
     #[test]
     fn blocks_drop_trigger_without_flag() {
         let ops = vec![MigrationOp::DropTrigger {

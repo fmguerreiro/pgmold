@@ -163,8 +163,7 @@ fn order_table_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             let qualified_table_name = qualified_name(&table.schema, &table.name);
             let mut deps = HashSet::new();
             for fk in &table.foreign_keys {
-                let qualified_ref =
-                    qualified_name(&fk.referenced_schema, &fk.referenced_table);
+                let qualified_ref = qualified_name(&fk.referenced_schema, &fk.referenced_table);
                 if qualified_ref != qualified_table_name {
                     deps.insert(qualified_ref);
                 }

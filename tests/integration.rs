@@ -25,7 +25,9 @@ async fn empty_to_simple_schema() {
 
     let connection = PgConnection::new(&url).await.unwrap();
 
-    let empty_schema = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let empty_schema = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
     assert!(empty_schema.tables.is_empty());
 
     let target_schema = parse_sql_string(
@@ -58,7 +60,9 @@ async fn add_column() {
         .await
         .unwrap();
 
-    let current_schema = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let current_schema = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
     assert!(current_schema.tables.contains_key("public.users"));
     assert!(!current_schema
         .tables
@@ -192,7 +196,9 @@ async fn multi_file_schema_loading() {
     assert_eq!(posts.foreign_keys[0].referenced_table, "users");
 
     // Test that apply works with multi-file
-    let current = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let current = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
     let ops = compute_diff(&current, &target);
 
     // Should have operations to create enum, tables, indexes, FK
@@ -211,7 +217,9 @@ async fn multi_file_schema_loading() {
     transaction.commit().await.unwrap();
 
     // Verify core schema objects exist after apply
-    let after = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let after = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
     assert_eq!(after.enums.len(), 1, "Should have enum");
     assert!(
         after.enums.contains_key("public.user_role"),
@@ -247,9 +255,19 @@ async fn add_enum_value() {
         .await
         .unwrap();
 
-    let current_schema = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let current_schema = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
     assert!(current_schema.enums.contains_key("public.status"));
-    assert_eq!(current_schema.enums.get("public.status").unwrap().values.len(), 2);
+    assert_eq!(
+        current_schema
+            .enums
+            .get("public.status")
+            .unwrap()
+            .values
+            .len(),
+        2
+    );
 
     let target_schema = parse_sql_string(
         r#"
@@ -282,7 +300,9 @@ async fn add_enum_value() {
             .unwrap();
     }
 
-    let after_schema = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let after_schema = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
     let status_enum = after_schema.enums.get("public.status").unwrap();
     assert_eq!(status_enum.values.len(), 3);
     assert!(status_enum.values.contains(&"pending".to_string()));
@@ -318,7 +338,9 @@ async fn multi_schema_table_management() {
     "#;
 
     let desired = parse_sql_string(sql).unwrap();
-    let current = introspect_schema(&connection, &["auth".to_string(), "api".to_string()]).await.unwrap();
+    let current = introspect_schema(&connection, &["auth".to_string(), "api".to_string()])
+        .await
+        .unwrap();
 
     let ops = compute_diff(&current, &desired);
     let planned = plan_migration(ops);
@@ -328,7 +350,9 @@ async fn multi_schema_table_management() {
         sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
-    let final_schema = introspect_schema(&connection, &["auth".to_string(), "api".to_string()]).await.unwrap();
+    let final_schema = introspect_schema(&connection, &["auth".to_string(), "api".to_string()])
+        .await
+        .unwrap();
     assert!(final_schema.tables.contains_key("auth.users"));
     assert!(final_schema.tables.contains_key("api.sessions"));
 
@@ -349,7 +373,9 @@ async fn sequence_roundtrip() {
     "#;
     let desired = parse_sql_string(sql).unwrap();
 
-    let current = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let current = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
     assert!(current.sequences.is_empty());
 
     let ops = compute_diff(&current, &desired);
@@ -366,7 +392,9 @@ async fn sequence_roundtrip() {
         sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
-    let after = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let after = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
     assert!(after.sequences.contains_key("public.counter_seq"));
 
     let seq = after.sequences.get("public.counter_seq").unwrap();
@@ -393,7 +421,9 @@ async fn sequence_with_owned_by() {
     "#;
     let desired = parse_sql_string(sql).unwrap();
 
-    let current = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let current = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
 
     let ops = compute_diff(&current, &desired);
     let planned = plan_migration(ops);
@@ -403,7 +433,9 @@ async fn sequence_with_owned_by() {
         sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
-    let after = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let after = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
     assert!(after.sequences.contains_key("public.users_id_seq"));
 
     let seq = after.sequences.get("public.users_id_seq").unwrap();
@@ -431,7 +463,9 @@ async fn sequence_alter() {
     "#;
     let initial_schema = parse_sql_string(initial_sql).unwrap();
 
-    let current = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let current = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
     let ops = compute_diff(&current, &initial_schema);
     let planned = plan_migration(ops);
     let sql_stmts = generate_sql(&planned);
@@ -440,7 +474,9 @@ async fn sequence_alter() {
         sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
-    let after_create = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let after_create = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
     assert!(after_create.sequences.contains_key("public.counter_seq"));
 
     let modified_sql = r#"
@@ -464,7 +500,9 @@ async fn sequence_alter() {
         sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
-    let after_alter = introspect_schema(&connection, &["public".to_string()]).await.unwrap();
+    let after_alter = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
     let seq = after_alter.sequences.get("public.counter_seq").unwrap();
     assert_eq!(seq.increment, Some(10));
     assert_eq!(seq.cache, Some(20));
@@ -474,4 +512,130 @@ async fn sequence_alter() {
         final_diff.is_empty(),
         "After alter, diff should be empty, but got: {final_diff:?}"
     );
+}
+
+#[tokio::test]
+async fn dump_roundtrip() {
+    use pgmold::dump::generate_dump;
+
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE TYPE status AS ENUM ('active', 'inactive')")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+    sqlx::query("CREATE TABLE users (id BIGINT PRIMARY KEY, email TEXT NOT NULL, status status DEFAULT 'active')")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+    sqlx::query("CREATE INDEX users_email_idx ON users (email)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
+
+    let dump = generate_dump(&schema, None);
+
+    assert!(dump.contains("CREATE TYPE"), "dump should contain enum");
+    assert!(dump.contains("CREATE TABLE"), "dump should contain table");
+    assert!(dump.contains("CREATE INDEX"), "dump should contain index");
+    assert!(dump.contains("users"), "dump should reference users table");
+    assert!(dump.contains("status"), "dump should reference status enum");
+}
+
+#[tokio::test]
+async fn dump_multi_schema() {
+    use pgmold::dump::generate_dump;
+
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE SCHEMA auth")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+    sqlx::query("CREATE TABLE auth.users (id BIGINT PRIMARY KEY, email TEXT NOT NULL)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+    sqlx::query("CREATE TABLE public.posts (id BIGINT PRIMARY KEY, user_id BIGINT REFERENCES auth.users(id))")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string(), "auth".to_string()])
+        .await
+        .unwrap();
+
+    let dump = generate_dump(&schema, None);
+
+    assert!(
+        dump.contains(r#""auth"."users""#),
+        "dump should contain auth.users"
+    );
+    assert!(
+        dump.contains(r#""public"."posts""#),
+        "dump should contain public.posts"
+    );
+    assert!(
+        dump.contains("REFERENCES"),
+        "dump should contain FK reference"
+    );
+}
+
+#[tokio::test]
+async fn dump_complex_schema() {
+    use pgmold::dump::generate_dump;
+
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE TABLE users (id BIGINT PRIMARY KEY, email TEXT)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+    sqlx::query("CREATE FUNCTION get_user_count() RETURNS INTEGER AS $$ SELECT COUNT(*)::INTEGER FROM users; $$ LANGUAGE SQL STABLE")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+    sqlx::query("CREATE VIEW active_users AS SELECT * FROM users WHERE id > 0")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE users ENABLE ROW LEVEL SECURITY")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+    sqlx::query("CREATE POLICY users_select ON users FOR SELECT USING (true)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
+
+    let dump = generate_dump(&schema, None);
+
+    assert!(
+        dump.contains("CREATE TABLE"),
+        "dump should contain CREATE TABLE"
+    );
+    assert!(
+        dump.contains("CREATE FUNCTION") || dump.contains("CREATE OR REPLACE FUNCTION"),
+        "dump should contain function"
+    );
+    assert!(
+        dump.contains("CREATE VIEW") || dump.contains("CREATE OR REPLACE VIEW"),
+        "dump should contain view"
+    );
+    assert!(
+        dump.contains("ENABLE ROW LEVEL SECURITY"),
+        "dump should contain RLS"
+    );
+    assert!(dump.contains("CREATE POLICY"), "dump should contain policy");
 }

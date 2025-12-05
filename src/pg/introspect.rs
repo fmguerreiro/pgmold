@@ -24,17 +24,21 @@ pub async fn introspect_schema(
         .map(|t| (t.schema.clone(), t.name.clone()))
         .collect();
     for (table_schema, table_name) in table_keys {
-        let columns = introspect_columns(connection, target_schemas, &table_schema, &table_name).await?;
+        let columns =
+            introspect_columns(connection, target_schemas, &table_schema, &table_name).await?;
         let primary_key = introspect_primary_key(connection, &table_schema, &table_name).await?;
         let mut indexes = introspect_indexes(connection, &table_schema, &table_name).await?;
-        let mut foreign_keys = introspect_foreign_keys(connection, &table_schema, &table_name).await?;
-        let mut check_constraints = introspect_check_constraints(connection, &table_schema, &table_name).await?;
+        let mut foreign_keys =
+            introspect_foreign_keys(connection, &table_schema, &table_name).await?;
+        let mut check_constraints =
+            introspect_check_constraints(connection, &table_schema, &table_name).await?;
 
         indexes.sort();
         foreign_keys.sort();
         check_constraints.sort();
 
-        let row_level_security = introspect_rls_enabled(connection, &table_schema, &table_name).await?;
+        let row_level_security =
+            introspect_rls_enabled(connection, &table_schema, &table_name).await?;
         let mut policies = introspect_policies(connection, &table_schema, &table_name).await?;
         policies.sort();
 
@@ -88,7 +92,10 @@ async fn introspect_extensions(connection: &PgConnection) -> Result<BTreeMap<Str
     Ok(extensions)
 }
 
-async fn introspect_enums(connection: &PgConnection, target_schemas: &[String]) -> Result<BTreeMap<String, EnumType>> {
+async fn introspect_enums(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, EnumType>> {
     let rows = sqlx::query(
         r#"
         SELECT n.nspname, t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) as labels
@@ -121,7 +128,10 @@ async fn introspect_enums(connection: &PgConnection, target_schemas: &[String]) 
     Ok(enums)
 }
 
-async fn introspect_tables(connection: &PgConnection, target_schemas: &[String]) -> Result<BTreeMap<String, Table>> {
+async fn introspect_tables(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Table>> {
     let rows = sqlx::query(
         r#"
         SELECT table_schema, table_name
@@ -251,7 +261,11 @@ async fn introspect_primary_key(
     }))
 }
 
-async fn introspect_indexes(connection: &PgConnection, table_schema: &str, table_name: &str) -> Result<Vec<Index>> {
+async fn introspect_indexes(
+    connection: &PgConnection,
+    table_schema: &str,
+    table_name: &str,
+) -> Result<Vec<Index>> {
     let rows = sqlx::query(
         r#"
         SELECT i.relname as index_name, ix.indisunique, am.amname,
@@ -406,7 +420,11 @@ fn map_referential_action(action: char) -> ReferentialAction {
     }
 }
 
-async fn introspect_rls_enabled(connection: &PgConnection, table_schema: &str, table_name: &str) -> Result<bool> {
+async fn introspect_rls_enabled(
+    connection: &PgConnection,
+    table_schema: &str,
+    table_name: &str,
+) -> Result<bool> {
     let row = sqlx::query(
         r#"
         SELECT c.relrowsecurity
@@ -430,7 +448,11 @@ async fn introspect_rls_enabled(connection: &PgConnection, table_schema: &str, t
     Ok(row.get::<bool, _>("relrowsecurity"))
 }
 
-async fn introspect_policies(connection: &PgConnection, table_schema: &str, table_name: &str) -> Result<Vec<Policy>> {
+async fn introspect_policies(
+    connection: &PgConnection,
+    table_schema: &str,
+    table_name: &str,
+) -> Result<Vec<Policy>> {
     let rows = sqlx::query(
         r#"
         SELECT
@@ -487,7 +509,10 @@ fn map_policy_command(cmd: char) -> PolicyCommand {
     }
 }
 
-async fn introspect_functions(connection: &PgConnection, target_schemas: &[String]) -> Result<BTreeMap<String, Function>> {
+async fn introspect_functions(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Function>> {
     let rows = sqlx::query(
         r#"
         SELECT
@@ -582,7 +607,10 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
         .collect()
 }
 
-async fn introspect_views(connection: &PgConnection, target_schemas: &[String]) -> Result<BTreeMap<String, View>> {
+async fn introspect_views(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, View>> {
     let mut views = BTreeMap::new();
 
     let regular_views = sqlx::query(
@@ -810,11 +838,11 @@ async fn introspect_sequences(
         let max_value: Option<i64> = row.get("max_value");
         let cycle: Option<bool> = row.get("cycle");
         let cache_size: Option<i64> = row.get("cache_size");
-        
+
         let owned_table: Option<String> = row.get("owned_table");
         let owned_schema: Option<String> = row.get("owned_schema");
         let owned_column: Option<String> = row.get("owned_column");
-        
+
         let owned_by = match (owned_schema, owned_table, owned_column) {
             (Some(ts), Some(t), Some(c)) => Some(SequenceOwner {
                 table_schema: ts,
@@ -823,14 +851,14 @@ async fn introspect_sequences(
             }),
             _ => None,
         };
-        
+
         let seq_data_type = match data_type.as_str() {
             "smallint" => SequenceDataType::SmallInt,
             "integer" => SequenceDataType::Integer,
             "bigint" => SequenceDataType::BigInt,
             _ => panic!("Unknown sequence data type from PostgreSQL: '{data_type}'"),
         };
-        
+
         let qualified_name = format!("{schema}.{name}");
         sequences.insert(
             qualified_name,

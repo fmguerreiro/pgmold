@@ -3,7 +3,9 @@ pub use loader::load_schema_sources;
 
 use crate::model::*;
 use crate::util::{Result, SchemaError};
-use sqlparser::ast::{ColumnDef, ColumnOption, DataType, Expr, SequenceOptions, Statement, TableConstraint};
+use sqlparser::ast::{
+    ColumnDef, ColumnOption, DataType, Expr, SequenceOptions, Statement, TableConstraint,
+};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use std::collections::BTreeMap;
@@ -67,7 +69,8 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
         match statement {
             Statement::CreateTable(ct) => {
                 let (table_schema, table_name) = extract_qualified_name(&ct.name);
-                let parsed = parse_create_table(&table_schema, &table_name, &ct.columns, &ct.constraints)?;
+                let parsed =
+                    parse_create_table(&table_schema, &table_name, &ct.columns, &ct.constraints)?;
                 let key = qualified_name(&table_schema, &table_name);
                 schema.tables.insert(key, parsed.table);
                 for seq in parsed.sequences {
@@ -256,10 +259,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     }
                 }
 
-                let for_each_row = matches!(
-                    trigger_object,
-                    sqlparser::ast::TriggerObject::Row
-                );
+                let for_each_row = matches!(trigger_object, sqlparser::ast::TriggerObject::Row);
 
                 let when_clause = condition.as_ref().map(|e| e.to_string());
 
@@ -576,9 +576,11 @@ fn parse_create_function(
     language: Option<&sqlparser::ast::Ident>,
     behavior: Option<&sqlparser::ast::FunctionBehavior>,
 ) -> Result<Function> {
-    let return_type_str = return_type
-        .map(|rt| rt.to_string())
-        .ok_or_else(|| SchemaError::ParseError(format!("Function {schema}.{name} is missing RETURNS clause")))?;
+    let return_type_str = return_type.map(|rt| rt.to_string()).ok_or_else(|| {
+        SchemaError::ParseError(format!(
+            "Function {schema}.{name} is missing RETURNS clause"
+        ))
+    })?;
 
     let language_str = language
         .map(|l| l.to_string().to_lowercase())
@@ -591,7 +593,9 @@ fn parse_create_function(
             sqlparser::ast::CreateFunctionBody::Return(expr) => expr.to_string(),
         })
         .map(|b| strip_dollar_quotes(&b))
-        .ok_or_else(|| SchemaError::ParseError(format!("Function {schema}.{name} is missing body")))?;
+        .ok_or_else(|| {
+            SchemaError::ParseError(format!("Function {schema}.{name} is missing body"))
+        })?;
 
     let volatility = behavior
         .map(|b| match b {
@@ -962,7 +966,8 @@ CREATE TABLE products (
 
     #[test]
     fn parses_qualified_view_name() {
-        let sql = "CREATE VIEW reporting.active_users AS SELECT * FROM public.users WHERE active = true;";
+        let sql =
+            "CREATE VIEW reporting.active_users AS SELECT * FROM public.users WHERE active = true;";
         let schema = parse_sql_string(sql).unwrap();
         let view = schema.views.get("reporting.active_users").unwrap();
         assert_eq!(view.schema, "reporting");
@@ -1028,7 +1033,10 @@ CREATE TRIGGER notify_email_change
     EXECUTE FUNCTION notify_fn();
 "#;
         let schema = parse_sql_string(sql).unwrap();
-        let trigger = schema.triggers.get("public.users.notify_email_change").unwrap();
+        let trigger = schema
+            .triggers
+            .get("public.users.notify_email_change")
+            .unwrap();
 
         assert_eq!(trigger.timing, TriggerTiming::Before);
         assert_eq!(trigger.events, vec![TriggerEvent::Update]);
@@ -1178,8 +1186,8 @@ CREATE TRIGGER batch_notify
     #[test]
     fn is_serial_type_detection() {
         use sqlparser::ast::DataType;
-        use sqlparser::ast::ObjectName;
         use sqlparser::ast::Ident;
+        use sqlparser::ast::ObjectName;
 
         // SERIAL
         let serial = DataType::Custom(ObjectName(vec![Ident::new("serial")]), vec![]);
@@ -1187,11 +1195,17 @@ CREATE TRIGGER batch_notify
 
         // BIGSERIAL
         let bigserial = DataType::Custom(ObjectName(vec![Ident::new("bigserial")]), vec![]);
-        assert_eq!(detect_serial_type(&bigserial), Some(SequenceDataType::BigInt));
+        assert_eq!(
+            detect_serial_type(&bigserial),
+            Some(SequenceDataType::BigInt)
+        );
 
         // SMALLSERIAL
         let smallserial = DataType::Custom(ObjectName(vec![Ident::new("smallserial")]), vec![]);
-        assert_eq!(detect_serial_type(&smallserial), Some(SequenceDataType::SmallInt));
+        assert_eq!(
+            detect_serial_type(&smallserial),
+            Some(SequenceDataType::SmallInt)
+        );
 
         // Not serial
         let integer = DataType::Integer(None);
@@ -1208,7 +1222,10 @@ CREATE TRIGGER batch_notify
         let table = schema.tables.get("public.users").unwrap();
         let id_col = table.columns.get("id").unwrap();
         assert_eq!(id_col.data_type, PgType::Integer);
-        assert_eq!(id_col.default, Some("nextval('public.users_id_seq'::regclass)".to_string()));
+        assert_eq!(
+            id_col.default,
+            Some("nextval('public.users_id_seq'::regclass)".to_string())
+        );
 
         // Sequence should exist
         assert!(schema.sequences.contains_key("public.users_id_seq"));
@@ -1227,7 +1244,10 @@ CREATE TRIGGER batch_notify
         let schema = parse_sql_string(sql).unwrap();
         let table = schema.tables.get("public.test").unwrap();
         let col = table.columns.get("id").unwrap();
-        assert_eq!(col.default, Some("nextval('public.test_id_seq'::regclass)".to_string()));
+        assert_eq!(
+            col.default,
+            Some("nextval('public.test_id_seq'::regclass)".to_string())
+        );
     }
 
     #[test]
@@ -1264,7 +1284,10 @@ CREATE TRIGGER batch_notify
         assert!(schema.tables.contains_key("auth.users"));
         let table = schema.tables.get("auth.users").unwrap();
         let id_col = table.columns.get("id").unwrap();
-        assert_eq!(id_col.default, Some("nextval('auth.users_id_seq'::regclass)".to_string()));
+        assert_eq!(
+            id_col.default,
+            Some("nextval('auth.users_id_seq'::regclass)".to_string())
+        );
 
         assert!(schema.sequences.contains_key("auth.users_id_seq"));
         let seq = schema.sequences.get("auth.users_id_seq").unwrap();
