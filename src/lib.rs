@@ -1,4 +1,5 @@
 pub mod apply;
+pub mod baseline;
 pub mod diff;
 pub mod drift;
 pub mod dump;
