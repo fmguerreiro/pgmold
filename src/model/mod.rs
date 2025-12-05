@@ -263,6 +263,8 @@ pub struct Trigger {
     pub function_name: String,
     pub function_args: Vec<String>,
     pub enabled: TriggerEnabled,
+    pub old_table_name: Option<String>,
+    pub new_table_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -568,6 +570,8 @@ mod tests {
             function_name: "audit_trigger_fn".to_string(),
             function_args: vec![],
             enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
         };
 
         assert_eq!(trigger.name, "audit_log");
@@ -594,6 +598,8 @@ mod tests {
             function_name: "prevent_delete".to_string(),
             function_args: vec![],
             enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
         };
         schema
             .triggers

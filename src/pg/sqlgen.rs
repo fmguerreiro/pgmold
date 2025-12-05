@@ -836,6 +836,18 @@ fn generate_create_trigger(trigger: &Trigger) -> String {
         sql.push_str(" FOR EACH STATEMENT");
     }
 
+    // Generate REFERENCING clause for transition tables
+    let mut referencing_parts = Vec::new();
+    if let Some(ref name) = trigger.old_table_name {
+        referencing_parts.push(format!("OLD TABLE AS {}", quote_ident(name)));
+    }
+    if let Some(ref name) = trigger.new_table_name {
+        referencing_parts.push(format!("NEW TABLE AS {}", quote_ident(name)));
+    }
+    if !referencing_parts.is_empty() {
+        sql.push_str(&format!(" REFERENCING {}", referencing_parts.join(" ")));
+    }
+
     if let Some(ref when_clause) = trigger.when_clause {
         sql.push_str(&format!(" WHEN ({when_clause})"));
     }
@@ -1304,6 +1316,8 @@ mod tests {
             function_name: "audit_fn".to_string(),
             function_args: vec![],
             enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -1335,6 +1349,8 @@ mod tests {
             function_name: "notify_fn".to_string(),
             function_args: vec![],
             enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -1366,6 +1382,8 @@ mod tests {
             function_name: "log_fn".to_string(),
             function_args: vec![],
             enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -1391,6 +1409,8 @@ mod tests {
             function_name: "check_fn".to_string(),
             function_args: vec![],
             enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -1508,6 +1528,8 @@ mod tests {
             function_name: "audit_fn".to_string(),
             function_args: vec![],
             enabled: TriggerEnabled::Disabled,
+            old_table_name: None,
+            new_table_name: None,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -1662,5 +1684,88 @@ mod tests {
         let sql = generate_sql(&vec![op]);
         assert_eq!(sql.len(), 1);
         assert!(sql[0].contains("OWNED BY NONE"));
+    }
+
+    #[test]
+    fn sqlgen_trigger_with_old_table() {
+        use crate::model::{Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
+
+        let trigger = Trigger {
+            name: "audit_deletes".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Delete],
+            update_columns: vec![],
+            for_each_row: false,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "audit_fn".to_string(),
+            function_args: vec![],
+            enabled: TriggerEnabled::Origin,
+            old_table_name: Some("deleted_rows".to_string()),
+            new_table_name: None,
+        };
+
+        let ops = vec![MigrationOp::CreateTrigger(trigger)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("REFERENCING OLD TABLE AS \"deleted_rows\""));
+        assert!(!sql[0].contains("NEW TABLE"));
+    }
+
+    #[test]
+    fn sqlgen_trigger_with_new_table() {
+        use crate::model::{Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
+
+        let trigger = Trigger {
+            name: "audit_inserts".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Insert],
+            update_columns: vec![],
+            for_each_row: false,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "audit_fn".to_string(),
+            function_args: vec![],
+            enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: Some("inserted_rows".to_string()),
+        };
+
+        let ops = vec![MigrationOp::CreateTrigger(trigger)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("REFERENCING NEW TABLE AS \"inserted_rows\""));
+        assert!(!sql[0].contains("OLD TABLE"));
+    }
+
+    #[test]
+    fn sqlgen_trigger_with_both_transition_tables() {
+        use crate::model::{Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
+
+        let trigger = Trigger {
+            name: "audit_updates".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Update],
+            update_columns: vec![],
+            for_each_row: false,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "audit_fn".to_string(),
+            function_args: vec![],
+            enabled: TriggerEnabled::Origin,
+            old_table_name: Some("old_rows".to_string()),
+            new_table_name: Some("new_rows".to_string()),
+        };
+
+        let ops = vec![MigrationOp::CreateTrigger(trigger)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("REFERENCING OLD TABLE AS \"old_rows\" NEW TABLE AS \"new_rows\""));
     }
 }

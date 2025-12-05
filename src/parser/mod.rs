@@ -256,6 +256,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 events,
                 table_name,
                 trigger_object,
+                referencing,
                 condition,
                 exec_body,
                 ..
@@ -291,6 +292,19 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     }
                 }
 
+                let mut old_table_name = None;
+                let mut new_table_name = None;
+                for tr in &referencing {
+                    match tr.refer_type {
+                        sqlparser::ast::TriggerReferencingType::OldTable => {
+                            old_table_name = Some(tr.transition_relation_name.to_string());
+                        }
+                        sqlparser::ast::TriggerReferencingType::NewTable => {
+                            new_table_name = Some(tr.transition_relation_name.to_string());
+                        }
+                    }
+                }
+
                 let for_each_row = matches!(trigger_object, sqlparser::ast::TriggerObject::Row);
 
                 let when_clause = condition.as_ref().map(|e| e.to_string());
@@ -305,6 +319,31 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     if when_clause.is_some() {
                         return Err(SchemaError::ParseError(format!(
                             "INSTEAD OF trigger '{trigger_name}' cannot have a WHEN clause"
+                        )));
+                    }
+                }
+
+                // Validate REFERENCING clause rules
+                if old_table_name.is_some() || new_table_name.is_some() {
+                    if timing != TriggerTiming::After {
+                        return Err(SchemaError::ParseError(format!(
+                            "REFERENCING clause on trigger '{trigger_name}' only allowed on AFTER triggers"
+                        )));
+                    }
+
+                    let has_insert = trigger_events.contains(&TriggerEvent::Insert);
+                    let has_update = trigger_events.contains(&TriggerEvent::Update);
+                    let has_delete = trigger_events.contains(&TriggerEvent::Delete);
+
+                    if old_table_name.is_some() && !has_update && !has_delete {
+                        return Err(SchemaError::ParseError(format!(
+                            "OLD TABLE on trigger '{trigger_name}' requires UPDATE or DELETE event"
+                        )));
+                    }
+
+                    if new_table_name.is_some() && !has_update && !has_insert {
+                        return Err(SchemaError::ParseError(format!(
+                            "NEW TABLE on trigger '{trigger_name}' requires UPDATE or INSERT event"
                         )));
                     }
                 }
@@ -329,6 +368,8 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     function_name: func_name,
                     function_args,
                     enabled: TriggerEnabled::Origin,
+                    old_table_name,
+                    new_table_name,
                 };
 
                 let key = format!("{tbl_schema}.{tbl_name}.{trigger_name}");
@@ -1484,5 +1525,124 @@ ALTER TABLE myschema.users DISABLE TRIGGER audit_trigger;
         let schema = parse_sql_string(sql).unwrap();
         let trigger = schema.triggers.get("myschema.users.audit_trigger").unwrap();
         assert_eq!(trigger.enabled, TriggerEnabled::Disabled);
+    }
+
+    #[test]
+    fn parses_trigger_with_old_table() {
+        let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN OLD; END; $$;
+CREATE TRIGGER audit_deletes
+    AFTER DELETE ON users
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION audit_fn();
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let trigger = schema.triggers.get("public.users.audit_deletes").unwrap();
+        assert_eq!(trigger.old_table_name, Some("deleted_rows".to_string()));
+        assert_eq!(trigger.new_table_name, None);
+    }
+
+    #[test]
+    fn parses_trigger_with_new_table() {
+        let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER audit_inserts
+    AFTER INSERT ON users
+    REFERENCING NEW TABLE AS inserted_rows
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION audit_fn();
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let trigger = schema.triggers.get("public.users.audit_inserts").unwrap();
+        assert_eq!(trigger.old_table_name, None);
+        assert_eq!(trigger.new_table_name, Some("inserted_rows".to_string()));
+    }
+
+    #[test]
+    fn parses_trigger_with_both_transition_tables() {
+        let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER audit_updates
+    AFTER UPDATE ON users
+    REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION audit_fn();
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let trigger = schema.triggers.get("public.users.audit_updates").unwrap();
+        assert_eq!(trigger.old_table_name, Some("old_rows".to_string()));
+        assert_eq!(trigger.new_table_name, Some("new_rows".to_string()));
+    }
+
+    #[test]
+    fn rejects_referencing_on_before_trigger() {
+        let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER bad_trigger
+    BEFORE INSERT ON users
+    REFERENCING NEW TABLE AS new_rows
+    FOR EACH ROW
+    EXECUTE FUNCTION audit_fn();
+"#;
+        let result = parse_sql_string(sql);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("REFERENCING") && err.contains("AFTER"));
+    }
+
+    #[test]
+    fn rejects_referencing_on_instead_of_trigger() {
+        let sql = r#"
+CREATE VIEW user_view AS SELECT id, name FROM users;
+CREATE FUNCTION insert_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER bad_trigger
+    INSTEAD OF INSERT ON user_view
+    REFERENCING NEW TABLE AS new_rows
+    FOR EACH ROW
+    EXECUTE FUNCTION insert_fn();
+"#;
+        let result = parse_sql_string(sql);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("REFERENCING") || err.contains("INSTEAD OF"));
+    }
+
+    #[test]
+    fn rejects_old_table_on_insert_only_trigger() {
+        let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER bad_trigger
+    AFTER INSERT ON users
+    REFERENCING OLD TABLE AS old_rows
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION audit_fn();
+"#;
+        let result = parse_sql_string(sql);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("OLD TABLE")
+                && (err.contains("INSERT") || err.contains("UPDATE") || err.contains("DELETE"))
+        );
+    }
+
+    #[test]
+    fn rejects_new_table_on_delete_only_trigger() {
+        let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN OLD; END; $$;
+CREATE TRIGGER bad_trigger
+    AFTER DELETE ON users
+    REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION audit_fn();
+"#;
+        let result = parse_sql_string(sql);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("NEW TABLE")
+                && (err.contains("INSERT") || err.contains("UPDATE") || err.contains("DELETE"))
+        );
     }
 }

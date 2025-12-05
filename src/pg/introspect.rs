@@ -691,7 +691,9 @@ async fn introspect_triggers(
                 SELECT array_agg(a.attname ORDER BY a.attnum)
                 FROM unnest(t.tgattr) AS attr_num
                 JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = attr_num
-            ) AS update_columns
+            ) AS update_columns,
+            t.tgoldtable AS old_table_name,
+            t.tgnewtable AS new_table_name
         FROM pg_trigger t
         JOIN pg_class c ON t.tgrelid = c.oid
         JOIN pg_namespace ns ON c.relnamespace = ns.oid
@@ -717,6 +719,8 @@ async fn introspect_triggers(
         let function_name: String = row.get("function_name");
         let trigger_def: String = row.get("trigger_def");
         let update_columns: Option<Vec<String>> = row.get("update_columns");
+        let old_table_name: Option<String> = row.get("old_table_name");
+        let new_table_name: Option<String> = row.get("new_table_name");
 
         let timing = if tgtype & 0x0040 != 0 {
             TriggerTiming::InsteadOf
@@ -764,6 +768,8 @@ async fn introspect_triggers(
             function_name,
             function_args: vec![],
             enabled,
+            old_table_name,
+            new_table_name,
         };
 
         let key = format!("{table_schema}.{table_name}.{trigger_name}");

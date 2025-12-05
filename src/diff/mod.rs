@@ -1381,6 +1381,8 @@ mod tests {
             function_name: "audit_fn".to_string(),
             function_args: vec![],
             enabled: crate::model::TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
         }
     }
 
@@ -1469,6 +1471,8 @@ mod tests {
             function_name: "insert_user_fn".to_string(),
             function_args: vec![],
             enabled: crate::model::TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
         };
         to.triggers.insert(
             "public.active_users.insert_active_user".to_string(),
