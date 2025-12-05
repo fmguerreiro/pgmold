@@ -263,6 +263,22 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
 
                 let when_clause = condition.as_ref().map(|e| e.to_string());
 
+                // Validate INSTEAD OF trigger rules per PostgreSQL requirements
+                if timing == TriggerTiming::InsteadOf {
+                    if !for_each_row {
+                        return Err(SchemaError::ParseError(format!(
+                            "INSTEAD OF trigger '{}' must be FOR EACH ROW",
+                            trigger_name
+                        )));
+                    }
+                    if when_clause.is_some() {
+                        return Err(SchemaError::ParseError(format!(
+                            "INSTEAD OF trigger '{}' cannot have a WHEN clause",
+                            trigger_name
+                        )));
+                    }
+                }
+
                 let function_args = exec_body
                     .func_desc
                     .args
@@ -1094,6 +1110,77 @@ CREATE TRIGGER batch_notify
         let trigger = schema.triggers.get("public.events.batch_notify").unwrap();
 
         assert!(!trigger.for_each_row);
+    }
+
+    #[test]
+    fn parses_instead_of_trigger_on_view() {
+        let sql = r#"
+CREATE VIEW active_users AS SELECT * FROM users WHERE active = true;
+
+CREATE FUNCTION insert_active_user_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO users (name, active) VALUES (NEW.name, true);
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER insert_active_user
+    INSTEAD OF INSERT ON active_users
+    FOR EACH ROW
+    EXECUTE FUNCTION insert_active_user_fn();
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        assert_eq!(schema.triggers.len(), 1);
+
+        let trigger = schema
+            .triggers
+            .get("public.active_users.insert_active_user")
+            .unwrap();
+        assert_eq!(trigger.name, "insert_active_user");
+        assert_eq!(trigger.table_schema, "public");
+        assert_eq!(trigger.table, "active_users");
+        assert_eq!(trigger.timing, TriggerTiming::InsteadOf);
+        assert_eq!(trigger.events, vec![TriggerEvent::Insert]);
+        assert!(trigger.for_each_row);
+        assert!(trigger.when_clause.is_none());
+        assert_eq!(trigger.function_name, "insert_active_user_fn");
+    }
+
+    #[test]
+    fn instead_of_trigger_rejects_for_each_statement() {
+        let sql = r#"
+CREATE VIEW active_users AS SELECT * FROM users WHERE active = true;
+
+CREATE FUNCTION insert_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+
+CREATE TRIGGER bad_trigger
+    INSTEAD OF INSERT ON active_users
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION insert_fn();
+"#;
+        let result = parse_sql_string(sql);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("must be FOR EACH ROW"), "Error: {err}");
+    }
+
+    #[test]
+    fn instead_of_trigger_rejects_when_clause() {
+        let sql = r#"
+CREATE VIEW active_users AS SELECT * FROM users WHERE active = true;
+
+CREATE FUNCTION insert_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+
+CREATE TRIGGER bad_trigger
+    INSTEAD OF INSERT ON active_users
+    FOR EACH ROW
+    WHEN (NEW.id > 0)
+    EXECUTE FUNCTION insert_fn();
+"#;
+        let result = parse_sql_string(sql);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("cannot have a WHEN clause"), "Error: {err}");
     }
 
     #[test]

@@ -1408,6 +1408,51 @@ mod tests {
     }
 
     #[test]
+    fn detects_instead_of_trigger_on_view() {
+        use crate::model::{TriggerEvent, TriggerTiming};
+
+        let from = empty_schema();
+        let mut to = empty_schema();
+
+        to.views.insert(
+            "public.active_users".to_string(),
+            View {
+                name: "active_users".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id, name FROM users WHERE active = true".to_string(),
+                materialized: false,
+            },
+        );
+
+        let trigger = crate::model::Trigger {
+            name: "insert_active_user".to_string(),
+            table_schema: "public".to_string(),
+            table: "active_users".to_string(),
+            timing: TriggerTiming::InsteadOf,
+            events: vec![TriggerEvent::Insert],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "insert_user_fn".to_string(),
+            function_args: vec![],
+        };
+        to.triggers.insert(
+            "public.active_users.insert_active_user".to_string(),
+            trigger,
+        );
+
+        let ops = compute_diff(&from, &to);
+
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::CreateView { .. })));
+        assert!(ops.iter().any(
+            |op| matches!(op, MigrationOp::CreateTrigger(t) if t.timing == TriggerTiming::InsteadOf)
+        ));
+    }
+
+    #[test]
     fn diff_create_sequence() {
         let from = empty_schema();
         let mut to = empty_schema();

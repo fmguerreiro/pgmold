@@ -639,3 +639,71 @@ async fn dump_complex_schema() {
     );
     assert!(dump.contains("CREATE POLICY"), "dump should contain policy");
 }
+
+#[tokio::test]
+async fn instead_of_trigger_on_view() {
+    let (_container, url) = setup_postgres().await;
+
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE TABLE users (id BIGINT PRIMARY KEY, name TEXT, active BOOLEAN DEFAULT false)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE VIEW active_users AS SELECT id, name FROM users WHERE active = true")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE FUNCTION insert_active_user_fn() RETURNS TRIGGER AS $$
+        BEGIN
+            INSERT INTO users (id, name, active) VALUES (NEW.id, NEW.name, true);
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TRIGGER insert_active_user
+            INSTEAD OF INSERT ON active_users
+            FOR EACH ROW
+            EXECUTE FUNCTION insert_active_user_fn()
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
+
+    assert!(
+        schema.triggers.contains_key("public.active_users.insert_active_user"),
+        "Should introspect INSTEAD OF trigger on view"
+    );
+
+    let trigger = schema
+        .triggers
+        .get("public.active_users.insert_active_user")
+        .unwrap();
+    assert_eq!(trigger.timing, pgmold::model::TriggerTiming::InsteadOf);
+    assert_eq!(trigger.table, "active_users");
+    assert!(trigger.for_each_row);
+    assert_eq!(trigger.function_name, "insert_active_user_fn");
+
+    let trigger_ops = vec![MigrationOp::CreateTrigger(trigger.clone())];
+    let sql = generate_sql(&trigger_ops);
+    assert_eq!(sql.len(), 1);
+    assert!(sql[0].contains("INSTEAD OF"), "SQL should contain INSTEAD OF");
+    assert!(sql[0].contains("active_users"), "SQL should reference view name");
+    assert!(sql[0].contains("FOR EACH ROW"), "SQL should contain FOR EACH ROW");
+}
