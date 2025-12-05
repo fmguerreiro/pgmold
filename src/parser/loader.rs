@@ -33,7 +33,10 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
     // Parse all files, tracking file paths for error messages
     let mut file_schemas: Vec<(PathBuf, Schema)> = Vec::new();
     for file in &all_files {
-        let schema = parse_sql_file(file.to_str().unwrap_or_default())?;
+        let file_str = file.to_str().ok_or_else(|| {
+            SchemaError::ParseError(format!("Path contains invalid UTF-8: {}", file.display()))
+        })?;
+        let schema = parse_sql_file(file_str)?;
         file_schemas.push((file.clone(), schema));
     }
 
@@ -94,7 +97,10 @@ fn resolve_source(source: &str) -> Result<Vec<PathBuf>> {
 
     if path.is_dir() {
         let pattern = path.join("**/*.sql");
-        return resolve_glob(pattern.to_str().unwrap_or(source));
+        let pattern_str = pattern.to_str().ok_or_else(|| {
+            SchemaError::ParseError(format!("Path contains invalid UTF-8: {}", pattern.display()))
+        })?;
+        return resolve_glob(pattern_str);
     }
 
     resolve_glob(source)

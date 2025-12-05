@@ -402,7 +402,7 @@ fn map_referential_action(action: char) -> ReferentialAction {
         'c' => ReferentialAction::Cascade,
         'n' => ReferentialAction::SetNull,
         'd' => ReferentialAction::SetDefault,
-        _ => ReferentialAction::NoAction,
+        _ => panic!("Unknown referential action code from PostgreSQL: '{action}'"),
     }
 }
 
@@ -421,9 +421,13 @@ async fn introspect_rls_enabled(connection: &PgConnection, table_schema: &str, t
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch RLS status: {e}")))?;
 
-    Ok(row
-        .map(|r| r.get::<bool, _>("relrowsecurity"))
-        .unwrap_or(false))
+    let row = row.ok_or_else(|| {
+        SchemaError::DatabaseError(format!(
+            "Table {table_schema}.{table_name} not found in pg_class while checking RLS"
+        ))
+    })?;
+
+    Ok(row.get::<bool, _>("relrowsecurity"))
 }
 
 async fn introspect_policies(connection: &PgConnection, table_schema: &str, table_name: &str) -> Result<Vec<Policy>> {
@@ -822,8 +826,9 @@ async fn introspect_sequences(
         
         let seq_data_type = match data_type.as_str() {
             "smallint" => SequenceDataType::SmallInt,
+            "integer" => SequenceDataType::Integer,
             "bigint" => SequenceDataType::BigInt,
-            _ => SequenceDataType::Integer,
+            _ => panic!("Unknown sequence data type from PostgreSQL: '{data_type}'"),
         };
         
         let qualified_name = format!("{schema}.{name}");

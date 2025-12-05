@@ -169,7 +169,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 ..
             } => {
                 let (func_schema, func_name) = extract_qualified_name(&name);
-                if let Some(func) = parse_create_function(
+                let func = parse_create_function(
                     &func_schema,
                     &func_name,
                     args.as_deref(),
@@ -177,10 +177,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     function_body.as_ref(),
                     language.as_ref(),
                     behavior.as_ref(),
-                ) {
-                    let key = qualified_name(&func_schema, &func.signature());
-                    schema.functions.insert(key, func);
-                }
+                )?;
+                let key = qualified_name(&func_schema, &func.signature());
+                schema.functions.insert(key, func);
             }
             Statement::CreateView {
                 name,
@@ -576,8 +575,10 @@ fn parse_create_function(
     function_body: Option<&sqlparser::ast::CreateFunctionBody>,
     language: Option<&sqlparser::ast::Ident>,
     behavior: Option<&sqlparser::ast::FunctionBehavior>,
-) -> Option<Function> {
-    let return_type_str = return_type.map(|rt| rt.to_string()).unwrap_or_default();
+) -> Result<Function> {
+    let return_type_str = return_type
+        .map(|rt| rt.to_string())
+        .ok_or_else(|| SchemaError::ParseError(format!("Function {schema}.{name} is missing RETURNS clause")))?;
 
     let language_str = language
         .map(|l| l.to_string().to_lowercase())
@@ -590,7 +591,7 @@ fn parse_create_function(
             sqlparser::ast::CreateFunctionBody::Return(expr) => expr.to_string(),
         })
         .map(|b| strip_dollar_quotes(&b))
-        .unwrap_or_default();
+        .ok_or_else(|| SchemaError::ParseError(format!("Function {schema}.{name} is missing body")))?;
 
     let volatility = behavior
         .map(|b| match b {
@@ -622,7 +623,7 @@ fn parse_create_function(
         })
         .unwrap_or_default();
 
-    Some(Function {
+    Ok(Function {
         schema: schema.to_string(),
         name: name.to_string(),
         arguments,
