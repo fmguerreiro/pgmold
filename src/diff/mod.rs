@@ -2,7 +2,8 @@ pub mod planner;
 
 use crate::model::{
     qualified_name, CheckConstraint, Column, EnumType, Extension, ForeignKey, Function, Index,
-    PgType, Policy, PrimaryKey, Sequence, SequenceDataType, SequenceOwner, Table, Trigger, View,
+    PgType, Policy, PrimaryKey, Sequence, SequenceDataType, SequenceOwner, Table, Trigger,
+    TriggerEnabled, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +103,12 @@ pub enum MigrationOp {
         target_schema: String,
         target_name: String,
         name: String,
+    },
+    AlterTriggerEnabled {
+        target_schema: String,
+        target_name: String,
+        name: String,
+        enabled: TriggerEnabled,
     },
     CreateSequence(Sequence),
     DropSequence(String),
@@ -324,12 +331,21 @@ fn diff_triggers(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     for (name, trigger) in &to.triggers {
         if let Some(from_trigger) = from.triggers.get(name) {
             if from_trigger != trigger {
-                ops.push(MigrationOp::DropTrigger {
-                    target_schema: from_trigger.target_schema.clone(),
-                    target_name: from_trigger.target_name.clone(),
-                    name: from_trigger.name.clone(),
-                });
-                ops.push(MigrationOp::CreateTrigger(trigger.clone()));
+                if only_enabled_differs(from_trigger, trigger) {
+                    ops.push(MigrationOp::AlterTriggerEnabled {
+                        target_schema: trigger.target_schema.clone(),
+                        target_name: trigger.target_name.clone(),
+                        name: trigger.name.clone(),
+                        enabled: trigger.enabled,
+                    });
+                } else {
+                    ops.push(MigrationOp::DropTrigger {
+                        target_schema: from_trigger.target_schema.clone(),
+                        target_name: from_trigger.target_name.clone(),
+                        name: from_trigger.name.clone(),
+                    });
+                    ops.push(MigrationOp::CreateTrigger(trigger.clone()));
+                }
             }
         } else {
             ops.push(MigrationOp::CreateTrigger(trigger.clone()));
@@ -347,6 +363,21 @@ fn diff_triggers(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     }
 
     ops
+}
+
+fn only_enabled_differs(from: &Trigger, to: &Trigger) -> bool {
+    from.name == to.name
+        && from.target_schema == to.target_schema
+        && from.target_name == to.target_name
+        && from.timing == to.timing
+        && from.events == to.events
+        && from.update_columns == to.update_columns
+        && from.for_each_row == to.for_each_row
+        && from.when_clause == to.when_clause
+        && from.function_schema == to.function_schema
+        && from.function_name == to.function_name
+        && from.function_args == to.function_args
+        && from.enabled != to.enabled
 }
 
 fn diff_sequences(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
@@ -1349,6 +1380,7 @@ mod tests {
             function_schema: "public".to_string(),
             function_name: "audit_fn".to_string(),
             function_args: vec![],
+            enabled: crate::model::TriggerEnabled::Origin,
         }
     }
 
@@ -1436,6 +1468,7 @@ mod tests {
             function_schema: "public".to_string(),
             function_name: "insert_user_fn".to_string(),
             function_args: vec![],
+            enabled: crate::model::TriggerEnabled::Origin,
         };
         to.triggers.insert(
             "public.active_users.insert_active_user".to_string(),
@@ -1628,5 +1661,102 @@ mod tests {
         assert!(ops.iter().any(|op| matches!(op,
             MigrationOp::AlterSequence { changes, .. } if changes.restart == Some(100)
         )));
+    }
+
+    #[test]
+    fn diff_trigger_enabled_change_only() {
+        let mut from = empty_schema();
+        let mut trigger = make_trigger("audit_trigger", "users");
+        trigger.enabled = crate::model::TriggerEnabled::Origin;
+        from.triggers
+            .insert("public.users.audit_trigger".to_string(), trigger);
+
+        let mut to = empty_schema();
+        let mut trigger = make_trigger("audit_trigger", "users");
+        trigger.enabled = crate::model::TriggerEnabled::Disabled;
+        to.triggers
+            .insert("public.users.audit_trigger".to_string(), trigger);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterTriggerEnabled {
+                target_schema,
+                target_name,
+                name,
+                enabled
+            } if target_schema == "public"
+              && target_name == "users"
+              && name == "audit_trigger"
+              && *enabled == crate::model::TriggerEnabled::Disabled
+        ));
+    }
+
+    #[test]
+    fn diff_trigger_enabled_to_replica() {
+        let mut from = empty_schema();
+        let mut trigger = make_trigger("audit_trigger", "users");
+        trigger.enabled = crate::model::TriggerEnabled::Origin;
+        from.triggers
+            .insert("public.users.audit_trigger".to_string(), trigger);
+
+        let mut to = empty_schema();
+        let mut trigger = make_trigger("audit_trigger", "users");
+        trigger.enabled = crate::model::TriggerEnabled::Replica;
+        to.triggers
+            .insert("public.users.audit_trigger".to_string(), trigger);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterTriggerEnabled { enabled, .. }
+            if *enabled == crate::model::TriggerEnabled::Replica
+        ));
+    }
+
+    #[test]
+    fn diff_trigger_enabled_to_always() {
+        let mut from = empty_schema();
+        let mut trigger = make_trigger("audit_trigger", "users");
+        trigger.enabled = crate::model::TriggerEnabled::Origin;
+        from.triggers
+            .insert("public.users.audit_trigger".to_string(), trigger);
+
+        let mut to = empty_schema();
+        let mut trigger = make_trigger("audit_trigger", "users");
+        trigger.enabled = crate::model::TriggerEnabled::Always;
+        to.triggers
+            .insert("public.users.audit_trigger".to_string(), trigger);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterTriggerEnabled { enabled, .. }
+            if *enabled == crate::model::TriggerEnabled::Always
+        ));
+    }
+
+    #[test]
+    fn diff_trigger_other_change_drops_and_creates() {
+        let mut from = empty_schema();
+        let mut trigger = make_trigger("audit_trigger", "users");
+        trigger.enabled = crate::model::TriggerEnabled::Origin;
+        from.triggers
+            .insert("public.users.audit_trigger".to_string(), trigger);
+
+        let mut to = empty_schema();
+        let mut trigger = make_trigger("audit_trigger", "users");
+        trigger.enabled = crate::model::TriggerEnabled::Disabled;
+        trigger.timing = crate::model::TriggerTiming::Before;
+        to.triggers
+            .insert("public.users.audit_trigger".to_string(), trigger);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 2);
+        assert!(matches!(&ops[0], MigrationOp::DropTrigger { .. }));
+        assert!(matches!(&ops[1], MigrationOp::CreateTrigger(_)));
     }
 }

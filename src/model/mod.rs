@@ -240,6 +240,15 @@ pub enum TriggerEvent {
     Truncate,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum TriggerEnabled {
+    #[default]
+    Origin,
+    Disabled,
+    Replica,
+    Always,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Trigger {
     pub name: String,
@@ -253,6 +262,7 @@ pub struct Trigger {
     pub function_schema: String,
     pub function_name: String,
     pub function_args: Vec<String>,
+    pub enabled: TriggerEnabled,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -557,6 +567,7 @@ mod tests {
             function_schema: "public".to_string(),
             function_name: "audit_trigger_fn".to_string(),
             function_args: vec![],
+            enabled: TriggerEnabled::Origin,
         };
 
         assert_eq!(trigger.name, "audit_log");
@@ -582,6 +593,7 @@ mod tests {
             function_schema: "public".to_string(),
             function_name: "prevent_delete".to_string(),
             function_args: vec![],
+            enabled: TriggerEnabled::Origin,
         };
         schema
             .triggers

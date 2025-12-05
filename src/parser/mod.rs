@@ -158,6 +158,38 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 table.row_level_security = false;
                             }
                         }
+                        sqlparser::ast::AlterTableOperation::EnableTrigger { name: trig_name } => {
+                            let trigger_key =
+                                format!("{}.{}.{}", tbl_schema, tbl_name, trig_name.value);
+                            if let Some(trigger) = schema.triggers.get_mut(&trigger_key) {
+                                trigger.enabled = TriggerEnabled::Origin;
+                            }
+                        }
+                        sqlparser::ast::AlterTableOperation::DisableTrigger { name: trig_name } => {
+                            let trigger_key =
+                                format!("{}.{}.{}", tbl_schema, tbl_name, trig_name.value);
+                            if let Some(trigger) = schema.triggers.get_mut(&trigger_key) {
+                                trigger.enabled = TriggerEnabled::Disabled;
+                            }
+                        }
+                        sqlparser::ast::AlterTableOperation::EnableReplicaTrigger {
+                            name: trig_name,
+                        } => {
+                            let trigger_key =
+                                format!("{}.{}.{}", tbl_schema, tbl_name, trig_name.value);
+                            if let Some(trigger) = schema.triggers.get_mut(&trigger_key) {
+                                trigger.enabled = TriggerEnabled::Replica;
+                            }
+                        }
+                        sqlparser::ast::AlterTableOperation::EnableAlwaysTrigger {
+                            name: trig_name,
+                        } => {
+                            let trigger_key =
+                                format!("{}.{}.{}", tbl_schema, tbl_name, trig_name.value);
+                            if let Some(trigger) = schema.triggers.get_mut(&trigger_key) {
+                                trigger.enabled = TriggerEnabled::Always;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -296,6 +328,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     function_schema: func_schema,
                     function_name: func_name,
                     function_args,
+                    enabled: TriggerEnabled::Origin,
                 };
 
                 let key = format!("{tbl_schema}.{tbl_name}.{trigger_name}");
@@ -1379,5 +1412,77 @@ CREATE TRIGGER bad_trigger
         assert_eq!(seq.schema, "auth");
         let owner = seq.owned_by.as_ref().unwrap();
         assert_eq!(owner.table_schema, "auth");
+    }
+
+    #[test]
+    fn trigger_enabled_by_default() {
+        let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER audit_trigger AFTER INSERT ON users FOR EACH ROW EXECUTE FUNCTION audit_fn();
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let trigger = schema.triggers.get("public.users.audit_trigger").unwrap();
+        assert_eq!(trigger.enabled, TriggerEnabled::Origin);
+    }
+
+    #[test]
+    fn parses_disable_trigger() {
+        let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER audit_trigger AFTER INSERT ON users FOR EACH ROW EXECUTE FUNCTION audit_fn();
+ALTER TABLE users DISABLE TRIGGER audit_trigger;
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let trigger = schema.triggers.get("public.users.audit_trigger").unwrap();
+        assert_eq!(trigger.enabled, TriggerEnabled::Disabled);
+    }
+
+    #[test]
+    fn parses_enable_trigger() {
+        let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER audit_trigger AFTER INSERT ON users FOR EACH ROW EXECUTE FUNCTION audit_fn();
+ALTER TABLE users DISABLE TRIGGER audit_trigger;
+ALTER TABLE users ENABLE TRIGGER audit_trigger;
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let trigger = schema.triggers.get("public.users.audit_trigger").unwrap();
+        assert_eq!(trigger.enabled, TriggerEnabled::Origin);
+    }
+
+    #[test]
+    fn parses_enable_replica_trigger() {
+        let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER audit_trigger AFTER INSERT ON users FOR EACH ROW EXECUTE FUNCTION audit_fn();
+ALTER TABLE users ENABLE REPLICA TRIGGER audit_trigger;
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let trigger = schema.triggers.get("public.users.audit_trigger").unwrap();
+        assert_eq!(trigger.enabled, TriggerEnabled::Replica);
+    }
+
+    #[test]
+    fn parses_enable_always_trigger() {
+        let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER audit_trigger AFTER INSERT ON users FOR EACH ROW EXECUTE FUNCTION audit_fn();
+ALTER TABLE users ENABLE ALWAYS TRIGGER audit_trigger;
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let trigger = schema.triggers.get("public.users.audit_trigger").unwrap();
+        assert_eq!(trigger.enabled, TriggerEnabled::Always);
+    }
+
+    #[test]
+    fn parses_disable_trigger_with_schema() {
+        let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER audit_trigger AFTER INSERT ON myschema.users FOR EACH ROW EXECUTE FUNCTION audit_fn();
+ALTER TABLE myschema.users DISABLE TRIGGER audit_trigger;
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let trigger = schema.triggers.get("myschema.users.audit_trigger").unwrap();
+        assert_eq!(trigger.enabled, TriggerEnabled::Disabled);
     }
 }

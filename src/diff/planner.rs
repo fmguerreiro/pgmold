@@ -38,6 +38,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut alter_views = Vec::new();
     let mut create_triggers = Vec::new();
     let mut drop_triggers = Vec::new();
+    let mut alter_triggers = Vec::new();
     let mut create_sequences = Vec::new();
     let mut drop_sequences = Vec::new();
     let mut alter_sequences = Vec::new();
@@ -75,6 +76,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::AlterView { .. } => alter_views.push(op),
             MigrationOp::CreateTrigger(_) => create_triggers.push(op),
             MigrationOp::DropTrigger { .. } => drop_triggers.push(op),
+            MigrationOp::AlterTriggerEnabled { .. } => alter_triggers.push(op),
             MigrationOp::CreateSequence(_) => create_sequences.push(op),
             MigrationOp::DropSequence(_) => drop_sequences.push(op),
             MigrationOp::AlterSequence { .. } => alter_sequences.push(op),
@@ -131,6 +133,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(create_views);
     result.extend(alter_views);
     result.extend(create_triggers);
+    result.extend(alter_triggers);
 
     result.extend(drop_triggers);
     result.extend(drop_views);

@@ -683,6 +683,7 @@ async fn introspect_triggers(
             ns.nspname AS table_schema,
             c.relname AS table_name,
             t.tgtype AS trigger_type,
+            t.tgenabled AS trigger_enabled,
             pns.nspname AS function_schema,
             p.proname AS function_name,
             pg_get_triggerdef(t.oid) AS trigger_def,
@@ -711,6 +712,7 @@ async fn introspect_triggers(
         let table_schema: String = row.get("table_schema");
         let table_name: String = row.get("table_name");
         let tgtype: i16 = row.get("trigger_type");
+        let tgenabled: i8 = row.get::<i8, _>("trigger_enabled");
         let function_schema: String = row.get("function_schema");
         let function_name: String = row.get("function_name");
         let trigger_def: String = row.get("trigger_def");
@@ -742,6 +744,13 @@ async fn introspect_triggers(
 
         let when_clause = extract_when_clause(&trigger_def);
 
+        let enabled = match tgenabled as u8 as char {
+            'D' => TriggerEnabled::Disabled,
+            'R' => TriggerEnabled::Replica,
+            'A' => TriggerEnabled::Always,
+            _ => TriggerEnabled::Origin,
+        };
+
         let trigger = Trigger {
             name: trigger_name.clone(),
             target_schema: table_schema.clone(),
@@ -754,6 +763,7 @@ async fn introspect_triggers(
             function_schema,
             function_name,
             function_args: vec![],
+            enabled,
         };
 
         let key = format!("{table_schema}.{table_name}.{trigger_name}");

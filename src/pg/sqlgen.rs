@@ -2,7 +2,7 @@ use crate::diff::{ColumnChanges, EnumValuePosition, MigrationOp, PolicyChanges, 
 use crate::model::{
     parse_qualified_name, CheckConstraint, Column, ForeignKey, Function, Index, IndexType, PgType,
     Policy, PolicyCommand, ReferentialAction, SecurityType, Sequence, SequenceDataType, Table,
-    Trigger, TriggerEvent, TriggerTiming, View, Volatility,
+    Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -243,7 +243,18 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             vec![generate_create_or_replace_view(new_view)]
         }
 
-        MigrationOp::CreateTrigger(trigger) => vec![generate_create_trigger(trigger)],
+        MigrationOp::CreateTrigger(trigger) => {
+            let mut statements = vec![generate_create_trigger(trigger)];
+            if trigger.enabled != TriggerEnabled::Origin {
+                statements.push(generate_alter_trigger_enabled(
+                    &trigger.target_schema,
+                    &trigger.target_name,
+                    &trigger.name,
+                    trigger.enabled,
+                ));
+            }
+            statements
+        }
 
         MigrationOp::DropTrigger {
             target_schema,
@@ -254,6 +265,20 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                 "DROP TRIGGER {} ON {};",
                 quote_ident(name),
                 quote_qualified(target_schema, target_name)
+            )]
+        }
+
+        MigrationOp::AlterTriggerEnabled {
+            target_schema,
+            target_name,
+            name,
+            enabled,
+        } => {
+            vec![generate_alter_trigger_enabled(
+                target_schema,
+                target_name,
+                name,
+                *enabled,
             )]
         }
 
@@ -829,6 +854,26 @@ fn generate_create_trigger(trigger: &Trigger) -> String {
     sql
 }
 
+fn generate_alter_trigger_enabled(
+    target_schema: &str,
+    target_name: &str,
+    trigger_name: &str,
+    enabled: TriggerEnabled,
+) -> String {
+    let action = match enabled {
+        TriggerEnabled::Origin => "ENABLE TRIGGER",
+        TriggerEnabled::Disabled => "DISABLE TRIGGER",
+        TriggerEnabled::Replica => "ENABLE REPLICA TRIGGER",
+        TriggerEnabled::Always => "ENABLE ALWAYS TRIGGER",
+    };
+    format!(
+        "ALTER TABLE {} {} {};",
+        quote_qualified(target_schema, target_name),
+        action,
+        quote_ident(trigger_name)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1244,7 +1289,7 @@ mod tests {
 
     #[test]
     fn create_simple_trigger() {
-        use crate::model::{Trigger, TriggerEvent, TriggerTiming};
+        use crate::model::{Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
 
         let trigger = Trigger {
             name: "audit_trigger".to_string(),
@@ -1258,6 +1303,7 @@ mod tests {
             function_schema: "public".to_string(),
             function_name: "audit_fn".to_string(),
             function_args: vec![],
+            enabled: TriggerEnabled::Origin,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -1274,7 +1320,7 @@ mod tests {
 
     #[test]
     fn create_trigger_with_update_of_columns() {
-        use crate::model::{Trigger, TriggerEvent, TriggerTiming};
+        use crate::model::{Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
 
         let trigger = Trigger {
             name: "notify_change".to_string(),
@@ -1288,6 +1334,7 @@ mod tests {
             function_schema: "public".to_string(),
             function_name: "notify_fn".to_string(),
             function_args: vec![],
+            enabled: TriggerEnabled::Origin,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -1300,7 +1347,7 @@ mod tests {
 
     #[test]
     fn create_trigger_with_multiple_events() {
-        use crate::model::{Trigger, TriggerEvent, TriggerTiming};
+        use crate::model::{Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
 
         let trigger = Trigger {
             name: "log_changes".to_string(),
@@ -1318,6 +1365,7 @@ mod tests {
             function_schema: "public".to_string(),
             function_name: "log_fn".to_string(),
             function_args: vec![],
+            enabled: TriggerEnabled::Origin,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -1328,7 +1376,7 @@ mod tests {
 
     #[test]
     fn create_trigger_with_when_clause() {
-        use crate::model::{Trigger, TriggerEvent, TriggerTiming};
+        use crate::model::{Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
 
         let trigger = Trigger {
             name: "check_amount".to_string(),
@@ -1342,6 +1390,7 @@ mod tests {
             function_schema: "public".to_string(),
             function_name: "check_fn".to_string(),
             function_args: vec![],
+            enabled: TriggerEnabled::Origin,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -1363,6 +1412,111 @@ mod tests {
         assert_eq!(
             sql[0],
             r#"DROP TRIGGER "audit_trigger" ON "public"."users";"#
+        );
+    }
+
+    #[test]
+    fn alter_trigger_disable() {
+        use crate::model::TriggerEnabled;
+
+        let ops = vec![MigrationOp::AlterTriggerEnabled {
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            name: "audit_trigger".to_string(),
+            enabled: TriggerEnabled::Disabled,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            r#"ALTER TABLE "public"."users" DISABLE TRIGGER "audit_trigger";"#
+        );
+    }
+
+    #[test]
+    fn alter_trigger_enable_origin() {
+        use crate::model::TriggerEnabled;
+
+        let ops = vec![MigrationOp::AlterTriggerEnabled {
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            name: "audit_trigger".to_string(),
+            enabled: TriggerEnabled::Origin,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            r#"ALTER TABLE "public"."users" ENABLE TRIGGER "audit_trigger";"#
+        );
+    }
+
+    #[test]
+    fn alter_trigger_enable_replica() {
+        use crate::model::TriggerEnabled;
+
+        let ops = vec![MigrationOp::AlterTriggerEnabled {
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            name: "audit_trigger".to_string(),
+            enabled: TriggerEnabled::Replica,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            r#"ALTER TABLE "public"."users" ENABLE REPLICA TRIGGER "audit_trigger";"#
+        );
+    }
+
+    #[test]
+    fn alter_trigger_enable_always() {
+        use crate::model::TriggerEnabled;
+
+        let ops = vec![MigrationOp::AlterTriggerEnabled {
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            name: "audit_trigger".to_string(),
+            enabled: TriggerEnabled::Always,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            r#"ALTER TABLE "public"."users" ENABLE ALWAYS TRIGGER "audit_trigger";"#
+        );
+    }
+
+    #[test]
+    fn create_disabled_trigger_emits_alter() {
+        use crate::model::{Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
+
+        let trigger = Trigger {
+            name: "audit_trigger".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Insert],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "audit_fn".to_string(),
+            function_args: vec![],
+            enabled: TriggerEnabled::Disabled,
+        };
+
+        let ops = vec![MigrationOp::CreateTrigger(trigger)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 2);
+        assert!(sql[0].contains("CREATE TRIGGER"));
+        assert_eq!(
+            sql[1],
+            r#"ALTER TABLE "public"."users" DISABLE TRIGGER "audit_trigger";"#
         );
     }
 
