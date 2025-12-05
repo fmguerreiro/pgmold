@@ -246,14 +246,14 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         MigrationOp::CreateTrigger(trigger) => vec![generate_create_trigger(trigger)],
 
         MigrationOp::DropTrigger {
-            table_schema,
-            table,
+            target_schema,
+            target_name,
             name,
         } => {
             vec![format!(
                 "DROP TRIGGER {} ON {};",
                 quote_ident(name),
-                quote_qualified(table_schema, table)
+                quote_qualified(target_schema, target_name)
             )]
         }
 
@@ -660,22 +660,22 @@ fn generate_create_sequence(seq: &Sequence) -> String {
         SequenceDataType::Integer => "integer",
         SequenceDataType::BigInt => "bigint",
     };
-    parts.push(format!("AS {}", data_type_str));
+    parts.push(format!("AS {data_type_str}"));
 
     if let Some(start) = seq.start {
-        parts.push(format!("START WITH {}", start));
+        parts.push(format!("START WITH {start}"));
     }
 
     if let Some(increment) = seq.increment {
-        parts.push(format!("INCREMENT BY {}", increment));
+        parts.push(format!("INCREMENT BY {increment}"));
     }
 
     if let Some(min_value) = seq.min_value {
-        parts.push(format!("MINVALUE {}", min_value));
+        parts.push(format!("MINVALUE {min_value}"));
     }
 
     if let Some(max_value) = seq.max_value {
-        parts.push(format!("MAXVALUE {}", max_value));
+        parts.push(format!("MAXVALUE {max_value}"));
     }
 
     if seq.cycle {
@@ -683,7 +683,7 @@ fn generate_create_sequence(seq: &Sequence) -> String {
     }
 
     if let Some(cache) = seq.cache {
-        parts.push(format!("CACHE {}", cache));
+        parts.push(format!("CACHE {cache}"));
     }
 
     if let Some(ref owner) = seq.owned_by {
@@ -711,33 +711,33 @@ fn generate_alter_sequence(name: &str, changes: &SequenceChanges) -> String {
             SequenceDataType::Integer => "integer",
             SequenceDataType::BigInt => "bigint",
         };
-        parts.push(format!("AS {}", data_type_str));
+        parts.push(format!("AS {data_type_str}"));
     }
 
     if let Some(increment) = changes.increment {
-        parts.push(format!("INCREMENT BY {}", increment));
+        parts.push(format!("INCREMENT BY {increment}"));
     }
 
     if let Some(ref min_value) = changes.min_value {
         match min_value {
-            Some(val) => parts.push(format!("MINVALUE {}", val)),
+            Some(val) => parts.push(format!("MINVALUE {val}")),
             None => parts.push("NO MINVALUE".to_string()),
         }
     }
 
     if let Some(ref max_value) = changes.max_value {
         match max_value {
-            Some(val) => parts.push(format!("MAXVALUE {}", val)),
+            Some(val) => parts.push(format!("MAXVALUE {val}")),
             None => parts.push("NO MAXVALUE".to_string()),
         }
     }
 
     if let Some(restart) = changes.restart {
-        parts.push(format!("RESTART WITH {}", restart));
+        parts.push(format!("RESTART WITH {restart}"));
     }
 
     if let Some(cache) = changes.cache {
-        parts.push(format!("CACHE {}", cache));
+        parts.push(format!("CACHE {cache}"));
     }
 
     if let Some(cycle) = changes.cycle {
@@ -802,7 +802,7 @@ fn generate_create_trigger(trigger: &Trigger) -> String {
     sql.push_str(&format!(" {} {}", timing, events.join(" OR ")));
     sql.push_str(&format!(
         " ON {}",
-        quote_qualified(&trigger.table_schema, &trigger.table)
+        quote_qualified(&trigger.target_schema, &trigger.target_name)
     ));
 
     if trigger.for_each_row {
@@ -812,7 +812,7 @@ fn generate_create_trigger(trigger: &Trigger) -> String {
     }
 
     if let Some(ref when_clause) = trigger.when_clause {
-        sql.push_str(&format!(" WHEN ({})", when_clause));
+        sql.push_str(&format!(" WHEN ({when_clause})"));
     }
 
     sql.push_str(&format!(
@@ -1248,8 +1248,8 @@ mod tests {
 
         let trigger = Trigger {
             name: "audit_trigger".to_string(),
-            table_schema: "public".to_string(),
-            table: "users".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
             timing: TriggerTiming::After,
             events: vec![TriggerEvent::Insert],
             update_columns: vec![],
@@ -1278,8 +1278,8 @@ mod tests {
 
         let trigger = Trigger {
             name: "notify_change".to_string(),
-            table_schema: "public".to_string(),
-            table: "users".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
             timing: TriggerTiming::Before,
             events: vec![TriggerEvent::Update],
             update_columns: vec!["email".to_string(), "name".to_string()],
@@ -1304,8 +1304,8 @@ mod tests {
 
         let trigger = Trigger {
             name: "log_changes".to_string(),
-            table_schema: "public".to_string(),
-            table: "orders".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "orders".to_string(),
             timing: TriggerTiming::After,
             events: vec![
                 TriggerEvent::Insert,
@@ -1332,8 +1332,8 @@ mod tests {
 
         let trigger = Trigger {
             name: "check_amount".to_string(),
-            table_schema: "public".to_string(),
-            table: "orders".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "orders".to_string(),
             timing: TriggerTiming::Before,
             events: vec![TriggerEvent::Insert],
             update_columns: vec![],
@@ -1353,8 +1353,8 @@ mod tests {
     #[test]
     fn drop_trigger() {
         let ops = vec![MigrationOp::DropTrigger {
-            table_schema: "public".to_string(),
-            table: "users".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
             name: "audit_trigger".to_string(),
         }];
 

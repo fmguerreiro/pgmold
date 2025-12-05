@@ -91,8 +91,10 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
                 seq_without_owner.owned_by = None;
                 create_sequences_without_owner.push(MigrationOp::CreateSequence(seq_without_owner));
 
-                let mut changes = super::SequenceChanges::default();
-                changes.owned_by = Some(Some(owned_by.clone()));
+                let changes = super::SequenceChanges {
+                    owned_by: Some(Some(owned_by.clone())),
+                    ..Default::default()
+                };
                 set_sequence_owners.push(MigrationOp::AlterSequence {
                     name: qualified_name(&seq.schema, &seq.name),
                     changes,

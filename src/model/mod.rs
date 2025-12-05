@@ -243,8 +243,8 @@ pub enum TriggerEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Trigger {
     pub name: String,
-    pub table_schema: String,
-    pub table: String,
+    pub target_schema: String,
+    pub target_name: String,
     pub timing: TriggerTiming,
     pub events: Vec<TriggerEvent>,
     pub update_columns: Vec<String>,
@@ -547,8 +547,8 @@ mod tests {
     fn trigger_struct_captures_all_fields() {
         let trigger = Trigger {
             name: "audit_log".to_string(),
-            table_schema: "public".to_string(),
-            table: "users".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
             timing: TriggerTiming::After,
             events: vec![TriggerEvent::Insert, TriggerEvent::Update],
             update_columns: vec!["email".to_string(), "name".to_string()],
@@ -560,7 +560,7 @@ mod tests {
         };
 
         assert_eq!(trigger.name, "audit_log");
-        assert_eq!(trigger.table_schema, "public");
+        assert_eq!(trigger.target_schema, "public");
         assert_eq!(trigger.timing, TriggerTiming::After);
         assert_eq!(trigger.events.len(), 2);
         assert_eq!(trigger.update_columns, vec!["email", "name"]);
@@ -572,8 +572,8 @@ mod tests {
         let mut schema = Schema::new();
         let trigger = Trigger {
             name: "audit_log".to_string(),
-            table_schema: "public".to_string(),
-            table: "users".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
             timing: TriggerTiming::Before,
             events: vec![TriggerEvent::Delete],
             update_columns: vec![],

@@ -646,10 +646,12 @@ async fn instead_of_trigger_on_view() {
 
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query("CREATE TABLE users (id BIGINT PRIMARY KEY, name TEXT, active BOOLEAN DEFAULT false)")
-        .execute(connection.pool())
-        .await
-        .unwrap();
+    sqlx::query(
+        "CREATE TABLE users (id BIGINT PRIMARY KEY, name TEXT, active BOOLEAN DEFAULT false)",
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
 
     sqlx::query("CREATE VIEW active_users AS SELECT id, name FROM users WHERE active = true")
         .execute(connection.pool())
@@ -687,7 +689,9 @@ async fn instead_of_trigger_on_view() {
         .unwrap();
 
     assert!(
-        schema.triggers.contains_key("public.active_users.insert_active_user"),
+        schema
+            .triggers
+            .contains_key("public.active_users.insert_active_user"),
         "Should introspect INSTEAD OF trigger on view"
     );
 
@@ -696,14 +700,23 @@ async fn instead_of_trigger_on_view() {
         .get("public.active_users.insert_active_user")
         .unwrap();
     assert_eq!(trigger.timing, pgmold::model::TriggerTiming::InsteadOf);
-    assert_eq!(trigger.table, "active_users");
+    assert_eq!(trigger.target_name, "active_users");
     assert!(trigger.for_each_row);
     assert_eq!(trigger.function_name, "insert_active_user_fn");
 
     let trigger_ops = vec![MigrationOp::CreateTrigger(trigger.clone())];
     let sql = generate_sql(&trigger_ops);
     assert_eq!(sql.len(), 1);
-    assert!(sql[0].contains("INSTEAD OF"), "SQL should contain INSTEAD OF");
-    assert!(sql[0].contains("active_users"), "SQL should reference view name");
-    assert!(sql[0].contains("FOR EACH ROW"), "SQL should contain FOR EACH ROW");
+    assert!(
+        sql[0].contains("INSTEAD OF"),
+        "SQL should contain INSTEAD OF"
+    );
+    assert!(
+        sql[0].contains("active_users"),
+        "SQL should reference view name"
+    );
+    assert!(
+        sql[0].contains("FOR EACH ROW"),
+        "SQL should contain FOR EACH ROW"
+    );
 }

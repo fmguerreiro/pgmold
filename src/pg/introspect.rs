@@ -744,8 +744,8 @@ async fn introspect_triggers(
 
         let trigger = Trigger {
             name: trigger_name.clone(),
-            table_schema: table_schema.clone(),
-            table: table_name.clone(),
+            target_schema: table_schema.clone(),
+            target_name: table_name.clone(),
             timing,
             events,
             update_columns: update_columns.unwrap_or_default(),
@@ -756,7 +756,7 @@ async fn introspect_triggers(
             function_args: vec![],
         };
 
-        let key = format!("{}.{}.{}", table_schema, table_name, trigger_name);
+        let key = format!("{table_schema}.{table_name}.{trigger_name}");
         triggers.insert(key, trigger);
     }
 

@@ -16,7 +16,7 @@ fn extract_qualified_name(name: &sqlparser::ast::ObjectName) -> (String, String)
     match parts.as_slice() {
         [schema, table] => (schema.to_string(), table.to_string()),
         [table] => ("public".to_string(), table.to_string()),
-        _ => panic!("Unexpected object name format: {:?}", name),
+        _ => panic!("Unexpected object name format: {name:?}"),
     }
 }
 
@@ -267,14 +267,12 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 if timing == TriggerTiming::InsteadOf {
                     if !for_each_row {
                         return Err(SchemaError::ParseError(format!(
-                            "INSTEAD OF trigger '{}' must be FOR EACH ROW",
-                            trigger_name
+                            "INSTEAD OF trigger '{trigger_name}' must be FOR EACH ROW"
                         )));
                     }
                     if when_clause.is_some() {
                         return Err(SchemaError::ParseError(format!(
-                            "INSTEAD OF trigger '{}' cannot have a WHEN clause",
-                            trigger_name
+                            "INSTEAD OF trigger '{trigger_name}' cannot have a WHEN clause"
                         )));
                     }
                 }
@@ -288,8 +286,8 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
 
                 let trigger = Trigger {
                     name: trigger_name.clone(),
-                    table_schema: tbl_schema.clone(),
-                    table: tbl_name.clone(),
+                    target_schema: tbl_schema.clone(),
+                    target_name: tbl_name.clone(),
                     timing,
                     events: trigger_events,
                     update_columns,
@@ -300,7 +298,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     function_args,
                 };
 
-                let key = format!("{}.{}.{}", tbl_schema, tbl_name, trigger_name);
+                let key = format!("{tbl_schema}.{tbl_name}.{trigger_name}");
                 schema.triggers.insert(key, trigger);
             }
             Statement::CreateSequence {
@@ -450,7 +448,7 @@ fn parse_column_with_serial(
     let col_name = col_def.name.to_string();
 
     if let Some(seq_data_type) = detect_serial_type(&col_def.data_type) {
-        let seq_name = format!("{}_{}_seq", table_name, col_name);
+        let seq_name = format!("{table_name}_{col_name}_seq");
         let seq_qualified = qualified_name(table_schema, &seq_name);
 
         let pg_type = match seq_data_type {
@@ -469,7 +467,7 @@ fn parse_column_with_serial(
             name: col_name.clone(),
             data_type: pg_type,
             nullable,
-            default: Some(format!("nextval('{}'::regclass)", seq_qualified)),
+            default: Some(format!("nextval('{seq_qualified}'::regclass)")),
             comment: None,
         };
 
@@ -729,7 +727,7 @@ fn parse_create_sequence(
 
     let final_cache = cache.or(Some(1));
 
-    let final_min_value = min_value.or_else(|| {
+    let final_min_value = min_value.or({
         if is_ascending {
             Some(1)
         } else {
@@ -741,7 +739,7 @@ fn parse_create_sequence(
         }
     });
 
-    let final_max_value = max_value.or_else(|| {
+    let final_max_value = max_value.or({
         if is_ascending {
             match seq_data_type {
                 SequenceDataType::SmallInt => Some(32767),
@@ -753,7 +751,7 @@ fn parse_create_sequence(
         }
     });
 
-    let final_start = start.or_else(|| {
+    let final_start = start.or({
         if is_ascending {
             final_min_value
         } else {
@@ -1030,8 +1028,8 @@ CREATE TRIGGER audit_trigger
 
         let trigger = schema.triggers.get("public.users.audit_trigger").unwrap();
         assert_eq!(trigger.name, "audit_trigger");
-        assert_eq!(trigger.table_schema, "public");
-        assert_eq!(trigger.table, "users");
+        assert_eq!(trigger.target_schema, "public");
+        assert_eq!(trigger.target_name, "users");
         assert_eq!(trigger.timing, TriggerTiming::After);
         assert_eq!(trigger.events, vec![TriggerEvent::Insert]);
         assert!(trigger.for_each_row);
@@ -1137,8 +1135,8 @@ CREATE TRIGGER insert_active_user
             .get("public.active_users.insert_active_user")
             .unwrap();
         assert_eq!(trigger.name, "insert_active_user");
-        assert_eq!(trigger.table_schema, "public");
-        assert_eq!(trigger.table, "active_users");
+        assert_eq!(trigger.target_schema, "public");
+        assert_eq!(trigger.target_name, "active_users");
         assert_eq!(trigger.timing, TriggerTiming::InsteadOf);
         assert_eq!(trigger.events, vec![TriggerEvent::Insert]);
         assert!(trigger.for_each_row);

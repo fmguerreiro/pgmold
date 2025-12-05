@@ -136,8 +136,8 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         }
 
         MigrationOp::DropTrigger {
-            table_schema,
-            table,
+            target_schema,
+            target_name,
             name,
         } => {
             if !options.allow_destructive {
@@ -145,7 +145,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
                     rule: "deny_drop_trigger".to_string(),
                     severity: LintSeverity::Error,
                     message: format!(
-                        "Dropping trigger \"{table_schema}\".\"{table}\".{name} requires --allow-destructive flag"
+                        "Dropping trigger \"{target_schema}\".\"{target_name}\".{name} requires --allow-destructive flag"
                     ),
                 });
             }
@@ -372,8 +372,8 @@ mod tests {
     #[test]
     fn blocks_drop_trigger_without_flag() {
         let ops = vec![MigrationOp::DropTrigger {
-            table_schema: "public".to_string(),
-            table: "users".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
             name: "update_timestamp".to_string(),
         }];
         let options = LintOptions {
@@ -389,8 +389,8 @@ mod tests {
     #[test]
     fn allows_drop_trigger_with_flag() {
         let ops = vec![MigrationOp::DropTrigger {
-            table_schema: "public".to_string(),
-            table: "users".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
             name: "update_timestamp".to_string(),
         }];
         let options = LintOptions {

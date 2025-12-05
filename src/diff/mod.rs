@@ -99,8 +99,8 @@ pub enum MigrationOp {
     },
     CreateTrigger(Trigger),
     DropTrigger {
-        table_schema: String,
-        table: String,
+        target_schema: String,
+        target_name: String,
         name: String,
     },
     CreateSequence(Sequence),
@@ -325,8 +325,8 @@ fn diff_triggers(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
         if let Some(from_trigger) = from.triggers.get(name) {
             if from_trigger != trigger {
                 ops.push(MigrationOp::DropTrigger {
-                    table_schema: from_trigger.table_schema.clone(),
-                    table: from_trigger.table.clone(),
+                    target_schema: from_trigger.target_schema.clone(),
+                    target_name: from_trigger.target_name.clone(),
                     name: from_trigger.name.clone(),
                 });
                 ops.push(MigrationOp::CreateTrigger(trigger.clone()));
@@ -339,8 +339,8 @@ fn diff_triggers(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     for (name, trigger) in &from.triggers {
         if !to.triggers.contains_key(name) {
             ops.push(MigrationOp::DropTrigger {
-                table_schema: trigger.table_schema.clone(),
-                table: trigger.table.clone(),
+                target_schema: trigger.target_schema.clone(),
+                target_name: trigger.target_name.clone(),
                 name: trigger.name.clone(),
             });
         }
@@ -1336,11 +1336,11 @@ mod tests {
         assert!(matches!(&ops[0], MigrationOp::DropExtension(name) if name == "pgcrypto"));
     }
 
-    fn make_trigger(name: &str, table: &str) -> crate::model::Trigger {
+    fn make_trigger(name: &str, target: &str) -> crate::model::Trigger {
         crate::model::Trigger {
             name: name.to_string(),
-            table_schema: "public".to_string(),
-            table: table.to_string(),
+            target_schema: "public".to_string(),
+            target_name: target.to_string(),
             timing: crate::model::TriggerTiming::After,
             events: vec![crate::model::TriggerEvent::Insert],
             update_columns: vec![],
@@ -1379,7 +1379,7 @@ mod tests {
         assert_eq!(ops.len(), 1);
         assert!(matches!(
             &ops[0],
-            MigrationOp::DropTrigger { name, table, .. } if name == "audit_trigger" && table == "users"
+            MigrationOp::DropTrigger { name, target_name, .. } if name == "audit_trigger" && target_name == "users"
         ));
     }
 
@@ -1426,8 +1426,8 @@ mod tests {
 
         let trigger = crate::model::Trigger {
             name: "insert_active_user".to_string(),
-            table_schema: "public".to_string(),
-            table: "active_users".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "active_users".to_string(),
             timing: TriggerTiming::InsteadOf,
             events: vec![TriggerEvent::Insert],
             update_columns: vec![],
