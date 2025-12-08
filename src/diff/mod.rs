@@ -261,7 +261,6 @@ fn diff_tables(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops
 }
 
-
 fn diff_partitions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 

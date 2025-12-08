@@ -365,28 +365,28 @@ fn generate_create_table(table: &Table) -> Vec<String> {
     statements
 }
 
-
 fn generate_create_partition(partition: &Partition) -> String {
     let partition_name = quote_qualified(&partition.schema, &partition.name);
     let parent_name = quote_qualified(&partition.parent_schema, &partition.parent_name);
 
     let bound_clause = match &partition.bound {
         PartitionBound::Range { from, to } => {
-            format!("FOR VALUES FROM ({}) TO ({})", from.join(", "), to.join(", "))
+            format!(
+                "FOR VALUES FROM ({}) TO ({})",
+                from.join(", "),
+                to.join(", ")
+            )
         }
         PartitionBound::List { values } => {
             format!("FOR VALUES IN ({})", values.join(", "))
         }
         PartitionBound::Hash { modulus, remainder } => {
-            format!("FOR VALUES WITH (MODULUS {}, REMAINDER {})", modulus, remainder)
+            format!("FOR VALUES WITH (MODULUS {modulus}, REMAINDER {remainder})")
         }
         PartitionBound::Default => "DEFAULT".to_string(),
     };
 
-    format!(
-        "CREATE TABLE {} PARTITION OF {} {};",
-        partition_name, parent_name, bound_clause
-    )
+    format!("CREATE TABLE {partition_name} PARTITION OF {parent_name} {bound_clause};")
 }
 
 fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {
@@ -736,10 +736,8 @@ fn generate_create_sequence(seq: &Sequence) -> String {
     };
     parts.push(format!("AS {data_type_str}"));
 
-    if let Some(start) = seq.start {
-        parts.push(format!("START WITH {start}"));
-    }
-
+    // PostgreSQL sequence options order:
+    // INCREMENT BY, MINVALUE, MAXVALUE, START WITH, CACHE, CYCLE, OWNED BY
     if let Some(increment) = seq.increment {
         parts.push(format!("INCREMENT BY {increment}"));
     }
@@ -752,12 +750,16 @@ fn generate_create_sequence(seq: &Sequence) -> String {
         parts.push(format!("MAXVALUE {max_value}"));
     }
 
-    if seq.cycle {
-        parts.push("CYCLE".to_string());
+    if let Some(start) = seq.start {
+        parts.push(format!("START WITH {start}"));
     }
 
     if let Some(cache) = seq.cache {
         parts.push(format!("CACHE {cache}"));
+    }
+
+    if seq.cycle {
+        parts.push("CYCLE".to_string());
     }
 
     if let Some(ref owner) = seq.owned_by {
@@ -1643,12 +1645,13 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert!(sql[0].contains("CREATE SEQUENCE \"auth\".\"counter_seq\""));
         assert!(sql[0].contains("AS integer"));
-        assert!(sql[0].contains("START WITH 100"));
+        // PostgreSQL order: INCREMENT BY before START WITH
         assert!(sql[0].contains("INCREMENT BY 5"));
         assert!(sql[0].contains("MINVALUE 1"));
         assert!(sql[0].contains("MAXVALUE 1000"));
-        assert!(sql[0].contains("CYCLE"));
+        assert!(sql[0].contains("START WITH 100"));
         assert!(sql[0].contains("CACHE 10"));
+        assert!(sql[0].contains("CYCLE"));
         assert!(sql[0].contains("OWNED BY \"auth\".\"users\".\"id\""));
     }
 

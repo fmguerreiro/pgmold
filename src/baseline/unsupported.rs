@@ -5,14 +5,39 @@ use sqlx::Row;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnsupportedObject {
-    MaterializedView { schema: String, name: String },
-    Domain { schema: String, name: String },
-    CompositeType { schema: String, name: String },
-    Aggregate { schema: String, name: String },
-    Rule { schema: String, table: String, name: String },
-    InheritedTable { schema: String, name: String },
-    PartitionedTable { schema: String, name: String },
-    ForeignTable { schema: String, name: String },
+    MaterializedView {
+        schema: String,
+        name: String,
+    },
+    Domain {
+        schema: String,
+        name: String,
+    },
+    CompositeType {
+        schema: String,
+        name: String,
+    },
+    Aggregate {
+        schema: String,
+        name: String,
+    },
+    Rule {
+        schema: String,
+        table: String,
+        name: String,
+    },
+    InheritedTable {
+        schema: String,
+        name: String,
+    },
+    PartitionedTable {
+        schema: String,
+        name: String,
+    },
+    ForeignTable {
+        schema: String,
+        name: String,
+    },
 }
 
 impl UnsupportedObject {
@@ -38,7 +63,11 @@ impl UnsupportedObject {
             | Self::InheritedTable { schema, name }
             | Self::PartitionedTable { schema, name }
             | Self::ForeignTable { schema, name } => format!("{schema}.{name}"),
-            Self::Rule { schema, table, name } => format!("{schema}.{table}.{name}"),
+            Self::Rule {
+                schema,
+                table,
+                name,
+            } => format!("{schema}.{table}.{name}"),
         }
     }
 }
@@ -65,13 +94,14 @@ async fn detect_materialized_views(
     connection: &PgConnection,
     target_schemas: &[String],
 ) -> Result<Vec<UnsupportedObject>> {
-    let rows = sqlx::query(
-        "SELECT schemaname, matviewname FROM pg_matviews WHERE schemaname = ANY($1)",
-    )
-    .bind(target_schemas)
-    .fetch_all(connection.pool())
-    .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to detect materialized views: {e}")))?;
+    let rows =
+        sqlx::query("SELECT schemaname, matviewname FROM pg_matviews WHERE schemaname = ANY($1)")
+            .bind(target_schemas)
+            .fetch_all(connection.pool())
+            .await
+            .map_err(|e| {
+                SchemaError::DatabaseError(format!("Failed to detect materialized views: {e}"))
+            })?;
 
     Ok(rows
         .into_iter()

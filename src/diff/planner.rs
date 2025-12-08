@@ -159,6 +159,55 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result
 }
 
+/// Plan operations for a schema dump (not migration).
+/// Unlike plan_migration, this keeps OWNED BY inline in CREATE SEQUENCE
+/// by placing sequences after tables they reference.
+pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+    let mut create_extensions = Vec::new();
+    let mut create_enums = Vec::new();
+    let mut create_tables = Vec::new();
+    let mut create_sequences = Vec::new();
+    let mut create_partitions = Vec::new();
+    let mut create_functions = Vec::new();
+    let mut create_views = Vec::new();
+    let mut create_triggers = Vec::new();
+    let mut enable_rls = Vec::new();
+    let mut create_policies = Vec::new();
+
+    for op in ops {
+        match op {
+            MigrationOp::CreateExtension(_) => create_extensions.push(op),
+            MigrationOp::CreateEnum(_) => create_enums.push(op),
+            MigrationOp::CreateTable(_) => create_tables.push(op),
+            MigrationOp::CreateSequence(_) => create_sequences.push(op),
+            MigrationOp::CreatePartition(_) => create_partitions.push(op),
+            MigrationOp::CreateFunction(_) => create_functions.push(op),
+            MigrationOp::CreateView(_) => create_views.push(op),
+            MigrationOp::CreateTrigger(_) => create_triggers.push(op),
+            MigrationOp::EnableRls { .. } => enable_rls.push(op),
+            MigrationOp::CreatePolicy(_) => create_policies.push(op),
+            _ => {}
+        }
+    }
+
+    let create_tables = order_table_creates(create_tables);
+
+    let mut result = Vec::new();
+
+    result.extend(create_extensions);
+    result.extend(create_enums);
+    result.extend(create_functions);
+    result.extend(create_tables);
+    result.extend(create_partitions);
+    result.extend(create_sequences);
+    result.extend(enable_rls);
+    result.extend(create_policies);
+    result.extend(create_views);
+    result.extend(create_triggers);
+
+    result
+}
+
 /// Topologically sort CreateTable operations by FK dependencies.
 /// Tables that are referenced by other tables must be created first.
 fn order_table_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
@@ -277,6 +326,13 @@ fn topological_sort(
             }
         }
     }
+
+    let unsorted: Vec<String> = table_ops
+        .keys()
+        .filter(|name| !sorted_names.contains(name))
+        .cloned()
+        .collect();
+    sorted_names.extend(unsorted);
 
     sorted_names
         .into_iter()

@@ -68,7 +68,10 @@ pub fn generate_text_report(report: &BaselineReport) -> String {
     let mut output = String::new();
 
     output.push_str("=== pgmold baseline ===\n");
-    output.push_str(&format!("Database: {}\n", sanitize_url(&report.database_url)));
+    output.push_str(&format!(
+        "Database: {}\n",
+        sanitize_url(&report.database_url)
+    ));
     output.push_str(&format!("Schemas: {}\n", report.target_schemas.join(", ")));
     output.push('\n');
 
@@ -77,7 +80,10 @@ pub fn generate_text_report(report: &BaselineReport) -> String {
         "  Extensions:   {:>3}\n",
         report.object_counts.extensions
     ));
-    output.push_str(&format!("  Enums:        {:>3}\n", report.object_counts.enums));
+    output.push_str(&format!(
+        "  Enums:        {:>3}\n",
+        report.object_counts.enums
+    ));
     output.push_str(&format!(
         "  Tables:       {:>3}\n",
         report.object_counts.tables
@@ -86,7 +92,10 @@ pub fn generate_text_report(report: &BaselineReport) -> String {
         "  Functions:    {:>3}\n",
         report.object_counts.functions
     ));
-    output.push_str(&format!("  Views:        {:>3}\n", report.object_counts.views));
+    output.push_str(&format!(
+        "  Views:        {:>3}\n",
+        report.object_counts.views
+    ));
     output.push_str(&format!(
         "  Triggers:     {:>3}\n",
         report.object_counts.triggers
@@ -98,14 +107,16 @@ pub fn generate_text_report(report: &BaselineReport) -> String {
     output.push('\n');
 
     output.push_str("Verification:\n");
-    let rt_status = if report.round_trip_ok {
-        "✓"
-    } else {
-        "✗"
-    };
-    output.push_str(&format!("  {rt_status} Round-trip fidelity: {}\n", status_text(report.round_trip_ok)));
+    let rt_status = if report.round_trip_ok { "✓" } else { "✗" };
+    output.push_str(&format!(
+        "  {rt_status} Round-trip fidelity: {}\n",
+        status_text(report.round_trip_ok)
+    ));
     let zd_status = if report.zero_diff_ok { "✓" } else { "✗" };
-    output.push_str(&format!("  {zd_status} Zero-diff guarantee: {}\n", status_text(report.zero_diff_ok)));
+    output.push_str(&format!(
+        "  {zd_status} Zero-diff guarantee: {}\n",
+        status_text(report.zero_diff_ok)
+    ));
     output.push_str(&format!("  Fingerprint: {}\n", report.fingerprint));
     output.push('\n');
 
@@ -156,13 +167,12 @@ fn sanitize_url(url: &str) -> String {
     url.to_string()
 }
 
-fn group_warnings(warnings: &[UnsupportedObject]) -> BTreeMap<&'static str, Vec<&UnsupportedObject>> {
+fn group_warnings(
+    warnings: &[UnsupportedObject],
+) -> BTreeMap<&'static str, Vec<&UnsupportedObject>> {
     let mut grouped: BTreeMap<&'static str, Vec<&UnsupportedObject>> = BTreeMap::new();
     for warning in warnings {
-        grouped
-            .entry(warning.kind())
-            .or_default()
-            .push(warning);
+        grouped.entry(warning.kind()).or_default().push(warning);
     }
     grouped
 }
@@ -305,9 +315,6 @@ mod tests {
 
     #[test]
     fn sanitize_url_without_password() {
-        assert_eq!(
-            sanitize_url("postgres://host/db"),
-            "postgres://host/db"
-        );
+        assert_eq!(sanitize_url("postgres://host/db"), "postgres://host/db");
     }
 }

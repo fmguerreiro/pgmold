@@ -1,6 +1,6 @@
 use crate::model::*;
 use crate::pg::connection::PgConnection;
-use crate::util::{Result, SchemaError};
+use crate::util::{normalize_sql_whitespace, Result, SchemaError};
 use sqlx::Row;
 use std::collections::BTreeMap;
 
@@ -356,10 +356,7 @@ fn extract_paren_values(s: &str) -> Vec<String> {
     if let Some(start) = s.find('(') {
         if let Some(end) = s.rfind(')') {
             let inner = &s[start + 1..end];
-            return inner
-                .split(',')
-                .map(|v| v.trim().to_string())
-                .collect();
+            return inner.split(',').map(|v| v.trim().to_string()).collect();
         }
     }
     Vec::new()
@@ -389,7 +386,7 @@ async fn introspect_columns(
     let rows = sqlx::query(
         r#"
         SELECT column_name, data_type, character_maximum_length,
-               is_nullable, column_default, udt_name
+               is_nullable, column_default, udt_name, udt_schema
         FROM information_schema.columns
         WHERE table_schema = $1 AND table_name = $2
         ORDER BY ordinal_position
@@ -409,8 +406,9 @@ async fn introspect_columns(
         let is_nullable: String = row.get("is_nullable");
         let column_default: Option<String> = row.get("column_default");
         let udt_name: String = row.get("udt_name");
+        let udt_schema: String = row.get("udt_schema");
 
-        let pg_type = map_pg_type(&data_type, char_max_length, &udt_name);
+        let pg_type = map_pg_type(&data_type, char_max_length, &udt_schema, &udt_name);
 
         columns.insert(
             name.clone(),
@@ -427,7 +425,12 @@ async fn introspect_columns(
     Ok(columns)
 }
 
-fn map_pg_type(data_type: &str, char_max_length: Option<i32>, udt_name: &str) -> PgType {
+fn map_pg_type(
+    data_type: &str,
+    char_max_length: Option<i32>,
+    udt_schema: &str,
+    udt_name: &str,
+) -> PgType {
     match data_type {
         "integer" => PgType::Integer,
         "bigint" => PgType::BigInt,
@@ -441,7 +444,7 @@ fn map_pg_type(data_type: &str, char_max_length: Option<i32>, udt_name: &str) ->
         "uuid" => PgType::Uuid,
         "json" => PgType::Json,
         "jsonb" => PgType::Jsonb,
-        "USER-DEFINED" => PgType::CustomEnum(udt_name.to_string()),
+        "USER-DEFINED" => PgType::CustomEnum(format!("{udt_schema}.{udt_name}")),
         _ => PgType::Text,
     }
 }
@@ -776,16 +779,17 @@ async fn introspect_functions(
 
         let func = Function {
             name: name.clone(),
-            schema,
+            schema: schema.clone(),
             arguments,
             return_type,
             language,
-            body,
+            body: body.trim().to_string(),
             volatility,
             security,
         };
 
-        functions.insert(func.signature(), func);
+        let key = qualified_name(&schema, &func.signature());
+        functions.insert(key, func);
     }
 
     Ok(functions)
@@ -846,7 +850,7 @@ async fn introspect_views(
         let view = View {
             name: name.clone(),
             schema: schema.clone(),
-            query: definition.trim().trim_end_matches(';').to_string(),
+            query: normalize_sql_whitespace(definition.trim_end_matches(';')),
             materialized: false,
         };
         let qualified_name = format!("{schema}.{name}");
@@ -873,7 +877,7 @@ async fn introspect_views(
         let view = View {
             name: name.clone(),
             schema: schema.clone(),
-            query: definition.trim().trim_end_matches(';').to_string(),
+            query: normalize_sql_whitespace(definition.trim_end_matches(';')),
             materialized: true,
         };
         let qualified_name = format!("{schema}.{name}");

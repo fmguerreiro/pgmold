@@ -382,11 +382,9 @@ async fn baseline_detects_materialized_view() {
     .unwrap();
 
     assert!(result.report.has_warnings());
-    assert!(result
-        .report
-        .warnings
-        .iter()
-        .any(|w| matches!(w, UnsupportedObject::MaterializedView { name, .. } if name == "user_stats")));
+    assert!(result.report.warnings.iter().any(
+        |w| matches!(w, UnsupportedObject::MaterializedView { name, .. } if name == "user_stats")
+    ));
 }
 
 #[tokio::test]
@@ -461,11 +459,9 @@ async fn baseline_detects_partitioned_table() {
     .unwrap();
 
     assert!(result.report.has_warnings());
-    assert!(result
-        .report
-        .warnings
-        .iter()
-        .any(|w| matches!(w, UnsupportedObject::PartitionedTable { name, .. } if name == "events")));
+    assert!(result.report.warnings.iter().any(
+        |w| matches!(w, UnsupportedObject::PartitionedTable { name, .. } if name == "events")
+    ));
 }
 
 #[tokio::test]

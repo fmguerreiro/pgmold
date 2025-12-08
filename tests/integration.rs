@@ -768,7 +768,10 @@ async fn partitioned_table_roundtrip() {
         .as_ref()
         .expect("partition_by should be set");
 
-    assert_eq!(partition_by.strategy, pgmold::model::PartitionStrategy::Range);
+    assert_eq!(
+        partition_by.strategy,
+        pgmold::model::PartitionStrategy::Range
+    );
     assert_eq!(partition_by.columns, vec!["logdate"]);
 
     let partition = schema

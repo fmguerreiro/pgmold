@@ -41,7 +41,6 @@ pub async fn run_baseline(
     let parsed_fingerprint = parsed.fingerprint();
     let round_trip_ok = introspected_fingerprint == parsed_fingerprint;
 
-
     let diff_ops = compute_diff(&introspected, &parsed);
     let zero_diff_ok = diff_ops.is_empty();
 

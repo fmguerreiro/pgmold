@@ -117,17 +117,9 @@ pub struct PartitionKey {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PartitionBound {
-    Range {
-        from: Vec<String>,
-        to: Vec<String>,
-    },
-    List {
-        values: Vec<String>,
-    },
-    Hash {
-        modulus: u32,
-        remainder: u32,
-    },
+    Range { from: Vec<String>, to: Vec<String> },
+    List { values: Vec<String> },
+    Hash { modulus: u32, remainder: u32 },
     Default,
 }
 

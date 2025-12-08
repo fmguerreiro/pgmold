@@ -1,4 +1,10 @@
+use regex::Regex;
 use thiserror::Error;
+
+pub fn normalize_sql_whitespace(sql: &str) -> String {
+    let re = Regex::new(r"\s+").unwrap();
+    re.replace_all(sql.trim(), " ").to_string()
+}
 
 #[derive(Error, Debug)]
 pub enum SchemaError {
