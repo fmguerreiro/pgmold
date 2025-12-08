@@ -2,8 +2,8 @@ pub mod planner;
 
 use crate::model::{
     qualified_name, CheckConstraint, Column, EnumType, Extension, ForeignKey, Function, Index,
-    PgType, Policy, PrimaryKey, Sequence, SequenceDataType, SequenceOwner, Table, Trigger,
-    TriggerEnabled, View,
+    Partition, PgType, Policy, PrimaryKey, Sequence, SequenceDataType, SequenceOwner, Table,
+    Trigger, TriggerEnabled, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +19,8 @@ pub enum MigrationOp {
     },
     CreateTable(Table),
     DropTable(String),
+    CreatePartition(Partition),
+    DropPartition(String),
     AddColumn {
         table: String,
         column: Column,
@@ -158,6 +160,7 @@ pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops.extend(diff_extensions(from, to));
     ops.extend(diff_enums(from, to));
     ops.extend(diff_tables(from, to));
+    ops.extend(diff_partitions(from, to));
     ops.extend(diff_functions(from, to));
     ops.extend(diff_views(from, to));
     ops.extend(diff_triggers(from, to));
@@ -252,6 +255,25 @@ fn diff_tables(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     for name in from.tables.keys() {
         if !to.tables.contains_key(name) {
             ops.push(MigrationOp::DropTable(name.clone()));
+        }
+    }
+
+    ops
+}
+
+
+fn diff_partitions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for (name, partition) in &to.partitions {
+        if !from.partitions.contains_key(name) {
+            ops.push(MigrationOp::CreatePartition(partition.clone()));
+        }
+    }
+
+    for name in from.partitions.keys() {
+        if !to.partitions.contains_key(name) {
+            ops.push(MigrationOp::DropPartition(name.clone()));
         }
     }
 

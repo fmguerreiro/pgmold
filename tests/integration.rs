@@ -788,7 +788,6 @@ async fn partitioned_table_roundtrip() {
 }
 
 #[tokio::test]
-#[ignore = "sqlparser 0.52 doesn't support PARTITION OF syntax - needs preprocessing or parser extension"]
 async fn partitioned_table_sql_generation() {
     let schema = parse_sql_string(
         r#"

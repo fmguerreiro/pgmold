@@ -1,8 +1,9 @@
 use crate::diff::{ColumnChanges, EnumValuePosition, MigrationOp, PolicyChanges, SequenceChanges};
 use crate::model::{
     parse_qualified_name, CheckConstraint, Column, ForeignKey, Function, Index, IndexType,
-    PartitionStrategy, PgType, Policy, PolicyCommand, ReferentialAction, SecurityType, Sequence,
-    SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, View, Volatility,
+    Partition, PartitionBound, PartitionStrategy, PgType, Policy, PolicyCommand, ReferentialAction,
+    SecurityType, Sequence, SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent,
+    TriggerTiming, View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -80,6 +81,18 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             vec![format!(
                 "DROP TABLE {};",
                 quote_qualified(&schema, &table_name)
+            )]
+        }
+
+        MigrationOp::CreatePartition(partition) => {
+            vec![generate_create_partition(partition)]
+        }
+
+        MigrationOp::DropPartition(name) => {
+            let (schema, partition_name) = parse_qualified_name(name);
+            vec![format!(
+                "DROP TABLE {};",
+                quote_qualified(&schema, &partition_name)
             )]
         }
 
@@ -350,6 +363,30 @@ fn generate_create_table(table: &Table) -> Vec<String> {
     }
 
     statements
+}
+
+
+fn generate_create_partition(partition: &Partition) -> String {
+    let partition_name = quote_qualified(&partition.schema, &partition.name);
+    let parent_name = quote_qualified(&partition.parent_schema, &partition.parent_name);
+
+    let bound_clause = match &partition.bound {
+        PartitionBound::Range { from, to } => {
+            format!("FOR VALUES FROM ({}) TO ({})", from.join(", "), to.join(", "))
+        }
+        PartitionBound::List { values } => {
+            format!("FOR VALUES IN ({})", values.join(", "))
+        }
+        PartitionBound::Hash { modulus, remainder } => {
+            format!("FOR VALUES WITH (MODULUS {}, REMAINDER {})", modulus, remainder)
+        }
+        PartitionBound::Default => "DEFAULT".to_string(),
+    };
+
+    format!(
+        "CREATE TABLE {} PARTITION OF {} {};",
+        partition_name, parent_name, bound_clause
+    )
 }
 
 fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {

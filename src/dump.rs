@@ -3,8 +3,6 @@ use crate::diff::MigrationOp;
 use crate::model::{qualified_name, Schema};
 use crate::pg::sqlgen::generate_sql;
 
-/// Convert a Schema to CREATE operations for all objects.
-/// The returned operations can be passed to plan_migration() for dependency ordering.
 pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
@@ -22,29 +20,10 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
 
     for table in schema.tables.values() {
         ops.push(MigrationOp::CreateTable(table.clone()));
+        // Note: indexes, foreign_keys, and check_constraints are handled by
+        // generate_create_table in sqlgen.rs, so we don't create separate ops here.
 
         let table_qualified = qualified_name(&table.schema, &table.name);
-
-        for index in &table.indexes {
-            ops.push(MigrationOp::AddIndex {
-                table: table_qualified.clone(),
-                index: index.clone(),
-            });
-        }
-
-        for fk in &table.foreign_keys {
-            ops.push(MigrationOp::AddForeignKey {
-                table: table_qualified.clone(),
-                foreign_key: fk.clone(),
-            });
-        }
-
-        for check in &table.check_constraints {
-            ops.push(MigrationOp::AddCheckConstraint {
-                table: table_qualified.clone(),
-                check_constraint: check.clone(),
-            });
-        }
 
         if table.row_level_security {
             ops.push(MigrationOp::EnableRls {
@@ -55,6 +34,10 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
         for policy in &table.policies {
             ops.push(MigrationOp::CreatePolicy(policy.clone()));
         }
+    }
+
+    for partition in schema.partitions.values() {
+        ops.push(MigrationOp::CreatePartition(partition.clone()));
     }
 
     for function in schema.functions.values() {
@@ -84,7 +67,7 @@ pub fn generate_dump(schema: &Schema, header: Option<&str>) -> String {
     let planned = plan_migration(ops);
     let statements = generate_sql(&planned);
 
-    let body = statements.join(";\n\n") + ";\n";
+    let body = statements.join("\n\n") + "\n";
 
     match header {
         Some(h) => format!("{h}\n\n{body}"),
@@ -145,8 +128,13 @@ mod tests {
         assert!(ops
             .iter()
             .any(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "posts")));
-        assert!(ops.iter().any(|op| matches!(op, MigrationOp::AddIndex { index, .. } if index.name == "posts_user_id_idx")));
-        assert!(ops.iter().any(|op| matches!(op, MigrationOp::AddForeignKey { foreign_key, .. } if foreign_key.referenced_table == "users")));
+        // Indexes and FKs are now part of CreateTable, not separate ops
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "posts" && t.indexes.iter().any(|i| i.name == "posts_user_id_idx"))));
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "posts" && t.foreign_keys.iter().any(|fk| fk.referenced_table == "users"))));
     }
 
     #[test]
@@ -203,9 +191,10 @@ mod tests {
         assert!(ops
             .iter()
             .any(|op| matches!(op, MigrationOp::CreateTable(_))));
+        // Indexes are now part of CreateTable, verify index is in the table
         assert!(ops
             .iter()
-            .any(|op| matches!(op, MigrationOp::AddIndex { .. })));
+            .any(|op| matches!(op, MigrationOp::CreateTable(t) if t.indexes.iter().any(|i| i.name == "items_status_idx"))));
     }
 
     #[test]

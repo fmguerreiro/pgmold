@@ -4,7 +4,8 @@ pub use loader::load_schema_sources;
 use crate::model::*;
 use crate::util::{Result, SchemaError};
 use sqlparser::ast::{
-    ColumnDef, ColumnOption, DataType, Expr, SequenceOptions, Statement, TableConstraint,
+    ColumnDef, ColumnOption, DataType, Expr, ForValues, PartitionBoundValue, SequenceOptions,
+    Statement, TableConstraint,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -12,10 +13,14 @@ use std::collections::BTreeMap;
 use std::fs;
 
 fn extract_qualified_name(name: &sqlparser::ast::ObjectName) -> (String, String) {
-    let parts: Vec<&str> = name.0.iter().map(|ident| ident.value.as_str()).collect();
+    let parts: Vec<String> = name
+        .0
+        .iter()
+        .map(|part| part.to_string().trim_matches('"').to_string())
+        .collect();
     match parts.as_slice() {
-        [schema, table] => (schema.to_string(), table.to_string()),
-        [table] => ("public".to_string(), table.to_string()),
+        [schema, table] => (schema.clone(), table.clone()),
+        [table] => ("public".to_string(), table.clone()),
         _ => panic!("Unexpected object name format: {name:?}"),
     }
 }
@@ -28,6 +33,34 @@ fn parse_policy_command(cmd: &Option<sqlparser::ast::CreatePolicyCommand>) -> Po
         Some(sqlparser::ast::CreatePolicyCommand::Update) => PolicyCommand::Update,
         Some(sqlparser::ast::CreatePolicyCommand::Delete) => PolicyCommand::Delete,
         None => PolicyCommand::All,
+    }
+}
+
+fn parse_for_values(for_values: &Option<ForValues>) -> Result<PartitionBound> {
+    match for_values {
+        Some(ForValues::In(values)) => Ok(PartitionBound::List {
+            values: values.iter().map(|e| e.to_string()).collect(),
+        }),
+        Some(ForValues::From { from, to }) => Ok(PartitionBound::Range {
+            from: from.iter().map(partition_bound_value_to_string).collect(),
+            to: to.iter().map(partition_bound_value_to_string).collect(),
+        }),
+        Some(ForValues::With { modulus, remainder }) => Ok(PartitionBound::Hash {
+            modulus: *modulus as u32,
+            remainder: *remainder as u32,
+        }),
+        Some(ForValues::Default) => Ok(PartitionBound::Default),
+        None => Err(SchemaError::ParseError(
+            "PARTITION OF requires FOR VALUES clause".into(),
+        )),
+    }
+}
+
+fn partition_bound_value_to_string(v: &PartitionBoundValue) -> String {
+    match v {
+        PartitionBoundValue::Expr(e) => e.to_string(),
+        PartitionBoundValue::MinValue => "MINVALUE".to_string(),
+        PartitionBoundValue::MaxValue => "MAXVALUE".to_string(),
     }
 }
 
@@ -69,24 +102,42 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
         match statement {
             Statement::CreateTable(ct) => {
                 let (table_schema, table_name) = extract_qualified_name(&ct.name);
-                let parsed = parse_create_table(
-                    &table_schema,
-                    &table_name,
-                    &ct.columns,
-                    &ct.constraints,
-                    ct.partition_by.as_deref(),
-                )?;
-                let key = qualified_name(&table_schema, &table_name);
-                schema.tables.insert(key, parsed.table);
-                for seq in parsed.sequences {
-                    let seq_key = qualified_name(&seq.schema, &seq.name);
-                    schema.sequences.insert(seq_key, seq);
+
+                // Check if this is a PARTITION OF statement
+                if let Some(ref parent_table) = ct.partition_of {
+                    let (parent_schema, parent_name) = extract_qualified_name(parent_table);
+                    let bound = parse_for_values(&ct.for_values)?;
+                    let partition = Partition {
+                        schema: table_schema.clone(),
+                        name: table_name.clone(),
+                        parent_schema,
+                        parent_name,
+                        bound,
+                        indexes: Vec::new(),
+                        check_constraints: Vec::new(),
+                    };
+                    let key = qualified_name(&table_schema, &table_name);
+                    schema.partitions.insert(key, partition);
+                } else {
+                    let parsed = parse_create_table(
+                        &table_schema,
+                        &table_name,
+                        &ct.columns,
+                        &ct.constraints,
+                        ct.partition_by.as_deref(),
+                    )?;
+                    let key = qualified_name(&table_schema, &table_name);
+                    schema.tables.insert(key, parsed.table);
+                    for seq in parsed.sequences {
+                        let seq_key = qualified_name(&seq.schema, &seq.name);
+                        schema.sequences.insert(seq_key, seq);
+                    }
                 }
             }
             Statement::CreateIndex(ci) => {
                 let idx_name = ci
                     .name
-                    .map(|n| n.to_string())
+                    .map(|n| n.to_string().trim_matches('"').to_string())
                     .ok_or_else(|| SchemaError::ParseError("Index must have name".into()))?;
                 let (tbl_schema, tbl_name) = extract_qualified_name(&ci.table_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
@@ -94,7 +145,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 if let Some(table) = schema.tables.get_mut(&tbl_key) {
                     table.indexes.push(Index {
                         name: idx_name,
-                        columns: ci.columns.iter().map(|c| c.expr.to_string()).collect(),
+                        columns: ci.columns.iter().map(|c| c.column.expr.to_string().trim_matches('"').to_string()).collect(),
                         unique: ci.unique,
                         index_type: IndexType::BTree,
                     });
@@ -103,7 +154,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             }
             Statement::CreateType {
                 name,
-                representation: sqlparser::ast::UserDefinedTypeRepresentation::Enum { labels },
+                representation: Some(sqlparser::ast::UserDefinedTypeRepresentation::Enum { labels }),
                 ..
             } => {
                 let (enum_schema, enum_name) = extract_qualified_name(&name);
@@ -146,9 +197,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     table.policies.sort();
                 }
             }
-            Statement::AlterTable {
+            Statement::AlterTable(sqlparser::ast::AlterTable {
                 name, operations, ..
-            } => {
+            }) => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(&name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
                 for op in operations {
@@ -199,7 +250,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     }
                 }
             }
-            Statement::CreateFunction {
+            Statement::CreateFunction(sqlparser::ast::CreateFunction {
                 name,
                 args,
                 return_type,
@@ -207,7 +258,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 language,
                 behavior,
                 ..
-            } => {
+            }) => {
                 let (func_schema, func_name) = extract_qualified_name(&name);
                 let func = parse_create_function(
                     &func_schema,
@@ -221,12 +272,12 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 let key = qualified_name(&func_schema, &func.signature());
                 schema.functions.insert(key, func);
             }
-            Statement::CreateView {
+            Statement::CreateView(sqlparser::ast::CreateView {
                 name,
                 query,
                 materialized,
                 ..
-            } => {
+            }) => {
                 let (view_schema, view_name) = extract_qualified_name(&name);
                 let view = View {
                     schema: view_schema.clone(),
@@ -237,12 +288,12 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 let key = qualified_name(&view_schema, &view_name);
                 schema.views.insert(key, view);
             }
-            Statement::CreateExtension {
+            Statement::CreateExtension(sqlparser::ast::CreateExtension {
                 name,
                 version,
                 schema: ext_schema,
                 ..
-            } => {
+            }) => {
                 let ext_name = name.to_string().trim_matches('"').to_string();
                 let ext = Extension {
                     name: ext_name.clone(),
@@ -255,7 +306,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 };
                 schema.extensions.insert(ext_name, ext);
             }
-            Statement::CreateTrigger {
+            Statement::CreateTrigger(sqlparser::ast::CreateTrigger {
                 name,
                 period,
                 events,
@@ -265,15 +316,20 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 condition,
                 exec_body,
                 ..
-            } => {
+            }) => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
                 let trigger_name = name.to_string();
-                let (func_schema, func_name) = extract_qualified_name(&exec_body.func_desc.name);
+                let exec = exec_body.as_ref().ok_or_else(|| {
+                    SchemaError::ParseError(format!("Trigger '{trigger_name}' missing EXECUTE clause"))
+                })?;
+                let (func_schema, func_name) = extract_qualified_name(&exec.func_desc.name);
 
                 let timing = match period {
-                    sqlparser::ast::TriggerPeriod::Before => TriggerTiming::Before,
-                    sqlparser::ast::TriggerPeriod::After => TriggerTiming::After,
-                    sqlparser::ast::TriggerPeriod::InsteadOf => TriggerTiming::InsteadOf,
+                    Some(sqlparser::ast::TriggerPeriod::Before) => TriggerTiming::Before,
+                    Some(sqlparser::ast::TriggerPeriod::After) => TriggerTiming::After,
+                    Some(sqlparser::ast::TriggerPeriod::InsteadOf) => TriggerTiming::InsteadOf,
+                    Some(sqlparser::ast::TriggerPeriod::For) => TriggerTiming::Before,
+                    None => TriggerTiming::Before,
                 };
 
                 let mut trigger_events = Vec::new();
@@ -286,7 +342,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         }
                         sqlparser::ast::TriggerEvent::Update(cols) => {
                             trigger_events.push(TriggerEvent::Update);
-                            update_columns.extend(cols.iter().map(|c| c.value.clone()));
+                            update_columns.extend(cols.iter().map(|c| c.to_string()));
                         }
                         sqlparser::ast::TriggerEvent::Delete => {
                             trigger_events.push(TriggerEvent::Delete);
@@ -310,7 +366,10 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     }
                 }
 
-                let for_each_row = matches!(trigger_object, sqlparser::ast::TriggerObject::Row);
+                let for_each_row = trigger_object
+                    .as_ref()
+                    .map(|to| to.to_string().to_uppercase().contains("ROW"))
+                    .unwrap_or(false);
 
                 let when_clause = condition.as_ref().map(|e| e.to_string());
 
@@ -353,7 +412,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     }
                 }
 
-                let function_args = exec_body
+                let function_args = exec
                     .func_desc
                     .args
                     .as_ref()
@@ -444,13 +503,17 @@ fn parse_create_table(
     // Check for inline PRIMARY KEY in column options
     for col_def in columns {
         for option in &col_def.options {
-            if let ColumnOption::Unique {
-                is_primary: true, ..
-            } = option.option
-            {
+            // Check for PRIMARY KEY by examining the option's string representation
+            let option_str = format!("{:?}", option.option);
+            if option_str.contains("PRIMARY") || option_str.contains("Primary") {
+                let pk_col = col_def.name.to_string().trim_matches('"').to_string();
                 table.primary_key = Some(PrimaryKey {
-                    columns: vec![col_def.name.to_string()],
+                    columns: vec![pk_col.clone()],
                 });
+                // Mark PRIMARY KEY column as NOT NULL
+                if let Some(col) = table.columns.get_mut(&pk_col) {
+                    col.nullable = false;
+                }
             }
         }
     }
@@ -458,45 +521,46 @@ fn parse_create_table(
     // Parse table-level constraints
     for constraint in constraints {
         match constraint {
-            TableConstraint::PrimaryKey { columns, .. } => {
+            TableConstraint::PrimaryKey(pk) => {
+                let pk_columns: Vec<String> = pk.columns.iter().map(|c| c.to_string().trim_matches('"').to_string()).collect();
                 table.primary_key = Some(PrimaryKey {
-                    columns: columns.iter().map(|c| c.to_string()).collect(),
+                    columns: pk_columns.clone(),
                 });
+                // Mark all PRIMARY KEY columns as NOT NULL
+                for pk_col in &pk_columns {
+                    if let Some(col) = table.columns.get_mut(pk_col) {
+                        col.nullable = false;
+                    }
+                }
             }
-            TableConstraint::ForeignKey {
-                name,
-                columns,
-                foreign_table,
-                referred_columns,
-                on_delete,
-                on_update,
-                ..
-            } => {
-                let fk_name = name
+            TableConstraint::ForeignKey(fk) => {
+                let fk_name = fk
+                    .name
                     .as_ref()
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| format!("{}_{}_fkey", table.name, columns[0]));
+                    .map(|n| n.to_string().trim_matches('"').to_string())
+                    .unwrap_or_else(|| format!("{}_{}_fkey", table.name, fk.columns[0].to_string().trim_matches('"')));
 
-                let (ref_schema, ref_table) = extract_qualified_name(foreign_table);
+                let (ref_schema, ref_table) = extract_qualified_name(&fk.foreign_table);
                 table.foreign_keys.push(ForeignKey {
                     name: fk_name,
-                    columns: columns.iter().map(|c| c.to_string()).collect(),
+                    columns: fk.columns.iter().map(|c| c.to_string().trim_matches('"').to_string()).collect(),
                     referenced_schema: ref_schema,
                     referenced_table: ref_table,
-                    referenced_columns: referred_columns.iter().map(|c| c.to_string()).collect(),
-                    on_delete: parse_referential_action(on_delete),
-                    on_update: parse_referential_action(on_update),
+                    referenced_columns: fk.referred_columns.iter().map(|c| c.to_string().trim_matches('"').to_string()).collect(),
+                    on_delete: parse_referential_action(&fk.on_delete),
+                    on_update: parse_referential_action(&fk.on_update),
                 });
             }
-            TableConstraint::Check { name, expr } => {
-                let constraint_name = name
+            TableConstraint::Check(chk) => {
+                let constraint_name = chk
+                    .name
                     .as_ref()
-                    .map(|n| n.to_string())
+                    .map(|n| n.to_string().trim_matches('"').to_string())
                     .unwrap_or_else(|| format!("{}_check", table.name));
 
                 table.check_constraints.push(CheckConstraint {
                     name: constraint_name,
-                    expression: expr.to_string(),
+                    expression: chk.expr.to_string(),
                 });
             }
             _ => {}
@@ -526,7 +590,7 @@ fn parse_column_with_serial(
         }
     }
 
-    let col_name = col_def.name.to_string();
+    let col_name = col_def.name.to_string().trim_matches('"').to_string();
 
     if let Some(seq_data_type) = detect_serial_type(&col_def.data_type) {
         let seq_name = format!("{table_name}_{col_name}_seq");
@@ -724,9 +788,12 @@ fn parse_create_function(
 
     let body = function_body
         .map(|fb| match fb {
-            sqlparser::ast::CreateFunctionBody::AsBeforeOptions(expr) => expr.to_string(),
+            sqlparser::ast::CreateFunctionBody::AsBeforeOptions { body, .. } => body.to_string(),
             sqlparser::ast::CreateFunctionBody::AsAfterOptions(expr) => expr.to_string(),
             sqlparser::ast::CreateFunctionBody::Return(expr) => expr.to_string(),
+            sqlparser::ast::CreateFunctionBody::AsBeginEnd(stmts) => stmts.to_string(),
+            sqlparser::ast::CreateFunctionBody::AsReturnExpr(expr) => expr.to_string(),
+            sqlparser::ast::CreateFunctionBody::AsReturnSelect(sel) => sel.to_string(),
         })
         .map(|b| strip_dollar_quotes(&b))
         .ok_or_else(|| {
@@ -823,21 +890,21 @@ fn parse_create_sequence(
     }
 
     let owned_by_parsed = owned_by.and_then(|obj_name| {
-        let parts: Vec<&str> = obj_name
+        let parts: Vec<String> = obj_name
             .0
             .iter()
-            .map(|ident| ident.value.as_str())
+            .map(|part| part.to_string())
             .collect();
         match parts.as_slice() {
             [table_schema, table_name, column_name] => Some(SequenceOwner {
-                table_schema: table_schema.to_string(),
-                table_name: table_name.to_string(),
-                column_name: column_name.to_string(),
+                table_schema: table_schema.clone(),
+                table_name: table_name.clone(),
+                column_name: column_name.clone(),
             }),
             [table_name, column_name] => Some(SequenceOwner {
                 table_schema: "public".to_string(),
-                table_name: table_name.to_string(),
-                column_name: column_name.to_string(),
+                table_name: table_name.clone(),
+                column_name: column_name.clone(),
             }),
             _ => None,
         }
@@ -897,7 +964,13 @@ fn parse_create_sequence(
 
 fn extract_i64_from_expr(expr: &Expr) -> Option<i64> {
     match expr {
-        Expr::Value(sqlparser::ast::Value::Number(n, _)) => n.parse::<i64>().ok(),
+        Expr::Value(value_with_span) => {
+            if let sqlparser::ast::Value::Number(n, _) = &value_with_span.value {
+                n.parse::<i64>().ok()
+            } else {
+                None
+            }
+        }
         Expr::UnaryOp { op, expr } => {
             if matches!(op, sqlparser::ast::UnaryOperator::Minus) {
                 extract_i64_from_expr(expr).map(|n| -n)
@@ -1082,6 +1155,8 @@ CREATE TABLE products (
         let table = schema.tables.get("public.users").unwrap();
         assert_eq!(table.schema, "public");
         assert_eq!(table.name, "users");
+        assert!(table.primary_key.is_some(), "PRIMARY KEY should be detected");
+        assert_eq!(table.primary_key.as_ref().unwrap().columns, vec!["id".to_string()]);
     }
 
     #[test]
@@ -1395,20 +1470,21 @@ CREATE TRIGGER bad_trigger
         use sqlparser::ast::DataType;
         use sqlparser::ast::Ident;
         use sqlparser::ast::ObjectName;
+        use sqlparser::ast::ObjectNamePart;
 
         // SERIAL
-        let serial = DataType::Custom(ObjectName(vec![Ident::new("serial")]), vec![]);
+        let serial = DataType::Custom(ObjectName(vec![ObjectNamePart::Identifier(Ident::new("serial"))]), vec![]);
         assert_eq!(detect_serial_type(&serial), Some(SequenceDataType::Integer));
 
         // BIGSERIAL
-        let bigserial = DataType::Custom(ObjectName(vec![Ident::new("bigserial")]), vec![]);
+        let bigserial = DataType::Custom(ObjectName(vec![ObjectNamePart::Identifier(Ident::new("bigserial"))]), vec![]);
         assert_eq!(
             detect_serial_type(&bigserial),
             Some(SequenceDataType::BigInt)
         );
 
         // SMALLSERIAL
-        let smallserial = DataType::Custom(ObjectName(vec![Ident::new("smallserial")]), vec![]);
+        let smallserial = DataType::Custom(ObjectName(vec![ObjectNamePart::Identifier(Ident::new("smallserial"))]), vec![]);
         assert_eq!(
             detect_serial_type(&smallserial),
             Some(SequenceDataType::SmallInt)
@@ -1779,7 +1855,6 @@ CREATE TABLE events (
     }
 
     #[test]
-    #[ignore = "sqlparser 0.52 doesn't support PARTITION OF syntax - needs preprocessing or parser extension"]
     fn parses_range_partition() {
         let sql = r#"
 CREATE TABLE measurement (
@@ -1808,7 +1883,6 @@ CREATE TABLE measurement_2024 PARTITION OF measurement
     }
 
     #[test]
-    #[ignore = "sqlparser 0.52 doesn't support PARTITION OF syntax - needs preprocessing or parser extension"]
     fn parses_list_partition() {
         let sql = r#"
 CREATE TABLE customers (
@@ -1834,7 +1908,6 @@ CREATE TABLE customers_active PARTITION OF customers
     }
 
     #[test]
-    #[ignore = "sqlparser 0.52 doesn't support PARTITION OF syntax - needs preprocessing or parser extension"]
     fn parses_hash_partition() {
         let sql = r#"
 CREATE TABLE orders (
@@ -1860,7 +1933,6 @@ CREATE TABLE orders_part1 PARTITION OF orders
     }
 
     #[test]
-    #[ignore = "sqlparser 0.52 doesn't support PARTITION OF syntax - needs preprocessing or parser extension"]
     fn parses_default_partition() {
         let sql = r#"
 CREATE TABLE logs (
@@ -1880,7 +1952,6 @@ CREATE TABLE logs_other PARTITION OF logs DEFAULT;
     }
 
     #[test]
-    #[ignore = "sqlparser 0.52 doesn't support PARTITION OF syntax - needs preprocessing or parser extension"]
     fn parses_partition_with_schema() {
         let sql = r#"
 CREATE TABLE analytics.events (
@@ -1905,3 +1976,4 @@ CREATE TABLE analytics.events_2024 PARTITION OF analytics.events
         assert_eq!(partition.parent_name, "events");
     }
 }
+

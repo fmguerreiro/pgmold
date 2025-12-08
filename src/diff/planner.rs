@@ -11,6 +11,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut create_enums = Vec::new();
     let mut add_enum_values = Vec::new();
     let mut create_tables = Vec::new();
+    let mut create_partitions = Vec::new();
     let mut add_columns = Vec::new();
     let mut add_primary_keys = Vec::new();
     let mut add_indexes = Vec::new();
@@ -23,6 +24,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut drop_indexes = Vec::new();
     let mut drop_primary_keys = Vec::new();
     let mut drop_columns = Vec::new();
+    let mut drop_partitions = Vec::new();
     let mut drop_tables = Vec::new();
     let mut drop_enums = Vec::new();
     let mut enable_rls = Vec::new();
@@ -50,6 +52,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::CreateEnum(_) => create_enums.push(op),
             MigrationOp::AddEnumValue { .. } => add_enum_values.push(op),
             MigrationOp::CreateTable(_) => create_tables.push(op),
+            MigrationOp::CreatePartition(_) => create_partitions.push(op),
             MigrationOp::AddColumn { .. } => add_columns.push(op),
             MigrationOp::AddPrimaryKey { .. } => add_primary_keys.push(op),
             MigrationOp::AddIndex { .. } => add_indexes.push(op),
@@ -61,6 +64,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::DropIndex { .. } => drop_indexes.push(op),
             MigrationOp::DropPrimaryKey { .. } => drop_primary_keys.push(op),
             MigrationOp::DropColumn { .. } => drop_columns.push(op),
+            MigrationOp::DropPartition(_) => drop_partitions.push(op),
             MigrationOp::DropTable(_) => drop_tables.push(op),
             MigrationOp::DropEnum(_) => drop_enums.push(op),
             MigrationOp::EnableRls { .. } => enable_rls.push(op),
@@ -118,6 +122,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(create_sequences_without_owner);
     result.extend(create_functions);
     result.extend(create_tables);
+    result.extend(create_partitions);
     result.extend(add_columns);
     result.extend(add_primary_keys);
     result.extend(add_indexes);
@@ -144,6 +149,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(drop_indexes);
     result.extend(drop_primary_keys);
     result.extend(drop_columns);
+    result.extend(drop_partitions);
     result.extend(drop_tables);
     result.extend(drop_functions);
     result.extend(drop_sequences);
