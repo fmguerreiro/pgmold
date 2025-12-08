@@ -14,7 +14,6 @@ PostgreSQL schema-as-code management tool. Define schemas in native PostgreSQL D
 - **Safety**: Lint rules prevent destructive operations without explicit flags
 - **Drift Detection**: Monitor for schema drift in CI/CD
 - **Transactional Apply**: All migrations run in a single transaction
-- **Partitioned Tables**: Full support for `PARTITION BY` and `PARTITION OF` syntax
 
 ## Installation
 
@@ -101,50 +100,6 @@ CREATE TABLE posts (
 );
 
 CREATE INDEX posts_user_id_idx ON posts (user_id);
-```
-
-## Partitioned Tables
-
-pgmold supports PostgreSQL table partitioning with `PARTITION BY` and `PARTITION OF`:
-
-```sql
--- Range partitioned table
-CREATE TABLE events (
-    id BIGINT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    data JSONB
-) PARTITION BY RANGE (created_at);
-
-CREATE TABLE events_2024 PARTITION OF events
-    FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-
-CREATE TABLE events_2025 PARTITION OF events
-    FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
-
--- List partitioned table
-CREATE TABLE orders (
-    id BIGINT NOT NULL,
-    region TEXT NOT NULL,
-    total NUMERIC
-) PARTITION BY LIST (region);
-
-CREATE TABLE orders_us PARTITION OF orders
-    FOR VALUES IN ('us-east', 'us-west');
-
-CREATE TABLE orders_eu PARTITION OF orders
-    FOR VALUES IN ('eu-west', 'eu-central');
-
--- Hash partitioned table
-CREATE TABLE logs (
-    id BIGINT NOT NULL,
-    message TEXT
-) PARTITION BY HASH (id);
-
-CREATE TABLE logs_0 PARTITION OF logs
-    FOR VALUES WITH (MODULUS 4, REMAINDER 0);
-
-CREATE TABLE logs_1 PARTITION OF logs
-    FOR VALUES WITH (MODULUS 4, REMAINDER 1);
 ```
 
 ## Safety Rules
