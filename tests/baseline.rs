@@ -87,7 +87,7 @@ async fn baseline_complex_schema() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query(
+    sqlx::raw_sql(
         r#"
         CREATE TYPE status AS ENUM ('active', 'inactive');
         CREATE SEQUENCE user_id_seq;
@@ -137,7 +137,7 @@ async fn baseline_with_function_and_trigger() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query(
+    sqlx::raw_sql(
         r#"
         CREATE TABLE users (
             id BIGINT PRIMARY KEY,
@@ -185,7 +185,7 @@ async fn baseline_with_view() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query(
+    sqlx::raw_sql(
         r#"
         CREATE TABLE users (
             id BIGINT PRIMARY KEY,
@@ -224,7 +224,7 @@ async fn baseline_multi_schema() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query("CREATE SCHEMA auth")
+    sqlx::raw_sql("CREATE SCHEMA auth")
         .execute(connection.pool())
         .await
         .unwrap();
@@ -233,7 +233,7 @@ async fn baseline_multi_schema() {
         .await
         .unwrap();
 
-    sqlx::query(
+    sqlx::raw_sql(
         r#"
         CREATE TABLE auth.users (
             id BIGINT PRIMARY KEY,
@@ -276,7 +276,7 @@ async fn baseline_with_rls_policy() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query(
+    sqlx::raw_sql(
         r#"
         CREATE TABLE documents (
             id BIGINT PRIMARY KEY,
@@ -318,7 +318,7 @@ async fn baseline_circular_foreign_keys() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query(
+    sqlx::raw_sql(
         r#"
         CREATE TABLE a (
             id BIGINT PRIMARY KEY,
@@ -359,7 +359,7 @@ async fn baseline_detects_materialized_view() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query(
+    sqlx::raw_sql(
         r#"
         CREATE TABLE users (id BIGINT PRIMARY KEY);
         CREATE MATERIALIZED VIEW user_stats AS SELECT count(*) as total FROM users;
@@ -394,7 +394,7 @@ async fn baseline_detects_domain() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query(
+    sqlx::raw_sql(
         r#"
         CREATE DOMAIN email_address AS TEXT CHECK (VALUE ~ '@');
         CREATE TABLE users (
@@ -432,7 +432,7 @@ async fn baseline_detects_partitioned_table() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query(
+    sqlx::raw_sql(
         r#"
         CREATE TABLE events (
             id BIGINT,
@@ -473,7 +473,7 @@ async fn baseline_detects_inherited_table() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query(
+    sqlx::raw_sql(
         r#"
         CREATE TABLE parent (
             id BIGINT PRIMARY KEY,
@@ -576,7 +576,7 @@ async fn baseline_verifies_plan_shows_no_changes() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query(
+    sqlx::raw_sql(
         r#"
         CREATE TYPE status AS ENUM ('active', 'inactive');
         CREATE TABLE users (
