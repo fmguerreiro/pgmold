@@ -10,6 +10,7 @@ pub struct Schema {
     pub views: BTreeMap<String, View>,
     pub triggers: BTreeMap<String, Trigger>,
     pub sequences: BTreeMap<String, Sequence>,
+    pub partitions: BTreeMap<String, Partition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -24,6 +25,7 @@ pub struct Table {
     pub comment: Option<String>,
     pub row_level_security: bool,
     pub policies: Vec<Policy>,
+    pub partition_by: Option<PartitionKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -97,6 +99,47 @@ pub enum ReferentialAction {
 pub struct CheckConstraint {
     pub name: String,
     pub expression: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PartitionStrategy {
+    Range,
+    List,
+    Hash,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PartitionKey {
+    pub strategy: PartitionStrategy,
+    pub columns: Vec<String>,
+    pub expressions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PartitionBound {
+    Range {
+        from: Vec<String>,
+        to: Vec<String>,
+    },
+    List {
+        values: Vec<String>,
+    },
+    Hash {
+        modulus: u32,
+        remainder: u32,
+    },
+    Default,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Partition {
+    pub schema: String,
+    pub name: String,
+    pub parent_schema: String,
+    pub parent_name: String,
+    pub bound: PartitionBound,
+    pub indexes: Vec<Index>,
+    pub check_constraints: Vec<CheckConstraint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -320,6 +363,7 @@ impl Schema {
             views: BTreeMap::new(),
             triggers: BTreeMap::new(),
             sequences: BTreeMap::new(),
+            partitions: BTreeMap::new(),
         }
     }
 
@@ -373,6 +417,7 @@ mod tests {
                 comment: None,
                 row_level_security: false,
                 policies: Vec::new(),
+                partition_by: None,
             },
         );
 
@@ -390,6 +435,7 @@ mod tests {
                 comment: None,
                 row_level_security: false,
                 policies: Vec::new(),
+                partition_by: None,
             },
         );
 
@@ -513,6 +559,7 @@ mod tests {
             comment: None,
             row_level_security: false,
             policies: Vec::new(),
+            partition_by: None,
         };
         assert_eq!(table.schema, "auth");
     }
@@ -623,6 +670,7 @@ mod tests {
                 comment: None,
                 row_level_security: false,
                 policies: Vec::new(),
+                partition_by: None,
             },
         );
 
@@ -640,6 +688,7 @@ mod tests {
                 comment: None,
                 row_level_security: false,
                 policies: Vec::new(),
+                partition_by: None,
             },
         );
 

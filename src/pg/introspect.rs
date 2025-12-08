@@ -18,6 +18,17 @@ pub async fn introspect_schema(
     schema.triggers = introspect_triggers(connection, target_schemas).await?;
     schema.sequences = introspect_sequences(connection, target_schemas).await?;
 
+    // Introspect partition keys and merge into tables
+    let partition_keys = introspect_partition_keys(connection, target_schemas).await?;
+    for (qualified_name, partition_key) in partition_keys {
+        if let Some(table) = schema.tables.get_mut(&qualified_name) {
+            table.partition_by = Some(partition_key);
+        }
+    }
+
+    // Introspect partitions (child tables)
+    schema.partitions = introspect_partitions(connection, target_schemas).await?;
+
     let table_keys: Vec<(String, String)> = schema
         .tables
         .values()
@@ -159,12 +170,214 @@ async fn introspect_tables(
             comment: None,
             row_level_security: false,
             policies: Vec::new(),
+            partition_by: None,
         };
         let qualified_name = format!("{schema}.{name}");
         tables.insert(qualified_name, table);
     }
 
     Ok(tables)
+}
+
+/// Introspect partition keys for partitioned tables.
+/// Returns a map of qualified_name -> PartitionKey.
+async fn introspect_partition_keys(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, PartitionKey>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname as schema,
+            c.relname as name,
+            pt.partstrat::text as strategy,
+            pg_get_partkeydef(c.oid) as partition_key_def
+        FROM pg_class c
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        JOIN pg_partitioned_table pt ON c.oid = pt.partrelid
+        WHERE n.nspname = ANY($1::text[])
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch partition keys: {e}")))?;
+
+    let mut partition_keys = BTreeMap::new();
+    for row in rows {
+        let schema: String = row.get("schema");
+        let name: String = row.get("name");
+        let strategy_char: String = row.get("strategy");
+        let key_def: String = row.get("partition_key_def");
+
+        let strategy = match strategy_char.as_str() {
+            "r" => PartitionStrategy::Range,
+            "l" => PartitionStrategy::List,
+            "h" => PartitionStrategy::Hash,
+            _ => continue,
+        };
+
+        // key_def is like "RANGE (logdate)" or "LIST (status)"
+        // Extract the columns by parsing the parentheses
+        let columns = parse_partition_key_columns(&key_def);
+
+        let partition_key = PartitionKey {
+            strategy,
+            columns,
+            expressions: Vec::new(),
+        };
+
+        let qualified_name = format!("{schema}.{name}");
+        partition_keys.insert(qualified_name, partition_key);
+    }
+
+    Ok(partition_keys)
+}
+
+/// Introspect partitions (child tables) for partitioned tables.
+/// Returns a map of qualified_name -> Partition.
+async fn introspect_partitions(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Partition>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname as schema,
+            c.relname as name,
+            pn.nspname as parent_schema,
+            pc.relname as parent_name,
+            pg_get_expr(c.relpartbound, c.oid) as partition_bound
+        FROM pg_class c
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        JOIN pg_inherits i ON c.oid = i.inhrelid
+        JOIN pg_class pc ON pc.oid = i.inhparent
+        JOIN pg_namespace pn ON pc.relnamespace = pn.oid
+        WHERE c.relispartition = true
+          AND n.nspname = ANY($1::text[])
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch partitions: {e}")))?;
+
+    let mut partitions = BTreeMap::new();
+    for row in rows {
+        let schema: String = row.get("schema");
+        let name: String = row.get("name");
+        let parent_schema: String = row.get("parent_schema");
+        let parent_name: String = row.get("parent_name");
+        let bound_expr: String = row.get("partition_bound");
+
+        let bound = parse_partition_bound(&bound_expr);
+
+        let partition = Partition {
+            schema: schema.clone(),
+            name: name.clone(),
+            parent_schema,
+            parent_name,
+            bound,
+            indexes: Vec::new(),
+            check_constraints: Vec::new(),
+        };
+
+        let qualified_name = format!("{schema}.{name}");
+        partitions.insert(qualified_name, partition);
+    }
+
+    Ok(partitions)
+}
+
+/// Parse a partition bound expression like "FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')"
+fn parse_partition_bound(expr: &str) -> PartitionBound {
+    let expr_upper = expr.to_uppercase();
+
+    if expr_upper.contains("DEFAULT") {
+        return PartitionBound::Default;
+    }
+
+    if expr_upper.contains("FROM") && expr_upper.contains("TO") {
+        // RANGE: FOR VALUES FROM (...) TO (...)
+        if let (Some(from_start), Some(to_start)) = (expr.find("FROM"), expr.find("TO")) {
+            let from_part = &expr[from_start + 4..to_start].trim();
+            let to_part = &expr[to_start + 2..].trim();
+
+            let from_values = extract_paren_values(from_part);
+            let to_values = extract_paren_values(to_part);
+
+            return PartitionBound::Range {
+                from: from_values,
+                to: to_values,
+            };
+        }
+    }
+
+    if expr_upper.contains("IN") {
+        // LIST: FOR VALUES IN (...)
+        if let Some(in_pos) = expr.find("IN") {
+            let values_part = &expr[in_pos + 2..].trim();
+            let values = extract_paren_values(values_part);
+            return PartitionBound::List { values };
+        }
+    }
+
+    if expr_upper.contains("MODULUS") && expr_upper.contains("REMAINDER") {
+        // HASH: FOR VALUES WITH (MODULUS n, REMAINDER r)
+        if let Some(with_pos) = expr.find("WITH") {
+            let params_part = &expr[with_pos + 4..].trim();
+            let params = extract_paren_values(params_part);
+            let mut modulus = 0u32;
+            let mut remainder = 0u32;
+
+            for param in params {
+                let param_upper = param.to_uppercase();
+                if param_upper.contains("MODULUS") {
+                    if let Some(val) = param.split_whitespace().last() {
+                        modulus = val.parse().unwrap_or(0);
+                    }
+                } else if param_upper.contains("REMAINDER") {
+                    if let Some(val) = param.split_whitespace().last() {
+                        remainder = val.parse().unwrap_or(0);
+                    }
+                }
+            }
+
+            return PartitionBound::Hash { modulus, remainder };
+        }
+    }
+
+    // Fallback
+    PartitionBound::Default
+}
+
+/// Extract values from a parenthesized list like "(val1, val2)"
+fn extract_paren_values(s: &str) -> Vec<String> {
+    if let Some(start) = s.find('(') {
+        if let Some(end) = s.rfind(')') {
+            let inner = &s[start + 1..end];
+            return inner
+                .split(',')
+                .map(|v| v.trim().to_string())
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+/// Parse column names from a partition key definition like "RANGE (col1, col2)"
+fn parse_partition_key_columns(key_def: &str) -> Vec<String> {
+    // Find content between parentheses
+    if let Some(start) = key_def.find('(') {
+        if let Some(end) = key_def.rfind(')') {
+            let columns_str = &key_def[start + 1..end];
+            return columns_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect();
+        }
+    }
+    Vec::new()
 }
 
 async fn introspect_columns(

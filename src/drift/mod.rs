@@ -68,6 +68,7 @@ mod tests {
             comment: None,
             row_level_security: false,
             policies: Vec::new(),
+            partition_by: None,
         };
         table.columns.insert(
             "email".to_string(),

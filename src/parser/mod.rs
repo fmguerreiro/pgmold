@@ -69,8 +69,13 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
         match statement {
             Statement::CreateTable(ct) => {
                 let (table_schema, table_name) = extract_qualified_name(&ct.name);
-                let parsed =
-                    parse_create_table(&table_schema, &table_name, &ct.columns, &ct.constraints)?;
+                let parsed = parse_create_table(
+                    &table_schema,
+                    &table_name,
+                    &ct.columns,
+                    &ct.constraints,
+                    ct.partition_by.as_deref(),
+                )?;
                 let key = qualified_name(&table_schema, &table_name);
                 schema.tables.insert(key, parsed.table);
                 for seq in parsed.sequences {
@@ -410,6 +415,7 @@ fn parse_create_table(
     name: &str,
     columns: &[ColumnDef],
     constraints: &[TableConstraint],
+    partition_by: Option<&Expr>,
 ) -> Result<ParsedTable> {
     let mut table = Table {
         schema: schema.to_string(),
@@ -422,6 +428,7 @@ fn parse_create_table(
         comment: None,
         row_level_security: false,
         policies: Vec::new(),
+        partition_by: partition_by.and_then(parse_partition_by),
     };
 
     let mut sequences = Vec::new();
@@ -631,6 +638,47 @@ fn parse_referential_action(
         Some(sqlparser::ast::ReferentialAction::SetNull) => ReferentialAction::SetNull,
         Some(sqlparser::ast::ReferentialAction::SetDefault) => ReferentialAction::SetDefault,
         None => ReferentialAction::NoAction,
+    }
+}
+
+/// Parse partition_by expression from sqlparser into our PartitionKey model.
+/// sqlparser parses `PARTITION BY RANGE (col1, col2)` as a function call expression
+/// where the function name is RANGE/LIST/HASH and the arguments are the columns.
+fn parse_partition_by(expr: &Expr) -> Option<PartitionKey> {
+    match expr {
+        Expr::Function(func) => {
+            let strategy_name = func.name.to_string().to_uppercase();
+            let strategy = match strategy_name.as_str() {
+                "RANGE" => PartitionStrategy::Range,
+                "LIST" => PartitionStrategy::List,
+                "HASH" => PartitionStrategy::Hash,
+                _ => return None,
+            };
+
+            let columns: Vec<String> = match &func.args {
+                sqlparser::ast::FunctionArguments::List(args) => args
+                    .args
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        sqlparser::ast::FunctionArg::Unnamed(
+                            sqlparser::ast::FunctionArgExpr::Expr(Expr::Identifier(ident)),
+                        ) => Some(ident.value.clone()),
+                        sqlparser::ast::FunctionArg::Unnamed(
+                            sqlparser::ast::FunctionArgExpr::Expr(expr),
+                        ) => Some(expr.to_string()),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+
+            Some(PartitionKey {
+                strategy,
+                columns,
+                expressions: Vec::new(),
+            })
+        }
+        _ => None,
     }
 }
 
@@ -1644,5 +1692,216 @@ CREATE TRIGGER bad_trigger
             err.contains("NEW TABLE")
                 && (err.contains("INSERT") || err.contains("UPDATE") || err.contains("DELETE"))
         );
+    }
+
+    #[test]
+    fn parses_partition_by_range() {
+        let sql = r#"
+CREATE TABLE measurement (
+    city_id INT NOT NULL,
+    logdate DATE NOT NULL,
+    peaktemp INT,
+    unitsales INT
+) PARTITION BY RANGE (logdate);
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.measurement").unwrap();
+
+        let partition_by = table
+            .partition_by
+            .as_ref()
+            .expect("partition_by should be set");
+        assert_eq!(partition_by.strategy, PartitionStrategy::Range);
+        assert_eq!(partition_by.columns, vec!["logdate".to_string()]);
+    }
+
+    #[test]
+    fn parses_partition_by_list() {
+        let sql = r#"
+CREATE TABLE customers (
+    id INT NOT NULL,
+    status TEXT NOT NULL,
+    name TEXT
+) PARTITION BY LIST (status);
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.customers").unwrap();
+
+        let partition_by = table
+            .partition_by
+            .as_ref()
+            .expect("partition_by should be set");
+        assert_eq!(partition_by.strategy, PartitionStrategy::List);
+        assert_eq!(partition_by.columns, vec!["status".to_string()]);
+    }
+
+    #[test]
+    fn parses_partition_by_hash() {
+        let sql = r#"
+CREATE TABLE orders (
+    id INT NOT NULL,
+    customer_id INT NOT NULL,
+    created_at TIMESTAMP NOT NULL
+) PARTITION BY HASH (id);
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.orders").unwrap();
+
+        let partition_by = table
+            .partition_by
+            .as_ref()
+            .expect("partition_by should be set");
+        assert_eq!(partition_by.strategy, PartitionStrategy::Hash);
+        assert_eq!(partition_by.columns, vec!["id".to_string()]);
+    }
+
+    #[test]
+    fn parses_partition_by_multiple_columns() {
+        let sql = r#"
+CREATE TABLE events (
+    region TEXT NOT NULL,
+    event_date DATE NOT NULL,
+    event_id INT NOT NULL
+) PARTITION BY RANGE (region, event_date);
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.events").unwrap();
+
+        let partition_by = table
+            .partition_by
+            .as_ref()
+            .expect("partition_by should be set");
+        assert_eq!(partition_by.strategy, PartitionStrategy::Range);
+        assert_eq!(
+            partition_by.columns,
+            vec!["region".to_string(), "event_date".to_string()]
+        );
+    }
+
+    #[test]
+    #[ignore = "sqlparser 0.52 doesn't support PARTITION OF syntax - needs preprocessing or parser extension"]
+    fn parses_range_partition() {
+        let sql = r#"
+CREATE TABLE measurement (
+    city_id INT NOT NULL,
+    logdate DATE NOT NULL
+) PARTITION BY RANGE (logdate);
+
+CREATE TABLE measurement_2024 PARTITION OF measurement
+    FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+
+        let partition = schema
+            .partitions
+            .get("public.measurement_2024")
+            .expect("partition should exist");
+        assert_eq!(partition.parent_schema, "public");
+        assert_eq!(partition.parent_name, "measurement");
+        match &partition.bound {
+            PartitionBound::Range { from, to } => {
+                assert_eq!(from, &vec!["'2024-01-01'".to_string()]);
+                assert_eq!(to, &vec!["'2025-01-01'".to_string()]);
+            }
+            _ => panic!("Expected Range bound"),
+        }
+    }
+
+    #[test]
+    #[ignore = "sqlparser 0.52 doesn't support PARTITION OF syntax - needs preprocessing or parser extension"]
+    fn parses_list_partition() {
+        let sql = r#"
+CREATE TABLE customers (
+    id INT NOT NULL,
+    status TEXT NOT NULL
+) PARTITION BY LIST (status);
+
+CREATE TABLE customers_active PARTITION OF customers
+    FOR VALUES IN ('active', 'pending');
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+
+        let partition = schema
+            .partitions
+            .get("public.customers_active")
+            .expect("partition should exist");
+        match &partition.bound {
+            PartitionBound::List { values } => {
+                assert_eq!(values, &vec!["'active'".to_string(), "'pending'".to_string()]);
+            }
+            _ => panic!("Expected List bound"),
+        }
+    }
+
+    #[test]
+    #[ignore = "sqlparser 0.52 doesn't support PARTITION OF syntax - needs preprocessing or parser extension"]
+    fn parses_hash_partition() {
+        let sql = r#"
+CREATE TABLE orders (
+    id INT NOT NULL
+) PARTITION BY HASH (id);
+
+CREATE TABLE orders_part1 PARTITION OF orders
+    FOR VALUES WITH (MODULUS 4, REMAINDER 0);
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+
+        let partition = schema
+            .partitions
+            .get("public.orders_part1")
+            .expect("partition should exist");
+        match &partition.bound {
+            PartitionBound::Hash { modulus, remainder } => {
+                assert_eq!(*modulus, 4);
+                assert_eq!(*remainder, 0);
+            }
+            _ => panic!("Expected Hash bound"),
+        }
+    }
+
+    #[test]
+    #[ignore = "sqlparser 0.52 doesn't support PARTITION OF syntax - needs preprocessing or parser extension"]
+    fn parses_default_partition() {
+        let sql = r#"
+CREATE TABLE logs (
+    id INT NOT NULL,
+    level TEXT NOT NULL
+) PARTITION BY LIST (level);
+
+CREATE TABLE logs_other PARTITION OF logs DEFAULT;
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+
+        let partition = schema
+            .partitions
+            .get("public.logs_other")
+            .expect("partition should exist");
+        assert_eq!(partition.bound, PartitionBound::Default);
+    }
+
+    #[test]
+    #[ignore = "sqlparser 0.52 doesn't support PARTITION OF syntax - needs preprocessing or parser extension"]
+    fn parses_partition_with_schema() {
+        let sql = r#"
+CREATE TABLE analytics.events (
+    id INT NOT NULL,
+    occurred_at DATE NOT NULL
+) PARTITION BY RANGE (occurred_at);
+
+CREATE TABLE analytics.events_2024 PARTITION OF analytics.events
+    FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+
+        let table = schema.tables.get("analytics.events").unwrap();
+        assert!(table.partition_by.is_some());
+
+        let partition = schema
+            .partitions
+            .get("analytics.events_2024")
+            .expect("partition should exist");
+        assert_eq!(partition.schema, "analytics");
+        assert_eq!(partition.parent_schema, "analytics");
+        assert_eq!(partition.parent_name, "events");
     }
 }

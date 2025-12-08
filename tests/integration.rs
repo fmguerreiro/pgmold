@@ -720,3 +720,118 @@ async fn instead_of_trigger_on_view() {
         "SQL should contain FOR EACH ROW"
     );
 }
+
+// ==================== Partitioned Tables Integration Tests ====================
+// These tests verify end-to-end partitioned table support.
+// They are ignored until the feature is fully implemented.
+
+#[tokio::test]
+async fn partitioned_table_roundtrip() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE measurement (
+            city_id INT NOT NULL,
+            logdate DATE NOT NULL,
+            peaktemp INT,
+            unitsales INT
+        ) PARTITION BY RANGE (logdate)
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE measurement_2024 PARTITION OF measurement
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
+
+    let table = schema
+        .tables
+        .get("public.measurement")
+        .expect("partitioned table should be introspected");
+
+    let partition_by = table
+        .partition_by
+        .as_ref()
+        .expect("partition_by should be set");
+
+    assert_eq!(partition_by.strategy, pgmold::model::PartitionStrategy::Range);
+    assert_eq!(partition_by.columns, vec!["logdate"]);
+
+    let partition = schema
+        .partitions
+        .get("public.measurement_2024")
+        .expect("partition should be introspected");
+
+    assert_eq!(partition.parent_name, "measurement");
+
+    match &partition.bound {
+        pgmold::model::PartitionBound::Range { from, to } => {
+            assert!(from[0].contains("2024-01-01"));
+            assert!(to[0].contains("2025-01-01"));
+        }
+        _ => panic!("Expected Range bound"),
+    }
+}
+
+#[tokio::test]
+#[ignore = "sqlparser 0.52 doesn't support PARTITION OF syntax - needs preprocessing or parser extension"]
+async fn partitioned_table_sql_generation() {
+    let schema = parse_sql_string(
+        r#"
+        CREATE TABLE events (
+            id INT NOT NULL,
+            occurred_at DATE NOT NULL
+        ) PARTITION BY RANGE (occurred_at);
+
+        CREATE TABLE events_2024 PARTITION OF events
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+        "#,
+    )
+    .unwrap();
+
+    let table = schema.tables.get("public.events").unwrap();
+    assert!(table.partition_by.is_some());
+
+    let empty_schema = pgmold::model::Schema::new();
+    let ops = compute_diff(&empty_schema, &schema);
+
+    let sql = generate_sql(&ops);
+
+    let create_table_sql = sql
+        .iter()
+        .find(|s| s.contains("CREATE TABLE") && s.contains("events") && !s.contains("PARTITION OF"))
+        .expect("Should generate CREATE TABLE for partitioned table");
+
+    assert!(
+        create_table_sql.contains("PARTITION BY RANGE"),
+        "CREATE TABLE should include PARTITION BY RANGE"
+    );
+
+    let create_partition_sql = sql
+        .iter()
+        .find(|s| s.contains("PARTITION OF"))
+        .expect("Should generate CREATE TABLE for partition");
+
+    assert!(
+        create_partition_sql.contains("events_2024"),
+        "Should create partition with correct name"
+    );
+    assert!(
+        create_partition_sql.contains("FOR VALUES FROM"),
+        "Partition should have bound"
+    );
+}

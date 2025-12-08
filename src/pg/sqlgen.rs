@@ -1,8 +1,8 @@
 use crate::diff::{ColumnChanges, EnumValuePosition, MigrationOp, PolicyChanges, SequenceChanges};
 use crate::model::{
-    parse_qualified_name, CheckConstraint, Column, ForeignKey, Function, Index, IndexType, PgType,
-    Policy, PolicyCommand, ReferentialAction, SecurityType, Sequence, SequenceDataType, Table,
-    Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, View, Volatility,
+    parse_qualified_name, CheckConstraint, Column, ForeignKey, Function, Index, IndexType,
+    PartitionStrategy, PgType, Policy, PolicyCommand, ReferentialAction, SecurityType, Sequence,
+    SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -311,10 +311,22 @@ fn generate_create_table(table: &Table) -> Vec<String> {
     }
 
     let qualified_name = quote_qualified(&table.schema, &table.name);
+
+    // Add PARTITION BY clause if present
+    let partition_clause = table.partition_by.as_ref().map_or(String::new(), |pk| {
+        let strategy = match pk.strategy {
+            PartitionStrategy::Range => "RANGE",
+            PartitionStrategy::List => "LIST",
+            PartitionStrategy::Hash => "HASH",
+        };
+        format!(" PARTITION BY {} ({})", strategy, pk.columns.join(", "))
+    });
+
     statements.push(format!(
-        "CREATE TABLE {} (\n    {}\n);",
+        "CREATE TABLE {} (\n    {}\n){};",
         qualified_name,
-        column_defs.join(",\n    ")
+        column_defs.join(",\n    "),
+        partition_clause
     ));
 
     for index in &table.indexes {
@@ -990,6 +1002,7 @@ mod tests {
             comment: None,
             row_level_security: false,
             policies: vec![],
+            partition_by: None,
         })];
 
         let sql = generate_sql(&ops);
@@ -1291,6 +1304,7 @@ mod tests {
             comment: None,
             row_level_security: false,
             policies: vec![],
+            partition_by: None,
         };
 
         let op = MigrationOp::CreateTable(table);
