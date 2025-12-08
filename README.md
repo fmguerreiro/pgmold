@@ -14,11 +14,18 @@ PostgreSQL schema-as-code management tool. Define schemas in native PostgreSQL D
 - **Safety**: Lint rules prevent destructive operations without explicit flags
 - **Drift Detection**: Monitor for schema drift in CI/CD
 - **Transactional Apply**: All migrations run in a single transaction
+- **Partitioned Tables**: Full support for `PARTITION BY` and `PARTITION OF` syntax
 
 ## Installation
 
 ```bash
 cargo install pgmold
+```
+
+For the latest version with partitioned table support (until the sqlparser fork is merged upstream):
+
+```bash
+cargo install --git https://github.com/fmguerreiro/pgmold
 ```
 
 ## Usage
