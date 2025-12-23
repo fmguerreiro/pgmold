@@ -75,6 +75,65 @@ pub fn generate_dump(schema: &Schema, header: Option<&str>) -> String {
     }
 }
 
+pub struct SplitDump {
+    pub extensions: String,
+    pub types: String,
+    pub sequences: String,
+    pub tables: String,
+    pub functions: String,
+    pub views: String,
+    pub triggers: String,
+    pub policies: String,
+}
+
+pub fn generate_split_dump(schema: &Schema) -> SplitDump {
+    let ops = schema_to_create_ops(schema);
+    let planned = plan_dump(ops);
+
+    let mut extension_ops = Vec::new();
+    let mut type_ops = Vec::new();
+    let mut sequence_ops = Vec::new();
+    let mut table_ops = Vec::new();
+    let mut function_ops = Vec::new();
+    let mut view_ops = Vec::new();
+    let mut trigger_ops = Vec::new();
+    let mut policy_ops = Vec::new();
+
+    for op in planned {
+        match &op {
+            MigrationOp::CreateExtension(_) => extension_ops.push(op),
+            MigrationOp::CreateEnum(_) => type_ops.push(op),
+            MigrationOp::CreateSequence(_) => sequence_ops.push(op),
+            MigrationOp::CreateTable(_) | MigrationOp::EnableRls { .. } => table_ops.push(op),
+            MigrationOp::CreateFunction(_) => function_ops.push(op),
+            MigrationOp::CreateView(_) => view_ops.push(op),
+            MigrationOp::CreateTrigger(_) => trigger_ops.push(op),
+            MigrationOp::CreatePolicy(_) => policy_ops.push(op),
+            _ => {}
+        }
+    }
+
+    let extensions = generate_sql(&extension_ops).join("\n\n") + "\n";
+    let types = generate_sql(&type_ops).join("\n\n") + "\n";
+    let sequences = generate_sql(&sequence_ops).join("\n\n") + "\n";
+    let tables = generate_sql(&table_ops).join("\n\n") + "\n";
+    let functions = generate_sql(&function_ops).join("\n\n") + "\n";
+    let views = generate_sql(&view_ops).join("\n\n") + "\n";
+    let triggers = generate_sql(&trigger_ops).join("\n\n") + "\n";
+    let policies = generate_sql(&policy_ops).join("\n\n") + "\n";
+
+    SplitDump {
+        extensions,
+        types,
+        sequences,
+        tables,
+        functions,
+        views,
+        triggers,
+        policies,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +323,93 @@ mod tests {
             result,
             dump
         );
+    }
+
+    #[test]
+    fn split_dump_empty_schema() {
+        let schema = Schema::default();
+        let split = generate_split_dump(&schema);
+
+        assert_eq!(split.extensions, "\n");
+        assert_eq!(split.types, "\n");
+        assert_eq!(split.sequences, "\n");
+        assert_eq!(split.tables, "\n");
+        assert_eq!(split.functions, "\n");
+        assert_eq!(split.views, "\n");
+        assert_eq!(split.triggers, "\n");
+        assert_eq!(split.policies, "\n");
+    }
+
+    #[test]
+    fn split_dump_separates_by_type() {
+        let schema = parse_sql_string(
+            r#"
+            CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+            CREATE TYPE status AS ENUM ('active', 'inactive');
+            CREATE SEQUENCE user_id_seq;
+            CREATE TABLE users (
+                id BIGINT PRIMARY KEY,
+                email TEXT NOT NULL
+            );
+            CREATE FUNCTION get_user(user_id BIGINT) RETURNS users AS $$
+                SELECT * FROM users WHERE id = user_id;
+            $$ LANGUAGE SQL;
+            CREATE VIEW active_users AS SELECT * FROM users;
+            "#,
+        )
+        .unwrap();
+
+        let split = generate_split_dump(&schema);
+
+        assert!(split.extensions.contains("CREATE EXTENSION"));
+        assert!(split.extensions.contains("uuid-ossp"));
+        assert!(split.types.contains("CREATE TYPE"));
+        assert!(split.types.contains("status"));
+        assert!(split.sequences.contains("CREATE SEQUENCE"));
+        assert!(split.sequences.contains("user_id_seq"));
+        assert!(split.tables.contains("CREATE TABLE"));
+        assert!(split.tables.contains("users"));
+        assert!(split.functions.contains("CREATE FUNCTION"));
+        assert!(split.functions.contains("get_user"));
+        assert!(split.views.contains("CREATE VIEW"));
+        assert!(split.views.contains("active_users"));
+    }
+
+    #[test]
+    fn split_dump_tables_include_rls_and_policies() {
+        let schema = parse_sql_string(
+            r#"
+            CREATE TABLE posts (
+                id BIGINT PRIMARY KEY,
+                user_id BIGINT NOT NULL
+            );
+            ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
+            CREATE POLICY posts_select ON posts FOR SELECT USING (true);
+            "#,
+        )
+        .unwrap();
+
+        let split = generate_split_dump(&schema);
+
+        assert!(split.tables.contains("CREATE TABLE"));
+        assert!(split.tables.contains("posts"));
+        assert!(split.tables.contains("ENABLE ROW LEVEL SECURITY"));
+        assert!(split.policies.contains("CREATE POLICY"));
+        assert!(split.policies.contains("posts_select"));
+    }
+
+    #[test]
+    fn split_dump_non_empty_files_only() {
+        let schema = parse_sql_string("CREATE TABLE users (id BIGINT PRIMARY KEY);").unwrap();
+        let split = generate_split_dump(&schema);
+
+        assert_eq!(split.extensions, "\n");
+        assert_eq!(split.types, "\n");
+        assert_eq!(split.sequences, "\n");
+        assert!(split.tables.contains("CREATE TABLE"));
+        assert_eq!(split.functions, "\n");
+        assert_eq!(split.views, "\n");
+        assert_eq!(split.triggers, "\n");
+        assert_eq!(split.policies, "\n");
     }
 }
