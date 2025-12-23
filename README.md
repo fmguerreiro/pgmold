@@ -81,6 +81,55 @@ schema/
 
 Duplicate definitions (same table/enum/function in multiple files) will error immediately with clear file locations.
 
+## Adopting pgmold in an Existing Project
+
+If you have a live database with existing schema (and possibly a migration-based workflow), use `pgmold dump` to create a baseline:
+
+```bash
+# Export current database schema to SQL files
+pgmold dump --database "db:postgres://localhost/mydb" -o schema/baseline.sql
+
+# For specific schemas only
+pgmold dump --database "db:postgres://localhost/mydb" --target-schemas public,auth -o schema/baseline.sql
+```
+
+This exports your live database schema as SQL DDL. Now your schema files match the database exactly, and `pgmold plan` will show 0 operations.
+
+### Workflow After Baseline
+
+1. **Make changes** by editing the SQL schema files
+2. **Preview** with `pgmold plan --schema schema/ --database postgres://localhost/mydb`
+3. **Apply** with `pgmold apply --schema schema/ --database postgres://localhost/mydb`
+
+### Integrating with Existing Migration Systems
+
+pgmold is declarative (like Terraform) - it computes diffs and applies directly rather than generating numbered migration files. If you need to maintain compatibility with an existing migration system:
+
+```bash
+# Generate migration SQL and save it as a numbered migration file
+pgmold diff --from "db:postgres://localhost/mydb" --to "sql:schema/" > migrations/0044_my_change.sql
+
+# Or use plan for more detailed output
+pgmold plan --schema schema/ --database postgres://localhost/mydb --dry-run > migrations/0044_my_change.sql
+```
+
+This lets you use pgmold for diffing while keeping your existing migration runner.
+
+### Recommended Directory Structure for Adoption
+
+```
+db/
+├── schema/                  # pgmold manages these files
+│   ├── types.sql           # ENUMs and custom types
+│   ├── tables.sql          # Table definitions
+│   ├── functions.sql       # Stored procedures
+│   ├── views.sql           # Views
+│   ├── triggers.sql        # Triggers
+│   └── policies.sql        # RLS policies
+└── migrations/             # Legacy migration files (optional)
+    └── ...
+```
+
 ## Schema Definition (PostgreSQL DDL)
 
 ```sql
