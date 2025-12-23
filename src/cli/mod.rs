@@ -359,9 +359,9 @@ pub async fn run() -> Result<()> {
                     if content.trim().is_empty() {
                         continue;
                     }
-                    let file_path = format!("{dir_path}/{filename}");
+                    let file_path = std::path::Path::new(&dir_path).join(filename);
                     std::fs::write(&file_path, content)
-                        .map_err(|e| anyhow!("Failed to write to {file_path}: {e}"))?;
+                        .map_err(|e| anyhow!("Failed to write to {}: {e}", file_path.display()))?;
                     written_files.push(filename);
                 }
 

@@ -104,7 +104,9 @@ pub fn generate_split_dump(schema: &Schema) -> SplitDump {
             MigrationOp::CreateExtension(_) => extension_ops.push(op),
             MigrationOp::CreateEnum(_) => type_ops.push(op),
             MigrationOp::CreateSequence(_) => sequence_ops.push(op),
-            MigrationOp::CreateTable(_) | MigrationOp::EnableRls { .. } => table_ops.push(op),
+            MigrationOp::CreateTable(_)
+            | MigrationOp::CreatePartition(_)
+            | MigrationOp::EnableRls { .. } => table_ops.push(op),
             MigrationOp::CreateFunction(_) => function_ops.push(op),
             MigrationOp::CreateView(_) => view_ops.push(op),
             MigrationOp::CreateTrigger(_) => trigger_ops.push(op),
@@ -411,5 +413,27 @@ mod tests {
         assert_eq!(split.views, "\n");
         assert_eq!(split.triggers, "\n");
         assert_eq!(split.policies, "\n");
+    }
+
+    #[test]
+    fn split_dump_includes_partitions() {
+        let schema = parse_sql_string(
+            r#"
+            CREATE TABLE events (
+                id BIGINT NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                data TEXT
+            ) PARTITION BY RANGE (created_at);
+
+            CREATE TABLE events_2024 PARTITION OF events
+                FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+            "#,
+        )
+        .unwrap();
+        let split = generate_split_dump(&schema);
+
+        assert!(split.tables.contains("CREATE TABLE"));
+        assert!(split.tables.contains("PARTITION BY"));
+        assert!(split.tables.contains("events_2024"));
     }
 }
