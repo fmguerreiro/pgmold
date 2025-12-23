@@ -4,6 +4,7 @@ use sqlx::Executor;
 
 use pgmold::diff::{compute_diff, planner::plan_migration};
 use pgmold::dump::generate_dump;
+use pgmold::lint::locks::detect_lock_hazards;
 use pgmold::lint::{has_errors, lint_migration_plan, LintOptions, LintSeverity};
 use pgmold::model::Schema;
 use pgmold::parser::load_schema_sources;
@@ -141,11 +142,20 @@ pub async fn run() -> Result<()> {
                 .map_err(|e| anyhow!("{e}"))?;
 
             let ops = plan_migration(compute_diff(&current, &target));
+            let lock_warnings = detect_lock_hazards(&ops);
+
+            for warning in &lock_warnings {
+                println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
+            }
+
             let sql = generate_sql(&ops);
 
             if sql.is_empty() {
                 println!("No changes required.");
             } else {
+                if !lock_warnings.is_empty() {
+                    println!();
+                }
                 println!("Migration plan ({} statements):", sql.len());
                 for statement in &sql {
                     println!("{statement}");
@@ -192,6 +202,11 @@ pub async fn run() -> Result<()> {
             if has_errors(&lint_results) {
                 println!("\nMigration blocked due to lint errors.");
                 return Ok(());
+            }
+
+            let lock_warnings = detect_lock_hazards(&ops);
+            for warning in &lock_warnings {
+                println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
             }
 
             let sql = generate_sql(&ops);
