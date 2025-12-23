@@ -16,6 +16,53 @@ PostgreSQL schema-as-code management tool. Define schemas in native PostgreSQL D
 - **Transactional Apply**: All migrations run in a single transaction
 - **Partitioned Tables**: Full support for `PARTITION BY` and `PARTITION OF` syntax
 
+## How pgmold Works
+
+```
+┌─────────────────────┐     ┌─────────────────────┐
+│   Schema Files      │     │   Live Database     │
+│   (Desired State)   │     │   (Current State)   │
+└──────────┬──────────┘     └──────────┬──────────┘
+           │                           │
+           └───────────┬───────────────┘
+                       ▼
+              ┌─────────────────┐
+              │   pgmold diff   │
+              │   (compare)     │
+              └────────┬────────┘
+                       ▼
+              ┌─────────────────┐
+              │  Generated SQL  │
+              │  (only changes) │
+              └─────────────────┘
+```
+
+**Example:**
+
+Your schema file says:
+```sql
+CREATE TABLE users (
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,  -- NEW
+  created_at TIMESTAMP
+);
+```
+
+Database currently has:
+```sql
+CREATE TABLE users (
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at TIMESTAMP
+);
+```
+
+pgmold generates only the delta:
+```sql
+ALTER TABLE users ADD COLUMN email TEXT NOT NULL;
+```
+
 ## Installation
 
 ```bash
