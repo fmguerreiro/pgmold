@@ -234,6 +234,24 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     ),
                 });
             }
+            MigrationOp::AlterTriggerEnabled {
+                target_schema,
+                target_name,
+                name,
+                ..
+            } => {
+                use crate::model::qualified_name;
+                let table = qualified_name(target_schema, target_name);
+                warnings.push(LockWarning {
+                    operation: "AlterTriggerEnabled".to_string(),
+                    table,
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "ALTER TRIGGER ENABLE/DISABLE acquires ACCESS EXCLUSIVE lock on table {}.{} (trigger {})",
+                        target_schema, target_name, name
+                    ),
+                });
+            }
             MigrationOp::DropView { name, .. } => {
                 warnings.push(LockWarning {
                     operation: "DropView".to_string(),
@@ -655,6 +673,24 @@ mod tests {
         assert_eq!(warnings[0].operation, "DropTrigger");
         assert_eq!(warnings[0].table, "public.users");
         assert_eq!(warnings[0].lock_level, LockLevel::ShareRowExclusive);
+    }
+
+    #[test]
+    fn detects_alter_trigger_enabled_lock() {
+        use crate::model::TriggerEnabled;
+
+        let ops = vec![MigrationOp::AlterTriggerEnabled {
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            name: "audit_trigger".to_string(),
+            enabled: TriggerEnabled::Disabled,
+        }];
+        let warnings = detect_lock_hazards(&ops);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].operation, "AlterTriggerEnabled");
+        assert_eq!(warnings[0].table, "public.users");
+        assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
     #[test]
