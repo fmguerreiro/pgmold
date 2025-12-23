@@ -1,3 +1,5 @@
+pub mod locks;
+
 use crate::diff::MigrationOp;
 use crate::model::PgType;
 
