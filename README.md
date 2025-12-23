@@ -75,6 +75,25 @@ For the latest version with partitioned table support (until the sqlparser fork 
 cargo install --git https://github.com/fmguerreiro/pgmold
 ```
 
+## Quick Start
+
+```bash
+# 1. Create a schema file
+cat > schema.sql << 'EOF'
+CREATE TABLE users (
+    id BIGINT PRIMARY KEY,
+    email TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT now()
+);
+EOF
+
+# 2. See what would change
+pgmold plan --schema schema.sql --database postgres://localhost/mydb
+
+# 3. Apply the migration
+pgmold apply --schema schema.sql --database postgres://localhost/mydb
+```
+
 ## Usage
 
 ```bash
@@ -100,7 +119,9 @@ pgmold lint --schema schema.sql
 pgmold monitor --schema schema.sql --database postgres://localhost/mydb
 ```
 
-## Multi-File Schemas
+## Guides
+
+### Multi-File Schemas
 
 Organize your schema across multiple files using directories or glob patterns:
 
@@ -128,7 +149,7 @@ schema/
 
 Duplicate definitions (same table/enum/function in multiple files) will error immediately with clear file locations.
 
-## Adopting pgmold in an Existing Project
+### Adopting pgmold in an Existing Project
 
 If you have a live database with existing schema (and possibly a migration-based workflow), use `pgmold dump` to create a baseline:
 
@@ -142,13 +163,13 @@ pgmold dump --database "db:postgres://localhost/mydb" --target-schemas public,au
 
 This exports your live database schema as SQL DDL. Now your schema files match the database exactly, and `pgmold plan` will show 0 operations.
 
-### Workflow After Baseline
+#### Workflow After Baseline
 
 1. **Make changes** by editing the SQL schema files
 2. **Preview** with `pgmold plan --schema schema/ --database postgres://localhost/mydb`
 3. **Apply** with `pgmold apply --schema schema/ --database postgres://localhost/mydb`
 
-### Integrating with Existing Migration Systems
+#### Integrating with Existing Migration Systems
 
 pgmold is declarative (like Terraform) - it computes diffs and applies directly rather than generating numbered migration files. If you need to maintain compatibility with an existing migration system:
 
@@ -161,49 +182,6 @@ pgmold plan --schema schema/ --database postgres://localhost/mydb --dry-run > mi
 ```
 
 This lets you use pgmold for diffing while keeping your existing migration runner.
-
-### Recommended Directory Structure for Adoption
-
-```
-db/
-├── schema/                  # pgmold manages these files
-│   ├── types.sql           # ENUMs and custom types
-│   ├── tables.sql          # Table definitions
-│   ├── functions.sql       # Stored procedures
-│   ├── views.sql           # Views
-│   ├── triggers.sql        # Triggers
-│   └── policies.sql        # RLS policies
-└── migrations/             # Legacy migration files (optional)
-    └── ...
-```
-
-## Schema Definition (PostgreSQL DDL)
-
-```sql
-CREATE TYPE user_role AS ENUM ('admin', 'user', 'guest');
-
-CREATE TABLE users (
-    id BIGINT NOT NULL,
-    email VARCHAR(255) NOT NULL,
-    role user_role NOT NULL DEFAULT 'guest',
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    PRIMARY KEY (id)
-);
-
-CREATE UNIQUE INDEX users_email_idx ON users (email);
-
-CREATE TABLE posts (
-    id BIGINT NOT NULL,
-    user_id BIGINT NOT NULL,
-    title TEXT NOT NULL,
-    content TEXT,
-    PRIMARY KEY (id),
-    CONSTRAINT posts_user_id_fkey FOREIGN KEY (user_id)
-        REFERENCES users (id) ON DELETE CASCADE
-);
-
-CREATE INDEX posts_user_id_idx ON posts (user_id);
-```
 
 ## Safety Rules
 
