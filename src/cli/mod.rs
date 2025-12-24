@@ -6,6 +6,7 @@ use pgmold::diff::{compute_diff, planner::plan_migration};
 use pgmold::dump::{generate_dump, generate_split_dump};
 use pgmold::lint::locks::detect_lock_hazards;
 use pgmold::lint::{has_errors, lint_migration_plan, LintOptions, LintSeverity};
+use pgmold::migrate::{find_next_migration_number, generate_migration_filename};
 use pgmold::model::Schema;
 use pgmold::parser::load_schema_sources;
 use pgmold::pg::connection::PgConnection;
@@ -88,6 +89,34 @@ enum Commands {
         /// Split output into multiple files by object type
         #[arg(long)]
         split: bool,
+    },
+
+    /// Generate numbered migration file
+    Migrate {
+        #[command(subcommand)]
+        action: MigrateAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum MigrateAction {
+    /// Generate a new migration file from schema diff
+    Generate {
+        /// Schema files (source of truth)
+        #[arg(long, required = true)]
+        schema: Vec<String>,
+        /// Database connection string
+        #[arg(long)]
+        database: String,
+        /// Directory for migration files
+        #[arg(long, short = 'm')]
+        migrations: String,
+        /// Migration name/description
+        #[arg(long, short = 'n')]
+        name: String,
+        /// Target schemas (comma-separated)
+        #[arg(long, default_value = "public", value_delimiter = ',')]
+        target_schemas: Vec<String>,
     },
 }
 
@@ -394,5 +423,51 @@ pub async fn run() -> Result<()> {
             }
             Ok(())
         }
+        Commands::Migrate { action } => match action {
+            MigrateAction::Generate {
+                schema,
+                database,
+                migrations,
+                name,
+                target_schemas,
+            } => {
+                let target = load_sql_schema(&schema)?;
+                let db_url = parse_db_source(&database)?;
+                let connection = PgConnection::new(&db_url)
+                    .await
+                    .map_err(|e| anyhow!("{e}"))?;
+                let current = introspect_schema(&connection, &target_schemas)
+                    .await
+                    .map_err(|e| anyhow!("{e}"))?;
+
+                let ops = plan_migration(compute_diff(&current, &target));
+                let sql = generate_sql(&ops);
+
+                if sql.is_empty() {
+                    println!("No changes to generate - schema is already in sync.");
+                    return Ok(());
+                }
+
+                let migrations_path = std::path::Path::new(&migrations);
+                std::fs::create_dir_all(migrations_path)
+                    .map_err(|e| anyhow!("Failed to create migrations directory: {e}"))?;
+
+                let next_number = find_next_migration_number(migrations_path)
+                    .map_err(|e| anyhow!("Failed to determine next migration number: {e}"))?;
+                let filename = generate_migration_filename(next_number, &name);
+                let file_path = migrations_path.join(&filename);
+
+                let content = sql.join("\n\n");
+                std::fs::write(&file_path, format!("{content}\n"))
+                    .map_err(|e| anyhow!("Failed to write migration file: {e}"))?;
+
+                println!(
+                    "Created migration: {} ({} statements)",
+                    file_path.display(),
+                    sql.len()
+                );
+                Ok(())
+            }
+        },
     }
 }
