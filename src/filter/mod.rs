@@ -1,7 +1,61 @@
 use glob::Pattern;
 use std::collections::BTreeMap;
+use std::fmt;
+use std::str::FromStr;
 
 use crate::model::Schema;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ObjectType {
+    Extensions,
+    Tables,
+    Enums,
+    Domains,
+    Functions,
+    Views,
+    Triggers,
+    Sequences,
+    Partitions,
+}
+
+impl FromStr for ObjectType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "extensions" => Ok(ObjectType::Extensions),
+            "tables" => Ok(ObjectType::Tables),
+            "enums" => Ok(ObjectType::Enums),
+            "domains" => Ok(ObjectType::Domains),
+            "functions" => Ok(ObjectType::Functions),
+            "views" => Ok(ObjectType::Views),
+            "triggers" => Ok(ObjectType::Triggers),
+            "sequences" => Ok(ObjectType::Sequences),
+            "partitions" => Ok(ObjectType::Partitions),
+            _ => Err(format!(
+                "Invalid object type '{}'. Valid types: extensions, tables, enums, domains, functions, views, triggers, sequences, partitions",
+                s
+            )),
+        }
+    }
+}
+
+impl fmt::Display for ObjectType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            ObjectType::Extensions => "extensions",
+            ObjectType::Tables => "tables",
+            ObjectType::Enums => "enums",
+            ObjectType::Domains => "domains",
+            ObjectType::Functions => "functions",
+            ObjectType::Views => "views",
+            ObjectType::Triggers => "triggers",
+            ObjectType::Sequences => "sequences",
+            ObjectType::Partitions => "partitions",
+        };
+        write!(f, "{}", s)
+    }
+}
 
 pub struct Filter {
     include: Vec<Pattern>,
@@ -532,5 +586,56 @@ mod tests {
 
         let invalid_exclude = vec!["[invalid".to_string()];
         assert!(Filter::new(&[], &invalid_exclude).is_err());
+    }
+
+    #[test]
+    fn object_type_from_str_valid_lowercase() {
+        assert_eq!("extensions".parse::<ObjectType>().unwrap(), ObjectType::Extensions);
+        assert_eq!("tables".parse::<ObjectType>().unwrap(), ObjectType::Tables);
+        assert_eq!("enums".parse::<ObjectType>().unwrap(), ObjectType::Enums);
+        assert_eq!("domains".parse::<ObjectType>().unwrap(), ObjectType::Domains);
+        assert_eq!("functions".parse::<ObjectType>().unwrap(), ObjectType::Functions);
+        assert_eq!("views".parse::<ObjectType>().unwrap(), ObjectType::Views);
+        assert_eq!("triggers".parse::<ObjectType>().unwrap(), ObjectType::Triggers);
+        assert_eq!("sequences".parse::<ObjectType>().unwrap(), ObjectType::Sequences);
+        assert_eq!("partitions".parse::<ObjectType>().unwrap(), ObjectType::Partitions);
+    }
+
+    #[test]
+    fn object_type_from_str_case_insensitive() {
+        assert_eq!("EXTENSIONS".parse::<ObjectType>().unwrap(), ObjectType::Extensions);
+        assert_eq!("Tables".parse::<ObjectType>().unwrap(), ObjectType::Tables);
+        assert_eq!("EnUmS".parse::<ObjectType>().unwrap(), ObjectType::Enums);
+        assert_eq!("DOMAINS".parse::<ObjectType>().unwrap(), ObjectType::Domains);
+    }
+
+    #[test]
+    fn object_type_from_str_invalid() {
+        let result = "invalid".parse::<ObjectType>();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.contains("Invalid object type"));
+        assert!(error.contains("extensions"));
+        assert!(error.contains("tables"));
+        assert!(error.contains("enums"));
+        assert!(error.contains("domains"));
+        assert!(error.contains("functions"));
+        assert!(error.contains("views"));
+        assert!(error.contains("triggers"));
+        assert!(error.contains("sequences"));
+        assert!(error.contains("partitions"));
+    }
+
+    #[test]
+    fn object_type_display() {
+        assert_eq!(ObjectType::Extensions.to_string(), "extensions");
+        assert_eq!(ObjectType::Tables.to_string(), "tables");
+        assert_eq!(ObjectType::Enums.to_string(), "enums");
+        assert_eq!(ObjectType::Domains.to_string(), "domains");
+        assert_eq!(ObjectType::Functions.to_string(), "functions");
+        assert_eq!(ObjectType::Views.to_string(), "views");
+        assert_eq!(ObjectType::Triggers.to_string(), "triggers");
+        assert_eq!(ObjectType::Sequences.to_string(), "sequences");
+        assert_eq!(ObjectType::Partitions.to_string(), "partitions");
     }
 }
