@@ -145,16 +145,28 @@ impl Filter {
 }
 
 pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
+    fn filter_field<T: Clone + HasName>(
+        map: &BTreeMap<String, T>,
+        filter: &Filter,
+        object_type: ObjectType,
+    ) -> BTreeMap<String, T> {
+        if filter.should_include_type(object_type) {
+            filter_map(map, filter)
+        } else {
+            BTreeMap::new()
+        }
+    }
+
     Schema {
-        extensions: schema.extensions.clone(),
-        tables: filter_map(&schema.tables, filter),
-        enums: filter_map(&schema.enums, filter),
-        domains: filter_map(&schema.domains, filter),
-        functions: filter_map(&schema.functions, filter),
-        views: filter_map(&schema.views, filter),
-        triggers: filter_map(&schema.triggers, filter),
-        sequences: filter_map(&schema.sequences, filter),
-        partitions: filter_map(&schema.partitions, filter),
+        extensions: filter_field(&schema.extensions, filter, ObjectType::Extensions),
+        tables: filter_field(&schema.tables, filter, ObjectType::Tables),
+        enums: filter_field(&schema.enums, filter, ObjectType::Enums),
+        domains: filter_field(&schema.domains, filter, ObjectType::Domains),
+        functions: filter_field(&schema.functions, filter, ObjectType::Functions),
+        views: filter_field(&schema.views, filter, ObjectType::Views),
+        triggers: filter_field(&schema.triggers, filter, ObjectType::Triggers),
+        sequences: filter_field(&schema.sequences, filter, ObjectType::Sequences),
+        partitions: filter_field(&schema.partitions, filter, ObjectType::Partitions),
     }
 }
 
@@ -215,6 +227,12 @@ impl HasName for crate::model::Sequence {
 }
 
 impl HasName for crate::model::Partition {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl HasName for crate::model::Extension {
     fn name(&self) -> &str {
         &self.name
     }
@@ -362,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn extensions_not_filtered() {
+    fn extensions_are_filtered() {
         let mut schema = Schema::default();
         schema.extensions.insert(
             "uuid-ossp".to_string(),
@@ -376,7 +394,7 @@ mod tests {
         let filter = Filter::new(&[], &["*".to_string()], &[], &[]).unwrap();
         let filtered = filter_schema(&schema, &filter);
 
-        assert_eq!(filtered.extensions.len(), 1);
+        assert_eq!(filtered.extensions.len(), 0);
     }
 
     #[test]
@@ -707,5 +725,130 @@ mod tests {
         assert!(filter.should_include_type(ObjectType::Tables));
         assert!(!filter.should_include_type(ObjectType::Functions));
         assert!(!filter.should_include_type(ObjectType::Views));
+    }
+
+    #[test]
+    fn filter_schema_exclude_types_functions() {
+        let mut schema = Schema::default();
+        schema.functions.insert(
+            "public.api_test".to_string(),
+            Function {
+                name: "api_test".to_string(),
+                schema: "public".to_string(),
+                arguments: vec![],
+                return_type: "void".to_string(),
+                language: "sql".to_string(),
+                body: "SELECT 1".to_string(),
+                volatility: Volatility::Volatile,
+                security: SecurityType::Invoker,
+            },
+        );
+        schema.tables.insert(
+            "public.users".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: vec![],
+                primary_key: None,
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                comment: None,
+                row_level_security: false,
+                policies: vec![],
+                partition_by: None,
+            },
+        );
+
+        let filter = Filter::new(&[], &[], &[], &[ObjectType::Functions]).unwrap();
+        let filtered = filter_schema(&schema, &filter);
+
+        assert_eq!(filtered.functions.len(), 0);
+        assert_eq!(filtered.tables.len(), 1);
+    }
+
+    #[test]
+    fn filter_schema_include_types_only_tables() {
+        let mut schema = Schema::default();
+        schema.functions.insert(
+            "public.api_test".to_string(),
+            Function {
+                name: "api_test".to_string(),
+                schema: "public".to_string(),
+                arguments: vec![],
+                return_type: "void".to_string(),
+                language: "sql".to_string(),
+                body: "SELECT 1".to_string(),
+                volatility: Volatility::Volatile,
+                security: SecurityType::Invoker,
+            },
+        );
+        schema.tables.insert(
+            "public.users".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: vec![],
+                primary_key: None,
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                comment: None,
+                row_level_security: false,
+                policies: vec![],
+                partition_by: None,
+            },
+        );
+        schema.views.insert(
+            "public.user_view".to_string(),
+            View {
+                name: "user_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT * FROM users".to_string(),
+                materialized: false,
+            },
+        );
+
+        let filter = Filter::new(&[], &[], &[ObjectType::Tables], &[]).unwrap();
+        let filtered = filter_schema(&schema, &filter);
+
+        assert_eq!(filtered.tables.len(), 1);
+        assert_eq!(filtered.functions.len(), 0);
+        assert_eq!(filtered.views.len(), 0);
+    }
+
+    #[test]
+    fn filter_schema_exclude_types_extensions() {
+        let mut schema = Schema::default();
+        schema.extensions.insert(
+            "uuid-ossp".to_string(),
+            Extension {
+                name: "uuid-ossp".to_string(),
+                version: None,
+                schema: None,
+            },
+        );
+        schema.tables.insert(
+            "public.users".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: vec![],
+                primary_key: None,
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                comment: None,
+                row_level_security: false,
+                policies: vec![],
+                partition_by: None,
+            },
+        );
+
+        let filter = Filter::new(&[], &[], &[], &[ObjectType::Extensions]).unwrap();
+        let filtered = filter_schema(&schema, &filter);
+
+        assert_eq!(filtered.extensions.len(), 0);
+        assert_eq!(filtered.tables.len(), 1);
     }
 }
