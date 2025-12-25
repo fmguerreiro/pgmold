@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 use sqlx::Executor;
 
 use pgmold::diff::{compute_diff, planner::plan_migration};
@@ -42,6 +42,12 @@ enum Commands {
         /// Generate rollback SQL (reverse direction: schema → database)
         #[arg(long)]
         reverse: bool,
+        /// Exclude objects matching glob patterns (can be repeated)
+        #[arg(long, action = ArgAction::Append)]
+        exclude: Vec<String>,
+        /// Include only objects matching glob patterns (can be repeated)
+        #[arg(long, action = ArgAction::Append)]
+        include: Vec<String>,
     },
 
     /// Apply migrations
@@ -56,6 +62,12 @@ enum Commands {
         allow_destructive: bool,
         #[arg(long, default_value = "public", value_delimiter = ',')]
         target_schemas: Vec<String>,
+        /// Exclude objects matching glob patterns (can be repeated)
+        #[arg(long, action = ArgAction::Append)]
+        exclude: Vec<String>,
+        /// Include only objects matching glob patterns (can be repeated)
+        #[arg(long, action = ArgAction::Append)]
+        include: Vec<String>,
     },
 
     /// Lint schema or migration plan
@@ -92,6 +104,12 @@ enum Commands {
         /// Split output into multiple files by object type
         #[arg(long)]
         split: bool,
+        /// Exclude objects matching glob patterns (can be repeated)
+        #[arg(long, action = ArgAction::Append)]
+        exclude: Vec<String>,
+        /// Include only objects matching glob patterns (can be repeated)
+        #[arg(long, action = ArgAction::Append)]
+        include: Vec<String>,
     },
 
     /// Generate numbered migration file
@@ -167,6 +185,8 @@ pub async fn run() -> Result<()> {
             database,
             target_schemas,
             reverse,
+            exclude: _,
+            include: _,
         } => {
             let target = load_sql_schema(&schema)?;
             let db_url = parse_db_source(&database)?;
@@ -210,6 +230,8 @@ pub async fn run() -> Result<()> {
             dry_run,
             allow_destructive,
             target_schemas,
+            exclude: _,
+            include: _,
         } => {
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
@@ -360,6 +382,8 @@ pub async fn run() -> Result<()> {
             target_schemas,
             output,
             split,
+            exclude: _,
+            include: _,
         } => {
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
@@ -476,5 +500,70 @@ pub async fn run() -> Result<()> {
                 Ok(())
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_parses_exclude_args() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--exclude",
+            "_*",
+            "--exclude",
+            "st_*",
+        ]);
+
+        if let Commands::Plan { exclude, .. } = args.command {
+            assert_eq!(exclude, vec!["_*", "st_*"]);
+        } else {
+            panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn cli_parses_include_args() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "apply",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--include",
+            "users",
+            "--include",
+            "posts",
+        ]);
+
+        if let Commands::Apply { include, .. } = args.command {
+            assert_eq!(include, vec!["users", "posts"]);
+        } else {
+            panic!("Expected Apply command");
+        }
+    }
+
+    #[test]
+    fn cli_exclude_defaults_empty() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "dump",
+            "--database",
+            "db:postgres://localhost/db",
+        ]);
+
+        if let Commands::Dump { exclude, .. } = args.command {
+            assert_eq!(exclude, Vec::<String>::new());
+        } else {
+            panic!("Expected Dump command");
+        }
     }
 }
