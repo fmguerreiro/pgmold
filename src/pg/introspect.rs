@@ -1,5 +1,6 @@
 use crate::model::*;
 use crate::pg::connection::PgConnection;
+use crate::pg::sqlgen::strip_ident_quotes;
 use crate::util::{normalize_sql_whitespace, Result, SchemaError};
 use sqlx::Row;
 use std::collections::BTreeMap;
@@ -12,6 +13,7 @@ pub async fn introspect_schema(
 
     schema.extensions = introspect_extensions(connection).await?;
     schema.enums = introspect_enums(connection, target_schemas).await?;
+    schema.domains = introspect_domains(connection, target_schemas).await?;
     schema.tables = introspect_tables(connection, target_schemas).await?;
     schema.functions = introspect_functions(connection, target_schemas).await?;
     schema.views = introspect_views(connection, target_schemas).await?;
@@ -137,6 +139,131 @@ async fn introspect_enums(
     }
 
     Ok(enums)
+}
+
+async fn introspect_domains(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Domain>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS schema_name,
+            t.typname AS domain_name,
+            bt.typname AS base_type,
+            t.typnotnull AS not_null,
+            pg_get_expr(t.typdefaultbin, 0) AS default_expr,
+            t.typcollation AS collation_oid
+        FROM pg_type t
+        JOIN pg_namespace n ON t.typnamespace = n.oid
+        JOIN pg_type bt ON t.typbasetype = bt.oid
+        WHERE t.typtype = 'd'
+            AND n.nspname = ANY($1::text[])
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch domains: {e}")))?;
+
+    let mut domains = BTreeMap::new();
+    for row in rows {
+        let schema: String = row.get("schema_name");
+        let name: String = row.get("domain_name");
+        let base_type: String = row.get("base_type");
+        let not_null: bool = row.get("not_null");
+        let default_expr: Option<String> = row.get("default_expr");
+
+        let check_constraints =
+            introspect_domain_constraints(connection, &schema, &name).await?;
+
+        let data_type = match base_type.as_str() {
+            "integer" | "int4" => PgType::Integer,
+            "bigint" | "int8" => PgType::BigInt,
+            "smallint" | "int2" => PgType::SmallInt,
+            "text" => PgType::Text,
+            "boolean" | "bool" => PgType::Boolean,
+            "timestamp" => PgType::Timestamp,
+            "timestamp with time zone" | "timestamptz" => PgType::TimestampTz,
+            "date" => PgType::Date,
+            "uuid" => PgType::Uuid,
+            "json" => PgType::Json,
+            "jsonb" => PgType::Jsonb,
+            "character varying" | "varchar" => PgType::Varchar(None),
+            _ => {
+                let qualified = format!("public.{base_type}");
+                if base_type.contains('.') {
+                    PgType::Named(base_type)
+                } else {
+                    PgType::CustomEnum(qualified)
+                }
+            }
+        };
+
+        let domain = Domain {
+            schema: schema.clone(),
+            name: name.clone(),
+            data_type,
+            default: default_expr,
+            not_null,
+            collation: None,
+            check_constraints,
+        };
+        let qualified_name = format!("{schema}.{name}");
+        domains.insert(qualified_name, domain);
+    }
+
+    Ok(domains)
+}
+
+async fn introspect_domain_constraints(
+    connection: &PgConnection,
+    schema: &str,
+    domain_name: &str,
+) -> Result<Vec<DomainConstraint>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            con.conname AS constraint_name,
+            pg_get_constraintdef(con.oid) AS constraint_def
+        FROM pg_constraint con
+        JOIN pg_type t ON con.contypid = t.oid
+        JOIN pg_namespace n ON t.typnamespace = n.oid
+        WHERE con.contype = 'c'
+            AND n.nspname = $1
+            AND t.typname = $2
+        "#,
+    )
+    .bind(schema)
+    .bind(domain_name)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch domain constraints: {e}")))?;
+
+    let mut constraints = Vec::new();
+    for row in rows {
+        let name: String = row.get("constraint_name");
+        let def: String = row.get("constraint_def");
+        let expression = def
+            .strip_prefix("CHECK ")
+            .unwrap_or(&def)
+            .trim_start_matches('(')
+            .trim_end_matches(')')
+            .to_string();
+
+        let constraint_name = if name == format!("{domain_name}_check") {
+            None
+        } else {
+            Some(name)
+        };
+
+        constraints.push(DomainConstraint {
+            name: constraint_name,
+            expression,
+        });
+    }
+
+    Ok(constraints)
 }
 
 async fn introspect_tables(
@@ -829,7 +956,7 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
             let parts: Vec<&str> = arg_rest.trim().splitn(2, ' ').collect();
             if parts.len() == 2 {
                 FunctionArg {
-                    name: Some(parts[0].to_string()),
+                    name: Some(strip_ident_quotes(parts[0])),
                     data_type: parts[1].to_lowercase(),
                     mode,
                     default,
@@ -1133,4 +1260,27 @@ async fn introspect_sequences(
     }
 
     Ok(sequences)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_function_arguments_strips_quotes_from_names() {
+        let args = parse_function_arguments("\"p_role_name\" text, \"p_enterprise_id\" uuid");
+
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0].name, Some("p_role_name".to_string()));
+        assert_eq!(args[1].name, Some("p_enterprise_id".to_string()));
+    }
+
+    #[test]
+    fn parse_function_arguments_handles_unquoted_names() {
+        let args = parse_function_arguments("role_name text, enterprise_id uuid");
+
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0].name, Some("role_name".to_string()));
+        assert_eq!(args[1].name, Some("enterprise_id".to_string()));
+    }
 }
