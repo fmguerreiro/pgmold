@@ -358,6 +358,48 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 };
                 schema.extensions.insert(ext_name, ext);
             }
+            Statement::CreateDomain(sqlparser::ast::CreateDomain {
+                name,
+                data_type,
+                collation,
+                default,
+                constraints,
+            }) => {
+                let (domain_schema, domain_name) = extract_qualified_name(&name);
+                let pg_type = parse_data_type(&data_type)?;
+
+                let mut not_null = false;
+                let mut check_constraints = Vec::new();
+
+                for constraint in constraints {
+                    match constraint {
+                        TableConstraint::Check(chk) => {
+                            check_constraints.push(DomainConstraint {
+                                name: chk.name.as_ref().map(|n| n.to_string()),
+                                expression: chk.expr.to_string(),
+                            });
+                        }
+                        _ => {
+                            let constraint_str = constraint.to_string().to_uppercase();
+                            if constraint_str.contains("NOT NULL") {
+                                not_null = true;
+                            }
+                        }
+                    }
+                }
+
+                let domain = Domain {
+                    schema: domain_schema.clone(),
+                    name: domain_name.clone(),
+                    data_type: pg_type,
+                    default: default.as_ref().map(|e| e.to_string()),
+                    not_null,
+                    collation: collation.as_ref().map(|c| c.to_string()),
+                    check_constraints,
+                };
+                let key = qualified_name(&domain_schema, &domain_name);
+                schema.domains.insert(key, domain);
+            }
             Statement::CreateTrigger(sqlparser::ast::CreateTrigger {
                 name,
                 period,
@@ -916,7 +958,7 @@ fn parse_create_function(
                         None => ArgMode::In,
                     };
                     FunctionArg {
-                        name: arg.name.as_ref().map(|n| n.to_string()),
+                        name: arg.name.as_ref().map(|n| crate::pg::sqlgen::strip_ident_quotes(&n.value)),
                         data_type: arg.data_type.to_string().to_lowercase(),
                         mode,
                         default: arg.default_expr.as_ref().map(|e| e.to_string().to_lowercase()),
@@ -2167,5 +2209,116 @@ CREATE TABLE analytics.events_2024 PARTITION OF analytics.events
         assert_eq!(partition.schema, "analytics");
         assert_eq!(partition.parent_schema, "analytics");
         assert_eq!(partition.parent_name, "events");
+    }
+
+    #[test]
+    fn parses_simple_domain() {
+        let sql = "CREATE DOMAIN email_address AS TEXT;";
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert_eq!(schema.domains.len(), 1);
+        assert!(schema.domains.contains_key("public.email_address"));
+
+        let domain = &schema.domains["public.email_address"];
+        assert_eq!(domain.name, "email_address");
+        assert_eq!(domain.schema, "public");
+        assert!(!domain.not_null);
+        assert!(domain.default.is_none());
+        assert!(domain.check_constraints.is_empty());
+    }
+
+    #[test]
+    fn parses_domain_with_check_constraint() {
+        let sql = "CREATE DOMAIN email_address AS TEXT CHECK (VALUE ~ '@');";
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let domain = &schema.domains["public.email_address"];
+        assert_eq!(domain.check_constraints.len(), 1);
+        assert!(domain.check_constraints[0].expression.contains("@"));
+    }
+
+    #[test]
+    fn parses_domain_with_named_constraint() {
+        let sql = "CREATE DOMAIN positive_int AS INTEGER CONSTRAINT must_be_positive CHECK (VALUE > 0);";
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let domain = &schema.domains["public.positive_int"];
+        assert_eq!(domain.data_type, PgType::Integer);
+        assert_eq!(domain.check_constraints.len(), 1);
+        assert_eq!(
+            domain.check_constraints[0].name.as_deref(),
+            Some("must_be_positive")
+        );
+    }
+
+    #[test]
+    fn parses_domain_with_default() {
+        let sql = "CREATE DOMAIN status AS TEXT DEFAULT 'pending';";
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let domain = &schema.domains["public.status"];
+        assert_eq!(domain.default.as_deref(), Some("'pending'"));
+    }
+
+    #[test]
+    fn parses_domain_with_collation() {
+        let sql = r#"CREATE DOMAIN case_insensitive AS TEXT COLLATE "en_US";"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let domain = &schema.domains["public.case_insensitive"];
+        assert!(domain.collation.is_some());
+    }
+
+    #[test]
+    fn parses_domain_full_syntax() {
+        let sql = r#"
+CREATE DOMAIN us_postal_code AS TEXT
+    COLLATE "en_US"
+    DEFAULT '00000'
+    CONSTRAINT valid_format CHECK (VALUE ~ '^\d{5}(-\d{4})?$');
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let domain = &schema.domains["public.us_postal_code"];
+        assert_eq!(domain.name, "us_postal_code");
+        assert_eq!(domain.data_type, PgType::Text);
+        assert!(domain.collation.is_some());
+        assert_eq!(domain.default.as_deref(), Some("'00000'"));
+        assert_eq!(domain.check_constraints.len(), 1);
+        assert_eq!(
+            domain.check_constraints[0].name.as_deref(),
+            Some("valid_format")
+        );
+    }
+
+    #[test]
+    fn parses_domain_with_schema() {
+        let sql = "CREATE DOMAIN auth.email AS TEXT CHECK (VALUE ~ '@');";
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert!(schema.domains.contains_key("auth.email"));
+        let domain = &schema.domains["auth.email"];
+        assert_eq!(domain.schema, "auth");
+        assert_eq!(domain.name, "email");
+    }
+
+    #[test]
+    fn parses_function_with_quoted_parameter_names() {
+        let sql = r#"
+            CREATE FUNCTION auth.is_org_admin("p_role_name" text, "p_enterprise_id" uuid)
+            RETURNS boolean LANGUAGE sql AS $$ SELECT true $$;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let func = schema.functions.get("auth.is_org_admin(text, uuid)").unwrap();
+
+        assert_eq!(func.arguments[0].name, Some("p_role_name".to_string()));
+        assert_eq!(func.arguments[1].name, Some("p_enterprise_id".to_string()));
     }
 }
