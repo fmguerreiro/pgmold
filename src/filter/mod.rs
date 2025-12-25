@@ -46,6 +46,27 @@ impl Filter {
 
         true
     }
+
+    pub fn should_include_with_both(&self, qualified_name: &str, unqualified_name: &str) -> bool {
+        if !self.exclude.is_empty() {
+            for pattern in &self.exclude {
+                if pattern.matches(qualified_name) || pattern.matches(unqualified_name) {
+                    return false;
+                }
+            }
+        }
+
+        if !self.include.is_empty() {
+            for pattern in &self.include {
+                if pattern.matches(qualified_name) || pattern.matches(unqualified_name) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        true
+    }
 }
 
 pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
@@ -67,7 +88,7 @@ where
     T: Clone + HasName,
 {
     map.iter()
-        .filter(|(_key, value)| filter.should_include(value.name()))
+        .filter(|(key, value)| filter.should_include_with_both(key, value.name()))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect()
 }

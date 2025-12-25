@@ -1104,3 +1104,106 @@ async fn exclude_pattern_filters_across_schemas() {
     assert!(!filtered_current.tables.contains_key("public._migrations"));
     assert!(!filtered_current.tables.contains_key("auth._migrations"));
 }
+
+#[tokio::test]
+async fn combined_include_and_exclude_filters() {
+    use pgmold::filter::{filter_schema, Filter};
+
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE TABLE api_user (id BIGINT PRIMARY KEY)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE TABLE api_temp (id BIGINT PRIMARY KEY)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE TABLE api_test (id BIGINT PRIMARY KEY)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE TABLE _internal (id BIGINT PRIMARY KEY)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(current.tables.len(), 4);
+
+    let filter = Filter::new(&["api_*".to_string()], &["*_temp".to_string()]).unwrap();
+    let filtered_current = filter_schema(&current, &filter);
+
+    assert_eq!(
+        filtered_current.tables.len(),
+        2,
+        "Should have api_user and api_test (exclude takes precedence on api_temp)"
+    );
+    assert!(filtered_current.tables.contains_key("public.api_user"));
+    assert!(filtered_current.tables.contains_key("public.api_test"));
+    assert!(
+        !filtered_current.tables.contains_key("public.api_temp"),
+        "api_temp should be excluded even though it matches include pattern"
+    );
+    assert!(
+        !filtered_current.tables.contains_key("public._internal"),
+        "_internal should not match include pattern"
+    );
+}
+
+#[tokio::test]
+async fn qualified_schema_pattern_filters() {
+    use pgmold::filter::{filter_schema, Filter};
+
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE SCHEMA auth")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE TABLE public._internal (id BIGINT PRIMARY KEY)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE TABLE public.api_user (id BIGINT PRIMARY KEY)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE TABLE auth._secret (id BIGINT PRIMARY KEY)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string(), "auth".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(current.tables.len(), 3);
+
+    let filter = Filter::new(&[], &["public._*".to_string()]).unwrap();
+    let filtered_current = filter_schema(&current, &filter);
+
+    assert_eq!(
+        filtered_current.tables.len(),
+        2,
+        "Should have public.api_user and auth._secret (auth._secret not excluded)"
+    );
+    assert!(filtered_current.tables.contains_key("public.api_user"));
+    assert!(
+        filtered_current.tables.contains_key("auth._secret"),
+        "auth._secret should not be excluded (pattern is qualified for public schema)"
+    );
+    assert!(
+        !filtered_current.tables.contains_key("public._internal"),
+        "public._internal should be excluded"
+    );
+}
