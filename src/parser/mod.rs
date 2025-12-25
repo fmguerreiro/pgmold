@@ -81,10 +81,8 @@ pub fn parse_sql_file(path: &str) -> Result<Schema> {
 }
 
 /// Preprocess SQL to remove/normalize syntax not supported by sqlparser 0.52
-fn preprocess_sql(sql: &str) -> (String, bool) {
+fn preprocess_sql(sql: &str) -> String {
     use regex::Regex;
-    let security_definer_re = Regex::new(r"(?i)\bSECURITY\s+DEFINER\b").unwrap();
-    let security_invoker_re = Regex::new(r"(?i)\bSECURITY\s+INVOKER\b").unwrap();
     // Match SET search_path until newline or AS keyword
     let set_search_path_re =
         Regex::new(r"(?i)\bSET\s+search_path\s+TO\s+'[^']*'(?:\s*,\s*'[^']*')*").unwrap();
@@ -93,18 +91,15 @@ fn preprocess_sql(sql: &str) -> (String, bool) {
     // Remove ALTER SEQUENCE statements (sqlparser doesn't support them)
     let alter_sequence_re = Regex::new(r"(?i)ALTER\s+SEQUENCE\s+[^;]+;").unwrap();
 
-    let has_security_definer = security_definer_re.is_match(sql);
-    let processed = security_definer_re.replace_all(sql, "");
-    let processed = security_invoker_re.replace_all(&processed, "");
-    let processed = set_search_path_re.replace_all(&processed, "");
+    let processed = set_search_path_re.replace_all(sql, "");
     let processed = alter_function_re.replace_all(&processed, "");
     let processed = alter_sequence_re.replace_all(&processed, "");
 
-    (processed.to_string(), has_security_definer)
+    processed.to_string()
 }
 
 pub fn parse_sql_string(sql: &str) -> Result<Schema> {
-    let (preprocessed_sql, _has_security_definer) = preprocess_sql(sql);
+    let preprocessed_sql = preprocess_sql(sql);
     let dialect = PostgreSqlDialect {};
     let statements = Parser::parse_sql(&dialect, &preprocessed_sql)
         .map_err(|e| SchemaError::ParseError(format!("SQL parse error: {e}")))?;
@@ -312,6 +307,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 function_body,
                 language,
                 behavior,
+                security,
                 ..
             }) => {
                 let (func_schema, func_name) = extract_qualified_name(&name);
@@ -323,6 +319,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     function_body.as_ref(),
                     language.as_ref(),
                     behavior.as_ref(),
+                    security.as_ref(),
                 )?;
                 let key = qualified_name(&func_schema, &func.signature());
                 schema.functions.insert(key, func);
@@ -864,6 +861,7 @@ fn parse_create_function(
     function_body: Option<&sqlparser::ast::CreateFunctionBody>,
     language: Option<&sqlparser::ast::Ident>,
     behavior: Option<&sqlparser::ast::FunctionBehavior>,
+    security: Option<&sqlparser::ast::FunctionSecurity>,
 ) -> Result<Function> {
     let return_type_str = return_type
         .map(|rt| rt.to_string().to_lowercase())
@@ -899,6 +897,13 @@ fn parse_create_function(
         })
         .unwrap_or_default();
 
+    let security_type = security
+        .map(|s| match s {
+            sqlparser::ast::FunctionSecurity::Definer => SecurityType::Definer,
+            sqlparser::ast::FunctionSecurity::Invoker => SecurityType::Invoker,
+        })
+        .unwrap_or_default();
+
     let arguments: Vec<FunctionArg> = args
         .map(|arg_list| {
             arg_list
@@ -929,7 +934,7 @@ fn parse_create_function(
         language: language_str,
         body,
         volatility,
-        security: SecurityType::default(),
+        security: security_type,
     })
 }
 
@@ -1292,6 +1297,54 @@ CREATE TABLE products (
         let func = schema.functions.get("utils.add_one(INTEGER)").unwrap();
         assert_eq!(func.schema, "utils");
         assert_eq!(func.name, "add_one");
+    }
+
+    #[test]
+    fn parses_function_with_set_search_path() {
+        let sql = r#"
+            CREATE OR REPLACE FUNCTION auth.custom_access_token_hook(event jsonb)
+            RETURNS jsonb
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = auth, pg_temp, public
+            AS $$
+            BEGIN
+                RETURN event;
+            END;
+            $$;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let func = schema
+            .functions
+            .get("auth.custom_access_token_hook(JSONB)")
+            .unwrap();
+        assert_eq!(func.schema, "auth");
+        assert_eq!(func.name, "custom_access_token_hook");
+        assert_eq!(func.language, "plpgsql");
+        assert_eq!(func.security, SecurityType::Definer);
+    }
+
+    #[test]
+    fn parses_function_with_security_invoker() {
+        let sql = r#"
+            CREATE FUNCTION public.safe_func() RETURNS INTEGER
+            LANGUAGE sql SECURITY INVOKER
+            AS $$ SELECT 1 $$;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let func = schema.functions.get("public.safe_func()").unwrap();
+        assert_eq!(func.security, SecurityType::Invoker);
+    }
+
+    #[test]
+    fn parses_function_without_security_defaults_to_invoker() {
+        let sql = r#"
+            CREATE FUNCTION public.default_func() RETURNS INTEGER
+            LANGUAGE sql AS $$ SELECT 1 $$;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let func = schema.functions.get("public.default_func()").unwrap();
+        assert_eq!(func.security, SecurityType::Invoker);
     }
 
     #[test]
