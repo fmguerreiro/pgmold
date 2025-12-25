@@ -39,6 +39,9 @@ enum Commands {
         database: String,
         #[arg(long, default_value = "public", value_delimiter = ',')]
         target_schemas: Vec<String>,
+        /// Generate rollback SQL (reverse direction: schema → database)
+        #[arg(long)]
+        reverse: bool,
     },
 
     /// Apply migrations
@@ -163,6 +166,7 @@ pub async fn run() -> Result<()> {
             schema,
             database,
             target_schemas,
+            reverse,
         } => {
             let target = load_sql_schema(&schema)?;
             let db_url = parse_db_source(&database)?;
@@ -173,7 +177,11 @@ pub async fn run() -> Result<()> {
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
-            let ops = plan_migration(compute_diff(&current, &target));
+            let ops = if reverse {
+                plan_migration(compute_diff(&target, &current))
+            } else {
+                plan_migration(compute_diff(&current, &target))
+            };
             let lock_warnings = detect_lock_hazards(&ops);
 
             for warning in &lock_warnings {
