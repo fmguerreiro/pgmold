@@ -4,7 +4,7 @@ use sqlx::Executor;
 
 use pgmold::diff::{compute_diff, planner::plan_migration};
 use pgmold::dump::{generate_dump, generate_split_dump};
-use pgmold::filter::{filter_schema, Filter};
+use pgmold::filter::{filter_schema, Filter, ObjectType};
 use pgmold::lint::locks::detect_lock_hazards;
 use pgmold::lint::{has_errors, lint_migration_plan, LintOptions, LintSeverity};
 use pgmold::migrate::{find_next_migration_number, generate_migration_filename};
@@ -49,6 +49,12 @@ enum Commands {
         /// Include only objects matching glob patterns (can be repeated)
         #[arg(long, action = ArgAction::Append)]
         include: Vec<String>,
+        /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions)
+        #[arg(long, value_delimiter = ',')]
+        include_types: Vec<ObjectType>,
+        /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions)
+        #[arg(long, value_delimiter = ',')]
+        exclude_types: Vec<ObjectType>,
     },
 
     /// Apply migrations
@@ -69,6 +75,12 @@ enum Commands {
         /// Include only objects matching glob patterns (can be repeated)
         #[arg(long, action = ArgAction::Append)]
         include: Vec<String>,
+        /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions)
+        #[arg(long, value_delimiter = ',')]
+        include_types: Vec<ObjectType>,
+        /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions)
+        #[arg(long, value_delimiter = ',')]
+        exclude_types: Vec<ObjectType>,
     },
 
     /// Lint schema or migration plan
@@ -111,6 +123,12 @@ enum Commands {
         /// Include only objects matching glob patterns (can be repeated)
         #[arg(long, action = ArgAction::Append)]
         include: Vec<String>,
+        /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions)
+        #[arg(long, value_delimiter = ',')]
+        include_types: Vec<ObjectType>,
+        /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions)
+        #[arg(long, value_delimiter = ',')]
+        exclude_types: Vec<ObjectType>,
     },
 
     /// Generate numbered migration file
@@ -188,8 +206,10 @@ pub async fn run() -> Result<()> {
             reverse,
             exclude,
             include,
+            include_types,
+            exclude_types,
         } => {
-            let filter = Filter::new(&include, &exclude, &[], &[])
+            let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
 
             let target = load_sql_schema(&schema)?;
@@ -238,8 +258,10 @@ pub async fn run() -> Result<()> {
             target_schemas,
             exclude,
             include,
+            include_types,
+            exclude_types,
         } => {
-            let filter = Filter::new(&include, &exclude, &[], &[])
+            let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
 
             let db_url = parse_db_source(&database)?;
@@ -395,8 +417,10 @@ pub async fn run() -> Result<()> {
             split,
             exclude,
             include,
+            include_types,
+            exclude_types,
         } => {
-            let filter = Filter::new(&include, &exclude, &[], &[])
+            let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
 
             let db_url = parse_db_source(&database)?;
@@ -578,6 +602,73 @@ mod tests {
 
         if let Commands::Dump { exclude, .. } = args.command {
             assert_eq!(exclude, Vec::<String>::new());
+        } else {
+            panic!("Expected Dump command");
+        }
+    }
+
+    #[test]
+    fn cli_parses_include_types_args() {
+        use pgmold::filter::ObjectType;
+
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--include-types",
+            "tables,functions",
+        ]);
+
+        if let Commands::Plan { include_types, .. } = args.command {
+            assert_eq!(include_types, vec![ObjectType::Tables, ObjectType::Functions]);
+        } else {
+            panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn cli_parses_exclude_types_args() {
+        use pgmold::filter::ObjectType;
+
+        let args = Cli::parse_from([
+            "pgmold",
+            "apply",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--exclude-types",
+            "triggers,sequences",
+        ]);
+
+        if let Commands::Apply { exclude_types, .. } = args.command {
+            assert_eq!(exclude_types, vec![ObjectType::Triggers, ObjectType::Sequences]);
+        } else {
+            panic!("Expected Apply command");
+        }
+    }
+
+    #[test]
+    fn cli_parses_both_type_filters() {
+        use pgmold::filter::ObjectType;
+
+        let args = Cli::parse_from([
+            "pgmold",
+            "dump",
+            "--database",
+            "db:postgres://localhost/db",
+            "--include-types",
+            "tables",
+            "--exclude-types",
+            "triggers",
+        ]);
+
+        if let Commands::Dump { include_types, exclude_types, .. } = args.command {
+            assert_eq!(include_types, vec![ObjectType::Tables]);
+            assert_eq!(exclude_types, vec![ObjectType::Triggers]);
         } else {
             panic!("Expected Dump command");
         }
