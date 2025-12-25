@@ -6,11 +6,29 @@ pub struct Schema {
     pub extensions: BTreeMap<String, Extension>,
     pub tables: BTreeMap<String, Table>,
     pub enums: BTreeMap<String, EnumType>,
+    pub domains: BTreeMap<String, Domain>,
     pub functions: BTreeMap<String, Function>,
     pub views: BTreeMap<String, View>,
     pub triggers: BTreeMap<String, Trigger>,
     pub sequences: BTreeMap<String, Sequence>,
     pub partitions: BTreeMap<String, Partition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Domain {
+    pub schema: String,
+    pub name: String,
+    pub data_type: PgType,
+    pub default: Option<String>,
+    pub not_null: bool,
+    pub collation: Option<String>,
+    pub check_constraints: Vec<DomainConstraint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DomainConstraint {
+    pub name: Option<String>,
+    pub expression: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -52,6 +70,7 @@ pub enum PgType {
     Json,
     Jsonb,
     CustomEnum(String),
+    Named(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -351,6 +370,7 @@ impl Schema {
             extensions: BTreeMap::new(),
             tables: BTreeMap::new(),
             enums: BTreeMap::new(),
+            domains: BTreeMap::new(),
             functions: BTreeMap::new(),
             views: BTreeMap::new(),
             triggers: BTreeMap::new(),

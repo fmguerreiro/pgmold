@@ -242,9 +242,9 @@ mod tests {
     #[test]
     fn baseline_report_with_warnings() {
         let mut report = sample_report();
-        report.warnings.push(UnsupportedObject::Domain {
+        report.warnings.push(UnsupportedObject::CompositeType {
             schema: "public".into(),
-            name: "email".into(),
+            name: "address".into(),
         });
         assert!(report.has_warnings());
         assert!(report.is_success());
@@ -275,24 +275,24 @@ mod tests {
     #[test]
     fn text_report_shows_warnings() {
         let mut report = sample_report();
-        report.warnings.push(UnsupportedObject::Domain {
-            schema: "public".into(),
-            name: "email".into(),
-        });
-        report.warnings.push(UnsupportedObject::Domain {
-            schema: "public".into(),
-            name: "url".into(),
-        });
         report.warnings.push(UnsupportedObject::CompositeType {
             schema: "public".into(),
             name: "address".into(),
+        });
+        report.warnings.push(UnsupportedObject::CompositeType {
+            schema: "public".into(),
+            name: "person".into(),
+        });
+        report.warnings.push(UnsupportedObject::Aggregate {
+            schema: "public".into(),
+            name: "my_agg".into(),
         });
 
         let text = generate_text_report(&report);
 
         assert!(text.contains("Warnings:"));
-        assert!(text.contains("2 domain"));
-        assert!(text.contains("1 composite type"));
+        assert!(text.contains("2 composite type"));
+        assert!(text.contains("1 aggregate"));
     }
 
     #[test]

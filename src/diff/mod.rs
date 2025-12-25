@@ -1,8 +1,8 @@
 pub mod planner;
 
 use crate::model::{
-    qualified_name, CheckConstraint, Column, EnumType, Extension, ForeignKey, Function, Index,
-    Partition, PgType, Policy, PrimaryKey, Sequence, SequenceDataType, SequenceOwner, Table,
+    qualified_name, CheckConstraint, Column, Domain, EnumType, Extension, ForeignKey, Function,
+    Index, Partition, PgType, Policy, PrimaryKey, Sequence, SequenceDataType, SequenceOwner, Table,
     Trigger, TriggerEnabled, View,
 };
 
@@ -16,6 +16,12 @@ pub enum MigrationOp {
         enum_name: String,
         value: String,
         position: Option<EnumValuePosition>,
+    },
+    CreateDomain(Domain),
+    DropDomain(String),
+    AlterDomain {
+        name: String,
+        changes: DomainChanges,
     },
     CreateTable(Table),
     DropTable(String),
@@ -146,6 +152,12 @@ pub struct SequenceChanges {
     pub owned_by: Option<Option<SequenceOwner>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DomainChanges {
+    pub default: Option<Option<String>>,
+    pub not_null: Option<bool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnumValuePosition {
     Before(String),
@@ -159,6 +171,7 @@ pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
 
     ops.extend(diff_extensions(from, to));
     ops.extend(diff_enums(from, to));
+    ops.extend(diff_domains(from, to));
     ops.extend(diff_tables(from, to));
     ops.extend(diff_partitions(from, to));
     ops.extend(diff_functions(from, to));
@@ -237,6 +250,38 @@ fn diff_enum_values(name: &str, from: &EnumType, to: &EnumType) -> Vec<Migration
                 value: value.clone(),
                 position,
             });
+        }
+    }
+
+    ops
+}
+
+fn diff_domains(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for (name, to_domain) in &to.domains {
+        if let Some(from_domain) = from.domains.get(name) {
+            let mut changes = DomainChanges::default();
+            if from_domain.default != to_domain.default {
+                changes.default = Some(to_domain.default.clone());
+            }
+            if from_domain.not_null != to_domain.not_null {
+                changes.not_null = Some(to_domain.not_null);
+            }
+            if changes != DomainChanges::default() {
+                ops.push(MigrationOp::AlterDomain {
+                    name: name.clone(),
+                    changes,
+                });
+            }
+        } else {
+            ops.push(MigrationOp::CreateDomain(to_domain.clone()));
+        }
+    }
+
+    for name in from.domains.keys() {
+        if !to.domains.contains_key(name) {
+            ops.push(MigrationOp::DropDomain(name.clone()));
         }
     }
 

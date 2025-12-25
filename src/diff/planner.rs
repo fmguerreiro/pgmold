@@ -44,6 +44,9 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut create_sequences = Vec::new();
     let mut drop_sequences = Vec::new();
     let mut alter_sequences = Vec::new();
+    let mut create_domains = Vec::new();
+    let mut drop_domains = Vec::new();
+    let mut alter_domains = Vec::new();
 
     for op in ops {
         match op {
@@ -84,6 +87,9 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::CreateSequence(_) => create_sequences.push(op),
             MigrationOp::DropSequence(_) => drop_sequences.push(op),
             MigrationOp::AlterSequence { .. } => alter_sequences.push(op),
+            MigrationOp::CreateDomain(_) => create_domains.push(op),
+            MigrationOp::DropDomain(_) => drop_domains.push(op),
+            MigrationOp::AlterDomain { .. } => alter_domains.push(op),
         }
     }
 
@@ -119,6 +125,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(create_extensions);
     result.extend(create_enums);
     result.extend(add_enum_values);
+    result.extend(create_domains);
     result.extend(create_sequences_without_owner);
     result.extend(create_functions);
     result.extend(create_tables);
@@ -134,6 +141,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(create_policies);
     result.extend(alter_policies);
     result.extend(alter_sequences);
+    result.extend(alter_domains);
     result.extend(alter_functions);
     result.extend(create_views);
     result.extend(alter_views);
@@ -153,6 +161,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(drop_tables);
     result.extend(drop_functions);
     result.extend(drop_sequences);
+    result.extend(drop_domains);
     result.extend(drop_enums);
     result.extend(drop_extensions);
 
@@ -165,6 +174,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut create_extensions = Vec::new();
     let mut create_enums = Vec::new();
+    let mut create_domains = Vec::new();
     let mut create_tables = Vec::new();
     let mut create_sequences = Vec::new();
     let mut create_partitions = Vec::new();
@@ -178,6 +188,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
         match op {
             MigrationOp::CreateExtension(_) => create_extensions.push(op),
             MigrationOp::CreateEnum(_) => create_enums.push(op),
+            MigrationOp::CreateDomain(_) => create_domains.push(op),
             MigrationOp::CreateTable(_) => create_tables.push(op),
             MigrationOp::CreateSequence(_) => create_sequences.push(op),
             MigrationOp::CreatePartition(_) => create_partitions.push(op),
@@ -196,6 +207,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     result.extend(create_extensions);
     result.extend(create_enums);
+    result.extend(create_domains);
     result.extend(create_functions);
     result.extend(create_tables);
     result.extend(create_partitions);

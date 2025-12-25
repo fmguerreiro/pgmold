@@ -14,6 +14,10 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
         ops.push(MigrationOp::CreateEnum(enum_type.clone()));
     }
 
+    for domain in schema.domains.values() {
+        ops.push(MigrationOp::CreateDomain(domain.clone()));
+    }
+
     for sequence in schema.sequences.values() {
         ops.push(MigrationOp::CreateSequence(sequence.clone()));
     }
@@ -102,7 +106,7 @@ pub fn generate_split_dump(schema: &Schema) -> SplitDump {
     for op in planned {
         match &op {
             MigrationOp::CreateExtension(_) => extension_ops.push(op),
-            MigrationOp::CreateEnum(_) => type_ops.push(op),
+            MigrationOp::CreateEnum(_) | MigrationOp::CreateDomain(_) => type_ops.push(op),
             MigrationOp::CreateSequence(_) => sequence_ops.push(op),
             MigrationOp::CreateTable(_)
             | MigrationOp::CreatePartition(_)

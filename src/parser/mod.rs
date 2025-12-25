@@ -2310,6 +2310,113 @@ CREATE DOMAIN us_postal_code AS TEXT
     }
 
     #[test]
+    fn domain_round_trip_with_check_constraint() {
+        use crate::dump::generate_dump;
+
+        let mut schema = Schema::new();
+        schema.domains.insert(
+            "public.email_address".to_string(),
+            Domain {
+                schema: "public".to_string(),
+                name: "email_address".to_string(),
+                data_type: PgType::Text,
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: vec![
+                    DomainConstraint {
+                        name: None,
+                        expression: "VALUE ~ '@'".to_string(),
+                    }
+                ],
+            },
+        );
+
+        let fingerprint_before = schema.fingerprint();
+        let sql = generate_dump(&schema, None);
+        let parsed = parse_sql_string(&sql).expect("Should parse generated SQL");
+        let fingerprint_after = parsed.fingerprint();
+
+        assert_eq!(fingerprint_before, fingerprint_after, "Domain should round-trip correctly");
+        assert_eq!(parsed.domains.len(), 1);
+        let parsed_domain = &parsed.domains["public.email_address"];
+        assert_eq!(parsed_domain.data_type, PgType::Text);
+        assert_eq!(parsed_domain.check_constraints.len(), 1);
+    }
+
+    #[test]
+    fn domain_round_trip_with_table_using_domain() {
+        use crate::dump::generate_dump;
+
+        let mut schema = Schema::new();
+        schema.domains.insert(
+            "public.email_address".to_string(),
+            Domain {
+                schema: "public".to_string(),
+                name: "email_address".to_string(),
+                data_type: PgType::Text,
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: vec![
+                    DomainConstraint {
+                        name: None,
+                        expression: "VALUE ~ '@'".to_string(),
+                    }
+                ],
+            },
+        );
+
+        let mut users_columns = BTreeMap::new();
+        users_columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::BigInt,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        users_columns.insert(
+            "email".to_string(),
+            Column {
+                name: "email".to_string(),
+                data_type: PgType::CustomEnum("public.email_address".to_string()),
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+
+        schema.tables.insert(
+            "public.users".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                columns: users_columns,
+                primary_key: Some(PrimaryKey {
+                    columns: vec!["id".to_string()],
+                }),
+                indexes: Vec::new(),
+                foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
+                comment: None,
+                row_level_security: false,
+                policies: Vec::new(),
+                partition_by: None,
+            },
+        );
+
+        let fingerprint_before = schema.fingerprint();
+        let sql = generate_dump(&schema, None);
+        let parsed = parse_sql_string(&sql).expect("Should parse generated SQL");
+        let fingerprint_after = parsed.fingerprint();
+
+        assert_eq!(fingerprint_before, fingerprint_after, "Domain and table should round-trip correctly");
+    }
+
+    #[test]
     fn parses_function_with_quoted_parameter_names() {
         let sql = r#"
             CREATE FUNCTION auth.is_org_admin("p_role_name" text, "p_enterprise_id" uuid)

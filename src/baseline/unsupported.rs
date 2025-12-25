@@ -5,10 +5,6 @@ use sqlx::Row;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnsupportedObject {
-    Domain {
-        schema: String,
-        name: String,
-    },
     CompositeType {
         schema: String,
         name: String,
@@ -35,7 +31,6 @@ pub enum UnsupportedObject {
 impl UnsupportedObject {
     pub fn kind(&self) -> &'static str {
         match self {
-            Self::Domain { .. } => "domain",
             Self::CompositeType { .. } => "composite type",
             Self::Aggregate { .. } => "aggregate",
             Self::Rule { .. } => "rule",
@@ -46,8 +41,7 @@ impl UnsupportedObject {
 
     pub fn qualified_name(&self) -> String {
         match self {
-            Self::Domain { schema, name }
-            | Self::CompositeType { schema, name }
+            Self::CompositeType { schema, name }
             | Self::Aggregate { schema, name }
             | Self::InheritedTable { schema, name }
             | Self::ForeignTable { schema, name } => format!("{schema}.{name}"),
@@ -66,7 +60,6 @@ pub async fn detect_unsupported_objects(
 ) -> Result<Vec<UnsupportedObject>> {
     let mut unsupported = Vec::new();
 
-    unsupported.extend(detect_domains(connection, target_schemas).await?);
     unsupported.extend(detect_composite_types(connection, target_schemas).await?);
     unsupported.extend(detect_aggregates(connection, target_schemas).await?);
     unsupported.extend(detect_rules(connection, target_schemas).await?);
@@ -74,32 +67,6 @@ pub async fn detect_unsupported_objects(
     unsupported.extend(detect_foreign_tables(connection, target_schemas).await?);
 
     Ok(unsupported)
-}
-
-async fn detect_domains(
-    connection: &PgConnection,
-    target_schemas: &[String],
-) -> Result<Vec<UnsupportedObject>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT n.nspname, t.typname
-        FROM pg_type t
-        JOIN pg_namespace n ON t.typnamespace = n.oid
-        WHERE t.typtype = 'd' AND n.nspname = ANY($1)
-        "#,
-    )
-    .bind(target_schemas)
-    .fetch_all(connection.pool())
-    .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to detect domains: {e}")))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| UnsupportedObject::Domain {
-            schema: row.get("nspname"),
-            name: row.get("typname"),
-        })
-        .collect())
 }
 
 async fn detect_composite_types(
@@ -245,11 +212,11 @@ mod tests {
 
     #[test]
     fn unsupported_object_kind() {
-        let domain = UnsupportedObject::Domain {
+        let composite = UnsupportedObject::CompositeType {
             schema: "public".into(),
-            name: "email".into(),
+            name: "address".into(),
         };
-        assert_eq!(domain.kind(), "domain");
+        assert_eq!(composite.kind(), "composite type");
 
         let rule = UnsupportedObject::Rule {
             schema: "public".into(),
@@ -261,11 +228,11 @@ mod tests {
 
     #[test]
     fn unsupported_object_qualified_name() {
-        let domain = UnsupportedObject::Domain {
+        let composite = UnsupportedObject::CompositeType {
             schema: "analytics".into(),
-            name: "email".into(),
+            name: "address".into(),
         };
-        assert_eq!(domain.qualified_name(), "analytics.email");
+        assert_eq!(composite.qualified_name(), "analytics.address");
 
         let rule = UnsupportedObject::Rule {
             schema: "public".into(),

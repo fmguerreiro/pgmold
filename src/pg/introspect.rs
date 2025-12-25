@@ -152,8 +152,7 @@ async fn introspect_domains(
             t.typname AS domain_name,
             bt.typname AS base_type,
             t.typnotnull AS not_null,
-            pg_get_expr(t.typdefaultbin, 0) AS default_expr,
-            t.typcollation AS collation_oid
+            pg_get_expr(t.typdefaultbin, 0) AS default_expr
         FROM pg_type t
         JOIN pg_namespace n ON t.typnamespace = n.oid
         JOIN pg_type bt ON t.typbasetype = bt.oid
@@ -172,7 +171,8 @@ async fn introspect_domains(
         let name: String = row.get("domain_name");
         let base_type: String = row.get("base_type");
         let not_null: bool = row.get("not_null");
-        let default_expr: Option<String> = row.get("default_expr");
+        let default_expr: Option<String> = row.get::<Option<String>, &str>("default_expr")
+            .filter(|s| !s.is_empty());
 
         let check_constraints =
             introspect_domain_constraints(connection, &schema, &name).await?;
@@ -244,12 +244,17 @@ async fn introspect_domain_constraints(
     for row in rows {
         let name: String = row.get("constraint_name");
         let def: String = row.get("constraint_def");
-        let expression = def
+        let mut expression = def
             .strip_prefix("CHECK ")
             .unwrap_or(&def)
             .trim_start_matches('(')
             .trim_end_matches(')')
+            .trim()
             .to_string();
+
+        if let Some(cast_pos) = expression.find("::") {
+            expression = expression[..cast_pos].trim_end().to_string();
+        }
 
         let constraint_name = if name == format!("{domain_name}_check") {
             None

@@ -355,7 +355,7 @@ async fn baseline_circular_foreign_keys() {
 }
 
 #[tokio::test]
-async fn baseline_detects_domain() {
+async fn baseline_captures_domain() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
@@ -384,12 +384,10 @@ async fn baseline_detects_domain() {
     .await
     .unwrap();
 
-    assert!(result.report.has_warnings());
-    assert!(result
-        .report
-        .warnings
-        .iter()
-        .any(|w| matches!(w, UnsupportedObject::Domain { name, .. } if name == "email_address")));
+    assert!(result.report.round_trip_ok);
+    assert!(result.report.zero_diff_ok);
+    assert!(result.sql_dump.contains("CREATE DOMAIN"));
+    assert!(result.sql_dump.contains("email_address"));
 }
 
 #[tokio::test]
