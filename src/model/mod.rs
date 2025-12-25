@@ -378,7 +378,7 @@ impl Function {
         let args = self
             .arguments
             .iter()
-            .map(|a| a.data_type.to_uppercase())
+            .map(|a| a.data_type.to_lowercase())
             .collect::<Vec<_>>()
             .join(", ");
         format!("{}({})", self.name, args)
@@ -778,5 +778,7 @@ mod tests {
             func_lowercase.signature(),
             "Function signatures should match regardless of type case"
         );
+        // Both should produce lowercase signature
+        assert_eq!(func_uppercase.signature(), "my_func(uuid)");
     }
 }

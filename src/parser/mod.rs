@@ -917,9 +917,9 @@ fn parse_create_function(
                     };
                     FunctionArg {
                         name: arg.name.as_ref().map(|n| n.to_string()),
-                        data_type: arg.data_type.to_string(),
+                        data_type: arg.data_type.to_string().to_lowercase(),
                         mode,
-                        default: arg.default_expr.as_ref().map(|e| e.to_string()),
+                        default: arg.default_expr.as_ref().map(|e| e.to_string().to_lowercase()),
                     }
                 })
                 .collect()
@@ -1294,7 +1294,7 @@ CREATE TABLE products (
             LANGUAGE SQL AS $$ SELECT x + 1 $$;
         "#;
         let schema = parse_sql_string(sql).unwrap();
-        let func = schema.functions.get("utils.add_one(INTEGER)").unwrap();
+        let func = schema.functions.get("utils.add_one(integer)").unwrap();
         assert_eq!(func.schema, "utils");
         assert_eq!(func.name, "add_one");
     }
@@ -1316,7 +1316,7 @@ CREATE TABLE products (
         let schema = parse_sql_string(sql).unwrap();
         let func = schema
             .functions
-            .get("auth.custom_access_token_hook(JSONB)")
+            .get("auth.custom_access_token_hook(jsonb)")
             .unwrap();
         assert_eq!(func.schema, "auth");
         assert_eq!(func.name, "custom_access_token_hook");

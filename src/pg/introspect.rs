@@ -804,20 +804,42 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
         .split(',')
         .map(|arg| {
             let arg = arg.trim();
-            let parts: Vec<&str> = arg.splitn(2, ' ').collect();
+
+            // Split off DEFAULT clause if present (case-insensitive)
+            // Normalize default value to lowercase for consistent comparison
+            let (arg_without_default, default) =
+                if let Some(idx) = arg.to_uppercase().find(" DEFAULT ") {
+                    let default_value = arg[idx + 9..].trim().to_lowercase();
+                    (arg[..idx].trim(), Some(default_value))
+                } else {
+                    (arg, None)
+                };
+
+            // Parse mode (IN, OUT, INOUT)
+            let (mode, arg_rest) = if arg_without_default.starts_with("INOUT ") {
+                (ArgMode::InOut, &arg_without_default[6..])
+            } else if arg_without_default.starts_with("OUT ") {
+                (ArgMode::Out, &arg_without_default[4..])
+            } else if arg_without_default.starts_with("IN ") {
+                (ArgMode::In, &arg_without_default[3..])
+            } else {
+                (ArgMode::In, arg_without_default)
+            };
+
+            let parts: Vec<&str> = arg_rest.trim().splitn(2, ' ').collect();
             if parts.len() == 2 {
                 FunctionArg {
                     name: Some(parts[0].to_string()),
-                    data_type: parts[1].to_string(),
-                    mode: ArgMode::In,
-                    default: None,
+                    data_type: parts[1].to_lowercase(),
+                    mode,
+                    default,
                 }
             } else {
                 FunctionArg {
                     name: None,
-                    data_type: arg.to_string(),
-                    mode: ArgMode::In,
-                    default: None,
+                    data_type: arg_rest.trim().to_lowercase(),
+                    mode,
+                    default,
                 }
             }
         })
