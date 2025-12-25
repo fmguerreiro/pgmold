@@ -1,4 +1,7 @@
 use glob::Pattern;
+use std::collections::BTreeMap;
+
+use crate::model::Schema;
 
 pub struct Filter {
     include: Vec<Pattern>,
@@ -45,9 +48,416 @@ impl Filter {
     }
 }
 
+pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
+    Schema {
+        extensions: schema.extensions.clone(),
+        tables: filter_map(&schema.tables, filter),
+        enums: filter_map(&schema.enums, filter),
+        domains: filter_map(&schema.domains, filter),
+        functions: filter_map(&schema.functions, filter),
+        views: filter_map(&schema.views, filter),
+        triggers: filter_map(&schema.triggers, filter),
+        sequences: filter_map(&schema.sequences, filter),
+        partitions: filter_map(&schema.partitions, filter),
+    }
+}
+
+fn filter_map<T>(map: &BTreeMap<String, T>, filter: &Filter) -> BTreeMap<String, T>
+where
+    T: Clone + HasName,
+{
+    map.iter()
+        .filter(|(_key, value)| filter.should_include(value.name()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
+trait HasName {
+    fn name(&self) -> &str;
+}
+
+impl HasName for crate::model::Table {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl HasName for crate::model::Function {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl HasName for crate::model::View {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl HasName for crate::model::Trigger {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl HasName for crate::model::EnumType {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl HasName for crate::model::Domain {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl HasName for crate::model::Sequence {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl HasName for crate::model::Partition {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{
+        Domain, EnumType, Extension, Function, Volatility, SecurityType,
+        Partition, PartitionBound, PgType, Sequence, SequenceDataType,
+        Table, Trigger, TriggerTiming, TriggerEvent, TriggerEnabled, View,
+    };
+
+    #[test]
+    fn empty_filter_returns_clone() {
+        let mut schema = Schema::default();
+        schema.functions.insert(
+            "public.api_test".to_string(),
+            Function {
+                name: "api_test".to_string(),
+                schema: "public".to_string(),
+                arguments: vec![],
+                return_type: "void".to_string(),
+                language: "sql".to_string(),
+                body: "SELECT 1".to_string(),
+                volatility: Volatility::Volatile,
+                security: SecurityType::Invoker,
+            },
+        );
+        schema.functions.insert(
+            "public._internal".to_string(),
+            Function {
+                name: "_internal".to_string(),
+                schema: "public".to_string(),
+                arguments: vec![],
+                return_type: "void".to_string(),
+                language: "sql".to_string(),
+                body: "SELECT 2".to_string(),
+                volatility: Volatility::Volatile,
+                security: SecurityType::Invoker,
+            },
+        );
+
+        let filter = Filter::new(&[], &[]).unwrap();
+        let filtered = filter_schema(&schema, &filter);
+
+        assert_eq!(filtered.functions.len(), 2);
+    }
+
+    #[test]
+    fn exclude_filters_functions() {
+        let mut schema = Schema::default();
+        schema.functions.insert(
+            "public.api_test".to_string(),
+            Function {
+                name: "api_test".to_string(),
+                schema: "public".to_string(),
+                arguments: vec![],
+                return_type: "void".to_string(),
+                language: "sql".to_string(),
+                body: "SELECT 1".to_string(),
+                volatility: Volatility::Volatile,
+                security: SecurityType::Invoker,
+            },
+        );
+        schema.functions.insert(
+            "public._internal".to_string(),
+            Function {
+                name: "_internal".to_string(),
+                schema: "public".to_string(),
+                arguments: vec![],
+                return_type: "void".to_string(),
+                language: "sql".to_string(),
+                body: "SELECT 2".to_string(),
+                volatility: Volatility::Volatile,
+                security: SecurityType::Invoker,
+            },
+        );
+
+        let filter = Filter::new(&[], &["_*".to_string()]).unwrap();
+        let filtered = filter_schema(&schema, &filter);
+
+        assert_eq!(filtered.functions.len(), 1);
+        assert!(filtered.functions.contains_key("public.api_test"));
+        assert!(!filtered.functions.contains_key("public._internal"));
+    }
+
+    #[test]
+    fn include_filters_tables() {
+        let mut schema = Schema::default();
+        schema.tables.insert(
+            "public.users".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: vec![],
+                primary_key: None,
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                comment: None,
+                row_level_security: false,
+                policies: vec![],
+                partition_by: None,
+            },
+        );
+        schema.tables.insert(
+            "public.posts".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "posts".to_string(),
+                columns: BTreeMap::new(),
+                indexes: vec![],
+                primary_key: None,
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                comment: None,
+                row_level_security: false,
+                policies: vec![],
+                partition_by: None,
+            },
+        );
+        schema.tables.insert(
+            "public._migrations".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "_migrations".to_string(),
+                columns: BTreeMap::new(),
+                indexes: vec![],
+                primary_key: None,
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                comment: None,
+                row_level_security: false,
+                policies: vec![],
+                partition_by: None,
+            },
+        );
+
+        let filter = Filter::new(&["users".to_string(), "posts".to_string()], &[]).unwrap();
+        let filtered = filter_schema(&schema, &filter);
+
+        assert_eq!(filtered.tables.len(), 2);
+    }
+
+    #[test]
+    fn extensions_not_filtered() {
+        let mut schema = Schema::default();
+        schema.extensions.insert(
+            "uuid-ossp".to_string(),
+            Extension {
+                name: "uuid-ossp".to_string(),
+                version: None,
+                schema: None,
+            },
+        );
+
+        let filter = Filter::new(&[], &["*".to_string()]).unwrap();
+        let filtered = filter_schema(&schema, &filter);
+
+        assert_eq!(filtered.extensions.len(), 1);
+    }
+
+    #[test]
+    fn all_object_types_filtered() {
+        let mut schema = Schema::default();
+
+        schema.tables.insert("public.users".to_string(), Table {
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: vec![],
+            primary_key: None,
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            comment: None,
+            row_level_security: false,
+            policies: vec![],
+            partition_by: None,
+        });
+        schema.tables.insert("public._temp".to_string(), Table {
+            schema: "public".to_string(),
+            name: "_temp".to_string(),
+            columns: BTreeMap::new(),
+            indexes: vec![],
+            primary_key: None,
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            comment: None,
+            row_level_security: false,
+            policies: vec![],
+            partition_by: None,
+        });
+
+        schema.views.insert("public.user_view".to_string(), View {
+            name: "user_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT * FROM users".to_string(),
+            materialized: false,
+        });
+        schema.views.insert("public._temp_view".to_string(), View {
+            name: "_temp_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT 1".to_string(),
+            materialized: false,
+        });
+
+        schema.triggers.insert("public.users.audit_trigger".to_string(), Trigger {
+            name: "audit_trigger".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            timing: TriggerTiming::Before,
+            events: vec![TriggerEvent::Insert],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "audit_fn".to_string(),
+            function_args: vec![],
+            enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
+        });
+        schema.triggers.insert("public.users._temp_trigger".to_string(), Trigger {
+            name: "_temp_trigger".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            timing: TriggerTiming::Before,
+            events: vec![TriggerEvent::Insert],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "temp_fn".to_string(),
+            function_args: vec![],
+            enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
+        });
+
+        schema.enums.insert("public.status".to_string(), EnumType {
+            schema: "public".to_string(),
+            name: "status".to_string(),
+            values: vec!["active".to_string(), "inactive".to_string()],
+        });
+        schema.enums.insert("public._temp_enum".to_string(), EnumType {
+            schema: "public".to_string(),
+            name: "_temp_enum".to_string(),
+            values: vec!["a".to_string(), "b".to_string()],
+        });
+
+        schema.domains.insert("public.email".to_string(), Domain {
+            schema: "public".to_string(),
+            name: "email".to_string(),
+            data_type: PgType::Text,
+            default: None,
+            not_null: false,
+            collation: None,
+            check_constraints: vec![],
+        });
+        schema.domains.insert("public._temp_domain".to_string(), Domain {
+            schema: "public".to_string(),
+            name: "_temp_domain".to_string(),
+            data_type: PgType::Text,
+            default: None,
+            not_null: false,
+            collation: None,
+            check_constraints: vec![],
+        });
+
+        schema.sequences.insert("public.user_seq".to_string(), Sequence {
+            name: "user_seq".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: None,
+            max_value: None,
+            cycle: false,
+            cache: None,
+            owned_by: None,
+        });
+        schema.sequences.insert("public._temp_seq".to_string(), Sequence {
+            name: "_temp_seq".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: None,
+            max_value: None,
+            cycle: false,
+            cache: None,
+            owned_by: None,
+        });
+
+        schema.partitions.insert("public.users_2024".to_string(), Partition {
+            schema: "public".to_string(),
+            name: "users_2024".to_string(),
+            parent_schema: "public".to_string(),
+            parent_name: "users".to_string(),
+            bound: PartitionBound::Default,
+            indexes: vec![],
+            check_constraints: vec![],
+        });
+        schema.partitions.insert("public._temp_part".to_string(), Partition {
+            schema: "public".to_string(),
+            name: "_temp_part".to_string(),
+            parent_schema: "public".to_string(),
+            parent_name: "users".to_string(),
+            bound: PartitionBound::Default,
+            indexes: vec![],
+            check_constraints: vec![],
+        });
+
+        let filter = Filter::new(&[], &["_*".to_string()]).unwrap();
+        let filtered = filter_schema(&schema, &filter);
+
+        assert_eq!(filtered.tables.len(), 1);
+        assert!(filtered.tables.contains_key("public.users"));
+
+        assert_eq!(filtered.views.len(), 1);
+        assert!(filtered.views.contains_key("public.user_view"));
+
+        assert_eq!(filtered.triggers.len(), 1);
+        assert!(filtered.triggers.contains_key("public.users.audit_trigger"));
+
+        assert_eq!(filtered.enums.len(), 1);
+        assert!(filtered.enums.contains_key("public.status"));
+
+        assert_eq!(filtered.domains.len(), 1);
+        assert!(filtered.domains.contains_key("public.email"));
+
+        assert_eq!(filtered.sequences.len(), 1);
+        assert!(filtered.sequences.contains_key("public.user_seq"));
+
+        assert_eq!(filtered.partitions.len(), 1);
+        assert!(filtered.partitions.contains_key("public.users_2024"));
+    }
 
     #[test]
     fn no_filters_includes_everything() {
