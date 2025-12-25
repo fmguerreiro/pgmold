@@ -149,6 +149,43 @@ schema/
 
 Duplicate definitions (same table/enum/function in multiple files) will error immediately with clear file locations.
 
+### Filtering Objects
+
+Filter which objects to include in comparisons using name patterns or object types.
+
+**Filter by name pattern:**
+```bash
+# Include only objects matching patterns
+pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+  --include 'api_*' --include 'users'
+
+# Exclude objects matching patterns
+pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+  --exclude '_*' --exclude 'pg_*'
+```
+
+**Filter by object type:**
+```bash
+# Only compare tables and functions (ignore extensions, views, triggers, etc.)
+pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+  --include-types tables,functions
+
+# Exclude extensions from comparison
+pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+  --exclude-types extensions
+```
+
+**Combine type and name filters:**
+```bash
+# Compare only functions matching 'api_*', excluding internal ones
+pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+  --include-types functions \
+  --include 'api_*' \
+  --exclude '_*'
+```
+
+Available object types: `extensions`, `tables`, `enums`, `domains`, `functions`, `views`, `triggers`, `sequences`, `partitions`
+
 ### Adopting pgmold in an Existing Project
 
 If you have a live database with existing schema (and possibly a migration-based workflow), use `pgmold dump` to create a baseline:
