@@ -4,6 +4,7 @@ use sqlx::Executor;
 
 use pgmold::diff::{compute_diff, planner::plan_migration};
 use pgmold::dump::{generate_dump, generate_split_dump};
+use pgmold::filter::{filter_schema, Filter};
 use pgmold::lint::locks::detect_lock_hazards;
 use pgmold::lint::{has_errors, lint_migration_plan, LintOptions, LintSeverity};
 use pgmold::migrate::{find_next_migration_number, generate_migration_filename};
@@ -185,22 +186,27 @@ pub async fn run() -> Result<()> {
             database,
             target_schemas,
             reverse,
-            exclude: _,
-            include: _,
+            exclude,
+            include,
         } => {
+            let filter = Filter::new(&include, &exclude)
+                .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
+
             let target = load_sql_schema(&schema)?;
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
-            let current = introspect_schema(&connection, &target_schemas)
+            let db_schema = introspect_schema(&connection, &target_schemas)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
+            let filtered_db_schema = filter_schema(&db_schema, &filter);
+
             let ops = if reverse {
-                plan_migration(compute_diff(&target, &current))
+                plan_migration(compute_diff(&target, &filtered_db_schema))
             } else {
-                plan_migration(compute_diff(&current, &target))
+                plan_migration(compute_diff(&filtered_db_schema, &target))
             };
             let lock_warnings = detect_lock_hazards(&ops);
 
@@ -230,20 +236,25 @@ pub async fn run() -> Result<()> {
             dry_run,
             allow_destructive,
             target_schemas,
-            exclude: _,
-            include: _,
+            exclude,
+            include,
         } => {
+            let filter = Filter::new(&include, &exclude)
+                .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
+
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
             let target = load_sql_schema(&schema)?;
-            let current = introspect_schema(&connection, &target_schemas)
+            let db_schema = introspect_schema(&connection, &target_schemas)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
-            let ops = plan_migration(compute_diff(&current, &target));
+            let filtered_db_schema = filter_schema(&db_schema, &filter);
+
+            let ops = plan_migration(compute_diff(&filtered_db_schema, &target));
             let lint_options = LintOptions {
                 allow_destructive,
                 ..Default::default()
@@ -382,17 +393,22 @@ pub async fn run() -> Result<()> {
             target_schemas,
             output,
             split,
-            exclude: _,
-            include: _,
+            exclude,
+            include,
         } => {
+            let filter = Filter::new(&include, &exclude)
+                .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
+
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
-            let schema = introspect_schema(&connection, &target_schemas)
+            let db_schema = introspect_schema(&connection, &target_schemas)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
+
+            let schema = filter_schema(&db_schema, &filter);
 
             if split {
                 let dir_path = output
