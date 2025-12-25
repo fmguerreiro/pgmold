@@ -2025,7 +2025,7 @@ dependencies = [
 [[package]]
 name = "sqlparser"
 version = "0.60.0"
-source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs?branch=partition-of-support#bd9e0a94e63a1e0609880a60a20c08cac73090cc"
+source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs?branch=partition-of-support#d85fe748dfafcd7b25f803d141d03f971cf488f9"
 dependencies = [
  "log",
  "recursive",
@@ -2035,7 +2035,7 @@ dependencies = [
 [[package]]
 name = "sqlparser_derive"
 version = "0.4.0"
-source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs?branch=partition-of-support#bd9e0a94e63a1e0609880a60a20c08cac73090cc"
+source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs?branch=partition-of-support#d85fe748dfafcd7b25f803d141d03f971cf488f9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2255,6 +2255,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
+ "windows-sys 0.52.0",
  "windows-sys 0.59.0",
 ]
 
