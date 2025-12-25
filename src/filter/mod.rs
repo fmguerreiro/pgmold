@@ -1,5 +1,5 @@
 use glob::Pattern;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 
@@ -60,10 +60,17 @@ impl fmt::Display for ObjectType {
 pub struct Filter {
     include: Vec<Pattern>,
     exclude: Vec<Pattern>,
+    include_types: HashSet<ObjectType>,
+    exclude_types: HashSet<ObjectType>,
 }
 
 impl Filter {
-    pub fn new(include: &[String], exclude: &[String]) -> Result<Self, glob::PatternError> {
+    pub fn new(
+        include: &[String],
+        exclude: &[String],
+        include_types: &[ObjectType],
+        exclude_types: &[ObjectType],
+    ) -> Result<Self, glob::PatternError> {
         let include_patterns = include
             .iter()
             .map(|s| Pattern::new(s))
@@ -77,6 +84,8 @@ impl Filter {
         Ok(Filter {
             include: include_patterns,
             exclude: exclude_patterns,
+            include_types: include_types.iter().copied().collect(),
+            exclude_types: exclude_types.iter().copied().collect(),
         })
     }
 
@@ -116,6 +125,18 @@ impl Filter {
                     return true;
                 }
             }
+            return false;
+        }
+
+        true
+    }
+
+    pub fn should_include_type(&self, obj_type: ObjectType) -> bool {
+        if self.exclude_types.contains(&obj_type) {
+            return false;
+        }
+
+        if !self.include_types.is_empty() && !self.include_types.contains(&obj_type) {
             return false;
         }
 
@@ -238,7 +259,7 @@ mod tests {
             },
         );
 
-        let filter = Filter::new(&[], &[]).unwrap();
+        let filter = Filter::new(&[], &[], &[], &[]).unwrap();
         let filtered = filter_schema(&schema, &filter);
 
         assert_eq!(filtered.functions.len(), 2);
@@ -274,7 +295,7 @@ mod tests {
             },
         );
 
-        let filter = Filter::new(&[], &["_*".to_string()]).unwrap();
+        let filter = Filter::new(&[], &["_*".to_string()], &[], &[]).unwrap();
         let filtered = filter_schema(&schema, &filter);
 
         assert_eq!(filtered.functions.len(), 1);
@@ -334,7 +355,7 @@ mod tests {
             },
         );
 
-        let filter = Filter::new(&["users".to_string(), "posts".to_string()], &[]).unwrap();
+        let filter = Filter::new(&["users".to_string(), "posts".to_string()], &[], &[], &[]).unwrap();
         let filtered = filter_schema(&schema, &filter);
 
         assert_eq!(filtered.tables.len(), 2);
@@ -352,7 +373,7 @@ mod tests {
             },
         );
 
-        let filter = Filter::new(&[], &["*".to_string()]).unwrap();
+        let filter = Filter::new(&[], &["*".to_string()], &[], &[]).unwrap();
         let filtered = filter_schema(&schema, &filter);
 
         assert_eq!(filtered.extensions.len(), 1);
@@ -509,7 +530,7 @@ mod tests {
             check_constraints: vec![],
         });
 
-        let filter = Filter::new(&[], &["_*".to_string()]).unwrap();
+        let filter = Filter::new(&[], &["_*".to_string()], &[], &[]).unwrap();
         let filtered = filter_schema(&schema, &filter);
 
         assert_eq!(filtered.tables.len(), 1);
@@ -536,13 +557,13 @@ mod tests {
 
     #[test]
     fn no_filters_includes_everything() {
-        let filter = Filter::new(&[], &[]).unwrap();
+        let filter = Filter::new(&[], &[], &[], &[]).unwrap();
         assert!(filter.should_include("anything"));
     }
 
     #[test]
     fn exclude_underscore_prefix() {
-        let filter = Filter::new(&[], &["_*".to_string()]).unwrap();
+        let filter = Filter::new(&[], &["_*".to_string()], &[], &[]).unwrap();
         assert!(!filter.should_include("_add"));
         assert!(filter.should_include("api_change"));
     }
@@ -550,7 +571,7 @@ mod tests {
     #[test]
     fn include_pattern_filters() {
         let include = vec!["api_*".to_string()];
-        let filter = Filter::new(&include, &[]).unwrap();
+        let filter = Filter::new(&include, &[], &[], &[]).unwrap();
         assert!(filter.should_include("api_user"));
         assert!(!filter.should_include("st_distance"));
     }
@@ -559,14 +580,14 @@ mod tests {
     fn exclude_takes_precedence() {
         let include = vec!["api_*".to_string()];
         let exclude = vec!["*_test".to_string()];
-        let filter = Filter::new(&include, &exclude).unwrap();
+        let filter = Filter::new(&include, &exclude, &[], &[]).unwrap();
         assert!(!filter.should_include("api_test"));
     }
 
     #[test]
     fn qualified_name_patterns() {
         let include = vec!["public.api_*".to_string()];
-        let filter = Filter::new(&include, &[]).unwrap();
+        let filter = Filter::new(&include, &[], &[], &[]).unwrap();
         assert!(filter.should_include("public.api_user"));
         assert!(!filter.should_include("auth.api_user"));
     }
@@ -574,7 +595,7 @@ mod tests {
     #[test]
     fn question_mark_matches_single_char() {
         let include = vec!["api_?".to_string()];
-        let filter = Filter::new(&include, &[]).unwrap();
+        let filter = Filter::new(&include, &[], &[], &[]).unwrap();
         assert!(filter.should_include("api_a"));
         assert!(!filter.should_include("api_ab"));
     }
@@ -582,10 +603,10 @@ mod tests {
     #[test]
     fn invalid_pattern_returns_error() {
         let invalid_include = vec!["[invalid".to_string()];
-        assert!(Filter::new(&invalid_include, &[]).is_err());
+        assert!(Filter::new(&invalid_include, &[], &[], &[]).is_err());
 
         let invalid_exclude = vec!["[invalid".to_string()];
-        assert!(Filter::new(&[], &invalid_exclude).is_err());
+        assert!(Filter::new(&[], &invalid_exclude, &[], &[]).is_err());
     }
 
     #[test]
@@ -637,5 +658,54 @@ mod tests {
         assert_eq!(ObjectType::Triggers.to_string(), "triggers");
         assert_eq!(ObjectType::Sequences.to_string(), "sequences");
         assert_eq!(ObjectType::Partitions.to_string(), "partitions");
+    }
+
+    #[test]
+    fn should_include_type_empty_filters_returns_true() {
+        let filter = Filter::new(&[], &[], &[], &[]).unwrap();
+        assert!(filter.should_include_type(ObjectType::Tables));
+        assert!(filter.should_include_type(ObjectType::Functions));
+        assert!(filter.should_include_type(ObjectType::Views));
+    }
+
+    #[test]
+    fn should_include_type_with_include_types() {
+        let filter = Filter::new(
+            &[],
+            &[],
+            &[ObjectType::Tables, ObjectType::Functions],
+            &[]
+        ).unwrap();
+        assert!(filter.should_include_type(ObjectType::Tables));
+        assert!(filter.should_include_type(ObjectType::Functions));
+        assert!(!filter.should_include_type(ObjectType::Views));
+        assert!(!filter.should_include_type(ObjectType::Enums));
+    }
+
+    #[test]
+    fn should_include_type_with_exclude_types() {
+        let filter = Filter::new(
+            &[],
+            &[],
+            &[],
+            &[ObjectType::Triggers, ObjectType::Sequences]
+        ).unwrap();
+        assert!(filter.should_include_type(ObjectType::Tables));
+        assert!(filter.should_include_type(ObjectType::Functions));
+        assert!(!filter.should_include_type(ObjectType::Triggers));
+        assert!(!filter.should_include_type(ObjectType::Sequences));
+    }
+
+    #[test]
+    fn should_include_type_exclude_takes_precedence() {
+        let filter = Filter::new(
+            &[],
+            &[],
+            &[ObjectType::Tables, ObjectType::Functions],
+            &[ObjectType::Functions]
+        ).unwrap();
+        assert!(filter.should_include_type(ObjectType::Tables));
+        assert!(!filter.should_include_type(ObjectType::Functions));
+        assert!(!filter.should_include_type(ObjectType::Views));
     }
 }

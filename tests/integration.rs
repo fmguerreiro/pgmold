@@ -887,7 +887,7 @@ async fn plan_with_exclude_filters_objects() {
 
     let target = parse_sql_string("").unwrap();
 
-    let filter = Filter::new(&[], &["_*".to_string(), "st_*".to_string()]).unwrap();
+    let filter = Filter::new(&[], &["_*".to_string(), "st_*".to_string()], &[], &[]).unwrap();
     let filtered_current = filter_schema(&current, &filter);
 
     assert_eq!(
@@ -949,7 +949,7 @@ async fn apply_with_include_only_modifies_matching_objects() {
     )
     .unwrap();
 
-    let filter = Filter::new(&["users".to_string()], &[]).unwrap();
+    let filter = Filter::new(&["users".to_string()], &[], &[], &[]).unwrap();
     let filtered_current = filter_schema(&current, &filter);
     let filtered_target = filter_schema(&target, &filter);
 
@@ -1029,7 +1029,7 @@ async fn dump_with_exclude_filters_output() {
         .unwrap();
     assert_eq!(schema.functions.len(), 3);
 
-    let filter = Filter::new(&[], &["_*".to_string(), "postgis*".to_string()]).unwrap();
+    let filter = Filter::new(&[], &["_*".to_string(), "postgis*".to_string()], &[], &[]).unwrap();
     let filtered = filter_schema(&schema, &filter);
 
     assert_eq!(
@@ -1091,7 +1091,7 @@ async fn exclude_pattern_filters_across_schemas() {
         .unwrap();
     assert_eq!(current.tables.len(), 4);
 
-    let filter = Filter::new(&[], &["_*".to_string()]).unwrap();
+    let filter = Filter::new(&[], &["_*".to_string()], &[], &[]).unwrap();
     let filtered_current = filter_schema(&current, &filter);
 
     assert_eq!(
@@ -1137,7 +1137,7 @@ async fn combined_include_and_exclude_filters() {
         .unwrap();
     assert_eq!(current.tables.len(), 4);
 
-    let filter = Filter::new(&["api_*".to_string()], &["*_temp".to_string()]).unwrap();
+    let filter = Filter::new(&["api_*".to_string()], &["*_temp".to_string()], &[], &[]).unwrap();
     let filtered_current = filter_schema(&current, &filter);
 
     assert_eq!(
@@ -1189,7 +1189,7 @@ async fn qualified_schema_pattern_filters() {
         .unwrap();
     assert_eq!(current.tables.len(), 3);
 
-    let filter = Filter::new(&[], &["public._*".to_string()]).unwrap();
+    let filter = Filter::new(&[], &["public._*".to_string()], &[], &[]).unwrap();
     let filtered_current = filter_schema(&current, &filter);
 
     assert_eq!(

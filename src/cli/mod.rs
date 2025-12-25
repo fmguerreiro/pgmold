@@ -189,7 +189,7 @@ pub async fn run() -> Result<()> {
             exclude,
             include,
         } => {
-            let filter = Filter::new(&include, &exclude)
+            let filter = Filter::new(&include, &exclude, &[], &[])
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
 
             let target = load_sql_schema(&schema)?;
@@ -239,7 +239,7 @@ pub async fn run() -> Result<()> {
             exclude,
             include,
         } => {
-            let filter = Filter::new(&include, &exclude)
+            let filter = Filter::new(&include, &exclude, &[], &[])
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
 
             let db_url = parse_db_source(&database)?;
@@ -396,7 +396,7 @@ pub async fn run() -> Result<()> {
             exclude,
             include,
         } => {
-            let filter = Filter::new(&include, &exclude)
+            let filter = Filter::new(&include, &exclude, &[], &[])
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
 
             let db_url = parse_db_source(&database)?;
