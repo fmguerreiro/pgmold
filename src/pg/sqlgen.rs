@@ -1,6 +1,8 @@
-use crate::diff::{ColumnChanges, EnumValuePosition, MigrationOp, PolicyChanges, SequenceChanges};
+use crate::diff::{
+    ColumnChanges, DomainChanges, EnumValuePosition, MigrationOp, PolicyChanges, SequenceChanges,
+};
 use crate::model::{
-    parse_qualified_name, CheckConstraint, Column, ForeignKey, Function, Index, IndexType,
+    parse_qualified_name, CheckConstraint, Column, Domain, ForeignKey, Function, Index, IndexType,
     Partition, PartitionBound, PartitionStrategy, PgType, Policy, PolicyCommand, ReferentialAction,
     SecurityType, Sequence, SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent,
     TriggerTiming, View, Volatility,
@@ -308,6 +310,22 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         MigrationOp::AlterSequence { name, changes } => {
             vec![generate_alter_sequence(name, changes)]
         }
+
+        MigrationOp::CreateDomain(domain) => {
+            vec![generate_create_domain(domain)]
+        }
+
+        MigrationOp::DropDomain(name) => {
+            let (schema, domain_name) = parse_qualified_name(name);
+            vec![format!(
+                "DROP DOMAIN {};",
+                quote_qualified(&schema, &domain_name)
+            )]
+        }
+
+        MigrationOp::AlterDomain { name, changes } => {
+            generate_alter_domain(name, changes)
+        }
     }
 }
 
@@ -543,6 +561,17 @@ fn format_column_list(columns: &[String]) -> String {
 
 pub fn quote_ident(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+/// Strips surrounding double quotes from an identifier and unescapes internal quotes.
+/// Handles both quoted ("name") and unquoted (name) identifiers.
+pub fn strip_ident_quotes(identifier: &str) -> String {
+    let trimmed = identifier.trim();
+    if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
+        trimmed[1..trimmed.len() - 1].replace("\"\"", "\"")
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn quote_qualified(schema: &str, name: &str) -> String {
@@ -839,6 +868,63 @@ fn generate_alter_sequence(name: &str, changes: &SequenceChanges) -> String {
     }
 
     format!("{};", parts.join(" "))
+}
+
+fn generate_create_domain(domain: &Domain) -> String {
+    let mut parts = vec![format!(
+        "CREATE DOMAIN {} AS {}",
+        quote_qualified(&domain.schema, &domain.name),
+        format_pg_type(&domain.data_type)
+    )];
+
+    if let Some(ref collation) = domain.collation {
+        parts.push(format!("COLLATE {}", collation));
+    }
+
+    if let Some(ref default) = domain.default {
+        parts.push(format!("DEFAULT {}", default));
+    }
+
+    if domain.not_null {
+        parts.push("NOT NULL".to_string());
+    }
+
+    for constraint in &domain.check_constraints {
+        let constraint_sql = match &constraint.name {
+            Some(name) => format!("CONSTRAINT {} CHECK ({})", quote_ident(name), constraint.expression),
+            None => format!("CHECK ({})", constraint.expression),
+        };
+        parts.push(constraint_sql);
+    }
+
+    format!("{};", parts.join(" "))
+}
+
+fn generate_alter_domain(name: &str, changes: &DomainChanges) -> Vec<String> {
+    let (schema, domain_name) = parse_qualified_name(name);
+    let qualified = quote_qualified(&schema, &domain_name);
+    let mut statements = Vec::new();
+
+    if let Some(ref default_change) = changes.default {
+        match default_change {
+            Some(new_default) => {
+                statements.push(format!("ALTER DOMAIN {} SET DEFAULT {};", qualified, new_default));
+            }
+            None => {
+                statements.push(format!("ALTER DOMAIN {} DROP DEFAULT;", qualified));
+            }
+        }
+    }
+
+    if let Some(not_null) = changes.not_null {
+        if not_null {
+            statements.push(format!("ALTER DOMAIN {} SET NOT NULL;", qualified));
+        } else {
+            statements.push(format!("ALTER DOMAIN {} DROP NOT NULL;", qualified));
+        }
+    }
+
+    statements
 }
 
 fn generate_create_trigger(trigger: &Trigger) -> String {
@@ -1827,5 +1913,153 @@ mod tests {
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
         assert!(sql[0].contains("REFERENCING OLD TABLE AS \"old_rows\" NEW TABLE AS \"new_rows\""));
+    }
+
+    #[test]
+    fn sqlgen_create_domain_simple() {
+        use crate::model::Domain;
+
+        let domain = Domain {
+            schema: "public".to_string(),
+            name: "email".to_string(),
+            data_type: PgType::Varchar(Some(255)),
+            default: None,
+            not_null: false,
+            collation: None,
+            check_constraints: vec![],
+        };
+
+        let ops = vec![MigrationOp::CreateDomain(domain)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "CREATE DOMAIN \"public\".\"email\" AS VARCHAR(255);");
+    }
+
+    #[test]
+    fn sqlgen_create_domain_with_default_and_not_null() {
+        use crate::model::Domain;
+
+        let domain = Domain {
+            schema: "public".to_string(),
+            name: "positive_int".to_string(),
+            data_type: PgType::Integer,
+            default: Some("0".to_string()),
+            not_null: true,
+            collation: None,
+            check_constraints: vec![],
+        };
+
+        let ops = vec![MigrationOp::CreateDomain(domain)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "CREATE DOMAIN \"public\".\"positive_int\" AS INTEGER DEFAULT 0 NOT NULL;"
+        );
+    }
+
+    #[test]
+    fn sqlgen_create_domain_with_check_constraint() {
+        use crate::model::{Domain, DomainConstraint};
+
+        let domain = Domain {
+            schema: "public".to_string(),
+            name: "positive_int".to_string(),
+            data_type: PgType::Integer,
+            default: None,
+            not_null: false,
+            collation: None,
+            check_constraints: vec![DomainConstraint {
+                name: Some("positive_check".to_string()),
+                expression: "VALUE > 0".to_string(),
+            }],
+        };
+
+        let ops = vec![MigrationOp::CreateDomain(domain)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "CREATE DOMAIN \"public\".\"positive_int\" AS INTEGER CONSTRAINT \"positive_check\" CHECK (VALUE > 0);"
+        );
+    }
+
+    #[test]
+    fn sqlgen_drop_domain() {
+        let ops = vec![MigrationOp::DropDomain("public.email".to_string())];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "DROP DOMAIN \"public\".\"email\";");
+    }
+
+    #[test]
+    fn sqlgen_alter_domain_set_default() {
+        let changes = DomainChanges {
+            default: Some(Some("'unknown'".to_string())),
+            not_null: None,
+        };
+        let ops = vec![MigrationOp::AlterDomain {
+            name: "public.email".to_string(),
+            changes,
+        }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER DOMAIN \"public\".\"email\" SET DEFAULT 'unknown';"
+        );
+    }
+
+    #[test]
+    fn sqlgen_alter_domain_drop_default() {
+        let changes = DomainChanges {
+            default: Some(None),
+            not_null: None,
+        };
+        let ops = vec![MigrationOp::AlterDomain {
+            name: "public.email".to_string(),
+            changes,
+        }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "ALTER DOMAIN \"public\".\"email\" DROP DEFAULT;");
+    }
+
+    #[test]
+    fn sqlgen_alter_domain_set_not_null() {
+        let changes = DomainChanges {
+            default: None,
+            not_null: Some(true),
+        };
+        let ops = vec![MigrationOp::AlterDomain {
+            name: "public.email".to_string(),
+            changes,
+        }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "ALTER DOMAIN \"public\".\"email\" SET NOT NULL;");
+    }
+
+    #[test]
+    fn sqlgen_alter_domain_drop_not_null() {
+        let changes = DomainChanges {
+            default: None,
+            not_null: Some(false),
+        };
+        let ops = vec![MigrationOp::AlterDomain {
+            name: "public.email".to_string(),
+            changes,
+        }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "ALTER DOMAIN \"public\".\"email\" DROP NOT NULL;");
+    }
+
+    #[test]
+    fn strip_ident_quotes_removes_surrounding_quotes() {
+        assert_eq!(strip_ident_quotes("\"p_role_name\""), "p_role_name");
+        assert_eq!(strip_ident_quotes("p_role_name"), "p_role_name");
+        assert_eq!(strip_ident_quotes("\"\"\"triple\"\"\""), "\"triple\"");
+        assert_eq!(strip_ident_quotes("\"has\"\"escaped\""), "has\"escaped");
     }
 }
