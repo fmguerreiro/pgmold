@@ -363,9 +363,8 @@ pub async fn run() -> Result<()> {
                 .map_err(|e| anyhow!("{e}"))?;
 
             if split {
-                let dir_path = output.ok_or_else(|| {
-                    anyhow!("--split requires -o to specify an output directory")
-                })?;
+                let dir_path = output
+                    .ok_or_else(|| anyhow!("--split requires -o to specify an output directory"))?;
 
                 std::fs::create_dir_all(&dir_path)
                     .map_err(|e| anyhow!("Failed to create directory {dir_path}: {e}"))?;

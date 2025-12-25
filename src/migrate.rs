@@ -1,5 +1,5 @@
-use std::path::Path;
 use regex::Regex;
+use std::path::Path;
 
 /// Scans a directory for migration files matching pattern NNNN_*.sql
 /// Returns the next available migration number (highest + 1, or 1 if none exist)
@@ -33,8 +33,7 @@ pub fn find_next_migration_number(dir: &Path) -> std::io::Result<u32> {
 pub fn generate_migration_filename(number: u32, name: &str) -> String {
     let sanitized: String = name
         .to_lowercase()
-        .replace(' ', "_")
-        .replace('-', "_")
+        .replace([' ', '-'], "_")
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
         .collect();
@@ -50,7 +49,7 @@ pub fn generate_migration_filename(number: u32, name: &str) -> String {
         panic!("Migration name must contain at least one alphanumeric character");
     }
 
-    format!("{:04}_{}.sql", number, sanitized)
+    format!("{number:04}_{sanitized}.sql")
 }
 
 #[cfg(test)]
@@ -86,9 +85,18 @@ mod tests {
 
     #[test]
     fn generates_filename_with_padding() {
-        assert_eq!(generate_migration_filename(1, "initial"), "0001_initial.sql");
-        assert_eq!(generate_migration_filename(42, "add users"), "0042_add_users.sql");
-        assert_eq!(generate_migration_filename(999, "Test-Name"), "0999_test_name.sql");
+        assert_eq!(
+            generate_migration_filename(1, "initial"),
+            "0001_initial.sql"
+        );
+        assert_eq!(
+            generate_migration_filename(42, "add users"),
+            "0042_add_users.sql"
+        );
+        assert_eq!(
+            generate_migration_filename(999, "Test-Name"),
+            "0999_test_name.sql"
+        );
     }
 
     #[test]

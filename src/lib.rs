@@ -4,6 +4,7 @@ pub mod diff;
 pub mod drift;
 pub mod dump;
 pub mod lint;
+pub mod migrate;
 pub mod model;
 pub mod parser;
 pub mod pg;

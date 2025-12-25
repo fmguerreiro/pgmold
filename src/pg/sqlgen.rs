@@ -1667,8 +1667,10 @@ mod tests {
     fn sqlgen_alter_sequence_increment() {
         use crate::diff::SequenceChanges;
 
-        let mut changes = SequenceChanges::default();
-        changes.increment = Some(10);
+        let changes = SequenceChanges {
+            increment: Some(10),
+            ..Default::default()
+        };
         let op = MigrationOp::AlterSequence {
             name: "public.counter_seq".to_string(),
             changes,
@@ -1714,8 +1716,10 @@ mod tests {
     fn sqlgen_alter_sequence_no_minvalue() {
         use crate::diff::SequenceChanges;
 
-        let mut changes = SequenceChanges::default();
-        changes.min_value = Some(None);
+        let changes = SequenceChanges {
+            min_value: Some(None),
+            ..Default::default()
+        };
         let op = MigrationOp::AlterSequence {
             name: "public.seq".to_string(),
             changes,
@@ -1729,8 +1733,10 @@ mod tests {
     fn sqlgen_alter_sequence_owned_by_none() {
         use crate::diff::SequenceChanges;
 
-        let mut changes = SequenceChanges::default();
-        changes.owned_by = Some(None);
+        let changes = SequenceChanges {
+            owned_by: Some(None),
+            ..Default::default()
+        };
         let op = MigrationOp::AlterSequence {
             name: "public.seq".to_string(),
             changes,

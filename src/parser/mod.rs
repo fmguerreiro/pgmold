@@ -1567,7 +1567,7 @@ CREATE TRIGGER bad_trigger
         // PostgreSQL order: INCREMENT BY before START WITH
         let sql = "CREATE SEQUENCE seq INCREMENT BY 1 START WITH 1;";
         let result = parse_sql_string(sql);
-        assert!(result.is_ok(), "PostgreSQL order should work: {:?}", result);
+        assert!(result.is_ok(), "PostgreSQL order should work: {result:?}");
     }
 
     #[test]
@@ -1586,8 +1586,7 @@ CREATE TRIGGER bad_trigger
         let result = parse_sql_string(sql);
         assert!(
             result.is_ok(),
-            "Full CREATE SEQUENCE should parse: {:?}",
-            result
+            "Full CREATE SEQUENCE should parse: {result:?}"
         );
         let schema = result.unwrap();
         let seq = schema.sequences.get("public.user_id_seq").unwrap();

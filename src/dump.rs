@@ -315,15 +315,13 @@ mod tests {
         );
 
         let dump = generate_dump(&schema, None);
-        eprintln!("Generated SQL:\n{}", dump);
+        eprintln!("Generated SQL:\n{dump}");
 
         // The dump should be parseable
         let result = parse_sql_string(&dump);
         assert!(
             result.is_ok(),
-            "Failed to parse generated dump: {:?}\n\nDump:\n{}",
-            result,
-            dump
+            "Failed to parse generated dump: {result:?}\n\nDump:\n{dump}"
         );
     }
 

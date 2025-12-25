@@ -25,10 +25,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     operation: "DropTable".to_string(),
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
-                    message: format!(
-                        "DROP TABLE acquires ACCESS EXCLUSIVE lock on table {}",
-                        table
-                    ),
+                    message: format!("DROP TABLE acquires ACCESS EXCLUSIVE lock on table {table}"),
                 });
             }
             MigrationOp::DropColumn { table, column } => {
@@ -37,8 +34,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "DROP COLUMN acquires ACCESS EXCLUSIVE lock on table {} (column {})",
-                        table, column
+                        "DROP COLUMN acquires ACCESS EXCLUSIVE lock on table {table} (column {column})"
                     ),
                 });
             }
@@ -53,8 +49,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                         table: table.clone(),
                         lock_level: LockLevel::AccessExclusive,
                         message: format!(
-                            "ALTER COLUMN acquires ACCESS EXCLUSIVE lock on table {} (column {})",
-                            table, column
+                            "ALTER COLUMN acquires ACCESS EXCLUSIVE lock on table {table} (column {column})"
                         ),
                     });
                 }
@@ -65,8 +60,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "CREATE INDEX acquires ACCESS EXCLUSIVE lock on table {} (use CREATE INDEX CONCURRENTLY to avoid blocking)",
-                        table
+                        "CREATE INDEX acquires ACCESS EXCLUSIVE lock on table {table} (use CREATE INDEX CONCURRENTLY to avoid blocking)"
                     ),
                 });
             }
@@ -76,8 +70,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "ADD PRIMARY KEY acquires ACCESS EXCLUSIVE lock on table {}",
-                        table
+                        "ADD PRIMARY KEY acquires ACCESS EXCLUSIVE lock on table {table}"
                     ),
                 });
             }
@@ -87,8 +80,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "DROP PRIMARY KEY acquires ACCESS EXCLUSIVE lock on table {}",
-                        table
+                        "DROP PRIMARY KEY acquires ACCESS EXCLUSIVE lock on table {table}"
                     ),
                 });
             }
@@ -98,8 +90,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "ADD FOREIGN KEY acquires ACCESS EXCLUSIVE lock on table {}",
-                        table
+                        "ADD FOREIGN KEY acquires ACCESS EXCLUSIVE lock on table {table}"
                     ),
                 });
             }
@@ -109,8 +100,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "DROP FOREIGN KEY acquires ACCESS EXCLUSIVE lock on table {}",
-                        table
+                        "DROP FOREIGN KEY acquires ACCESS EXCLUSIVE lock on table {table}"
                     ),
                 });
             }
@@ -120,8 +110,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "ADD CHECK CONSTRAINT acquires ACCESS EXCLUSIVE lock on table {}",
-                        table
+                        "ADD CHECK CONSTRAINT acquires ACCESS EXCLUSIVE lock on table {table}"
                     ),
                 });
             }
@@ -131,8 +120,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "DROP CHECK CONSTRAINT acquires ACCESS EXCLUSIVE lock on table {}",
-                        table
+                        "DROP CHECK CONSTRAINT acquires ACCESS EXCLUSIVE lock on table {table}"
                     ),
                 });
             }
@@ -142,8 +130,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "DROP INDEX acquires ACCESS EXCLUSIVE lock on table {} (index {})",
-                        table, index_name
+                        "DROP INDEX acquires ACCESS EXCLUSIVE lock on table {table} (index {index_name})"
                     ),
                 });
             }
@@ -153,8 +140,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "ENABLE ROW LEVEL SECURITY acquires ACCESS EXCLUSIVE lock on table {}",
-                        table
+                        "ENABLE ROW LEVEL SECURITY acquires ACCESS EXCLUSIVE lock on table {table}"
                     ),
                 });
             }
@@ -164,8 +150,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "DISABLE ROW LEVEL SECURITY acquires ACCESS EXCLUSIVE lock on table {}",
-                        table
+                        "DISABLE ROW LEVEL SECURITY acquires ACCESS EXCLUSIVE lock on table {table}"
                     ),
                 });
             }
@@ -188,8 +173,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "DROP POLICY acquires ACCESS EXCLUSIVE lock on table {} (policy {})",
-                        table, name
+                        "DROP POLICY acquires ACCESS EXCLUSIVE lock on table {table} (policy {name})"
                     ),
                 });
             }
@@ -199,8 +183,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: table.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "ALTER POLICY acquires ACCESS EXCLUSIVE lock on table {} (policy {})",
-                        table, name
+                        "ALTER POLICY acquires ACCESS EXCLUSIVE lock on table {table} (policy {name})"
                     ),
                 });
             }
@@ -229,8 +212,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table,
                     lock_level: LockLevel::ShareRowExclusive,
                     message: format!(
-                        "DROP TRIGGER acquires SHARE ROW EXCLUSIVE lock on table {}.{} (trigger {})",
-                        target_schema, target_name, name
+                        "DROP TRIGGER acquires SHARE ROW EXCLUSIVE lock on table {target_schema}.{target_name} (trigger {name})"
                     ),
                 });
             }
@@ -247,8 +229,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table,
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "ALTER TRIGGER ENABLE/DISABLE acquires ACCESS EXCLUSIVE lock on table {}.{} (trigger {})",
-                        target_schema, target_name, name
+                        "ALTER TRIGGER ENABLE/DISABLE acquires ACCESS EXCLUSIVE lock on table {target_schema}.{target_name} (trigger {name})"
                     ),
                 });
             }
@@ -257,7 +238,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     operation: "DropView".to_string(),
                     table: name.clone(),
                     lock_level: LockLevel::AccessExclusive,
-                    message: format!("DROP VIEW acquires ACCESS EXCLUSIVE lock on view {}", name),
+                    message: format!("DROP VIEW acquires ACCESS EXCLUSIVE lock on view {name}"),
                 });
             }
             MigrationOp::AlterView { name, .. } => {
@@ -265,10 +246,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     operation: "AlterView".to_string(),
                     table: name.clone(),
                     lock_level: LockLevel::AccessExclusive,
-                    message: format!(
-                        "ALTER VIEW acquires ACCESS EXCLUSIVE lock on view {}",
-                        name
-                    ),
+                    message: format!("ALTER VIEW acquires ACCESS EXCLUSIVE lock on view {name}"),
                 });
             }
             MigrationOp::DropSequence(name) => {
@@ -277,8 +255,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: name.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "DROP SEQUENCE acquires ACCESS EXCLUSIVE lock on sequence {}",
-                        name
+                        "DROP SEQUENCE acquires ACCESS EXCLUSIVE lock on sequence {name}"
                     ),
                 });
             }
@@ -288,8 +265,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     table: name.clone(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
-                        "ALTER SEQUENCE acquires ACCESS EXCLUSIVE lock on sequence {}",
-                        name
+                        "ALTER SEQUENCE acquires ACCESS EXCLUSIVE lock on sequence {name}"
                     ),
                 });
             }
@@ -304,7 +280,10 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
 mod tests {
     use super::*;
     use crate::diff::ColumnChanges;
-    use crate::model::{CheckConstraint, Column, ForeignKey, Index, IndexType, PgType, PrimaryKey, ReferentialAction};
+    use crate::model::{
+        CheckConstraint, Column, ForeignKey, Index, IndexType, PgType, PrimaryKey,
+        ReferentialAction,
+    };
 
     #[test]
     fn detects_drop_table_lock() {
