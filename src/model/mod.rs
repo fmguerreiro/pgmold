@@ -378,7 +378,7 @@ impl Function {
         let args = self
             .arguments
             .iter()
-            .map(|a| a.data_type.clone())
+            .map(|a| a.data_type.to_uppercase())
             .collect::<Vec<_>>()
             .join(", ");
         format!("{}({})", self.name, args)
@@ -737,5 +737,46 @@ mod tests {
         assert_eq!(small_int, small_deserialized);
         assert_eq!(integer, int_deserialized);
         assert_eq!(big_int, big_deserialized);
+    }
+
+    #[test]
+    fn function_signature_is_case_insensitive() {
+        let func_uppercase = Function {
+            schema: "public".to_string(),
+            name: "my_func".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("user_id".to_string()),
+                data_type: "UUID".to_string(),
+                mode: ArgMode::In,
+                default: None,
+            }],
+            return_type: "void".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+
+        let func_lowercase = Function {
+            schema: "public".to_string(),
+            name: "my_func".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("user_id".to_string()),
+                data_type: "uuid".to_string(),
+                mode: ArgMode::In,
+                default: None,
+            }],
+            return_type: "void".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+
+        assert_eq!(
+            func_uppercase.signature(),
+            func_lowercase.signature(),
+            "Function signatures should match regardless of type case"
+        );
     }
 }
