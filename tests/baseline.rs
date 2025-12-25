@@ -426,45 +426,6 @@ async fn baseline_detects_domain() {
 }
 
 #[tokio::test]
-async fn baseline_detects_partitioned_table() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    sqlx::raw_sql(
-        r#"
-        CREATE TABLE events (
-            id BIGINT,
-            created_at TIMESTAMPTZ NOT NULL,
-            data TEXT
-        ) PARTITION BY RANGE (created_at);
-
-        CREATE TABLE events_2024 PARTITION OF events
-            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-        "#,
-    )
-    .execute(connection.pool())
-    .await
-    .unwrap();
-
-    let temp_dir = TempDir::new().unwrap();
-    let output_path = temp_dir.path().join("schema.sql");
-
-    let result = run_baseline(
-        &connection,
-        &url,
-        &["public".to_string()],
-        output_path.to_str().unwrap(),
-    )
-    .await
-    .unwrap();
-
-    assert!(result.report.has_warnings());
-    assert!(result.report.warnings.iter().any(
-        |w| matches!(w, UnsupportedObject::PartitionedTable { name, .. } if name == "events")
-    ));
-}
-
-#[tokio::test]
 async fn baseline_detects_inherited_table() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();

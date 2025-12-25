@@ -30,10 +30,6 @@ pub enum UnsupportedObject {
         schema: String,
         name: String,
     },
-    PartitionedTable {
-        schema: String,
-        name: String,
-    },
     ForeignTable {
         schema: String,
         name: String,
@@ -49,7 +45,6 @@ impl UnsupportedObject {
             Self::Aggregate { .. } => "aggregate",
             Self::Rule { .. } => "rule",
             Self::InheritedTable { .. } => "inherited table",
-            Self::PartitionedTable { .. } => "partitioned table",
             Self::ForeignTable { .. } => "foreign table",
         }
     }
@@ -61,7 +56,6 @@ impl UnsupportedObject {
             | Self::CompositeType { schema, name }
             | Self::Aggregate { schema, name }
             | Self::InheritedTable { schema, name }
-            | Self::PartitionedTable { schema, name }
             | Self::ForeignTable { schema, name } => format!("{schema}.{name}"),
             Self::Rule {
                 schema,
@@ -84,7 +78,6 @@ pub async fn detect_unsupported_objects(
     unsupported.extend(detect_aggregates(connection, target_schemas).await?);
     unsupported.extend(detect_rules(connection, target_schemas).await?);
     unsupported.extend(detect_inherited_tables(connection, target_schemas).await?);
-    unsupported.extend(detect_partitioned_tables(connection, target_schemas).await?);
     unsupported.extend(detect_foreign_tables(connection, target_schemas).await?);
 
     Ok(unsupported)
@@ -232,6 +225,7 @@ async fn detect_inherited_tables(
         JOIN pg_namespace n ON c.relnamespace = n.oid
         JOIN pg_inherits i ON c.oid = i.inhrelid
         WHERE n.nspname = ANY($1)
+          AND NOT c.relispartition
         "#,
     )
     .bind(target_schemas)
@@ -242,32 +236,6 @@ async fn detect_inherited_tables(
     Ok(rows
         .into_iter()
         .map(|row| UnsupportedObject::InheritedTable {
-            schema: row.get("nspname"),
-            name: row.get("relname"),
-        })
-        .collect())
-}
-
-async fn detect_partitioned_tables(
-    connection: &PgConnection,
-    target_schemas: &[String],
-) -> Result<Vec<UnsupportedObject>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT n.nspname, c.relname
-        FROM pg_class c
-        JOIN pg_namespace n ON c.relnamespace = n.oid
-        WHERE c.relkind = 'p' AND n.nspname = ANY($1)
-        "#,
-    )
-    .bind(target_schemas)
-    .fetch_all(connection.pool())
-    .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to detect partitioned tables: {e}")))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| UnsupportedObject::PartitionedTable {
             schema: row.get("nspname"),
             name: row.get("relname"),
         })
