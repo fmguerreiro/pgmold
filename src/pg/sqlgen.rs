@@ -538,6 +538,10 @@ fn format_pg_type(pg_type: &PgType) -> String {
             let (schema, enum_name) = parse_qualified_name(name);
             quote_qualified(&schema, &enum_name)
         }
+        PgType::Named(name) => {
+            let (schema, type_name) = parse_qualified_name(name);
+            quote_qualified(&schema, &type_name)
+        }
     }
 }
 
@@ -2061,5 +2065,40 @@ mod tests {
         assert_eq!(strip_ident_quotes("p_role_name"), "p_role_name");
         assert_eq!(strip_ident_quotes("\"\"\"triple\"\"\""), "\"triple\"");
         assert_eq!(strip_ident_quotes("\"has\"\"escaped\""), "has\"escaped");
+    }
+
+    #[test]
+    fn generate_function_ddl_quotes_parameter_names_correctly() {
+        use crate::model::{Function, FunctionArg, ArgMode, Volatility, SecurityType};
+
+        let func = Function {
+            name: "is_org_admin".to_string(),
+            schema: "auth".to_string(),
+            arguments: vec![
+                FunctionArg {
+                    name: Some("p_role_name".to_string()),
+                    data_type: "text".to_string(),
+                    mode: ArgMode::In,
+                    default: None,
+                },
+                FunctionArg {
+                    name: Some("p_enterprise_id".to_string()),
+                    data_type: "uuid".to_string(),
+                    mode: ArgMode::In,
+                    default: Some("null::uuid".to_string()),
+                },
+            ],
+            return_type: "boolean".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT true".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Definer,
+        };
+
+        let ddl = generate_create_function(&func);
+
+        assert!(ddl.contains("\"p_role_name\" text"), "Expected single-quoted param name, got: {}", ddl);
+        assert!(ddl.contains("\"p_enterprise_id\" uuid DEFAULT null::uuid"), "Expected single-quoted param with default, got: {}", ddl);
+        assert!(!ddl.contains("\"\"\""), "Should not have triple quotes in: {}", ddl);
     }
 }
