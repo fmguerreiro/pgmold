@@ -97,9 +97,9 @@ mod tests {
             round_trip_ok: true,
             zero_diff_ok: true,
             fingerprint: "abc123".into(),
-            warnings: vec![UnsupportedObject::MaterializedView {
+            warnings: vec![UnsupportedObject::Domain {
                 schema: "public".into(),
-                name: "mv1".into(),
+                name: "email".into(),
             }],
         };
 

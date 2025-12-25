@@ -5,10 +5,6 @@ use sqlx::Row;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnsupportedObject {
-    MaterializedView {
-        schema: String,
-        name: String,
-    },
     Domain {
         schema: String,
         name: String,
@@ -39,7 +35,6 @@ pub enum UnsupportedObject {
 impl UnsupportedObject {
     pub fn kind(&self) -> &'static str {
         match self {
-            Self::MaterializedView { .. } => "materialized view",
             Self::Domain { .. } => "domain",
             Self::CompositeType { .. } => "composite type",
             Self::Aggregate { .. } => "aggregate",
@@ -51,8 +46,7 @@ impl UnsupportedObject {
 
     pub fn qualified_name(&self) -> String {
         match self {
-            Self::MaterializedView { schema, name }
-            | Self::Domain { schema, name }
+            Self::Domain { schema, name }
             | Self::CompositeType { schema, name }
             | Self::Aggregate { schema, name }
             | Self::InheritedTable { schema, name }
@@ -72,7 +66,6 @@ pub async fn detect_unsupported_objects(
 ) -> Result<Vec<UnsupportedObject>> {
     let mut unsupported = Vec::new();
 
-    unsupported.extend(detect_materialized_views(connection, target_schemas).await?);
     unsupported.extend(detect_domains(connection, target_schemas).await?);
     unsupported.extend(detect_composite_types(connection, target_schemas).await?);
     unsupported.extend(detect_aggregates(connection, target_schemas).await?);
@@ -81,28 +74,6 @@ pub async fn detect_unsupported_objects(
     unsupported.extend(detect_foreign_tables(connection, target_schemas).await?);
 
     Ok(unsupported)
-}
-
-async fn detect_materialized_views(
-    connection: &PgConnection,
-    target_schemas: &[String],
-) -> Result<Vec<UnsupportedObject>> {
-    let rows =
-        sqlx::query("SELECT schemaname, matviewname FROM pg_matviews WHERE schemaname = ANY($1)")
-            .bind(target_schemas)
-            .fetch_all(connection.pool())
-            .await
-            .map_err(|e| {
-                SchemaError::DatabaseError(format!("Failed to detect materialized views: {e}"))
-            })?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| UnsupportedObject::MaterializedView {
-            schema: row.get("schemaname"),
-            name: row.get("matviewname"),
-        })
-        .collect())
 }
 
 async fn detect_domains(
@@ -274,26 +245,27 @@ mod tests {
 
     #[test]
     fn unsupported_object_kind() {
-        let mv = UnsupportedObject::MaterializedView {
-            schema: "public".into(),
-            name: "mv1".into(),
-        };
-        assert_eq!(mv.kind(), "materialized view");
-
         let domain = UnsupportedObject::Domain {
             schema: "public".into(),
             name: "email".into(),
         };
         assert_eq!(domain.kind(), "domain");
+
+        let rule = UnsupportedObject::Rule {
+            schema: "public".into(),
+            table: "users".into(),
+            name: "protect_users".into(),
+        };
+        assert_eq!(rule.kind(), "rule");
     }
 
     #[test]
     fn unsupported_object_qualified_name() {
-        let mv = UnsupportedObject::MaterializedView {
+        let domain = UnsupportedObject::Domain {
             schema: "analytics".into(),
-            name: "daily_stats".into(),
+            name: "email".into(),
         };
-        assert_eq!(mv.qualified_name(), "analytics.daily_stats");
+        assert_eq!(domain.qualified_name(), "analytics.email");
 
         let rule = UnsupportedObject::Rule {
             schema: "public".into(),

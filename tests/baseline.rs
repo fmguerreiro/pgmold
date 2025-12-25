@@ -355,39 +355,6 @@ async fn baseline_circular_foreign_keys() {
 }
 
 #[tokio::test]
-async fn baseline_detects_materialized_view() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    sqlx::raw_sql(
-        r#"
-        CREATE TABLE users (id BIGINT PRIMARY KEY);
-        CREATE MATERIALIZED VIEW user_stats AS SELECT count(*) as total FROM users;
-        "#,
-    )
-    .execute(connection.pool())
-    .await
-    .unwrap();
-
-    let temp_dir = TempDir::new().unwrap();
-    let output_path = temp_dir.path().join("schema.sql");
-
-    let result = run_baseline(
-        &connection,
-        &url,
-        &["public".to_string()],
-        output_path.to_str().unwrap(),
-    )
-    .await
-    .unwrap();
-
-    assert!(result.report.has_warnings());
-    assert!(result.report.warnings.iter().any(
-        |w| matches!(w, UnsupportedObject::MaterializedView { name, .. } if name == "user_stats")
-    ));
-}
-
-#[tokio::test]
 async fn baseline_detects_domain() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();

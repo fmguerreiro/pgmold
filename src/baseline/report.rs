@@ -242,9 +242,9 @@ mod tests {
     #[test]
     fn baseline_report_with_warnings() {
         let mut report = sample_report();
-        report.warnings.push(UnsupportedObject::MaterializedView {
+        report.warnings.push(UnsupportedObject::Domain {
             schema: "public".into(),
-            name: "mv1".into(),
+            name: "email".into(),
         });
         assert!(report.has_warnings());
         assert!(report.is_success());
@@ -275,24 +275,24 @@ mod tests {
     #[test]
     fn text_report_shows_warnings() {
         let mut report = sample_report();
-        report.warnings.push(UnsupportedObject::MaterializedView {
-            schema: "public".into(),
-            name: "mv1".into(),
-        });
-        report.warnings.push(UnsupportedObject::MaterializedView {
-            schema: "public".into(),
-            name: "mv2".into(),
-        });
         report.warnings.push(UnsupportedObject::Domain {
             schema: "public".into(),
             name: "email".into(),
+        });
+        report.warnings.push(UnsupportedObject::Domain {
+            schema: "public".into(),
+            name: "url".into(),
+        });
+        report.warnings.push(UnsupportedObject::CompositeType {
+            schema: "public".into(),
+            name: "address".into(),
         });
 
         let text = generate_text_report(&report);
 
         assert!(text.contains("Warnings:"));
-        assert!(text.contains("2 materialized view"));
-        assert!(text.contains("1 domain"));
+        assert!(text.contains("2 domain"));
+        assert!(text.contains("1 composite type"));
     }
 
     #[test]
