@@ -199,7 +199,11 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     command: parse_policy_command(&command),
                     roles: to
                         .iter()
-                        .flat_map(|owners| owners.iter().map(|o| o.to_string()))
+                        .flat_map(|owners| {
+                            owners.iter().map(|o| {
+                                crate::pg::sqlgen::strip_ident_quotes(&o.to_string())
+                            })
+                        })
                         .collect(),
                     using_expr: using.as_ref().map(|e| e.to_string()),
                     check_expr: with_check.as_ref().map(|e| e.to_string()),
@@ -293,6 +297,18 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                         on_delete: parse_referential_action(&fk.on_delete),
                                         on_update: parse_referential_action(&fk.on_update),
                                     });
+                                } else if let TableConstraint::Check(chk) = constraint {
+                                    let constraint_name = chk
+                                        .name
+                                        .as_ref()
+                                        .map(|n| n.to_string().trim_matches('"').to_string())
+                                        .unwrap_or_else(|| format!("{}_check", tbl_name));
+
+                                    table.check_constraints.push(CheckConstraint {
+                                        name: constraint_name,
+                                        expression: chk.expr.to_string(),
+                                    });
+                                    table.check_constraints.sort();
                                 }
                             }
                         }
@@ -2414,6 +2430,36 @@ CREATE DOMAIN us_postal_code AS TEXT
         let fingerprint_after = parsed.fingerprint();
 
         assert_eq!(fingerprint_before, fingerprint_after, "Domain and table should round-trip correctly");
+    }
+
+
+    #[test]
+    fn parses_policy_with_quoted_role_names() {
+        let sql = r#"
+            CREATE TABLE users (id BIGINT PRIMARY KEY);
+            ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+            CREATE POLICY admin_policy ON users FOR ALL TO "authenticated" USING (true);
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        let policy = &table.policies[0];
+
+        assert_eq!(policy.roles.len(), 1);
+        assert_eq!(policy.roles[0], "authenticated", "Role name should not have quotes");
+    }
+
+    #[test]
+    fn parses_check_constraint_from_alter_table() {
+        let sql = r#"
+            CREATE TABLE products (id BIGINT PRIMARY KEY, price INTEGER);
+            ALTER TABLE products ADD CONSTRAINT price_positive CHECK (price > 0);
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.products").unwrap();
+
+        assert_eq!(table.check_constraints.len(), 1);
+        assert_eq!(table.check_constraints[0].name, "price_positive");
+        assert!(table.check_constraints[0].expression.contains("price > 0"));
     }
 
     #[test]

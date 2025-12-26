@@ -748,6 +748,22 @@ fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     ops
 }
 
+/// Normalize an expression for comparison by converting type casts to lowercase.
+/// This handles differences like `::text` vs `::TEXT` from parser vs PostgreSQL.
+fn normalize_expr(expr: &Option<String>) -> Option<String> {
+    expr.as_ref().map(|e| {
+        let re = regex::Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").unwrap();
+        re.replace_all(e, |caps: &regex::Captures| {
+            format!("::{}", caps[1].to_lowercase())
+        })
+        .to_string()
+    })
+}
+
+fn exprs_equal(from: &Option<String>, to: &Option<String>) -> bool {
+    normalize_expr(from) == normalize_expr(to)
+}
+
 fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
     PolicyChanges {
         roles: if from.roles != to.roles {
@@ -755,12 +771,12 @@ fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
         } else {
             None
         },
-        using_expr: if from.using_expr != to.using_expr {
+        using_expr: if !exprs_equal(&from.using_expr, &to.using_expr) {
             Some(to.using_expr.clone())
         } else {
             None
         },
-        check_expr: if from.check_expr != to.check_expr {
+        check_expr: if !exprs_equal(&from.check_expr, &to.check_expr) {
             Some(to.check_expr.clone())
         } else {
             None
@@ -1829,5 +1845,40 @@ mod tests {
         assert_eq!(ops.len(), 2);
         assert!(matches!(&ops[0], MigrationOp::DropTrigger { .. }));
         assert!(matches!(&ops[1], MigrationOp::CreateTrigger(_)));
+    }
+
+
+    #[test]
+    fn policy_expression_comparison_ignores_type_cast_case() {
+        let mut from = empty_schema();
+        let mut table = simple_table("users");
+        table.row_level_security = true;
+        table.policies.push(crate::model::Policy {
+            name: "admin_only".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: crate::model::PolicyCommand::All,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("role = 'admin'::TEXT".to_string()),
+            check_expr: None,
+        });
+        from.tables.insert("public.users".to_string(), table);
+
+        let mut to = empty_schema();
+        let mut table = simple_table("users");
+        table.row_level_security = true;
+        table.policies.push(crate::model::Policy {
+            name: "admin_only".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: crate::model::PolicyCommand::All,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("role = 'admin'::text".to_string()),
+            check_expr: None,
+        });
+        to.tables.insert("public.users".to_string(), table);
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "Should not report differences for type cast case changes");
     }
 }
