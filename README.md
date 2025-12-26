@@ -184,7 +184,20 @@ pgmold plan --schema schema.sql --database postgres://localhost/mydb \
   --exclude '_*'
 ```
 
-Available object types: `extensions`, `tables`, `enums`, `domains`, `functions`, `views`, `triggers`, `sequences`, `partitions`
+**Filter nested types within tables:**
+```bash
+# Compare tables without RLS policies
+pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+  --exclude-types policies
+
+# Compare only table structure (no indexes, constraints, or policies)
+pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+  --exclude-types policies,indexes,foreignkeys,checkconstraints
+```
+
+Available object types:
+- Top-level: `extensions`, `tables`, `enums`, `domains`, `functions`, `views`, `triggers`, `sequences`, `partitions`
+- Nested (within tables): `policies`, `indexes`, `foreignkeys`, `checkconstraints`
 
 ### Adopting pgmold in an Existing Project
 
