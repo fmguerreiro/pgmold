@@ -16,6 +16,10 @@ pub enum ObjectType {
     Triggers,
     Sequences,
     Partitions,
+    Policies,
+    Indexes,
+    ForeignKeys,
+    CheckConstraints,
 }
 
 impl FromStr for ObjectType {
@@ -32,8 +36,12 @@ impl FromStr for ObjectType {
             "triggers" => Ok(ObjectType::Triggers),
             "sequences" => Ok(ObjectType::Sequences),
             "partitions" => Ok(ObjectType::Partitions),
+            "policies" => Ok(ObjectType::Policies),
+            "indexes" => Ok(ObjectType::Indexes),
+            "foreignkeys" => Ok(ObjectType::ForeignKeys),
+            "checkconstraints" => Ok(ObjectType::CheckConstraints),
             _ => Err(format!(
-                "Invalid object type '{}'. Valid types: extensions, tables, enums, domains, functions, views, triggers, sequences, partitions",
+                "Invalid object type '{}'. Valid types: extensions, tables, enums, domains, functions, views, triggers, sequences, partitions, policies, indexes, foreignkeys, checkconstraints",
                 s
             )),
         }
@@ -52,8 +60,24 @@ impl fmt::Display for ObjectType {
             ObjectType::Triggers => "triggers",
             ObjectType::Sequences => "sequences",
             ObjectType::Partitions => "partitions",
+            ObjectType::Policies => "policies",
+            ObjectType::Indexes => "indexes",
+            ObjectType::ForeignKeys => "foreignkeys",
+            ObjectType::CheckConstraints => "checkconstraints",
         };
         write!(f, "{}", s)
+    }
+}
+
+impl ObjectType {
+    pub fn is_nested(&self) -> bool {
+        matches!(
+            self,
+            ObjectType::Policies
+                | ObjectType::Indexes
+                | ObjectType::ForeignKeys
+                | ObjectType::CheckConstraints
+        )
     }
 }
 
@@ -850,5 +874,50 @@ mod tests {
 
         assert_eq!(filtered.extensions.len(), 0);
         assert_eq!(filtered.tables.len(), 1);
+    }
+
+    #[test]
+    fn object_type_from_str_nested_types() {
+        assert_eq!("policies".parse::<ObjectType>().unwrap(), ObjectType::Policies);
+        assert_eq!("indexes".parse::<ObjectType>().unwrap(), ObjectType::Indexes);
+        assert_eq!("foreignkeys".parse::<ObjectType>().unwrap(), ObjectType::ForeignKeys);
+        assert_eq!("checkconstraints".parse::<ObjectType>().unwrap(), ObjectType::CheckConstraints);
+    }
+
+    #[test]
+    fn object_type_from_str_nested_types_case_insensitive() {
+        assert_eq!("POLICIES".parse::<ObjectType>().unwrap(), ObjectType::Policies);
+        assert_eq!("Indexes".parse::<ObjectType>().unwrap(), ObjectType::Indexes);
+        assert_eq!("ForeignKeys".parse::<ObjectType>().unwrap(), ObjectType::ForeignKeys);
+        assert_eq!("CheckConstraints".parse::<ObjectType>().unwrap(), ObjectType::CheckConstraints);
+    }
+
+    #[test]
+    fn object_type_display_nested_types() {
+        assert_eq!(ObjectType::Policies.to_string(), "policies");
+        assert_eq!(ObjectType::Indexes.to_string(), "indexes");
+        assert_eq!(ObjectType::ForeignKeys.to_string(), "foreignkeys");
+        assert_eq!(ObjectType::CheckConstraints.to_string(), "checkconstraints");
+    }
+
+    #[test]
+    fn is_nested_returns_true_for_nested_types() {
+        assert!(ObjectType::Policies.is_nested());
+        assert!(ObjectType::Indexes.is_nested());
+        assert!(ObjectType::ForeignKeys.is_nested());
+        assert!(ObjectType::CheckConstraints.is_nested());
+    }
+
+    #[test]
+    fn is_nested_returns_false_for_top_level_types() {
+        assert!(!ObjectType::Extensions.is_nested());
+        assert!(!ObjectType::Tables.is_nested());
+        assert!(!ObjectType::Enums.is_nested());
+        assert!(!ObjectType::Domains.is_nested());
+        assert!(!ObjectType::Functions.is_nested());
+        assert!(!ObjectType::Views.is_nested());
+        assert!(!ObjectType::Triggers.is_nested());
+        assert!(!ObjectType::Sequences.is_nested());
+        assert!(!ObjectType::Partitions.is_nested());
     }
 }
