@@ -160,11 +160,11 @@ impl Filter {
             return false;
         }
 
-        if !self.include_types.is_empty() && !self.include_types.contains(&obj_type) {
-            return false;
+        if obj_type.is_nested() {
+            return true;
         }
 
-        true
+        self.include_types.is_empty() || self.include_types.contains(&obj_type)
     }
 }
 
@@ -919,5 +919,81 @@ mod tests {
         assert!(!ObjectType::Triggers.is_nested());
         assert!(!ObjectType::Sequences.is_nested());
         assert!(!ObjectType::Partitions.is_nested());
+    }
+
+    #[test]
+    fn nested_type_included_by_default_when_include_has_only_top_level() {
+        let filter = Filter::new(
+            &[],
+            &[],
+            &[ObjectType::Tables],
+            &[]
+        ).unwrap();
+        assert!(filter.should_include_type(ObjectType::Tables));
+        assert!(filter.should_include_type(ObjectType::Policies));
+        assert!(filter.should_include_type(ObjectType::Indexes));
+        assert!(filter.should_include_type(ObjectType::ForeignKeys));
+        assert!(!filter.should_include_type(ObjectType::Functions));
+    }
+
+    #[test]
+    fn nested_type_excluded_when_in_exclude_types() {
+        let filter = Filter::new(
+            &[],
+            &[],
+            &[],
+            &[ObjectType::Policies]
+        ).unwrap();
+        assert!(filter.should_include_type(ObjectType::Tables));
+        assert!(!filter.should_include_type(ObjectType::Policies));
+        assert!(filter.should_include_type(ObjectType::Indexes));
+    }
+
+    #[test]
+    fn include_types_with_nested_same_as_without_nested() {
+        let filter_without = Filter::new(
+            &[],
+            &[],
+            &[ObjectType::Tables],
+            &[]
+        ).unwrap();
+        let filter_with = Filter::new(
+            &[],
+            &[],
+            &[ObjectType::Tables, ObjectType::Policies],
+            &[]
+        ).unwrap();
+
+        assert_eq!(
+            filter_without.should_include_type(ObjectType::Tables),
+            filter_with.should_include_type(ObjectType::Tables)
+        );
+        assert_eq!(
+            filter_without.should_include_type(ObjectType::Policies),
+            filter_with.should_include_type(ObjectType::Policies)
+        );
+        assert_eq!(
+            filter_without.should_include_type(ObjectType::Indexes),
+            filter_with.should_include_type(ObjectType::Indexes)
+        );
+        assert_eq!(
+            filter_without.should_include_type(ObjectType::Functions),
+            filter_with.should_include_type(ObjectType::Functions)
+        );
+    }
+
+    #[test]
+    fn nested_type_defaults_to_included_even_with_exclude_on_unrelated_type() {
+        let filter = Filter::new(
+            &[],
+            &[],
+            &[ObjectType::Functions],
+            &[ObjectType::Indexes]
+        ).unwrap();
+        assert!(filter.should_include_type(ObjectType::Functions));
+        assert!(!filter.should_include_type(ObjectType::Indexes));
+        assert!(filter.should_include_type(ObjectType::Policies));
+        assert!(filter.should_include_type(ObjectType::ForeignKeys));
+        assert!(!filter.should_include_type(ObjectType::Tables));
     }
 }
