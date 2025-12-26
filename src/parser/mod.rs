@@ -12,8 +12,8 @@ use sqlparser::parser::Parser;
 use std::collections::BTreeMap;
 use std::fs;
 
-fn normalize_default_expr(expr: &str) -> String {
-    let re = regex::Regex::new(r"::([A-Z]+)").unwrap();
+fn normalize_expr(expr: &str) -> String {
+    let re = regex::Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").unwrap();
     re.replace_all(expr, |caps: &regex::Captures| {
         format!("::{}", caps[1].to_lowercase())
     })
@@ -49,7 +49,7 @@ fn parse_policy_command(cmd: &Option<sqlparser::ast::CreatePolicyCommand>) -> Po
 fn parse_for_values(for_values: &Option<ForValues>) -> Result<PartitionBound> {
     match for_values {
         Some(ForValues::In(values)) => Ok(PartitionBound::List {
-            values: values.iter().map(|e| e.to_string()).collect(),
+            values: values.iter().map(|e| normalize_expr(&e.to_string())).collect(),
         }),
         Some(ForValues::From { from, to }) => Ok(PartitionBound::Range {
             from: from.iter().map(partition_bound_value_to_string).collect(),
@@ -68,7 +68,7 @@ fn parse_for_values(for_values: &Option<ForValues>) -> Result<PartitionBound> {
 
 fn partition_bound_value_to_string(v: &PartitionBoundValue) -> String {
     match v {
-        PartitionBoundValue::Expr(e) => e.to_string(),
+        PartitionBoundValue::Expr(e) => normalize_expr(&e.to_string()),
         PartitionBoundValue::MinValue => "MINVALUE".to_string(),
         PartitionBoundValue::MaxValue => "MAXVALUE".to_string(),
     }
@@ -205,8 +205,8 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                             })
                         })
                         .collect(),
-                    using_expr: using.as_ref().map(|e| e.to_string()),
-                    check_expr: with_check.as_ref().map(|e| e.to_string()),
+                    using_expr: using.as_ref().map(|e| normalize_expr(&e.to_string())),
+                    check_expr: with_check.as_ref().map(|e| normalize_expr(&e.to_string())),
                 };
                 if let Some(table) = schema.tables.get_mut(&tbl_key) {
                     table.policies.push(policy);
@@ -306,7 +306,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
 
                                     table.check_constraints.push(CheckConstraint {
                                         name: constraint_name,
-                                        expression: chk.expr.to_string(),
+                                        expression: normalize_expr(&chk.expr.to_string()),
                                     });
                                     table.check_constraints.sort();
                                 }
@@ -392,7 +392,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         TableConstraint::Check(chk) => {
                             check_constraints.push(DomainConstraint {
                                 name: chk.name.as_ref().map(|n| n.to_string()),
-                                expression: chk.expr.to_string(),
+                                expression: normalize_expr(&chk.expr.to_string()),
                             });
                         }
                         _ => {
@@ -408,7 +408,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     schema: domain_schema.clone(),
                     name: domain_name.clone(),
                     data_type: pg_type,
-                    default: default.as_ref().map(|e| e.to_string()),
+                    default: default.as_ref().map(|e| normalize_expr(&e.to_string())),
                     not_null,
                     collation: collation.as_ref().map(|c| c.to_string()),
                     check_constraints,
@@ -483,7 +483,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     .map(|to| to.to_string().to_uppercase().contains("ROW"))
                     .unwrap_or(false);
 
-                let when_clause = condition.as_ref().map(|e| e.to_string());
+                let when_clause = condition.as_ref().map(|e| normalize_expr(&e.to_string()));
 
                 // Validate INSTEAD OF trigger rules per PostgreSQL requirements
                 if timing == TriggerTiming::InsteadOf {
@@ -690,7 +690,7 @@ fn parse_create_table(
 
                 table.check_constraints.push(CheckConstraint {
                     name: constraint_name,
-                    expression: chk.expr.to_string(),
+                    expression: normalize_expr(&chk.expr.to_string()),
                 });
             }
             _ => {}
@@ -716,7 +716,7 @@ fn parse_column_with_serial(
             ColumnOption::NotNull => nullable = false,
             ColumnOption::Null => nullable = true,
             ColumnOption::Default(expr) => {
-                default = Some(normalize_default_expr(&expr.to_string()));
+                default = Some(normalize_expr(&expr.to_string()));
             }
             _ => {}
         }
@@ -2473,5 +2473,49 @@ CREATE DOMAIN us_postal_code AS TEXT
 
         assert_eq!(func.arguments[0].name, Some("p_role_name".to_string()));
         assert_eq!(func.arguments[1].name, Some("p_enterprise_id".to_string()));
+    }
+
+    #[test]
+    fn type_casts_normalized_to_lowercase() {
+        let sql = r#"
+            CREATE TABLE users (
+                id BIGINT,
+                role TEXT DEFAULT 'admin'::TEXT
+            );
+            CREATE POLICY user_policy ON users
+                FOR ALL
+                USING (role = 'admin'::TEXT)
+                WITH CHECK (role = 'user'::VARCHAR);
+            ALTER TABLE users ADD CONSTRAINT role_check CHECK (role IN ('admin'::TEXT, 'user'::TEXT));
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+
+        let table = schema.tables.get("public.users").unwrap();
+
+        let role_col = table.columns.get("role").unwrap();
+        assert_eq!(
+            role_col.default,
+            Some("'admin'::text".to_string()),
+            "Column default type casts should be lowercase"
+        );
+
+        let policy = &table.policies[0];
+        assert_eq!(
+            policy.using_expr,
+            Some("role = 'admin'::text".to_string()),
+            "Policy USING expression type casts should be lowercase"
+        );
+        assert_eq!(
+            policy.check_expr,
+            Some("role = 'user'::varchar".to_string()),
+            "Policy CHECK expression type casts should be lowercase"
+        );
+
+        let check = &table.check_constraints[0];
+        assert!(
+            check.expression.contains("'admin'::text"),
+            "Check constraint expression type casts should be lowercase: {}",
+            check.expression
+        );
     }
 }
