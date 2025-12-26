@@ -748,15 +748,18 @@ fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     ops
 }
 
-/// Normalize an expression for comparison by converting type casts to lowercase.
-/// This handles differences like `::text` vs `::TEXT` from parser vs PostgreSQL.
+/// Normalize an expression for comparison by:
+/// 1. Converting type casts to lowercase (handles `::TEXT` vs `::text`)
+/// 2. Normalizing whitespace (handles PostgreSQL's pg_get_expr vs sqlparser formatting)
 fn normalize_expr(expr: &Option<String>) -> Option<String> {
     expr.as_ref().map(|e| {
         let re = regex::Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").unwrap();
-        re.replace_all(e, |caps: &regex::Captures| {
-            format!("::{}", caps[1].to_lowercase())
-        })
-        .to_string()
+        let lowercased = re
+            .replace_all(e, |caps: &regex::Captures| {
+                format!("::{}", caps[1].to_lowercase())
+            })
+            .to_string();
+        normalize_whitespace(&lowercased)
     })
 }
 
@@ -782,6 +785,20 @@ fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
             None
         },
     }
+}
+
+
+/// Normalize whitespace in expression for comparison. Removes spaces after open
+/// parens and before close parens to match PostgreSQL's pg_get_expr vs sqlparser
+/// formatting differences.
+fn normalize_whitespace(expr: &str) -> String {
+    let re_ws = regex::Regex::new(r"\s+").unwrap();
+    let collapsed = re_ws.replace_all(expr, " ");
+
+    let re_paren_open = regex::Regex::new(r"\(\s+").unwrap();
+    let re_paren_close = regex::Regex::new(r"\s+\)").unwrap();
+    let no_space_after_open = re_paren_open.replace_all(&collapsed, "(");
+    re_paren_close.replace_all(&no_space_after_open, ")").to_string()
 }
 
 #[cfg(test)]
@@ -1880,5 +1897,77 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert!(ops.is_empty(), "Should not report differences for type cast case changes");
+    }
+
+    #[test]
+    fn policy_expression_comparison_ignores_whitespace_after_parens() {
+        // Tests the PostgreSQL pg_get_expr vs sqlparser formatting difference
+        // PostgreSQL returns: "(EXISTS ( SELECT 1 FROM ..."
+        // sqlparser formats: "(EXISTS (SELECT 1 FROM ..."
+        let mut from = empty_schema();
+        let mut table = simple_table("users");
+        table.row_level_security = true;
+        table.policies.push(crate::model::Policy {
+            name: "admin_only".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: crate::model::PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("(EXISTS ( SELECT 1 FROM user_roles ur WHERE ur.user_id = auth.uid()))".to_string()),
+            check_expr: None,
+        });
+        from.tables.insert("public.users".to_string(), table);
+
+        let mut to = empty_schema();
+        let mut table = simple_table("users");
+        table.row_level_security = true;
+        table.policies.push(crate::model::Policy {
+            name: "admin_only".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: crate::model::PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("(EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = auth.uid()))".to_string()),
+            check_expr: None,
+        });
+        to.tables.insert("public.users".to_string(), table);
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "Should not report differences for whitespace after parens");
+    }
+
+    #[test]
+    fn policy_expression_comparison_ignores_whitespace_before_parens() {
+        // Also test whitespace before closing parens
+        let mut from = empty_schema();
+        let mut table = simple_table("users");
+        table.row_level_security = true;
+        table.policies.push(crate::model::Policy {
+            name: "admin_only".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: crate::model::PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("(id = 1 )".to_string()),
+            check_expr: None,
+        });
+        from.tables.insert("public.users".to_string(), table);
+
+        let mut to = empty_schema();
+        let mut table = simple_table("users");
+        table.row_level_security = true;
+        table.policies.push(crate::model::Policy {
+            name: "admin_only".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: crate::model::PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("(id = 1)".to_string()),
+            check_expr: None,
+        });
+        to.tables.insert("public.users".to_string(), table);
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "Should not report differences for whitespace before parens");
     }
 }
