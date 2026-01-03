@@ -49,10 +49,10 @@ enum Commands {
         /// Include only objects matching glob patterns (can be repeated)
         #[arg(long, action = ArgAction::Append)]
         include: Vec<String>,
-        /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions)
+        /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
         #[arg(long, value_delimiter = ',')]
         include_types: Vec<ObjectType>,
-        /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions)
+        /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
         #[arg(long, value_delimiter = ',')]
         exclude_types: Vec<ObjectType>,
     },
@@ -75,10 +75,10 @@ enum Commands {
         /// Include only objects matching glob patterns (can be repeated)
         #[arg(long, action = ArgAction::Append)]
         include: Vec<String>,
-        /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions)
+        /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
         #[arg(long, value_delimiter = ',')]
         include_types: Vec<ObjectType>,
-        /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions)
+        /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
         #[arg(long, value_delimiter = ',')]
         exclude_types: Vec<ObjectType>,
     },
@@ -123,10 +123,10 @@ enum Commands {
         /// Include only objects matching glob patterns (can be repeated)
         #[arg(long, action = ArgAction::Append)]
         include: Vec<String>,
-        /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions)
+        /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
         #[arg(long, value_delimiter = ',')]
         include_types: Vec<ObjectType>,
-        /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions)
+        /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
         #[arg(long, value_delimiter = ',')]
         exclude_types: Vec<ObjectType>,
     },
