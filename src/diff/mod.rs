@@ -2066,4 +2066,272 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert!(ops.is_empty(), "Should not report differences for whitespace before parens");
     }
+
+    #[test]
+    fn trigger_on_cross_schema_table_matches_correctly() {
+        // Bug: pgmold incorrectly drops triggers that exist in both schema file and DB
+        // when the trigger is on a non-public schema table
+        let mut from = empty_schema();
+        from.triggers.insert(
+            "auth.users.on_auth_user_created".to_string(),
+            crate::model::Trigger {
+                name: "on_auth_user_created".to_string(),
+                target_schema: "auth".to_string(),
+                target_name: "users".to_string(),
+                timing: crate::model::TriggerTiming::After,
+                events: vec![crate::model::TriggerEvent::Insert],
+                update_columns: vec![],
+                for_each_row: true,
+                when_clause: None,
+                function_schema: "auth".to_string(),
+                function_name: "on_auth_user_created".to_string(),
+                function_args: vec![],
+                enabled: crate::model::TriggerEnabled::Origin,
+                old_table_name: None,
+                new_table_name: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.triggers.insert(
+            "auth.users.on_auth_user_created".to_string(),
+            crate::model::Trigger {
+                name: "on_auth_user_created".to_string(),
+                target_schema: "auth".to_string(),
+                target_name: "users".to_string(),
+                timing: crate::model::TriggerTiming::After,
+                events: vec![crate::model::TriggerEvent::Insert],
+                update_columns: vec![],
+                for_each_row: true,
+                when_clause: None,
+                function_schema: "auth".to_string(),
+                function_name: "on_auth_user_created".to_string(),
+                function_args: vec![],
+                enabled: crate::model::TriggerEnabled::Origin,
+                old_table_name: None,
+                new_table_name: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "Identical triggers should produce no diff operations");
+    }
+
+    #[test]
+    fn trigger_parsed_from_sql_matches_db_format() {
+        // Test that triggers parsed from SQL match what introspection would return
+        use crate::parser::parse_sql_string;
+
+        let sql = r#"
+CREATE FUNCTION auth.on_auth_user_created() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH ROW EXECUTE FUNCTION "auth"."on_auth_user_created"();
+"#;
+        let parsed_schema = parse_sql_string(sql).unwrap();
+
+        // Verify the trigger was parsed with the correct key
+        assert!(
+            parsed_schema.triggers.contains_key("auth.users.on_auth_user_created"),
+            "Parsed schema should contain trigger with key 'auth.users.on_auth_user_created', but keys are: {:?}",
+            parsed_schema.triggers.keys().collect::<Vec<_>>()
+        );
+
+        let parsed_trigger = parsed_schema.triggers.get("auth.users.on_auth_user_created").unwrap();
+
+        // Create a mock DB schema that matches what introspection would return
+        let db_trigger = crate::model::Trigger {
+            name: "on_auth_user_created".to_string(),
+            target_schema: "auth".to_string(),
+            target_name: "users".to_string(),
+            timing: crate::model::TriggerTiming::After,
+            events: vec![crate::model::TriggerEvent::Insert],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "auth".to_string(),
+            function_name: "on_auth_user_created".to_string(),
+            function_args: vec![],
+            enabled: crate::model::TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
+        };
+
+        // Check field by field to identify any mismatches
+        assert_eq!(parsed_trigger.name, db_trigger.name, "name mismatch");
+        assert_eq!(parsed_trigger.target_schema, db_trigger.target_schema, "target_schema mismatch");
+        assert_eq!(parsed_trigger.target_name, db_trigger.target_name, "target_name mismatch");
+        assert_eq!(parsed_trigger.timing, db_trigger.timing, "timing mismatch");
+        assert_eq!(parsed_trigger.events, db_trigger.events, "events mismatch");
+        assert_eq!(parsed_trigger.update_columns, db_trigger.update_columns, "update_columns mismatch");
+        assert_eq!(parsed_trigger.for_each_row, db_trigger.for_each_row, "for_each_row mismatch");
+        assert_eq!(parsed_trigger.when_clause, db_trigger.when_clause, "when_clause mismatch");
+        assert_eq!(parsed_trigger.function_schema, db_trigger.function_schema, "function_schema mismatch");
+        assert_eq!(parsed_trigger.function_name, db_trigger.function_name, "function_name mismatch");
+        assert_eq!(parsed_trigger.function_args, db_trigger.function_args, "function_args mismatch");
+        assert_eq!(parsed_trigger.enabled, db_trigger.enabled, "enabled mismatch");
+        assert_eq!(parsed_trigger.old_table_name, db_trigger.old_table_name, "old_table_name mismatch");
+        assert_eq!(parsed_trigger.new_table_name, db_trigger.new_table_name, "new_table_name mismatch");
+
+        // Verify semantic equality
+        assert!(
+            triggers_semantically_equal(&db_trigger, parsed_trigger),
+            "Triggers should be semantically equal"
+        );
+    }
+
+    #[test]
+    fn multiple_triggers_across_schemas_match() {
+        // Reproduces the exact bug report scenario with 3 triggers across 2 schemas
+        use crate::parser::parse_sql_string;
+
+        let sql = r#"
+CREATE FUNCTION auth.on_auth_user_created() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE FUNCTION auth.on_auth_user_updated() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE FUNCTION auth.user_role_change_trigger() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+
+CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH ROW EXECUTE FUNCTION "auth"."on_auth_user_created"();
+CREATE TRIGGER "on_auth_user_updated" AFTER UPDATE ON "auth"."users" FOR EACH ROW EXECUTE FUNCTION "auth"."on_auth_user_updated"();
+CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public"."user_roles" FOR EACH ROW EXECUTE FUNCTION "auth"."user_role_change_trigger"();
+"#;
+        let parsed_schema = parse_sql_string(sql).unwrap();
+
+        // Verify all triggers were parsed
+        assert_eq!(
+            parsed_schema.triggers.len(),
+            3,
+            "Should have parsed 3 triggers, got keys: {:?}",
+            parsed_schema.triggers.keys().collect::<Vec<_>>()
+        );
+
+        // Create mock DB schema
+        let mut db_schema = crate::model::Schema::new();
+
+        db_schema.triggers.insert(
+            "auth.users.on_auth_user_created".to_string(),
+            crate::model::Trigger {
+                name: "on_auth_user_created".to_string(),
+                target_schema: "auth".to_string(),
+                target_name: "users".to_string(),
+                timing: crate::model::TriggerTiming::After,
+                events: vec![crate::model::TriggerEvent::Insert],
+                update_columns: vec![],
+                for_each_row: true,
+                when_clause: None,
+                function_schema: "auth".to_string(),
+                function_name: "on_auth_user_created".to_string(),
+                function_args: vec![],
+                enabled: crate::model::TriggerEnabled::Origin,
+                old_table_name: None,
+                new_table_name: None,
+            },
+        );
+
+        db_schema.triggers.insert(
+            "auth.users.on_auth_user_updated".to_string(),
+            crate::model::Trigger {
+                name: "on_auth_user_updated".to_string(),
+                target_schema: "auth".to_string(),
+                target_name: "users".to_string(),
+                timing: crate::model::TriggerTiming::After,
+                events: vec![crate::model::TriggerEvent::Update],
+                update_columns: vec![],
+                for_each_row: true,
+                when_clause: None,
+                function_schema: "auth".to_string(),
+                function_name: "on_auth_user_updated".to_string(),
+                function_args: vec![],
+                enabled: crate::model::TriggerEnabled::Origin,
+                old_table_name: None,
+                new_table_name: None,
+            },
+        );
+
+        db_schema.triggers.insert(
+            "public.user_roles.on_user_role_change".to_string(),
+            crate::model::Trigger {
+                name: "on_user_role_change".to_string(),
+                target_schema: "public".to_string(),
+                target_name: "user_roles".to_string(),
+                timing: crate::model::TriggerTiming::After,
+                events: {
+                    let mut events = vec![
+                        crate::model::TriggerEvent::Delete,
+                        crate::model::TriggerEvent::Insert,
+                        crate::model::TriggerEvent::Update,
+                    ];
+                    events.sort();
+                    events
+                },
+                update_columns: vec![],
+                for_each_row: true,
+                when_clause: None,
+                function_schema: "auth".to_string(),
+                function_name: "user_role_change_trigger".to_string(),
+                function_args: vec![],
+                enabled: crate::model::TriggerEnabled::Origin,
+                old_table_name: None,
+                new_table_name: None,
+            },
+        );
+
+        // Also add the functions to DB schema so we don't get spurious CreateFunction ops
+        db_schema.functions.insert(
+            "auth.on_auth_user_created()".to_string(),
+            crate::model::Function {
+                name: "on_auth_user_created".to_string(),
+                schema: "auth".to_string(),
+                arguments: vec![],
+                return_type: "trigger".to_string(),
+                language: "plpgsql".to_string(),
+                body: "BEGIN RETURN NEW; END;".to_string(),
+                volatility: crate::model::Volatility::Volatile,
+                security: crate::model::SecurityType::Invoker,
+            },
+        );
+        db_schema.functions.insert(
+            "auth.on_auth_user_updated()".to_string(),
+            crate::model::Function {
+                name: "on_auth_user_updated".to_string(),
+                schema: "auth".to_string(),
+                arguments: vec![],
+                return_type: "trigger".to_string(),
+                language: "plpgsql".to_string(),
+                body: "BEGIN RETURN NEW; END;".to_string(),
+                volatility: crate::model::Volatility::Volatile,
+                security: crate::model::SecurityType::Invoker,
+            },
+        );
+        db_schema.functions.insert(
+            "auth.user_role_change_trigger()".to_string(),
+            crate::model::Function {
+                name: "user_role_change_trigger".to_string(),
+                schema: "auth".to_string(),
+                arguments: vec![],
+                return_type: "trigger".to_string(),
+                language: "plpgsql".to_string(),
+                body: "BEGIN RETURN NEW; END;".to_string(),
+                volatility: crate::model::Volatility::Volatile,
+                security: crate::model::SecurityType::Invoker,
+            },
+        );
+
+        // FROM = db_schema, TO = parsed_schema (like in plan command)
+        let ops = compute_diff(&db_schema, &parsed_schema);
+
+        // Filter for just trigger operations
+        let trigger_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| {
+                matches!(
+                    op,
+                    MigrationOp::CreateTrigger(_) | MigrationOp::DropTrigger { .. }
+                )
+            })
+            .collect();
+
+        assert!(
+            trigger_ops.is_empty(),
+            "Should have no trigger diff operations, but got: {:?}",
+            trigger_ops
+        );
+    }
 }

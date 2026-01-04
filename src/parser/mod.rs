@@ -2518,4 +2518,25 @@ CREATE DOMAIN us_postal_code AS TEXT
             check.expression
         );
     }
+
+    #[test]
+    fn parses_trigger_on_cross_schema_table_with_qualified_function() {
+        // Bug: triggers on non-public schema tables are not parsed correctly
+        // when the function is also in a non-public schema
+        let sql = r#"
+CREATE FUNCTION auth.on_auth_user_created() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH ROW EXECUTE FUNCTION "auth"."on_auth_user_created"();
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+
+        assert_eq!(schema.triggers.len(), 1, "Should parse exactly one trigger");
+        let trigger = schema.triggers.get("auth.users.on_auth_user_created").expect(
+            "Trigger should be keyed as auth.users.on_auth_user_created"
+        );
+        assert_eq!(trigger.name, "on_auth_user_created");
+        assert_eq!(trigger.target_schema, "auth");
+        assert_eq!(trigger.target_name, "users");
+        assert_eq!(trigger.function_schema, "auth");
+        assert_eq!(trigger.function_name, "on_auth_user_created");
+    }
 }

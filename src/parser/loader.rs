@@ -81,6 +81,78 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
             object_sources.insert(format!("func:{sig}"), path.clone());
             merged.functions.insert(sig, func);
         }
+
+        for (name, view) in schema.views {
+            if let Some(existing_path) = object_sources.get(&format!("view:{name}")) {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate view \"{name}\" defined in:\n  - {}\n  - {}",
+                    existing_path.display(),
+                    path.display()
+                )));
+            }
+            object_sources.insert(format!("view:{name}"), path.clone());
+            merged.views.insert(name, view);
+        }
+
+        for (name, trigger) in schema.triggers {
+            if let Some(existing_path) = object_sources.get(&format!("trigger:{name}")) {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate trigger \"{name}\" defined in:\n  - {}\n  - {}",
+                    existing_path.display(),
+                    path.display()
+                )));
+            }
+            object_sources.insert(format!("trigger:{name}"), path.clone());
+            merged.triggers.insert(name, trigger);
+        }
+
+        for (name, sequence) in schema.sequences {
+            if let Some(existing_path) = object_sources.get(&format!("sequence:{name}")) {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate sequence \"{name}\" defined in:\n  - {}\n  - {}",
+                    existing_path.display(),
+                    path.display()
+                )));
+            }
+            object_sources.insert(format!("sequence:{name}"), path.clone());
+            merged.sequences.insert(name, sequence);
+        }
+
+        for (name, domain) in schema.domains {
+            if let Some(existing_path) = object_sources.get(&format!("domain:{name}")) {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate domain \"{name}\" defined in:\n  - {}\n  - {}",
+                    existing_path.display(),
+                    path.display()
+                )));
+            }
+            object_sources.insert(format!("domain:{name}"), path.clone());
+            merged.domains.insert(name, domain);
+        }
+
+        for (name, extension) in schema.extensions {
+            if let Some(existing_path) = object_sources.get(&format!("extension:{name}")) {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate extension \"{name}\" defined in:\n  - {}\n  - {}",
+                    existing_path.display(),
+                    path.display()
+                )));
+            }
+            object_sources.insert(format!("extension:{name}"), path.clone());
+            merged.extensions.insert(name, extension);
+        }
+
+        for (name, partition) in schema.partitions {
+            if let Some(existing_path) = object_sources.get(&format!("partition:{name}")) {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate partition \"{name}\" defined in:\n  - {}\n  - {}",
+                    existing_path.display(),
+                    path.display()
+                )));
+            }
+            object_sources.insert(format!("partition:{name}"), path.clone());
+            merged.partitions.insert(name, partition);
+        }
     }
 
     Ok(merged)
@@ -434,5 +506,149 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Duplicate table"));
+    }
+
+    #[test]
+    fn load_merges_triggers() {
+        // Bug: triggers were not being merged from file schemas to the merged schema
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("functions.sql"),
+            r#"
+CREATE FUNCTION auth.on_auth_user_created() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("triggers.sql"),
+            r#"
+CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH ROW EXECUTE FUNCTION "auth"."on_auth_user_created"();
+"#,
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", dir.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        assert_eq!(
+            schema.triggers.len(),
+            1,
+            "Should have loaded 1 trigger, but got triggers: {:?}",
+            schema.triggers.keys().collect::<Vec<_>>()
+        );
+        assert!(schema.triggers.contains_key("auth.users.on_auth_user_created"));
+    }
+
+    #[test]
+    fn load_merges_views() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("tables.sql"),
+            "CREATE TABLE users (id INT, name TEXT);",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("views.sql"),
+            "CREATE VIEW active_users AS SELECT id, name FROM users WHERE id > 0;",
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", dir.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        assert_eq!(schema.views.len(), 1);
+        assert!(schema.views.contains_key("public.active_users"));
+    }
+
+    #[test]
+    fn load_merges_extensions() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("extensions.sql"), "CREATE EXTENSION pgcrypto;").unwrap();
+        fs::write(dir.path().join("other.sql"), "CREATE EXTENSION uuid_ossp;").unwrap();
+
+        let sources = vec![format!("{}/*.sql", dir.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        assert_eq!(schema.extensions.len(), 2);
+        assert!(schema.extensions.contains_key("pgcrypto"));
+        assert!(schema.extensions.contains_key("uuid_ossp"));
+    }
+
+    #[test]
+    fn load_merges_domains() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("domains.sql"),
+            "CREATE DOMAIN email AS TEXT CHECK (VALUE ~ '@');",
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", dir.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        assert_eq!(schema.domains.len(), 1);
+        assert!(schema.domains.contains_key("public.email"));
+    }
+
+    #[test]
+    fn load_merges_sequences() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("sequences.sql"), "CREATE SEQUENCE user_id_seq;").unwrap();
+
+        let sources = vec![format!("{}/*.sql", dir.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        assert_eq!(schema.sequences.len(), 1);
+        assert!(schema.sequences.contains_key("public.user_id_seq"));
+    }
+
+    #[test]
+    fn load_merges_all_schema_types() {
+        // Comprehensive test to ensure all schema types are merged
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("01_extensions.sql"),
+            "CREATE EXTENSION pgcrypto;",
+        )
+        .unwrap();
+        fs::write(dir.path().join("02_domains.sql"), "CREATE DOMAIN email AS TEXT;").unwrap();
+        fs::write(
+            dir.path().join("03_enums.sql"),
+            "CREATE TYPE status AS ENUM ('active', 'inactive');",
+        )
+        .unwrap();
+        fs::write(dir.path().join("04_sequences.sql"), "CREATE SEQUENCE counter_seq;").unwrap();
+        fs::write(
+            dir.path().join("05_tables.sql"),
+            "CREATE TABLE users (id INT PRIMARY KEY, email email, status status);",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("06_functions.sql"),
+            "CREATE FUNCTION my_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("07_views.sql"),
+            "CREATE VIEW active_users AS SELECT id FROM users;",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("08_triggers.sql"),
+            r#"CREATE TRIGGER user_audit AFTER INSERT ON users FOR EACH ROW EXECUTE FUNCTION my_fn();"#,
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", dir.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        assert_eq!(schema.extensions.len(), 1, "Should have 1 extension");
+        assert_eq!(schema.domains.len(), 1, "Should have 1 domain");
+        assert_eq!(schema.enums.len(), 1, "Should have 1 enum");
+        assert_eq!(schema.sequences.len(), 1, "Should have 1 sequence");
+        assert_eq!(schema.tables.len(), 1, "Should have 1 table");
+        assert_eq!(schema.functions.len(), 1, "Should have 1 function");
+        assert_eq!(schema.views.len(), 1, "Should have 1 view");
+        assert_eq!(schema.triggers.len(), 1, "Should have 1 trigger");
     }
 }
