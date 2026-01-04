@@ -199,6 +199,15 @@ Available object types:
 - Top-level: `extensions`, `tables`, `enums`, `domains`, `functions`, `views`, `triggers`, `sequences`, `partitions`
 - Nested (within tables): `policies`, `indexes`, `foreignkeys`, `checkconstraints`
 
+### Extension Objects
+
+By default, pgmold automatically excludes objects owned by extensions (e.g., PostGIS functions, pg_trgm operators). This prevents extension-provided objects from appearing in diffs.
+
+```bash
+# Include extension objects if needed (e.g., for full database dumps)
+pgmold dump --database postgres://localhost/mydb --include-extension-objects -o full_schema.sql
+```
+
 ### Adopting pgmold in an Existing Project
 
 If you have a live database with existing schema (and possibly a migration-based workflow), use `pgmold dump` to create a baseline:
