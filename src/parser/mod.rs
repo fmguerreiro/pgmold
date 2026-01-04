@@ -12,15 +12,11 @@ use sqlparser::parser::Parser;
 use std::collections::BTreeMap;
 use std::fs;
 
-fn normalize_expr(expr: &str) -> String {
-    let re = regex::Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").unwrap();
-    re.replace_all(expr, |caps: &regex::Captures| {
-        format!("::{}", caps[1].to_lowercase())
-    })
-    .to_string()
-}
+use crate::util::{normalize_sql_whitespace, normalize_type_casts};
 
-use crate::util::normalize_sql_whitespace;
+fn normalize_expr(expr: &str) -> String {
+    normalize_type_casts(expr)
+}
 
 fn extract_qualified_name(name: &sqlparser::ast::ObjectName) -> (String, String) {
     let parts: Vec<String> = name
@@ -536,7 +532,11 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     target_schema: tbl_schema.clone(),
                     target_name: tbl_name.clone(),
                     timing,
-                    events: trigger_events,
+                    events: {
+                        let mut sorted = trigger_events;
+                        sorted.sort();
+                        sorted
+                    },
                     update_columns,
                     for_each_row,
                     when_clause,
@@ -922,7 +922,7 @@ fn parse_create_function(
     security: Option<&sqlparser::ast::FunctionSecurity>,
 ) -> Result<Function> {
     let return_type_str = return_type
-        .map(|rt| rt.to_string().to_lowercase())
+        .map(|rt| crate::model::normalize_pg_type(&rt.to_string()))
         .ok_or_else(|| {
             SchemaError::ParseError(format!(
                 "Function {schema}.{name} is missing RETURNS clause"
@@ -975,7 +975,7 @@ fn parse_create_function(
                     };
                     FunctionArg {
                         name: arg.name.as_ref().map(|n| crate::pg::sqlgen::strip_ident_quotes(&n.value)),
-                        data_type: arg.data_type.to_string().to_lowercase(),
+                        data_type: crate::model::normalize_pg_type(&arg.data_type.to_string()),
                         mode,
                         default: arg.default_expr.as_ref().map(|e| e.to_string().to_lowercase()),
                     }

@@ -396,7 +396,7 @@ fn diff_triggers(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
 
     for (name, trigger) in &to.triggers {
         if let Some(from_trigger) = from.triggers.get(name) {
-            if from_trigger != trigger {
+            if !triggers_semantically_equal(from_trigger, trigger) {
                 if only_enabled_differs(from_trigger, trigger) {
                     ops.push(MigrationOp::AlterTriggerEnabled {
                         target_schema: trigger.target_schema.clone(),
@@ -431,6 +431,40 @@ fn diff_triggers(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops
 }
 
+fn normalize_when_clause(clause: &Option<String>) -> Option<String> {
+    clause.as_ref().map(|c| {
+        // Lowercase everything first (handles OLD/old, NEW/new differences)
+        let lowered = c.to_lowercase();
+        // Normalize type casts (handles ::TEXT vs ::text)
+        let type_normalized = crate::util::normalize_type_casts(&lowered);
+        // Remove redundant text type casts (PostgreSQL often strips these)
+        let re = regex::Regex::new(r"::text\b").unwrap();
+        let cast_stripped = re.replace_all(&type_normalized, "").to_string();
+        normalize_whitespace(&cast_stripped)
+    })
+}
+
+fn when_clauses_equal(from: &Option<String>, to: &Option<String>) -> bool {
+    normalize_when_clause(from) == normalize_when_clause(to)
+}
+
+fn triggers_semantically_equal(from: &Trigger, to: &Trigger) -> bool {
+    from.name == to.name
+        && from.target_schema == to.target_schema
+        && from.target_name == to.target_name
+        && from.timing == to.timing
+        && from.events == to.events
+        && from.update_columns == to.update_columns
+        && from.for_each_row == to.for_each_row
+        && when_clauses_equal(&from.when_clause, &to.when_clause)
+        && from.function_schema == to.function_schema
+        && from.function_name == to.function_name
+        && from.function_args == to.function_args
+        && from.enabled == to.enabled
+        && from.old_table_name == to.old_table_name
+        && from.new_table_name == to.new_table_name
+}
+
 fn only_enabled_differs(from: &Trigger, to: &Trigger) -> bool {
     from.name == to.name
         && from.target_schema == to.target_schema
@@ -439,11 +473,13 @@ fn only_enabled_differs(from: &Trigger, to: &Trigger) -> bool {
         && from.events == to.events
         && from.update_columns == to.update_columns
         && from.for_each_row == to.for_each_row
-        && from.when_clause == to.when_clause
+        && when_clauses_equal(&from.when_clause, &to.when_clause)
         && from.function_schema == to.function_schema
         && from.function_name == to.function_name
         && from.function_args == to.function_args
         && from.enabled != to.enabled
+        && from.old_table_name == to.old_table_name
+        && from.new_table_name == to.new_table_name
 }
 
 fn diff_sequences(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
@@ -1862,6 +1898,66 @@ mod tests {
         assert_eq!(ops.len(), 2);
         assert!(matches!(&ops[0], MigrationOp::DropTrigger { .. }));
         assert!(matches!(&ops[1], MigrationOp::CreateTrigger(_)));
+    }
+
+    #[test]
+    fn trigger_event_order_does_not_affect_comparison() {
+        use crate::model::TriggerEvent;
+
+        let mut from = empty_schema();
+        let mut from_trigger = make_trigger("audit_trigger", "users");
+        from_trigger.events = vec![TriggerEvent::Delete, TriggerEvent::Insert, TriggerEvent::Update];
+        from_trigger.events.sort();
+        from.triggers.insert(
+            "public.users.audit_trigger".to_string(),
+            from_trigger,
+        );
+
+        let mut to = empty_schema();
+        let mut to_trigger = make_trigger("audit_trigger", "users");
+        to_trigger.events = vec![TriggerEvent::Insert, TriggerEvent::Update, TriggerEvent::Delete];
+        to_trigger.events.sort();
+        to.triggers.insert(
+            "public.users.audit_trigger".to_string(),
+            to_trigger,
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert!(
+            ops.is_empty(),
+            "Triggers with same events in different order should be considered equal"
+        );
+    }
+
+
+    #[test]
+    fn trigger_when_clause_type_cast_case_does_not_affect_comparison() {
+        use crate::model::TriggerEvent;
+
+        let mut from = empty_schema();
+        let mut from_trigger = make_trigger("log_trigger", "events");
+        from_trigger.events = vec![TriggerEvent::Update];
+        from_trigger.when_clause = Some("(OLD.status::TEXT IS DISTINCT FROM NEW.status::TEXT)".to_string());
+        from.triggers.insert(
+            "public.events.log_trigger".to_string(),
+            from_trigger,
+        );
+
+        let mut to = empty_schema();
+        let mut to_trigger = make_trigger("log_trigger", "events");
+        to_trigger.events = vec![TriggerEvent::Update];
+        to_trigger.when_clause = Some("(OLD.status::text IS DISTINCT FROM NEW.status::text)".to_string());
+        to.triggers.insert(
+            "public.events.log_trigger".to_string(),
+            to_trigger,
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert!(
+            ops.is_empty(),
+            "Triggers with same WHEN clause but different type cast case should be equal. Got: {:?}",
+            ops
+        );
     }
 
 

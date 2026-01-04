@@ -1,6 +1,6 @@
 [package]
 name = "pgmold"
-version = "0.12.8"
+version = "0.12.9"
 edition = "2021"
 description = "PostgreSQL schema-as-code management tool"
 license = "MIT"

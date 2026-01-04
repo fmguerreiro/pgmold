@@ -913,7 +913,7 @@ async fn introspect_functions(
             name: name.clone(),
             schema: schema.clone(),
             arguments,
-            return_type,
+            return_type: crate::model::normalize_pg_type(&return_type),
             language,
             body: body.trim().to_string(),
             volatility,
@@ -962,14 +962,14 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
             if parts.len() == 2 {
                 FunctionArg {
                     name: Some(strip_ident_quotes(parts[0])),
-                    data_type: parts[1].to_lowercase(),
+                    data_type: crate::model::normalize_pg_type(parts[1]),
                     mode,
                     default,
                 }
             } else {
                 FunctionArg {
                     name: None,
-                    data_type: arg_rest.trim().to_lowercase(),
+                    data_type: crate::model::normalize_pg_type(arg_rest.trim()),
                     mode,
                     default,
                 }
@@ -1117,7 +1117,8 @@ async fn introspect_triggers(
             events.push(TriggerEvent::Truncate);
         }
 
-        let when_clause = extract_when_clause(&trigger_def);
+        let when_clause = extract_when_clause(&trigger_def)
+            .map(|w| crate::util::normalize_type_casts(&w));
 
         let enabled = match tgenabled as u8 as char {
             'D' => TriggerEnabled::Disabled,
@@ -1131,7 +1132,11 @@ async fn introspect_triggers(
             target_schema: table_schema.clone(),
             target_name: table_name.clone(),
             timing,
-            events,
+            events: {
+                let mut sorted = events;
+                sorted.sort();
+                sorted
+            },
             update_columns: update_columns.unwrap_or_default(),
             for_each_row,
             when_clause,

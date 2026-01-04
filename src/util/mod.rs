@@ -6,6 +6,17 @@ pub fn normalize_sql_whitespace(sql: &str) -> String {
     re.replace_all(sql.trim(), " ").to_string()
 }
 
+
+/// Normalizes SQL expression type casts to lowercase.
+/// Handles `::TEXT` vs `::text` differences.
+pub fn normalize_type_casts(expr: &str) -> String {
+    let re = Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").unwrap();
+    re.replace_all(expr, |caps: &regex::Captures| {
+        format!("::{}", caps[1].to_lowercase())
+    })
+    .to_string()
+}
+
 #[derive(Error, Debug)]
 pub enum SchemaError {
     #[error("Parse error: {0}")]

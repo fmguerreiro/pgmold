@@ -398,10 +398,29 @@ impl Function {
         let args = self
             .arguments
             .iter()
-            .map(|a| a.data_type.to_lowercase())
+            .map(|a| normalize_pg_type(&a.data_type))
             .collect::<Vec<_>>()
             .join(", ");
         format!("{}({})", self.name, args)
+    }
+}
+
+
+/// Normalizes PostgreSQL type aliases to their canonical forms.
+/// This ensures consistent comparison between parsed SQL and introspected schemas.
+pub fn normalize_pg_type(type_name: &str) -> String {
+    let lower = type_name.to_lowercase();
+    match lower.as_str() {
+        "int" | "int4" => "integer".to_string(),
+        "int8" => "bigint".to_string(),
+        "int2" => "smallint".to_string(),
+        "float4" => "real".to_string(),
+        "float8" => "double precision".to_string(),
+        "bool" => "boolean".to_string(),
+        "varchar" => "character varying".to_string(),
+        "timestamptz" => "timestamp with time zone".to_string(),
+        "timetz" => "time with time zone".to_string(),
+        _ => lower,
     }
 }
 
@@ -800,5 +819,85 @@ mod tests {
         );
         // Both should produce lowercase signature
         assert_eq!(func_uppercase.signature(), "my_func(uuid)");
+    }
+
+    #[test]
+    fn function_signature_normalizes_type_aliases() {
+        // PostgreSQL normalizes int → integer, int8 → bigint, etc.
+        // Signatures should match regardless of which alias is used
+        let func_int = Function {
+            schema: "public".to_string(),
+            name: "add_numbers".to_string(),
+            arguments: vec![
+                FunctionArg {
+                    name: Some("a".to_string()),
+                    data_type: "int".to_string(),
+                    mode: ArgMode::In,
+                    default: None,
+                },
+                FunctionArg {
+                    name: Some("b".to_string()),
+                    data_type: "int".to_string(),
+                    mode: ArgMode::In,
+                    default: None,
+                },
+            ],
+            return_type: "int".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT a + b".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+
+        let func_integer = Function {
+            schema: "public".to_string(),
+            name: "add_numbers".to_string(),
+            arguments: vec![
+                FunctionArg {
+                    name: Some("a".to_string()),
+                    data_type: "integer".to_string(),
+                    mode: ArgMode::In,
+                    default: None,
+                },
+                FunctionArg {
+                    name: Some("b".to_string()),
+                    data_type: "integer".to_string(),
+                    mode: ArgMode::In,
+                    default: None,
+                },
+            ],
+            return_type: "integer".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT a + b".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+
+        assert_eq!(
+            func_int.signature(),
+            func_integer.signature(),
+            "int and integer should produce the same signature"
+        );
+        // Canonical form should be 'integer'
+        assert_eq!(func_int.signature(), "add_numbers(integer, integer)");
+    }
+
+    #[test]
+    fn normalize_pg_type_handles_common_aliases() {
+        // Test the normalization function directly
+        assert_eq!(normalize_pg_type("int"), "integer");
+        assert_eq!(normalize_pg_type("int4"), "integer");
+        assert_eq!(normalize_pg_type("int8"), "bigint");
+        assert_eq!(normalize_pg_type("int2"), "smallint");
+        assert_eq!(normalize_pg_type("float4"), "real");
+        assert_eq!(normalize_pg_type("float8"), "double precision");
+        assert_eq!(normalize_pg_type("bool"), "boolean");
+        assert_eq!(normalize_pg_type("varchar"), "character varying");
+        assert_eq!(normalize_pg_type("timestamptz"), "timestamp with time zone");
+        assert_eq!(normalize_pg_type("timetz"), "time with time zone");
+        // Already canonical types should remain unchanged
+        assert_eq!(normalize_pg_type("integer"), "integer");
+        assert_eq!(normalize_pg_type("text"), "text");
+        assert_eq!(normalize_pg_type("uuid"), "uuid");
     }
 }
