@@ -8,17 +8,24 @@ use std::collections::BTreeMap;
 pub async fn introspect_schema(
     connection: &PgConnection,
     target_schemas: &[String],
+    include_extension_objects: bool,
 ) -> Result<Schema> {
     let mut schema = Schema::new();
 
     schema.extensions = introspect_extensions(connection).await?;
-    schema.enums = introspect_enums(connection, target_schemas).await?;
-    schema.domains = introspect_domains(connection, target_schemas).await?;
-    schema.tables = introspect_tables(connection, target_schemas).await?;
-    schema.functions = introspect_functions(connection, target_schemas).await?;
-    schema.views = introspect_views(connection, target_schemas).await?;
-    schema.triggers = introspect_triggers(connection, target_schemas).await?;
-    schema.sequences = introspect_sequences(connection, target_schemas).await?;
+    schema.enums = introspect_enums(connection, target_schemas, include_extension_objects).await?;
+    schema.domains =
+        introspect_domains(connection, target_schemas, include_extension_objects).await?;
+    schema.tables =
+        introspect_tables(connection, target_schemas, include_extension_objects).await?;
+    schema.functions =
+        introspect_functions(connection, target_schemas, include_extension_objects).await?;
+    schema.views =
+        introspect_views(connection, target_schemas, include_extension_objects).await?;
+    schema.triggers =
+        introspect_triggers(connection, target_schemas, include_extension_objects).await?;
+    schema.sequences =
+        introspect_sequences(connection, target_schemas, include_extension_objects).await?;
 
     // Introspect partition keys and merge into tables
     let partition_keys = introspect_partition_keys(connection, target_schemas).await?;
@@ -108,6 +115,7 @@ async fn introspect_extensions(connection: &PgConnection) -> Result<BTreeMap<Str
 async fn introspect_enums(
     connection: &PgConnection,
     target_schemas: &[String],
+    include_extension_objects: bool,
 ) -> Result<BTreeMap<String, EnumType>> {
     let rows = sqlx::query(
         r#"
@@ -116,10 +124,16 @@ async fn introspect_enums(
         JOIN pg_enum e ON t.oid = e.enumtypid
         JOIN pg_namespace n ON t.typnamespace = n.oid
         WHERE n.nspname = ANY($1::text[])
+          AND ($2::boolean OR NOT EXISTS (
+              SELECT 1 FROM pg_depend d
+              WHERE d.objid = t.oid
+              AND d.deptype = 'e'
+          ))
         GROUP BY n.nspname, t.typname
         "#,
     )
     .bind(target_schemas)
+    .bind(include_extension_objects)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch enums: {e}")))?;
@@ -144,6 +158,7 @@ async fn introspect_enums(
 async fn introspect_domains(
     connection: &PgConnection,
     target_schemas: &[String],
+    include_extension_objects: bool,
 ) -> Result<BTreeMap<String, Domain>> {
     let rows = sqlx::query(
         r#"
@@ -158,9 +173,15 @@ async fn introspect_domains(
         JOIN pg_type bt ON t.typbasetype = bt.oid
         WHERE t.typtype = 'd'
             AND n.nspname = ANY($1::text[])
+            AND ($2::boolean OR NOT EXISTS (
+                SELECT 1 FROM pg_depend d
+                WHERE d.objid = t.oid
+                AND d.deptype = 'e'
+            ))
         "#,
     )
     .bind(target_schemas)
+    .bind(include_extension_objects)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch domains: {e}")))?;
@@ -274,15 +295,24 @@ async fn introspect_domain_constraints(
 async fn introspect_tables(
     connection: &PgConnection,
     target_schemas: &[String],
+    include_extension_objects: bool,
 ) -> Result<BTreeMap<String, Table>> {
     let rows = sqlx::query(
         r#"
-        SELECT table_schema, table_name
-        FROM information_schema.tables
-        WHERE table_schema = ANY($1::text[]) AND table_type = 'BASE TABLE'
+        SELECT n.nspname AS table_schema, c.relname AS table_name
+        FROM pg_class c
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE n.nspname = ANY($1::text[])
+          AND c.relkind IN ('r', 'p')
+          AND ($2::boolean OR NOT EXISTS (
+              SELECT 1 FROM pg_depend d
+              WHERE d.objid = c.oid
+              AND d.deptype = 'e'
+          ))
         "#,
     )
     .bind(target_schemas)
+    .bind(include_extension_objects)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch tables: {e}")))?;
@@ -860,6 +890,7 @@ fn map_policy_command(cmd: char) -> PolicyCommand {
 async fn introspect_functions(
     connection: &PgConnection,
     target_schemas: &[String],
+    include_extension_objects: bool,
 ) -> Result<BTreeMap<String, Function>> {
     let rows = sqlx::query(
         r#"
@@ -877,9 +908,15 @@ async fn introspect_functions(
         JOIN pg_language l ON p.prolang = l.oid
         WHERE n.nspname = ANY($1::text[])
           AND p.prokind = 'f'
+          AND ($2::boolean OR NOT EXISTS (
+              SELECT 1 FROM pg_depend d
+              WHERE d.objid = p.oid
+              AND d.deptype = 'e'
+          ))
         "#,
     )
     .bind(target_schemas)
+    .bind(include_extension_objects)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch functions: {e}")))?;
@@ -981,17 +1018,26 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
 async fn introspect_views(
     connection: &PgConnection,
     target_schemas: &[String],
+    include_extension_objects: bool,
 ) -> Result<BTreeMap<String, View>> {
     let mut views = BTreeMap::new();
 
     let regular_views = sqlx::query(
         r#"
-        SELECT schemaname, viewname, definition
-        FROM pg_views
-        WHERE schemaname = ANY($1::text[])
+        SELECT v.schemaname, v.viewname, v.definition
+        FROM pg_views v
+        JOIN pg_class c ON c.relname = v.viewname
+        JOIN pg_namespace n ON c.relnamespace = n.oid AND n.nspname = v.schemaname
+        WHERE v.schemaname = ANY($1::text[])
+          AND ($2::boolean OR NOT EXISTS (
+              SELECT 1 FROM pg_depend d
+              WHERE d.objid = c.oid
+              AND d.deptype = 'e'
+          ))
         "#,
     )
     .bind(target_schemas)
+    .bind(include_extension_objects)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch views: {e}")))?;
@@ -1013,12 +1059,20 @@ async fn introspect_views(
 
     let materialized_views = sqlx::query(
         r#"
-        SELECT schemaname, matviewname, definition
-        FROM pg_matviews
-        WHERE schemaname = ANY($1::text[])
+        SELECT v.schemaname, v.matviewname, v.definition
+        FROM pg_matviews v
+        JOIN pg_class c ON c.relname = v.matviewname
+        JOIN pg_namespace n ON c.relnamespace = n.oid AND n.nspname = v.schemaname
+        WHERE v.schemaname = ANY($1::text[])
+          AND ($2::boolean OR NOT EXISTS (
+              SELECT 1 FROM pg_depend d
+              WHERE d.objid = c.oid
+              AND d.deptype = 'e'
+          ))
         "#,
     )
     .bind(target_schemas)
+    .bind(include_extension_objects)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch materialized views: {e}")))?;
@@ -1044,6 +1098,7 @@ async fn introspect_views(
 async fn introspect_triggers(
     connection: &PgConnection,
     target_schemas: &[String],
+    include_extension_objects: bool,
 ) -> Result<BTreeMap<String, Trigger>> {
     let mut triggers = BTreeMap::new();
 
@@ -1072,10 +1127,16 @@ async fn introspect_triggers(
         JOIN pg_namespace pns ON p.pronamespace = pns.oid
         WHERE NOT t.tgisinternal
           AND ns.nspname = ANY($1::text[])
+          AND ($2::boolean OR NOT EXISTS (
+              SELECT 1 FROM pg_depend d
+              WHERE d.objid = t.oid
+              AND d.deptype = 'e'
+          ))
         ORDER BY ns.nspname, c.relname, t.tgname
         "#,
     )
     .bind(target_schemas)
+    .bind(include_extension_objects)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch triggers: {e}")))?;
@@ -1184,6 +1245,7 @@ fn extract_when_clause(trigger_def: &str) -> Option<String> {
 async fn introspect_sequences(
     connection: &PgConnection,
     target_schemas: &[String],
+    include_extension_objects: bool,
 ) -> Result<BTreeMap<String, Sequence>> {
     let rows = sqlx::query(
         r#"
@@ -1212,9 +1274,15 @@ async fn introspect_sequences(
         LEFT JOIN pg_attribute a ON a.attrelid = d.refobjid
             AND a.attnum = d.refobjsubid
         WHERE s.schemaname = ANY($1::text[])
+          AND ($2::boolean OR NOT EXISTS (
+              SELECT 1 FROM pg_depend ext_d
+              WHERE ext_d.objid = seq_class.oid
+              AND ext_d.deptype = 'e'
+          ))
         "#,
     )
     .bind(target_schemas)
+    .bind(include_extension_objects)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch sequences: {e}")))?;

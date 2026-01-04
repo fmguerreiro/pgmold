@@ -25,7 +25,7 @@ async fn empty_to_simple_schema() {
 
     let connection = PgConnection::new(&url).await.unwrap();
 
-    let empty_schema = introspect_schema(&connection, &["public".to_string()])
+    let empty_schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     assert!(empty_schema.tables.is_empty());
@@ -60,7 +60,7 @@ async fn add_column() {
         .await
         .unwrap();
 
-    let current_schema = introspect_schema(&connection, &["public".to_string()])
+    let current_schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     assert!(current_schema.tables.contains_key("public.users"));
@@ -196,7 +196,7 @@ async fn multi_file_schema_loading() {
     assert_eq!(posts.foreign_keys[0].referenced_table, "users");
 
     // Test that apply works with multi-file
-    let current = introspect_schema(&connection, &["public".to_string()])
+    let current = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     let ops = compute_diff(&current, &target);
@@ -217,7 +217,7 @@ async fn multi_file_schema_loading() {
     transaction.commit().await.unwrap();
 
     // Verify core schema objects exist after apply
-    let after = introspect_schema(&connection, &["public".to_string()])
+    let after = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     assert_eq!(after.enums.len(), 1, "Should have enum");
@@ -255,7 +255,7 @@ async fn add_enum_value() {
         .await
         .unwrap();
 
-    let current_schema = introspect_schema(&connection, &["public".to_string()])
+    let current_schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     assert!(current_schema.enums.contains_key("public.status"));
@@ -300,7 +300,7 @@ async fn add_enum_value() {
             .unwrap();
     }
 
-    let after_schema = introspect_schema(&connection, &["public".to_string()])
+    let after_schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     let status_enum = after_schema.enums.get("public.status").unwrap();
@@ -338,7 +338,7 @@ async fn multi_schema_table_management() {
     "#;
 
     let desired = parse_sql_string(sql).unwrap();
-    let current = introspect_schema(&connection, &["auth".to_string(), "api".to_string()])
+    let current = introspect_schema(&connection, &["auth".to_string(), "api".to_string()], false)
         .await
         .unwrap();
 
@@ -350,7 +350,7 @@ async fn multi_schema_table_management() {
         sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
-    let final_schema = introspect_schema(&connection, &["auth".to_string(), "api".to_string()])
+    let final_schema = introspect_schema(&connection, &["auth".to_string(), "api".to_string()], false)
         .await
         .unwrap();
     assert!(final_schema.tables.contains_key("auth.users"));
@@ -373,7 +373,7 @@ async fn sequence_roundtrip() {
     "#;
     let desired = parse_sql_string(sql).unwrap();
 
-    let current = introspect_schema(&connection, &["public".to_string()])
+    let current = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     assert!(current.sequences.is_empty());
@@ -392,7 +392,7 @@ async fn sequence_roundtrip() {
         sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
-    let after = introspect_schema(&connection, &["public".to_string()])
+    let after = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     assert!(after.sequences.contains_key("public.counter_seq"));
@@ -421,7 +421,7 @@ async fn sequence_with_owned_by() {
     "#;
     let desired = parse_sql_string(sql).unwrap();
 
-    let current = introspect_schema(&connection, &["public".to_string()])
+    let current = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
 
@@ -433,7 +433,7 @@ async fn sequence_with_owned_by() {
         sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
-    let after = introspect_schema(&connection, &["public".to_string()])
+    let after = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     assert!(after.sequences.contains_key("public.users_id_seq"));
@@ -463,7 +463,7 @@ async fn sequence_alter() {
     "#;
     let initial_schema = parse_sql_string(initial_sql).unwrap();
 
-    let current = introspect_schema(&connection, &["public".to_string()])
+    let current = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     let ops = compute_diff(&current, &initial_schema);
@@ -474,7 +474,7 @@ async fn sequence_alter() {
         sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
-    let after_create = introspect_schema(&connection, &["public".to_string()])
+    let after_create = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     assert!(after_create.sequences.contains_key("public.counter_seq"));
@@ -500,7 +500,7 @@ async fn sequence_alter() {
         sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
-    let after_alter = introspect_schema(&connection, &["public".to_string()])
+    let after_alter = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     let seq = after_alter.sequences.get("public.counter_seq").unwrap();
@@ -534,7 +534,7 @@ async fn dump_roundtrip() {
         .await
         .unwrap();
 
-    let schema = introspect_schema(&connection, &["public".to_string()])
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
 
@@ -567,7 +567,7 @@ async fn dump_multi_schema() {
         .await
         .unwrap();
 
-    let schema = introspect_schema(&connection, &["public".to_string(), "auth".to_string()])
+    let schema = introspect_schema(&connection, &["public".to_string(), "auth".to_string()], false)
         .await
         .unwrap();
 
@@ -615,7 +615,7 @@ async fn dump_complex_schema() {
         .await
         .unwrap();
 
-    let schema = introspect_schema(&connection, &["public".to_string()])
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
 
@@ -684,7 +684,7 @@ async fn instead_of_trigger_on_view() {
     .await
     .unwrap();
 
-    let schema = introspect_schema(&connection, &["public".to_string()])
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
 
@@ -754,7 +754,7 @@ async fn partitioned_table_roundtrip() {
     .await
     .unwrap();
 
-    let schema = introspect_schema(&connection, &["public".to_string()])
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
 
@@ -880,7 +880,7 @@ async fn plan_with_exclude_filters_objects() {
     .await
     .unwrap();
 
-    let current = introspect_schema(&connection, &["public".to_string()])
+    let current = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     assert_eq!(current.functions.len(), 3);
@@ -933,7 +933,7 @@ async fn apply_with_include_only_modifies_matching_objects() {
         .await
         .unwrap();
 
-    let current = introspect_schema(&connection, &["public".to_string()])
+    let current = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     assert_eq!(current.tables.len(), 3);
@@ -1024,7 +1024,7 @@ async fn dump_with_exclude_filters_output() {
     .await
     .unwrap();
 
-    let schema = introspect_schema(&connection, &["public".to_string()])
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     assert_eq!(schema.functions.len(), 3);
@@ -1086,7 +1086,7 @@ async fn exclude_pattern_filters_across_schemas() {
         .await
         .unwrap();
 
-    let current = introspect_schema(&connection, &["public".to_string(), "auth".to_string()])
+    let current = introspect_schema(&connection, &["public".to_string(), "auth".to_string()], false)
         .await
         .unwrap();
     assert_eq!(current.tables.len(), 4);
@@ -1132,7 +1132,7 @@ async fn combined_include_and_exclude_filters() {
         .await
         .unwrap();
 
-    let current = introspect_schema(&connection, &["public".to_string()])
+    let current = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     assert_eq!(current.tables.len(), 4);
@@ -1184,7 +1184,7 @@ async fn qualified_schema_pattern_filters() {
         .await
         .unwrap();
 
-    let current = introspect_schema(&connection, &["public".to_string(), "auth".to_string()])
+    let current = introspect_schema(&connection, &["public".to_string(), "auth".to_string()], false)
         .await
         .unwrap();
     assert_eq!(current.tables.len(), 3);
@@ -1205,5 +1205,59 @@ async fn qualified_schema_pattern_filters() {
     assert!(
         !filtered_current.tables.contains_key("public._internal"),
         "public._internal should be excluded"
+    );
+}
+
+#[tokio::test]
+async fn extension_objects_excluded_by_default() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE EXTENSION IF NOT EXISTS citext")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE TABLE public.users (id SERIAL PRIMARY KEY, email citext)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "CREATE FUNCTION public.my_custom_func() RETURNS text AS $$ SELECT 'hello'; $$ LANGUAGE sql",
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let schema_without_ext = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    assert!(
+        schema_without_ext.tables.contains_key("public.users"),
+        "User tables should be included"
+    );
+    assert!(
+        schema_without_ext
+            .functions
+            .contains_key("public.my_custom_func()"),
+        "User functions should be included"
+    );
+
+    let has_citext_func = schema_without_ext.functions.keys().any(|k| k.contains("citext"));
+    assert!(
+        !has_citext_func,
+        "citext extension functions should NOT be included when include_extension_objects=false"
+    );
+
+    let schema_with_ext = introspect_schema(&connection, &["public".to_string()], true)
+        .await
+        .unwrap();
+
+    let has_citext_func_included = schema_with_ext.functions.keys().any(|k| k.contains("citext"));
+    assert!(
+        has_citext_func_included,
+        "citext extension functions SHOULD be included when include_extension_objects=true"
     );
 }

@@ -49,7 +49,7 @@ async fn trigger_when_clause_type_cast_roundtrip() {
     .unwrap();
 
     // Introspect from DB
-    let db_schema = introspect_schema(&connection, &["public".to_string()])
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
 
@@ -113,7 +113,7 @@ async fn trigger_event_order_roundtrip() {
     .await
     .unwrap();
 
-    let db_schema = introspect_schema(&connection, &["public".to_string()])
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
 
@@ -162,7 +162,7 @@ async fn function_volatile_implicit_vs_explicit() {
     .await
     .unwrap();
 
-    let db_schema = introspect_schema(&connection, &["public".to_string()])
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
 
@@ -202,7 +202,7 @@ async fn function_body_whitespace_roundtrip() {
     .await
     .unwrap();
 
-    let db_schema = introspect_schema(&connection, &["public".to_string()])
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
 

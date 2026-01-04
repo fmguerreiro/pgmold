@@ -55,6 +55,9 @@ enum Commands {
         /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
         #[arg(long, value_delimiter = ',')]
         exclude_types: Vec<ObjectType>,
+        /// Include objects owned by extensions (e.g., PostGIS functions). Default: false (excludes extension objects)
+        #[arg(long)]
+        include_extension_objects: bool,
     },
 
     /// Apply migrations
@@ -81,6 +84,9 @@ enum Commands {
         /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
         #[arg(long, value_delimiter = ',')]
         exclude_types: Vec<ObjectType>,
+        /// Include objects owned by extensions (e.g., PostGIS functions). Default: false (excludes extension objects)
+        #[arg(long)]
+        include_extension_objects: bool,
     },
 
     /// Lint schema or migration plan
@@ -129,6 +135,9 @@ enum Commands {
         /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
         #[arg(long, value_delimiter = ',')]
         exclude_types: Vec<ObjectType>,
+        /// Include objects owned by extensions (e.g., PostGIS functions). Default: false (excludes extension objects)
+        #[arg(long)]
+        include_extension_objects: bool,
     },
 
     /// Generate numbered migration file
@@ -208,6 +217,7 @@ pub async fn run() -> Result<()> {
             include,
             include_types,
             exclude_types,
+            include_extension_objects,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -217,9 +227,10 @@ pub async fn run() -> Result<()> {
             let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
-            let db_schema = introspect_schema(&connection, &target_schemas)
-                .await
-                .map_err(|e| anyhow!("{e}"))?;
+            let db_schema =
+                introspect_schema(&connection, &target_schemas, include_extension_objects)
+                    .await
+                    .map_err(|e| anyhow!("{e}"))?;
 
             let filtered_db_schema = filter_schema(&db_schema, &filter);
 
@@ -260,6 +271,7 @@ pub async fn run() -> Result<()> {
             include,
             include_types,
             exclude_types,
+            include_extension_objects,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -270,9 +282,10 @@ pub async fn run() -> Result<()> {
                 .map_err(|e| anyhow!("{e}"))?;
 
             let target = load_sql_schema(&schema)?;
-            let db_schema = introspect_schema(&connection, &target_schemas)
-                .await
-                .map_err(|e| anyhow!("{e}"))?;
+            let db_schema =
+                introspect_schema(&connection, &target_schemas, include_extension_objects)
+                    .await
+                    .map_err(|e| anyhow!("{e}"))?;
 
             let filtered_db_schema = filter_schema(&db_schema, &filter);
 
@@ -348,7 +361,7 @@ pub async fn run() -> Result<()> {
                 let connection = PgConnection::new(&db_url)
                     .await
                     .map_err(|e| anyhow!("{e}"))?;
-                let current = introspect_schema(&connection, &target_schemas)
+                let current = introspect_schema(&connection, &target_schemas, false)
                     .await
                     .map_err(|e| anyhow!("{e}"))?;
                 plan_migration(compute_diff(&current, &target))
@@ -387,7 +400,7 @@ pub async fn run() -> Result<()> {
                 .map_err(|e| anyhow!("{e}"))?;
 
             let target = load_sql_schema(&schema)?;
-            let current = introspect_schema(&connection, &target_schemas)
+            let current = introspect_schema(&connection, &target_schemas, false)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
@@ -419,6 +432,7 @@ pub async fn run() -> Result<()> {
             include,
             include_types,
             exclude_types,
+            include_extension_objects,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -428,9 +442,10 @@ pub async fn run() -> Result<()> {
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
-            let db_schema = introspect_schema(&connection, &target_schemas)
-                .await
-                .map_err(|e| anyhow!("{e}"))?;
+            let db_schema =
+                introspect_schema(&connection, &target_schemas, include_extension_objects)
+                    .await
+                    .map_err(|e| anyhow!("{e}"))?;
 
             let schema = filter_schema(&db_schema, &filter);
 
@@ -507,7 +522,7 @@ pub async fn run() -> Result<()> {
                 let connection = PgConnection::new(&db_url)
                     .await
                     .map_err(|e| anyhow!("{e}"))?;
-                let current = introspect_schema(&connection, &target_schemas)
+                let current = introspect_schema(&connection, &target_schemas, false)
                     .await
                     .map_err(|e| anyhow!("{e}"))?;
 

@@ -75,7 +75,7 @@ async fn baseline_simple_table() {
     let content = fs::read_to_string(&output_path).unwrap();
     let parsed = parse_sql_string(&content).unwrap();
 
-    let introspected = introspect_schema(&connection, &["public".to_string()])
+    let introspected = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
     let diff = compute_diff(&introspected, &parsed);
@@ -528,7 +528,7 @@ async fn baseline_verifies_plan_shows_no_changes() {
     fs::write(&output_path, &result.sql_dump).unwrap();
 
     let schema_from_file = parse_sql_string(&result.sql_dump).unwrap();
-    let schema_from_db = introspect_schema(&connection, &["public".to_string()])
+    let schema_from_db = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
 
