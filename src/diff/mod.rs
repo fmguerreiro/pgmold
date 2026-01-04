@@ -262,7 +262,7 @@ fn diff_domains(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     for (name, to_domain) in &to.domains {
         if let Some(from_domain) = from.domains.get(name) {
             let mut changes = DomainChanges::default();
-            if from_domain.default != to_domain.default {
+            if !exprs_equal(&from_domain.default, &to_domain.default) {
                 changes.default = Some(to_domain.default.clone());
             }
             if from_domain.not_null != to_domain.not_null {
@@ -603,7 +603,7 @@ fn compute_column_changes(from: &Column, to: &Column) -> ColumnChanges {
         } else {
             None
         },
-        default: if from.default != to.default {
+        default: if !exprs_equal(&from.default, &to.default) {
             Some(to.default.clone())
         } else {
             None
@@ -785,11 +785,11 @@ fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
 }
 
 /// Normalize an expression for comparison by:
-/// 1. Converting type casts to lowercase (handles `::TEXT` vs `::text`)
+/// 1. Converting type casts to lowercase (handles `::TEXT` vs `::text`, `::character VARYING` vs `::character varying`)
 /// 2. Normalizing whitespace (handles PostgreSQL's pg_get_expr vs sqlparser formatting)
 fn normalize_expr(expr: &Option<String>) -> Option<String> {
     expr.as_ref().map(|e| {
-        let re = regex::Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").unwrap();
+        let re = regex::Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*(?:\s+[A-Za-z][A-Za-z0-9_\[\]]*)*)").unwrap();
         let lowercased = re
             .replace_all(e, |caps: &regex::Captures| {
                 format!("::{}", caps[1].to_lowercase())
@@ -2065,6 +2065,82 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert!(ops.is_empty(), "Should not report differences for whitespace before parens");
+    }
+
+    #[test]
+    fn column_default_comparison_ignores_type_cast_case() {
+        let mut from = empty_schema();
+        let mut from_table = simple_table("users");
+        from_table.columns.insert(
+            "phone".to_string(),
+            Column {
+                name: "phone".to_string(),
+                data_type: PgType::Varchar(Some(64)),
+                nullable: true,
+                default: Some("''::character varying".to_string()),
+                comment: None,
+            },
+        );
+        from.tables.insert("public.users".to_string(), from_table);
+
+        let mut to = empty_schema();
+        let mut to_table = simple_table("users");
+        to_table.columns.insert(
+            "phone".to_string(),
+            Column {
+                name: "phone".to_string(),
+                data_type: PgType::Varchar(Some(64)),
+                nullable: true,
+                default: Some("''::character VARYING".to_string()),
+                comment: None,
+            },
+        );
+        to.tables.insert("public.users".to_string(), to_table);
+
+        let ops = compute_diff(&from, &to);
+        assert!(
+            ops.is_empty(),
+            "Should not report differences for type cast case changes in column defaults. Got: {:?}",
+            ops
+        );
+    }
+
+    #[test]
+    fn column_default_null_cast_comparison_ignores_type_cast_case() {
+        let mut from = empty_schema();
+        let mut from_table = simple_table("users");
+        from_table.columns.insert(
+            "phone".to_string(),
+            Column {
+                name: "phone".to_string(),
+                data_type: PgType::Varchar(Some(64)),
+                nullable: true,
+                default: Some("NULL::character varying".to_string()),
+                comment: None,
+            },
+        );
+        from.tables.insert("public.users".to_string(), from_table);
+
+        let mut to = empty_schema();
+        let mut to_table = simple_table("users");
+        to_table.columns.insert(
+            "phone".to_string(),
+            Column {
+                name: "phone".to_string(),
+                data_type: PgType::Varchar(Some(64)),
+                nullable: true,
+                default: Some("NULL::character VARYING".to_string()),
+                comment: None,
+            },
+        );
+        to.tables.insert("public.users".to_string(), to_table);
+
+        let ops = compute_diff(&from, &to);
+        assert!(
+            ops.is_empty(),
+            "Should not report differences for type cast case changes in NULL defaults. Got: {:?}",
+            ops
+        );
     }
 
     #[test]
