@@ -43,10 +43,10 @@ enum Commands {
         /// Generate rollback SQL (reverse direction: schema → database)
         #[arg(long)]
         reverse: bool,
-        /// Exclude objects matching glob patterns (can be repeated)
+        /// Exclude objects by name using glob patterns. Matches against both unqualified names (e.g., "users") and qualified names (e.g., "public.users", "auth.users.my_trigger"). Use * and ? wildcards. To exclude by type, use --exclude-types instead. Can be repeated.
         #[arg(long, action = ArgAction::Append)]
         exclude: Vec<String>,
-        /// Include only objects matching glob patterns (can be repeated)
+        /// Include only objects by name using glob patterns. Matches against both unqualified names (e.g., "users") and qualified names (e.g., "public.users"). Use * and ? wildcards. To include by type, use --include-types instead. Can be repeated.
         #[arg(long, action = ArgAction::Append)]
         include: Vec<String>,
         /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
@@ -72,10 +72,10 @@ enum Commands {
         allow_destructive: bool,
         #[arg(long, default_value = "public", value_delimiter = ',')]
         target_schemas: Vec<String>,
-        /// Exclude objects matching glob patterns (can be repeated)
+        /// Exclude objects by name using glob patterns. Matches against both unqualified names (e.g., "users") and qualified names (e.g., "public.users", "auth.users.my_trigger"). Use * and ? wildcards. To exclude by type, use --exclude-types instead. Can be repeated.
         #[arg(long, action = ArgAction::Append)]
         exclude: Vec<String>,
-        /// Include only objects matching glob patterns (can be repeated)
+        /// Include only objects by name using glob patterns. Matches against both unqualified names (e.g., "users") and qualified names (e.g., "public.users"). Use * and ? wildcards. To include by type, use --include-types instead. Can be repeated.
         #[arg(long, action = ArgAction::Append)]
         include: Vec<String>,
         /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
@@ -123,10 +123,10 @@ enum Commands {
         /// Split output into multiple files by object type
         #[arg(long)]
         split: bool,
-        /// Exclude objects matching glob patterns (can be repeated)
+        /// Exclude objects by name using glob patterns. Matches against both unqualified names (e.g., "users") and qualified names (e.g., "public.users", "auth.users.my_trigger"). Use * and ? wildcards. To exclude by type, use --exclude-types instead. Can be repeated.
         #[arg(long, action = ArgAction::Append)]
         exclude: Vec<String>,
-        /// Include only objects matching glob patterns (can be repeated)
+        /// Include only objects by name using glob patterns. Matches against both unqualified names (e.g., "users") and qualified names (e.g., "public.users"). Use * and ? wildcards. To include by type, use --include-types instead. Can be repeated.
         #[arg(long, action = ArgAction::Append)]
         include: Vec<String>,
         /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
@@ -223,6 +223,7 @@ pub async fn run() -> Result<()> {
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
 
             let target = load_sql_schema(&schema)?;
+            let filtered_target = filter_schema(&target, &filter);
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
                 .await
@@ -235,9 +236,9 @@ pub async fn run() -> Result<()> {
             let filtered_db_schema = filter_schema(&db_schema, &filter);
 
             let ops = if reverse {
-                plan_migration(compute_diff(&target, &filtered_db_schema))
+                plan_migration(compute_diff(&filtered_target, &filtered_db_schema))
             } else {
-                plan_migration(compute_diff(&filtered_db_schema, &target))
+                plan_migration(compute_diff(&filtered_db_schema, &filtered_target))
             };
             let lock_warnings = detect_lock_hazards(&ops);
 
@@ -282,6 +283,7 @@ pub async fn run() -> Result<()> {
                 .map_err(|e| anyhow!("{e}"))?;
 
             let target = load_sql_schema(&schema)?;
+            let filtered_target = filter_schema(&target, &filter);
             let db_schema =
                 introspect_schema(&connection, &target_schemas, include_extension_objects)
                     .await
@@ -289,7 +291,7 @@ pub async fn run() -> Result<()> {
 
             let filtered_db_schema = filter_schema(&db_schema, &filter);
 
-            let ops = plan_migration(compute_diff(&filtered_db_schema, &target));
+            let ops = plan_migration(compute_diff(&filtered_db_schema, &filtered_target));
             let lint_options = LintOptions {
                 allow_destructive,
                 ..Default::default()

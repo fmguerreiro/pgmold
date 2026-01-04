@@ -160,11 +160,31 @@ impl Filter {
             return false;
         }
 
-        if obj_type.is_nested() {
+        if self.include_types.is_empty() {
             return true;
         }
 
-        self.include_types.is_empty() || self.include_types.contains(&obj_type)
+        if self.include_types.contains(&obj_type) {
+            return true;
+        }
+
+        // Check if include_types contains only nested types
+        let has_only_nested = !self.include_types.is_empty()
+            && self.include_types.iter().all(|t| t.is_nested());
+
+        // Include Tables when any nested type is in include_types
+        // (nested types like Policies, Indexes, etc. are stored inside tables)
+        if obj_type == ObjectType::Tables && has_only_nested {
+            return true;
+        }
+
+        // If include_types has only nested types, include only those specific nested types
+        // If include_types has top-level types, all nested types are included by default
+        if obj_type.is_nested() && !has_only_nested {
+            return true;
+        }
+
+        false
     }
 }
 
@@ -1201,5 +1221,101 @@ mod tests {
         let filtered_table = filtered_schema.tables.get("public.users").unwrap();
         assert_eq!(filtered_table.indexes.len(), 1);
         assert_eq!(filtered_table.policies.len(), 1);
+    }
+
+    #[test]
+    fn include_only_policies_preserves_tables_with_policies() {
+        use crate::model::{Policy, PolicyCommand};
+
+        let table = Table {
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: vec![],
+            primary_key: None,
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            comment: None,
+            row_level_security: true,
+            policies: vec![Policy {
+                name: "user_policy".to_string(),
+                table_schema: "public".to_string(),
+                table: "users".to_string(),
+                command: PolicyCommand::All,
+                roles: vec!["authenticated".to_string()],
+                using_expr: Some("user_id = current_user_id()".to_string()),
+                check_expr: None,
+            }],
+            partition_by: None,
+        };
+
+        let filter = Filter::new(&[], &[], &[ObjectType::Policies], &[]).unwrap();
+
+        assert!(filter.should_include_type(ObjectType::Tables));
+        assert!(filter.should_include_type(ObjectType::Policies));
+        assert!(!filter.should_include_type(ObjectType::Functions));
+
+        let filtered_schema = filter_schema(&Schema {
+            tables: vec![("public.users".to_string(), table)].into_iter().collect(),
+            functions: vec![("public.fn".to_string(), Function {
+                name: "fn".to_string(),
+                schema: "public".to_string(),
+                arguments: vec![],
+                return_type: "void".to_string(),
+                language: "sql".to_string(),
+                body: "SELECT 1".to_string(),
+                volatility: Volatility::Volatile,
+                security: SecurityType::Invoker,
+            })].into_iter().collect(),
+            ..Default::default()
+        }, &filter);
+
+        assert_eq!(filtered_schema.tables.len(), 1);
+        assert_eq!(filtered_schema.functions.len(), 0);
+
+        let filtered_table = filtered_schema.tables.get("public.users").unwrap();
+        assert_eq!(filtered_table.policies.len(), 1);
+        assert_eq!(filtered_table.indexes.len(), 0);
+    }
+
+    #[test]
+    fn include_only_indexes_preserves_tables_with_indexes() {
+        use crate::model::{Index, IndexType};
+
+        let table = Table {
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: vec![Index {
+                name: "users_email_idx".to_string(),
+                columns: vec!["email".to_string()],
+                unique: false,
+                index_type: IndexType::BTree,
+            }],
+            primary_key: None,
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            comment: None,
+            row_level_security: false,
+            policies: vec![],
+            partition_by: None,
+        };
+
+        let filter = Filter::new(&[], &[], &[ObjectType::Indexes], &[]).unwrap();
+
+        assert!(filter.should_include_type(ObjectType::Tables));
+        assert!(filter.should_include_type(ObjectType::Indexes));
+        assert!(!filter.should_include_type(ObjectType::Policies));
+        assert!(!filter.should_include_type(ObjectType::Functions));
+
+        let filtered_schema = filter_schema(&Schema {
+            tables: vec![("public.users".to_string(), table)].into_iter().collect(),
+            ..Default::default()
+        }, &filter);
+
+        assert_eq!(filtered_schema.tables.len(), 1);
+        let filtered_table = filtered_schema.tables.get("public.users").unwrap();
+        assert_eq!(filtered_table.indexes.len(), 1);
+        assert_eq!(filtered_table.policies.len(), 0);
     }
 }
