@@ -1384,17 +1384,28 @@ dependencies = [
  "clap",
  "glob",
  "hex",
+ "pgmold-sqlparser",
  "regex",
  "serde",
  "serde_json",
  "sha2",
- "sqlparser",
  "sqlx",
  "tempfile",
  "testcontainers",
  "testcontainers-modules",
  "thiserror 1.0.69",
  "tokio",
+]
+
+[[package]]
+name = "pgmold-sqlparser"
+version = "0.60.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "390a586fb08dab2a31facb5112c75188730cebbab6ef7154b48ed42d6c2f4e28"
+dependencies = [
+ "log",
+ "recursive",
+ "sqlparser_derive",
 ]
 
 [[package]]
@@ -2023,19 +2034,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "sqlparser"
-version = "0.60.0"
-source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs?branch=partition-of-support#767e1123eba58972868e11bc5f49100914322c1d"
-dependencies = [
- "log",
- "recursive",
- "sqlparser_derive",
-]
-
-[[package]]
 name = "sqlparser_derive"
 version = "0.4.0"
-source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs?branch=partition-of-support#767e1123eba58972868e11bc5f49100914322c1d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "028e551d5e270b31b9f3ea271778d9d827148d4287a5d96167b6bb9787f5cc38"
 dependencies = [
  "proc-macro2",
  "quote",
