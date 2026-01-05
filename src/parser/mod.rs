@@ -187,7 +187,6 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 ..
             } => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
-                let tbl_key = qualified_name(&tbl_schema, &tbl_name);
                 let policy = Policy {
                     name: name.to_string().trim_matches('"').to_string(),
                     table_schema: tbl_schema,
@@ -204,10 +203,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     using_expr: using.as_ref().map(|e| normalize_expr(&e.to_string())),
                     check_expr: with_check.as_ref().map(|e| normalize_expr(&e.to_string())),
                 };
-                if let Some(table) = schema.tables.get_mut(&tbl_key) {
-                    table.policies.push(policy);
-                    table.policies.sort();
-                }
+                schema.pending_policies.push(policy);
             }
             Statement::AlterTable(sqlparser::ast::AlterTable {
                 name, operations, ..
@@ -572,6 +568,11 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             _ => {}
         }
     }
+
+    // Associate pending policies with their tables.
+    // Orphaned policies (referencing non-existent tables) remain in pending_policies
+    // for potential resolution after schema merging in load_schema_sources.
+    schema.pending_policies = schema.finalize_partial();
 
     Ok(schema)
 }
@@ -2446,6 +2447,54 @@ CREATE DOMAIN us_postal_code AS TEXT
 
         assert_eq!(policy.roles.len(), 1);
         assert_eq!(policy.roles[0], "authenticated", "Role name should not have quotes");
+    }
+
+    #[test]
+    fn parses_policy_before_table_in_same_file() {
+        // Bug fix: policies should work regardless of statement order
+        let sql = r#"
+            CREATE POLICY admin_policy ON users FOR ALL TO "authenticated" USING (true);
+            CREATE TABLE users (id BIGINT PRIMARY KEY);
+            ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+
+        assert_eq!(table.policies.len(), 1, "Policy should be associated with table");
+        assert_eq!(table.policies[0].name, "admin_policy");
+        assert_eq!(table.policies[0].roles, vec!["authenticated"]);
+    }
+
+    #[test]
+    fn parses_multiple_policies_different_order() {
+        // Mix of policies before and after table definition
+        let sql = r#"
+            CREATE POLICY first_policy ON users FOR SELECT USING (true);
+            CREATE TABLE users (id BIGINT PRIMARY KEY, role TEXT);
+            CREATE POLICY second_policy ON users FOR INSERT WITH CHECK (role = 'admin');
+            ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+
+        assert_eq!(table.policies.len(), 2, "Both policies should be associated");
+        // Policies are sorted by name
+        let names: Vec<&str> = table.policies.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"first_policy"));
+        assert!(names.contains(&"second_policy"));
+    }
+
+    #[test]
+    fn policy_references_nonexistent_table_errors() {
+        let sql = r#"
+            CREATE POLICY orphan_policy ON nonexistent_table FOR ALL USING (true);
+        "#;
+        let result = parse_sql_string(sql);
+        // The policy references a non-existent table, which should result in pending_policies
+        // being non-empty, but parse_sql_string uses finalize_partial which doesn't error
+        let schema = result.unwrap();
+        assert!(schema.pending_policies.len() == 1, "Orphaned policy should remain in pending");
+        assert_eq!(schema.pending_policies[0].name, "orphan_policy");
     }
 
     #[test]

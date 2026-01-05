@@ -12,6 +12,10 @@ pub struct Schema {
     pub triggers: BTreeMap<String, Trigger>,
     pub sequences: BTreeMap<String, Sequence>,
     pub partitions: BTreeMap<String, Partition>,
+    /// Policies collected during parsing, awaiting association with tables.
+    /// Cleared after finalize() is called.
+    #[serde(skip)]
+    pub pending_policies: Vec<Policy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -376,6 +380,7 @@ impl Schema {
             triggers: BTreeMap::new(),
             sequences: BTreeMap::new(),
             partitions: BTreeMap::new(),
+            pending_policies: Vec::new(),
         }
     }
 
@@ -384,6 +389,42 @@ impl Schema {
         let json = serde_json::to_string(self).expect("Schema must serialize");
         let hash = Sha256::digest(json.as_bytes());
         hex::encode(hash)
+    }
+
+    /// Associates pending policies with their respective tables.
+    /// Returns an error if a policy references a table that doesn't exist.
+    pub fn finalize(&mut self) -> Result<(), String> {
+        let pending = std::mem::take(&mut self.pending_policies);
+        for policy in pending {
+            let table_key = qualified_name(&policy.table_schema, &policy.table);
+            if let Some(table) = self.tables.get_mut(&table_key) {
+                table.policies.push(policy);
+                table.policies.sort();
+            } else {
+                return Err(format!(
+                    "Policy \"{}\" references non-existent table \"{}\"",
+                    policy.name, table_key
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Associates pending policies with their respective tables.
+    /// Policies referencing non-existent tables are returned.
+    pub fn finalize_partial(&mut self) -> Vec<Policy> {
+        let pending = std::mem::take(&mut self.pending_policies);
+        let mut orphaned = Vec::new();
+        for policy in pending {
+            let table_key = qualified_name(&policy.table_schema, &policy.table);
+            if let Some(table) = self.tables.get_mut(&table_key) {
+                table.policies.push(policy);
+                table.policies.sort();
+            } else {
+                orphaned.push(policy);
+            }
+        }
+        orphaned
     }
 }
 

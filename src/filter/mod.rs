@@ -235,6 +235,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         triggers: filter_field(&schema.triggers, filter, ObjectType::Triggers),
         sequences: filter_field(&schema.sequences, filter, ObjectType::Sequences),
         partitions: filter_field(&schema.partitions, filter, ObjectType::Partitions),
+        pending_policies: Vec::new(),
     }
 }
 

@@ -153,7 +153,16 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
             object_sources.insert(format!("partition:{name}"), path.clone());
             merged.partitions.insert(name, partition);
         }
+
+        // Collect pending policies for cross-file resolution
+        merged.pending_policies.extend(schema.pending_policies);
     }
+
+    // Finalize: associate all pending policies with their tables.
+    // This handles policies defined in separate files from their tables.
+    merged
+        .finalize()
+        .map_err(|e| SchemaError::ParseError(e))?;
 
     Ok(merged)
 }
@@ -650,5 +659,78 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
         assert_eq!(schema.functions.len(), 1, "Should have 1 function");
         assert_eq!(schema.views.len(), 1, "Should have 1 view");
         assert_eq!(schema.triggers.len(), 1, "Should have 1 trigger");
+    }
+
+    #[test]
+    fn load_merges_policies_across_files() {
+        // Bug fix: policies in separate files should be associated with tables
+        let temp = TempDir::new().unwrap();
+
+        // Tables defined in one file
+        fs::write(
+            temp.path().join("tables.sql"),
+            r#"
+            CREATE TABLE users (id BIGINT PRIMARY KEY, role TEXT);
+            ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+        "#,
+        )
+        .unwrap();
+
+        // Policies defined in a separate file
+        fs::write(
+            temp.path().join("policies.sql"),
+            r#"
+            CREATE POLICY admin_policy ON users FOR ALL TO "authenticated" USING (true);
+            CREATE POLICY user_select ON users FOR SELECT USING (id > 0);
+        "#,
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", temp.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(
+            table.policies.len(),
+            2,
+            "Both policies from separate file should be associated with table"
+        );
+
+        let names: Vec<&str> = table.policies.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"admin_policy"));
+        assert!(names.contains(&"user_select"));
+    }
+
+    #[test]
+    fn load_errors_on_orphan_policy_in_cross_file() {
+        // Policies referencing non-existent tables should error after merge
+        let temp = TempDir::new().unwrap();
+
+        fs::write(
+            temp.path().join("tables.sql"),
+            r#"
+            CREATE TABLE users (id BIGINT PRIMARY KEY);
+        "#,
+        )
+        .unwrap();
+
+        // Policy references a table that doesn't exist
+        fs::write(
+            temp.path().join("policies.sql"),
+            r#"
+            CREATE POLICY orphan_policy ON nonexistent_table FOR ALL USING (true);
+        "#,
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", temp.path().display())];
+        let result = load_schema_sources(&sources);
+        assert!(result.is_err(), "Should error on orphan policy");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("nonexistent_table"),
+            "Error should mention the missing table: {}",
+            err
+        );
     }
 }
