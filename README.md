@@ -88,10 +88,10 @@ CREATE TABLE users (
 EOF
 
 # 2. See what would change
-pgmold plan --schema schema.sql --database postgres://localhost/mydb
+pgmold plan --schema sql:schema.sql --database db:postgres://localhost/mydb
 
 # 3. Apply the migration
-pgmold apply --schema schema.sql --database postgres://localhost/mydb
+pgmold apply --schema sql:schema.sql --database db:postgres://localhost/mydb
 ```
 
 ## Usage
@@ -101,22 +101,25 @@ pgmold apply --schema schema.sql --database postgres://localhost/mydb
 pgmold diff --from sql:schema.sql --to db:postgres://localhost/mydb
 
 # Generate migration plan
-pgmold plan --schema schema.sql --database postgres://localhost/mydb
+pgmold plan --schema sql:schema.sql --database db:postgres://localhost/mydb
+
+# Generate rollback plan (reverse direction)
+pgmold plan --schema sql:schema.sql --database db:postgres://localhost/mydb --reverse
 
 # Apply migrations (with safety checks)
-pgmold apply --schema schema.sql --database postgres://localhost/mydb
+pgmold apply --schema sql:schema.sql --database db:postgres://localhost/mydb
 
 # Apply with destructive operations allowed
-pgmold apply --schema schema.sql --database postgres://localhost/mydb --allow-destructive
+pgmold apply --schema sql:schema.sql --database db:postgres://localhost/mydb --allow-destructive
 
 # Dry run (preview SQL without executing)
-pgmold apply --schema schema.sql --database postgres://localhost/mydb --dry-run
+pgmold apply --schema sql:schema.sql --database db:postgres://localhost/mydb --dry-run
 
 # Lint schema
-pgmold lint --schema schema.sql
+pgmold lint --schema sql:schema.sql
 
 # Monitor for drift
-pgmold monitor --schema schema.sql --database postgres://localhost/mydb
+pgmold monitor --schema sql:schema.sql --database db:postgres://localhost/mydb
 ```
 
 ## Guides
@@ -127,13 +130,13 @@ Organize your schema across multiple files using directories or glob patterns:
 
 ```bash
 # Load all SQL files from a directory (recursive)
-pgmold apply --schema ./schema/ --database postgres://localhost/mydb
+pgmold apply --schema sql:./schema/ --database db:postgres://localhost/mydb
 
 # Use glob patterns
-pgmold apply --schema "schema/**/*.sql" --database postgres://localhost/mydb
+pgmold apply --schema "sql:schema/**/*.sql" --database db:postgres://localhost/mydb
 
 # Multiple sources
-pgmold apply --schema types.sql --schema "tables/*.sql" --database postgres://localhost/mydb
+pgmold apply --schema sql:types.sql --schema "sql:tables/*.sql" --database db:postgres://localhost/mydb
 ```
 
 Example directory structure:
@@ -156,29 +159,29 @@ Filter which objects to include in comparisons using name patterns or object typ
 **Filter by name pattern:**
 ```bash
 # Include only objects matching patterns
-pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+pgmold plan --schema sql:schema.sql --database db:postgres://localhost/mydb \
   --include 'api_*' --include 'users'
 
 # Exclude objects matching patterns
-pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+pgmold plan --schema sql:schema.sql --database db:postgres://localhost/mydb \
   --exclude '_*' --exclude 'pg_*'
 ```
 
 **Filter by object type:**
 ```bash
 # Only compare tables and functions (ignore extensions, views, triggers, etc.)
-pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+pgmold plan --schema sql:schema.sql --database db:postgres://localhost/mydb \
   --include-types tables,functions
 
 # Exclude extensions from comparison
-pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+pgmold plan --schema sql:schema.sql --database db:postgres://localhost/mydb \
   --exclude-types extensions
 ```
 
 **Combine type and name filters:**
 ```bash
 # Compare only functions matching 'api_*', excluding internal ones
-pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+pgmold plan --schema sql:schema.sql --database db:postgres://localhost/mydb \
   --include-types functions \
   --include 'api_*' \
   --exclude '_*'
@@ -187,11 +190,11 @@ pgmold plan --schema schema.sql --database postgres://localhost/mydb \
 **Filter nested types within tables:**
 ```bash
 # Compare tables without RLS policies
-pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+pgmold plan --schema sql:schema.sql --database db:postgres://localhost/mydb \
   --exclude-types policies
 
 # Compare only table structure (no indexes, constraints, or policies)
-pgmold plan --schema schema.sql --database postgres://localhost/mydb \
+pgmold plan --schema sql:schema.sql --database db:postgres://localhost/mydb \
   --exclude-types policies,indexes,foreignkeys,checkconstraints
 ```
 
@@ -205,7 +208,7 @@ By default, pgmold automatically excludes objects owned by extensions (e.g., Pos
 
 ```bash
 # Include extension objects if needed (e.g., for full database dumps)
-pgmold dump --database postgres://localhost/mydb --include-extension-objects -o full_schema.sql
+pgmold dump --database db:postgres://localhost/mydb --include-extension-objects -o full_schema.sql
 ```
 
 ### Adopting pgmold in an Existing Project
@@ -218,27 +221,39 @@ pgmold dump --database "db:postgres://localhost/mydb" -o schema/baseline.sql
 
 # For specific schemas only
 pgmold dump --database "db:postgres://localhost/mydb" --target-schemas public,auth -o schema/baseline.sql
+
+# Split into multiple files by object type
+pgmold dump --database "db:postgres://localhost/mydb" --split -o schema/
 ```
+
+The `--split` option creates separate files for extensions, types, sequences, tables, functions, views, triggers, and policies.
 
 This exports your live database schema as SQL DDL. Now your schema files match the database exactly, and `pgmold plan` will show 0 operations.
 
 #### Workflow After Baseline
 
 1. **Make changes** by editing the SQL schema files
-2. **Preview** with `pgmold plan --schema schema/ --database postgres://localhost/mydb`
-3. **Apply** with `pgmold apply --schema schema/ --database postgres://localhost/mydb`
+2. **Preview** with `pgmold plan --schema sql:schema/ --database db:postgres://localhost/mydb`
+3. **Apply** with `pgmold apply --schema sql:schema/ --database db:postgres://localhost/mydb`
 
 #### Integrating with Existing Migration Systems
 
 pgmold is declarative (like Terraform) - it computes diffs and applies directly rather than generating numbered migration files. If you need to maintain compatibility with an existing migration system:
 
 ```bash
-# Generate migration SQL and save it as a numbered migration file
-pgmold diff --from "db:postgres://localhost/mydb" --to "sql:schema/" > migrations/0044_my_change.sql
+# Generate a numbered migration file automatically
+pgmold migrate generate \
+  --schema sql:schema/ \
+  --database db:postgres://localhost/mydb \
+  --migrations ./migrations \
+  --name "add_email_column"
+# Creates: migrations/0044_add_email_column.sql
 
-# Or use plan for more detailed output
-pgmold plan --schema schema/ --database postgres://localhost/mydb --dry-run > migrations/0044_my_change.sql
+# Or manually capture output
+pgmold diff --from "db:postgres://localhost/mydb" --to "sql:schema/" > migrations/0044_my_change.sql
 ```
+
+The `migrate generate` command auto-detects the next migration number by scanning existing files.
 
 This lets you use pgmold for diffing while keeping your existing migration runner.
 

@@ -6,7 +6,7 @@ pgmold is a PostgreSQL schema-as-code tool built in Rust. It follows a pipeline 
 
 ## Core Principles
 
-1. **Canonical Model is Truth**: All operations use the normalized `model::Schema` IR. No module compares HCL to DB directly.
+1. **Canonical Model is Truth**: All operations use the normalized `model::Schema` IR. No module compares SQL to DB directly.
 2. **Deterministic Output**: BTreeMap everywhere. Sorted collections. Predictable diffs.
 3. **Strict Module Boundaries**: No SQL outside `pg/sqlgen.rs`. No DB access outside `pg/`.
 4. **Fail Fast**: No panics. Clear errors via `anyhow::Result`.
@@ -18,6 +18,8 @@ pgmold/
 ├── src/
 │   ├── cli/           # CLI argument parsing, command routing
 │   ├── parser/        # PostgreSQL DDL parser → canonical model
+│   │   ├── mod.rs         # SQL parsing with sqlparser
+│   │   └── loader.rs      # Multi-file schema loading
 │   ├── model/         # Canonical schema IR (the core)
 │   ├── pg/
 │   │   ├── connection.rs   # Database connection pool
@@ -26,14 +28,21 @@ pgmold/
 │   ├── diff/
 │   │   ├── mod.rs          # Schema comparison
 │   │   └── planner.rs      # Operation ordering
+│   ├── filter/        # Object filtering by name patterns and types
 │   ├── lint/          # Safety rules
-│   ├── drift/         # Drift detection
+│   │   ├── mod.rs          # Lint rules and severity
+│   │   └── locks.rs        # Lock hazard detection
+│   ├── drift/         # Drift detection via fingerprinting
+│   ├── baseline/      # Schema export with round-trip validation
+│   ├── dump.rs        # Schema → SQL DDL generation
+│   ├── migrate.rs     # Migration file numbering utilities
 │   ├── apply/         # Transactional execution
 │   ├── util/          # Shared types, errors
 │   └── main.rs
 └── tests/
-    ├── integration/   # testcontainers tests
-    └── unit/          # Module tests
+    ├── integration.rs      # testcontainers tests
+    ├── baseline.rs         # Baseline command tests
+    └── semantic_equivalence.rs  # Normalization tests
 ```
 
 ## Data Flow
@@ -53,6 +62,11 @@ pgmold/
                 ▼
         ┌───────────────┐
         │ model::Schema │  ← Canonical IR
+        └───────┬───────┘
+                │
+                ▼
+        ┌───────────────┐
+        │filter::filter │  ← Apply include/exclude patterns
         └───────┬───────┘
                 │
                 ▼
@@ -94,14 +108,27 @@ The canonical IR represents all schema objects in a normalized form:
 pub struct Schema {
     pub tables: BTreeMap<String, Table>,
     pub enums: BTreeMap<String, EnumType>,
+    pub domains: BTreeMap<String, Domain>,
+    pub extensions: BTreeMap<String, Extension>,
+    pub functions: BTreeMap<String, Function>,
+    pub views: BTreeMap<String, View>,
+    pub triggers: BTreeMap<String, Trigger>,
+    pub sequences: BTreeMap<String, Sequence>,
+    pub partitions: BTreeMap<String, Partition>,
 }
 
 pub struct Table {
     pub name: String,
+    pub schema: String,
     pub columns: BTreeMap<String, Column>,
-    pub indexes: Vec<Index>,
+    pub indexes: BTreeMap<String, Index>,
     pub primary_key: Option<PrimaryKey>,
-    pub foreign_keys: Vec<ForeignKey>,
+    pub foreign_keys: BTreeMap<String, ForeignKey>,
+    pub check_constraints: BTreeMap<String, CheckConstraint>,
+    pub policies: BTreeMap<String, Policy>,
+    pub rls_enabled: bool,
+    pub rls_force: bool,
+    pub partition_key: Option<PartitionKey>,
 }
 
 pub struct Column {
@@ -109,20 +136,14 @@ pub struct Column {
     pub data_type: PgType,
     pub nullable: bool,
     pub default: Option<String>,
-}
-
-pub enum PgType {
-    Integer, BigInt, SmallInt,
-    Varchar(Option<u32>), Text,
-    Boolean, TimestampTz, Timestamp, Date,
-    Uuid, Json, Jsonb,
-    CustomEnum(String),
+    pub identity: Option<String>,
 }
 ```
 
 **Key Design Decisions:**
 - `BTreeMap` for deterministic iteration order
-- `Vec` for indexes/FKs, sorted after construction
+- Map keys use qualified names: `schema.name`
+- All objects have a `schema` field (default: "public")
 - Fingerprinting via SHA256 of JSON serialization
 
 ## Migration Operations
@@ -131,19 +152,48 @@ Operations represent atomic schema changes:
 
 ```rust
 pub enum MigrationOp {
+    CreateExtension(Extension),
+    DropExtension(String),
     CreateEnum(EnumType),
-    DropEnum(String),
+    DropEnum(String, String),
+    AddEnumValue { ... },
+    CreateDomain(Domain),
+    DropDomain(String, String),
+    AlterDomain { ... },
     CreateTable(Table),
-    DropTable(String),
-    AddColumn { table: String, column: Column },
-    DropColumn { table: String, column: String },
-    AlterColumn { table: String, column: String, changes: ColumnChanges },
-    AddPrimaryKey { table: String, pk: PrimaryKey },
-    DropPrimaryKey { table: String },
-    AddIndex { table: String, index: Index },
-    DropIndex { table: String, index_name: String },
-    AddForeignKey { table: String, fk: ForeignKey },
-    DropForeignKey { table: String, fk_name: String },
+    DropTable(String, String),
+    CreatePartition(Partition),
+    DropPartition(String, String),
+    AddColumn { ... },
+    DropColumn { ... },
+    AlterColumn { ... },
+    AddPrimaryKey { ... },
+    DropPrimaryKey { ... },
+    AddIndex { ... },
+    DropIndex { ... },
+    AddForeignKey { ... },
+    DropForeignKey { ... },
+    AddCheckConstraint { ... },
+    DropCheckConstraint { ... },
+    EnableRls { ... },
+    DisableRls { ... },
+    ForceRls { ... },
+    NoForceRls { ... },
+    CreatePolicy(Policy),
+    AlterPolicy { ... },
+    DropPolicy { ... },
+    CreateFunction(Function),
+    DropFunction { ... },
+    ReplaceFunction(Function),
+    CreateView(View),
+    DropView { ... },
+    ReplaceView(View),
+    CreateTrigger(Trigger),
+    DropTrigger { ... },
+    AlterTriggerEnabled { ... },
+    CreateSequence(Sequence),
+    DropSequence { ... },
+    AlterSequence { ... },
 }
 ```
 
@@ -152,21 +202,48 @@ pub enum MigrationOp {
 The planner orders operations to satisfy dependencies:
 
 1. **Create phase** (safe to add):
-   - CreateEnum
+   - CreateExtension
+   - CreateEnum, AddEnumValue
+   - CreateDomain
+   - CreateSequence
    - CreateTable (topologically sorted by FK dependencies)
-   - AddColumn
+   - CreatePartition
+   - AddColumn, AlterColumn
    - AddPrimaryKey
    - AddIndex
-   - AlterColumn
    - AddForeignKey
+   - AddCheckConstraint
+   - EnableRls, ForceRls
+   - CreatePolicy, AlterPolicy
+   - CreateFunction, ReplaceFunction
+   - CreateView, ReplaceView
+   - CreateTrigger
 
 2. **Drop phase** (reverse order):
+   - DropTrigger
+   - DropView
+   - DropFunction
+   - DropPolicy
+   - DisableRls, NoForceRls
+   - DropCheckConstraint
    - DropForeignKey
    - DropIndex
    - DropPrimaryKey
    - DropColumn
+   - DropPartition
    - DropTable
+   - DropSequence
+   - DropDomain
    - DropEnum
+   - DropExtension
+
+## Object Filtering
+
+The `filter` module supports filtering by:
+- Name patterns (glob syntax: `*`, `?`)
+- Object types (tables, indexes, policies, etc.)
+
+Filters apply to both source and target schemas before diffing.
 
 ## Lint Rules
 
@@ -174,44 +251,47 @@ The planner orders operations to satisfy dependencies:
 |------|----------|-----------|
 | `deny_drop_column` | Error | Without `--allow-destructive` |
 | `deny_drop_table` | Error | Without `--allow-destructive` |
+| `deny_drop_enum` | Error | Without `--allow-destructive` |
 | `deny_drop_table_in_prod` | Error | When `PGMOLD_PROD=1` |
 | `warn_type_narrowing` | Warning | Type change may lose data |
 | `warn_set_not_null` | Warning | May fail on existing NULLs |
 
+Lock hazard detection warns about operations that acquire exclusive locks.
+
 ## Module Dependencies
 
 ```
-cli → parser, pg, diff, lint, drift, apply
+cli → parser, pg, diff, filter, lint, drift, baseline, dump, migrate, apply
 parser → model
 pg/introspect → model
 pg/sqlgen → model, diff
 diff → model
+filter → model
 lint → diff
-drift → parser, pg, diff
-apply → parser, pg, diff, lint
+drift → model
+baseline → parser, pg, diff, dump
+dump → model, pg/sqlgen
+apply → pg
 ```
 
 No circular dependencies. `model` is the leaf dependency.
 
 ## Testing Strategy
 
-- **Unit tests**: Each module tested in isolation
+- **Unit tests**: Each module has inline `#[cfg(test)]` modules
 - **Integration tests**: Full pipeline with testcontainers PostgreSQL
-- **Fixtures**: SQL DDL files in `tests/fixtures/`
+- **Semantic equivalence tests**: Verify normalization produces identical results
 
-## Supported PostgreSQL Features (v1)
+## Supported PostgreSQL Features
 
-- Tables, columns, enums
-- Primary keys, foreign keys
-- Indexes (btree, hash, gin, gist)
-- Column defaults, nullability
-- Comments on tables/columns
-
-## Future Considerations
-
-- Views, materialized views
-- Stored procedures, functions
-- Triggers
-- Partitioned tables
+- Tables, columns, partitioned tables
+- Primary keys, foreign keys, check constraints
+- Indexes (btree, hash, gin, gist, brin)
+- Enums, domains
+- Functions (with volatility, security, SET parameters)
+- Views
+- Triggers (with WHEN clauses, transition tables)
+- Sequences (with SERIAL/BIGSERIAL support)
+- Row-Level Security (RLS) policies
+- Extensions
 - Multi-schema support
-- MySQL/SQLite backends
