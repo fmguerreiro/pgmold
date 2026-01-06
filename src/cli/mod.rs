@@ -501,19 +501,17 @@ pub async fn run() -> Result<()> {
                 let json_output = serde_json::to_string_pretty(&output)
                     .map_err(|e| anyhow!("Failed to serialize drift output to JSON: {e}"))?;
                 println!("{json_output}");
-            } else {
-                if report.has_drift {
-                    println!("Drift detected!");
-                    println!("Expected fingerprint: {}", report.expected_fingerprint);
-                    println!("Actual fingerprint:   {}", report.actual_fingerprint);
-                    println!("\nDifferences ({} operations):", report.differences.len());
-                    for op in &report.differences {
-                        println!("  {op:?}");
-                    }
-                } else {
-                    println!("No drift detected. Schema is in sync.");
-                    println!("Fingerprint: {}", report.expected_fingerprint);
+            } else if report.has_drift {
+                println!("Drift detected!");
+                println!("Expected fingerprint: {}", report.expected_fingerprint);
+                println!("Actual fingerprint:   {}", report.actual_fingerprint);
+                println!("\nDifferences ({} operations):", report.differences.len());
+                for op in &report.differences {
+                    println!("  {op:?}");
                 }
+            } else {
+                println!("No drift detected. Schema is in sync.");
+                println!("Fingerprint: {}", report.expected_fingerprint);
             }
 
             if report.has_drift {

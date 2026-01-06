@@ -1909,10 +1909,14 @@ async fn drift_cli_json_output() {
         .output()
         .expect("Failed to execute command");
 
-    assert!(!output.status.success(), "Should exit with code 1 when drift detected");
+    assert!(
+        !output.status.success(),
+        "Should exit with code 1 when drift detected"
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Output should be valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Output should be valid JSON");
     assert_eq!(json["has_drift"].as_bool(), Some(true));
     assert!(json["expected_fingerprint"].is_string());
     assert!(json["actual_fingerprint"].is_string());
