@@ -1575,3 +1575,62 @@ async fn extension_objects_excluded_by_default() {
         "citext extension functions SHOULD be included when include_extension_objects=true"
     );
 }
+
+#[tokio::test]
+async fn plan_json_output_format() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE existing_table (
+            id INT PRIMARY KEY,
+            name TEXT
+        )
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE TABLE existing_table (
+            id INT PRIMARY KEY,
+            name TEXT,
+            email TEXT NOT NULL
+        );
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let ops = compute_diff(&current, &target);
+    let sql = generate_sql(&ops);
+
+    assert!(!ops.is_empty(), "Should have operations to add email column");
+    assert!(!sql.is_empty(), "Should have SQL statements");
+
+    let json_output = serde_json::json!({
+        "operations": ops.iter().map(|op| format!("{:?}", op)).collect::<Vec<_>>(),
+        "statements": sql.clone(),
+        "lock_warnings": Vec::<String>::new(),
+        "statement_count": sql.len(),
+    });
+
+    assert!(json_output.get("operations").unwrap().is_array());
+    assert!(json_output.get("statements").unwrap().is_array());
+    assert!(json_output.get("lock_warnings").unwrap().is_array());
+    assert!(json_output.get("statement_count").unwrap().is_number());
+
+    let statements = json_output.get("statements").unwrap().as_array().unwrap();
+    assert!(!statements.is_empty());
+
+    let has_add_column = statements
+        .iter()
+        .any(|s| s.as_str().unwrap().contains("ADD COLUMN") && s.as_str().unwrap().contains("email"));
+    assert!(has_add_column, "Should have ADD COLUMN for email");
+}
