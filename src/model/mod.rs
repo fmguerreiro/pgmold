@@ -226,6 +226,25 @@ impl Function {
             && self.security == other.security
             && normalize_sql_body(&self.body) == normalize_sql_body(&other.body)
     }
+
+    /// Checks if the function differences require DROP + CREATE instead of CREATE OR REPLACE.
+    /// PostgreSQL doesn't allow changing parameter names or defaults via CREATE OR REPLACE.
+    pub fn requires_drop_recreate(&self, other: &Function) -> bool {
+        if self.arguments.len() != other.arguments.len() {
+            return false; // Different signature entirely, not a name change
+        }
+
+        for (self_arg, other_arg) in self.arguments.iter().zip(other.arguments.iter()) {
+            // Check if types/modes match but names or defaults differ
+            if self_arg.data_type == other_arg.data_type && self_arg.mode == other_arg.mode {
+                if self_arg.name != other_arg.name || self_arg.default != other_arg.default {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
 }
 
 fn normalize_sql_body(body: &str) -> String {
