@@ -146,23 +146,24 @@ fn remove_from_join_parens(s: &str) -> String {
 
 /// Removes outer parens in WHERE clauses
 /// WHERE ((...) AND (...)) -> WHERE (...) AND (...)
+/// Also handles: WHERE (a OR b) -> WHERE a OR b (single outer parens)
 fn remove_where_outer_parens(s: &str) -> String {
-    let re = Regex::new(r"\bWHERE\s*\(\(").unwrap();
     let mut result = s.to_string();
 
+    // First pass: remove double outer parens WHERE ((...) ...)
+    let re_double = Regex::new(r"\bWHERE\s*\(\(").unwrap();
     loop {
         let mut found = false;
-        if let Some(mat) = re.find(&result) {
-            // The first open paren is at mat.end() - 2, second at mat.end() - 1
+        if let Some(mat) = re_double.find(&result) {
             let outer_open_pos = mat.end() - 2;
 
             if let Some(outer_close_pos) = find_matching_paren(&result, outer_open_pos) {
-                // Find the inner matching paren (the second `(`)
                 if let Some(inner_close) = find_matching_paren(&result, mat.end() - 1) {
-                    // Only remove outer if the inner close is followed by AND/OR
                     let between = &result[inner_close + 1..outer_close_pos];
                     let trimmed = between.trim();
-                    if trimmed.is_empty() || trimmed.starts_with("AND") || trimmed.starts_with("OR")
+                    if trimmed.is_empty()
+                        || trimmed.starts_with("AND")
+                        || trimmed.starts_with("OR")
                     {
                         let mut chars: Vec<char> = result.chars().collect();
                         chars.remove(outer_close_pos);
@@ -177,13 +178,50 @@ fn remove_where_outer_parens(s: &str) -> String {
             break;
         }
     }
+
+    // Second pass: remove single outer parens WHERE (...) when parens wrap entire condition
+    let re_single = Regex::new(r"\bWHERE\s*\(").unwrap();
+    loop {
+        let mut found = false;
+        for mat in re_single.find_iter(&result.clone()) {
+            let open_pos = mat.end() - 1;
+
+            if let Some(close_pos) = find_matching_paren(&result, open_pos) {
+                // Check if the closing paren is followed by end of clause
+                let after_close = result[close_pos + 1..].trim_start();
+                if after_close.is_empty()
+                    || after_close.starts_with("ORDER")
+                    || after_close.starts_with("GROUP")
+                    || after_close.starts_with("HAVING")
+                    || after_close.starts_with("LIMIT")
+                    || after_close.starts_with("OFFSET")
+                    || after_close.starts_with("UNION")
+                    || after_close.starts_with("INTERSECT")
+                    || after_close.starts_with("EXCEPT")
+                    || after_close.starts_with(")")
+                    || after_close.starts_with(";")
+                {
+                    let mut chars: Vec<char> = result.chars().collect();
+                    chars.remove(close_pos);
+                    chars.remove(open_pos);
+                    result = chars.into_iter().collect();
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            break;
+        }
+    }
+
     result
 }
 
 pub fn normalize_view_query(query: &str) -> String {
-    // Step 1: Strip ::text from string literals
-    // PostgreSQL adds ::text to string literals like 'value'::text
-    let re_string_text_cast = Regex::new(r"'([^']*)'::text").unwrap();
+    // Step 1: Strip ::text from string literals (case-insensitive)
+    // PostgreSQL adds ::text to string literals like 'value'::text or 'value'::TEXT
+    let re_string_text_cast = Regex::new(r"(?i)'([^']*)'::text").unwrap();
     let without_text_cast = re_string_text_cast.replace_all(query, "'$1'");
 
     // Step 2: Normalize !~~* to NOT ILIKE (must come BEFORE ~~ handling)
@@ -234,6 +272,64 @@ pub fn normalize_view_query(query: &str) -> String {
             break;
         }
         result = new_result;
+    }
+
+    // Step 9b: Remove outer parens from ON clause conditions
+    // PostgreSQL stores ON a = b without parens, but schema may have ON (a = b) or ON ((a = b))
+    // After double-paren removal, we still have single parens - remove those too for ON clauses
+    let re_on_parens = Regex::new(r"\bON\s*\(([^()]+)\)").unwrap();
+    result = re_on_parens.replace_all(&result, "ON $1").to_string();
+
+    // Step 9c: Remove parens around AND-only groups when preceded by OR
+    // These parens are redundant because AND has higher precedence than OR
+    // Use balanced paren matching to handle nested parens
+    let re_or_paren = Regex::new(r"\bOR\s*\(").unwrap();
+    loop {
+        let mut found = false;
+        if let Some(mat) = re_or_paren.find(&result) {
+            let open_pos = mat.end() - 1;
+            if let Some(close_pos) = find_matching_paren(&result, open_pos) {
+                let content = &result[open_pos + 1..close_pos];
+                // Only remove if content contains AND but not OR (AND-only group)
+                if content.contains(" AND ") && !content.contains(" OR ") {
+                    let mut chars: Vec<char> = result.chars().collect();
+                    chars.remove(close_pos);
+                    chars.remove(open_pos);
+                    result = chars.into_iter().collect();
+                    found = true;
+                }
+            }
+        }
+        if !found {
+            break;
+        }
+    }
+
+    // Step 9d: Remove parens around simple conditions (no AND/OR inside)
+    // PostgreSQL doesn't add parens around simple comparisons like a = 'x'
+    // This handles: (a = 'x') -> a = 'x', (b = 'y') -> b = 'y'
+    let re_simple_paren = Regex::new(r"\(([^()]+)\)").unwrap();
+    loop {
+        let before = result.clone();
+        result = re_simple_paren
+            .replace_all(&result, |caps: &regex::Captures| {
+                let content = &caps[1];
+                // Only remove if content doesn't contain AND/OR (simple expression)
+                // and isn't a function call (check for comma) or subquery (SELECT)
+                if !content.contains(" AND ")
+                    && !content.contains(" OR ")
+                    && !content.contains(',')
+                    && !content.to_uppercase().contains("SELECT")
+                {
+                    content.to_string()
+                } else {
+                    caps[0].to_string()
+                }
+            })
+            .to_string();
+        if result == before {
+            break;
+        }
     }
 
     // Step 10: Remove outer parens around EXISTS with balanced paren matching
@@ -324,34 +420,35 @@ mod tests {
 
     #[test]
     fn normalize_view_query_normalizes_double_parentheses() {
-        // PostgreSQL adds extra parens around conditions in JOINs
+        // PostgreSQL stores ON conditions without parens
         let input = "SELECT * FROM a JOIN b ON ((a.id = b.id))";
-        let expected = "SELECT * FROM a JOIN b ON (a.id = b.id)";
+        let expected = "SELECT * FROM a JOIN b ON a.id = b.id";
         assert_eq!(normalize_view_query(input), expected);
     }
 
     #[test]
     fn normalize_view_query_handles_nested_double_parentheses() {
-        // Triple nested parens should be reduced
+        // Triple nested parens in WHERE should be reduced to none (simple condition)
         let input = "SELECT * FROM a WHERE (((x > 0)))";
-        let expected = "SELECT * FROM a WHERE (x > 0)";
+        let expected = "SELECT * FROM a WHERE x > 0";
         assert_eq!(normalize_view_query(input), expected);
     }
 
     #[test]
     fn normalize_view_query_removes_outer_parens_in_where_compound() {
         // PostgreSQL adds outer parens around compound WHERE conditions: WHERE ((x) AND (y))
-        // We normalize by removing the outer parens
+        // We normalize by removing all unnecessary parens around simple conditions
         let input = "SELECT * FROM a WHERE ((x > 0) AND (y < 10))";
-        let expected = "SELECT * FROM a WHERE (x > 0) AND (y < 10)";
+        let expected = "SELECT * FROM a WHERE x > 0 AND y < 10";
         assert_eq!(normalize_view_query(input), expected);
     }
 
     #[test]
     fn normalize_view_query_handles_complex_postgresql_normalization() {
         // Combined case from bug report: PostgreSQL normalizes AS, casts, operators
+        // Parens around simple expressions are also removed
         let input = "SELECT 'enterprise'::text AS type, (r.name ~~ 'enterprise_%'::text) AS is_enterprise FROM roles r";
-        let expected = "SELECT 'enterprise' AS type, (r.name LIKE 'enterprise_%') AS is_enterprise FROM roles r";
+        let expected = "SELECT 'enterprise' AS type, r.name LIKE 'enterprise_%' AS is_enterprise FROM roles r";
         assert_eq!(normalize_view_query(input), expected);
     }
 
@@ -372,17 +469,57 @@ mod tests {
     #[test]
     fn normalize_view_query_handles_exists_with_nested_join() {
         // PostgreSQL wraps EXISTS in extra parens and adds parens around JOINs inside subqueries
+        // After normalization: no outer parens on EXISTS, no parens on ON, no parens on simple conditions
         let input = "(EXISTS (SELECT 1 FROM (roles r JOIN user_roles ur ON ((ur.role_id = r.id))) WHERE ((ur.user_id = u.id) AND (r.name ~~ 'admin_%'::text))))";
-        let expected = "EXISTS (SELECT 1 FROM roles r JOIN user_roles ur ON (ur.role_id = r.id) WHERE (ur.user_id = u.id) AND (r.name LIKE 'admin_%'))";
+        let expected = "EXISTS (SELECT 1 FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = u.id AND r.name LIKE 'admin_%')";
         assert_eq!(normalize_view_query(input), expected);
     }
 
     #[test]
     fn normalize_view_query_handles_complex_view_with_case_and_exists() {
-        // Full complex view pattern from bug report
+        // Full complex view pattern from bug report - all unnecessary parens are removed
         let input = "SELECT u.id, u.email, 'active'::text AS status, CASE WHEN (EXISTS (SELECT 1 FROM (roles r JOIN user_roles ur ON ((ur.role_id = r.id))) WHERE ((ur.user_id = u.id) AND (r.name ~~ 'admin_%'::text)))) THEN 'admin'::text ELSE 'user'::text END AS role_type FROM users u WHERE (EXISTS (SELECT 1 FROM (user_roles ur JOIN roles r ON ((ur.role_id = r.id))) WHERE ((ur.user_id = u.id) AND (r.name ~~ 'enterprise_%'::text))))";
-        let expected = "SELECT u.id, u.email, 'active' AS status, CASE WHEN EXISTS (SELECT 1 FROM roles r JOIN user_roles ur ON (ur.role_id = r.id) WHERE (ur.user_id = u.id) AND (r.name LIKE 'admin_%')) THEN 'admin' ELSE 'user' END AS role_type FROM users u WHERE EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON (ur.role_id = r.id) WHERE (ur.user_id = u.id) AND (r.name LIKE 'enterprise_%'))";
+        let expected = "SELECT u.id, u.email, 'active' AS status, CASE WHEN EXISTS (SELECT 1 FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = u.id AND r.name LIKE 'admin_%') THEN 'admin' ELSE 'user' END AS role_type FROM users u WHERE EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = u.id AND r.name LIKE 'enterprise_%')";
         assert_eq!(normalize_view_query(input), expected);
+    }
+
+    #[test]
+    fn normalize_view_query_handles_uppercase_text_cast() {
+        // Type casts should be normalized regardless of case
+        let input = "SELECT 'app_admin'::TEXT, name::VARCHAR FROM users";
+        let expected = "SELECT 'app_admin', name::varchar FROM users";
+        assert_eq!(normalize_view_query(input), expected);
+    }
+
+    #[test]
+    fn normalize_view_query_strips_text_cast_case_insensitive() {
+        // ::TEXT (uppercase) should also be stripped from string literals
+        let input = "SELECT 'value'::TEXT AS col FROM t";
+        let expected = "SELECT 'value' AS col FROM t";
+        assert_eq!(normalize_view_query(input), expected);
+    }
+
+    #[test]
+    fn normalize_view_query_handles_on_clause_parens() {
+        // JOIN ON conditions: both ((a = b)) and (a = b) should normalize to same form
+        let db_form = "SELECT * FROM a JOIN b ON a.id = b.id";
+        let schema_form = "SELECT * FROM a JOIN b ON ((a.id = b.id))";
+        assert_eq!(
+            normalize_view_query(db_form),
+            normalize_view_query(schema_form)
+        );
+    }
+
+    #[test]
+    fn normalize_view_query_handles_boolean_logic_parens() {
+        // Boolean expressions: extra parens around operands should be normalized
+        // Both forms should normalize to the same minimal form
+        let db_form = "SELECT * FROM t WHERE a = 'x' OR b = 'y' AND c = 'z'";
+        let schema_form = "SELECT * FROM t WHERE ((a = 'x'::text) OR ((b = 'y'::text) AND (c = 'z'::text)))";
+        // Both should normalize to: WHERE a = 'x' OR b = 'y' AND c = 'z'
+        let expected = "SELECT * FROM t WHERE a = 'x' OR b = 'y' AND c = 'z'";
+        assert_eq!(normalize_view_query(db_form), expected);
+        assert_eq!(normalize_view_query(schema_form), expected);
     }
 
     #[test]
