@@ -823,12 +823,20 @@ fn parse_data_type(dt: &DataType) -> Result<PgType> {
         DataType::Uuid => Ok(PgType::Uuid),
         DataType::JSON => Ok(PgType::Json),
         DataType::JSONB => Ok(PgType::Jsonb),
-        DataType::Custom(name, _) => {
+        DataType::Custom(name, modifiers) => {
             let parts: Vec<String> = name
                 .0
                 .iter()
                 .map(|part| part.to_string().trim_matches('"').to_string())
                 .collect();
+
+            let type_name = parts.last().map(|s| s.as_str()).unwrap_or("");
+
+            if type_name == "vector" {
+                let dimension = modifiers.first().and_then(|m| m.parse::<u32>().ok());
+                return Ok(PgType::Vector(dimension));
+            }
+
             let qualified = match parts.as_slice() {
                 [schema, type_name] => format!("{schema}.{type_name}"),
                 [type_name] => format!("public.{type_name}"),
@@ -2616,5 +2624,31 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
         assert_eq!(trigger.target_name, "users");
         assert_eq!(trigger.function_schema, "auth");
         assert_eq!(trigger.function_name, "on_auth_user_created");
+    }
+
+    #[test]
+    fn parse_vector_types() {
+        let sql = r#"
+CREATE TABLE embeddings (
+    id BIGINT NOT NULL PRIMARY KEY,
+    embedding_default vector,
+    embedding_1536 vector(1536),
+    embedding_qualified public.vector(768)
+);
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let embeddings = &schema.tables["public.embeddings"];
+        assert_eq!(embeddings.columns.len(), 4);
+
+        let embedding_default = &embeddings.columns["embedding_default"];
+        assert_eq!(embedding_default.data_type, PgType::Vector(None));
+
+        let embedding_1536 = &embeddings.columns["embedding_1536"];
+        assert_eq!(embedding_1536.data_type, PgType::Vector(Some(1536)));
+
+        let embedding_qualified = &embeddings.columns["embedding_qualified"];
+        assert_eq!(embedding_qualified.data_type, PgType::Vector(Some(768)));
     }
 }
