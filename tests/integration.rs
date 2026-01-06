@@ -909,7 +909,7 @@ async fn plan_with_exclude_filters_objects() {
 
     assert!(ops.iter().any(|op| matches!(
         op,
-        MigrationOp::DropFunction { name, .. } if name == "api_user"
+        MigrationOp::DropFunction { name, .. } if name == "public.api_user"
     )));
 }
 

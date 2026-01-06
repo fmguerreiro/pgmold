@@ -331,7 +331,7 @@ fn diff_functions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
         if let Some(from_func) = from.functions.get(sig) {
             if !from_func.semantically_equals(func) {
                 ops.push(MigrationOp::AlterFunction {
-                    name: func.name.clone(),
+                    name: qualified_name(&func.schema, &func.name),
                     args: func
                         .arguments
                         .iter()
@@ -349,7 +349,7 @@ fn diff_functions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     for (sig, func) in &from.functions {
         if !to.functions.contains_key(sig) {
             ops.push(MigrationOp::DropFunction {
-                name: func.name.clone(),
+                name: qualified_name(&func.schema, &func.name),
                 args: func
                     .arguments
                     .iter()
@@ -370,7 +370,7 @@ fn diff_views(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
         if let Some(from_view) = from.views.get(name) {
             if from_view.query != view.query || from_view.materialized != view.materialized {
                 ops.push(MigrationOp::AlterView {
-                    name: view.name.clone(),
+                    name: qualified_name(&view.schema, &view.name),
                     new_view: view.clone(),
                 });
             }
@@ -382,7 +382,7 @@ fn diff_views(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     for (name, view) in &from.views {
         if !to.views.contains_key(name) {
             ops.push(MigrationOp::DropView {
-                name: view.name.clone(),
+                name: qualified_name(&view.schema, &view.name),
                 materialized: view.materialized,
             });
         }
@@ -1131,7 +1131,55 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "add_numbers"));
+        assert!(matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "public.add_numbers"));
+    }
+
+
+    #[test]
+    fn drop_function_uses_correct_schema() {
+        let mut from = empty_schema();
+        let func = Function {
+            name: "my_func".to_string(),
+            schema: "auth".to_string(),
+            arguments: vec![],
+            return_type: "void".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+        from.functions.insert(qualified_name(&func.schema, &func.signature()), func);
+        let to = empty_schema();
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(
+            matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "auth.my_func"),
+            "DropFunction should use qualified name with schema, got: {:?}",
+            &ops[0]
+        );
+    }
+
+
+    #[test]
+    fn drop_view_uses_correct_schema() {
+        let mut from = empty_schema();
+        let view = View {
+            name: "my_view".to_string(),
+            schema: "reporting".to_string(),
+            query: "SELECT 1".to_string(),
+            materialized: false,
+        };
+        from.views.insert(qualified_name(&view.schema, &view.name), view);
+        let to = empty_schema();
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(
+            matches!(&ops[0], MigrationOp::DropView { name, .. } if name == "reporting.my_view"),
+            "DropView should use qualified name with schema, got: {:?}",
+            &ops[0]
+        );
     }
 
     #[test]
@@ -1170,7 +1218,7 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(
-            matches!(&ops[0], MigrationOp::DropView { name, materialized } if name == "active_users" && !materialized)
+            matches!(&ops[0], MigrationOp::DropView { name, materialized } if name == "public.active_users" && !materialized)
         );
     }
 
@@ -1200,7 +1248,7 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], MigrationOp::AlterView { name, .. } if name == "active_users"));
+        assert!(matches!(&ops[0], MigrationOp::AlterView { name, .. } if name == "public.active_users"));
     }
 
     #[test]
