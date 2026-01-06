@@ -3,6 +3,7 @@ pub mod baseline;
 pub mod diff;
 pub mod drift;
 pub mod dump;
+pub mod expand_contract;
 pub mod filter;
 pub mod lint;
 pub mod migrate;
