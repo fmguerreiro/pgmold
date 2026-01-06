@@ -1,3 +1,4 @@
+use crate::util::normalize_view_query;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -281,6 +282,22 @@ pub struct View {
     pub schema: String,
     pub query: String,
     pub materialized: bool,
+}
+
+
+impl View {
+    /// Compares two views semantically, accounting for PostgreSQL's normalization.
+    /// Handles differences like:
+    /// - 'literal' vs 'literal'::text
+    /// - LIKE vs ~~
+    /// - Type cast case differences
+    /// - Whitespace formatting
+    pub fn semantically_equals(&self, other: &View) -> bool {
+        self.name == other.name
+            && self.schema == other.schema
+            && self.materialized == other.materialized
+            && normalize_view_query(&self.query) == normalize_view_query(&other.query)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -940,5 +957,119 @@ mod tests {
         assert_eq!(normalize_pg_type("integer"), "integer");
         assert_eq!(normalize_pg_type("text"), "text");
         assert_eq!(normalize_pg_type("uuid"), "uuid");
+    }
+
+    #[test]
+    fn view_semantically_equals_with_text_cast_difference() {
+        let parsed_view = View {
+            name: "test_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT 'supplier' AS type FROM users".to_string(),
+            materialized: false,
+        };
+
+        let introspected_view = View {
+            name: "test_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT 'supplier'::text AS type FROM users".to_string(),
+            materialized: false,
+        };
+
+        assert!(parsed_view.semantically_equals(&introspected_view));
+    }
+
+    #[test]
+    fn view_semantically_equals_with_like_operator_difference() {
+        let parsed_view = View {
+            name: "test_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT * FROM users WHERE name LIKE 'test%'".to_string(),
+            materialized: false,
+        };
+
+        let introspected_view = View {
+            name: "test_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT * FROM users WHERE name ~~ 'test%'::text".to_string(),
+            materialized: false,
+        };
+
+        assert!(parsed_view.semantically_equals(&introspected_view));
+    }
+
+    #[test]
+    fn view_semantically_equals_with_type_cast_case_difference() {
+        let parsed_view = View {
+            name: "test_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT id::TEXT FROM users".to_string(),
+            materialized: false,
+        };
+
+        let introspected_view = View {
+            name: "test_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT id::text FROM users".to_string(),
+            materialized: false,
+        };
+
+        assert!(parsed_view.semantically_equals(&introspected_view));
+    }
+
+    #[test]
+    fn view_semantically_equals_with_whitespace_and_newline_differences() {
+        let parsed_view = View {
+            name: "test_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT id, name FROM users WHERE active = true".to_string(),
+            materialized: false,
+        };
+
+        let introspected_view = View {
+            name: "test_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT  id,  name  FROM  users  WHERE  active  =  true".to_string(),
+            materialized: false,
+        };
+
+        assert!(parsed_view.semantically_equals(&introspected_view));
+    }
+
+    #[test]
+    fn view_semantically_equals_with_paren_whitespace_differences() {
+        let parsed_view = View {
+            name: "test_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT * FROM (SELECT id FROM users)".to_string(),
+            materialized: false,
+        };
+
+        let introspected_view = View {
+            name: "test_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT * FROM ( SELECT id FROM users )".to_string(),
+            materialized: false,
+        };
+
+        assert!(parsed_view.semantically_equals(&introspected_view));
+    }
+
+    #[test]
+    fn view_semantically_not_equals_with_different_query() {
+        let view1 = View {
+            name: "test_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT id FROM users".to_string(),
+            materialized: false,
+        };
+
+        let view2 = View {
+            name: "test_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT id FROM accounts".to_string(),
+            materialized: false,
+        };
+
+        assert!(!view1.semantically_equals(&view2));
     }
 }

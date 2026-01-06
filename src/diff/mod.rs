@@ -368,7 +368,7 @@ fn diff_views(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
 
     for (name, view) in &to.views {
         if let Some(from_view) = from.views.get(name) {
-            if from_view.query != view.query || from_view.materialized != view.materialized {
+            if !from_view.semantically_equals(view) {
                 ops.push(MigrationOp::AlterView {
                     name: qualified_name(&view.schema, &view.name),
                     new_view: view.clone(),
