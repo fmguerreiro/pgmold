@@ -581,7 +581,13 @@ async fn introspect_columns(
         let udt_schema: String = row.get("udt_schema");
         let atttypmod: i32 = row.get("atttypmod");
 
-        let pg_type = map_pg_type(&data_type, char_max_length, &udt_schema, &udt_name, atttypmod);
+        let pg_type = map_pg_type(
+            &data_type,
+            char_max_length,
+            &udt_schema,
+            &udt_name,
+            atttypmod,
+        );
 
         columns.insert(
             name.clone(),

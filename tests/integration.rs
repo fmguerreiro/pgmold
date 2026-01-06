@@ -1104,14 +1104,20 @@ async fn partition_remove_partition() {
         .unwrap();
 
     // Should have both partitions initially
-    assert!(current_schema.partitions.contains_key("public.metrics_2024_q1"));
-    assert!(current_schema.partitions.contains_key("public.metrics_2024_q2"));
+    assert!(current_schema
+        .partitions
+        .contains_key("public.metrics_2024_q1"));
+    assert!(current_schema
+        .partitions
+        .contains_key("public.metrics_2024_q2"));
 
     // Compute diff - should only drop Q2 partition
     let ops = compute_diff(&current_schema, &desired_schema);
 
     assert!(
-        ops.iter().any(|op| matches!(op, MigrationOp::DropPartition(name) if name == "public.metrics_2024_q2")),
+        ops.iter().any(
+            |op| matches!(op, MigrationOp::DropPartition(name) if name == "public.metrics_2024_q2")
+        ),
         "Should drop Q2 partition"
     );
     assert_eq!(ops.len(), 1, "Should have exactly one operation");
@@ -1119,10 +1125,7 @@ async fn partition_remove_partition() {
     // Apply the migration (DropPartition generates DROP TABLE)
     let sql = generate_sql(&ops);
     for stmt in &sql {
-        sqlx::query(stmt)
-            .execute(connection.pool())
-            .await
-            .unwrap();
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
     // Verify only Q1 partition remains
@@ -1130,8 +1133,12 @@ async fn partition_remove_partition() {
         .await
         .unwrap();
 
-    assert!(after_schema.partitions.contains_key("public.metrics_2024_q1"));
-    assert!(!after_schema.partitions.contains_key("public.metrics_2024_q2"));
+    assert!(after_schema
+        .partitions
+        .contains_key("public.metrics_2024_q1"));
+    assert!(!after_schema
+        .partitions
+        .contains_key("public.metrics_2024_q2"));
 
     // Verify diff is now empty
     let final_ops = compute_diff(&after_schema, &desired_schema);
@@ -1611,7 +1618,10 @@ async fn plan_json_output_format() {
     let ops = compute_diff(&current, &target);
     let sql = generate_sql(&ops);
 
-    assert!(!ops.is_empty(), "Should have operations to add email column");
+    assert!(
+        !ops.is_empty(),
+        "Should have operations to add email column"
+    );
     assert!(!sql.is_empty(), "Should have SQL statements");
 
     let json_output = serde_json::json!({
@@ -1629,9 +1639,9 @@ async fn plan_json_output_format() {
     let statements = json_output.get("statements").unwrap().as_array().unwrap();
     assert!(!statements.is_empty());
 
-    let has_add_column = statements
-        .iter()
-        .any(|s| s.as_str().unwrap().contains("ADD COLUMN") && s.as_str().unwrap().contains("email"));
+    let has_add_column = statements.iter().any(|s| {
+        s.as_str().unwrap().contains("ADD COLUMN") && s.as_str().unwrap().contains("email")
+    });
     assert!(has_add_column, "Should have ADD COLUMN for email");
 }
 

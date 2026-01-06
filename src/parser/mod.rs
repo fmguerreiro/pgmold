@@ -923,6 +923,7 @@ fn strip_dollar_quotes(body: &str) -> String {
     body.to_string()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn parse_create_function(
     schema: &str,
     name: &str,

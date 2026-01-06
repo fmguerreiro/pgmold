@@ -93,7 +93,7 @@ fn find_matching_paren(s: &str, open_pos: usize) -> Option<usize> {
 /// Removes outer parens around a pattern like EXISTS
 /// (EXISTS (...)) -> EXISTS (...)
 fn remove_outer_parens_around_pattern(s: &str, pattern: &str) -> String {
-    let search = format!("({}", pattern);
+    let search = format!("({pattern}");
     let mut result = s.to_string();
     while let Some(pos) = result.find(&search) {
         // Find the matching closing paren for the opening paren at pos
@@ -114,6 +114,7 @@ fn remove_outer_parens_around_pattern(s: &str, pattern: &str) -> String {
 /// FROM (table1 JOIN table2 ON (...)) -> FROM table1 JOIN table2 ON (...)
 fn remove_from_join_parens(s: &str) -> String {
     let re = Regex::new(r"\bFROM\s*\(").unwrap();
+    let re_join_pattern = Regex::new(r"^\s*\w+\s+\w*\s*JOIN\b").unwrap();
     let mut result = s.to_string();
 
     // We need to process iteratively since each removal changes positions
@@ -126,7 +127,6 @@ fn remove_from_join_parens(s: &str) -> String {
             // Check if this is followed by a JOIN pattern (not a subquery)
             let after_paren = &result[mat.end()..];
             // Check if it looks like "identifier identifier JOIN" or "identifier JOIN"
-            let re_join_pattern = Regex::new(r"^\s*\w+\s+\w*\s*JOIN\b").unwrap();
             if re_join_pattern.is_match(after_paren) {
                 if let Some(close_pos) = find_matching_paren(&result, open_pos) {
                     let mut chars: Vec<char> = result.chars().collect();
@@ -162,9 +162,7 @@ fn remove_where_outer_parens(s: &str) -> String {
                     // Only remove outer if the inner close is followed by AND/OR
                     let between = &result[inner_close + 1..outer_close_pos];
                     let trimmed = between.trim();
-                    if trimmed.is_empty()
-                        || trimmed.starts_with("AND")
-                        || trimmed.starts_with("OR")
+                    if trimmed.is_empty() || trimmed.starts_with("AND") || trimmed.starts_with("OR")
                     {
                         let mut chars: Vec<char> = result.chars().collect();
                         chars.remove(outer_close_pos);
