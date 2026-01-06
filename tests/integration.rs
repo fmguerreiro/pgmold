@@ -939,6 +939,104 @@ async fn partition_migration_apply() {
     );
 }
 
+#[tokio::test]
+async fn partition_add_new_partition() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create initial partitioned table with one partition
+    sqlx::query(
+        r#"
+        CREATE TABLE logs (
+            id INT NOT NULL,
+            created_at DATE NOT NULL,
+            message TEXT
+        ) PARTITION BY RANGE (created_at)
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE logs_2024_01 PARTITION OF logs
+            FOR VALUES FROM ('2024-01-01') TO ('2024-02-01')
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    // Define desired schema with additional partition
+    let desired_schema = parse_sql_string(
+        r#"
+        CREATE TABLE logs (
+            id INT NOT NULL,
+            created_at DATE NOT NULL,
+            message TEXT
+        ) PARTITION BY RANGE (created_at);
+
+        CREATE TABLE logs_2024_01 PARTITION OF logs
+            FOR VALUES FROM ('2024-01-01') TO ('2024-02-01');
+
+        CREATE TABLE logs_2024_02 PARTITION OF logs
+            FOR VALUES FROM ('2024-02-01') TO ('2024-03-01');
+        "#,
+    )
+    .unwrap();
+
+    // Introspect current state
+    let current_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    // Should have the existing partition
+    assert!(current_schema.partitions.contains_key("public.logs_2024_01"));
+    assert!(!current_schema.partitions.contains_key("public.logs_2024_02"));
+
+    // Compute diff - should only create the new partition
+    let ops = compute_diff(&current_schema, &desired_schema);
+
+    // Should NOT recreate the table or existing partition
+    assert!(
+        !ops.iter().any(|op| matches!(op, MigrationOp::CreateTable(_))),
+        "Should not recreate existing table"
+    );
+    assert!(
+        !ops.iter().any(|op| matches!(op, MigrationOp::CreatePartition(p) if p.name == "logs_2024_01")),
+        "Should not recreate existing partition"
+    );
+
+    // Should only create the new partition
+    assert!(
+        ops.iter().any(|op| matches!(op, MigrationOp::CreatePartition(p) if p.name == "logs_2024_02")),
+        "Should create new partition"
+    );
+    assert_eq!(ops.len(), 1, "Should have exactly one operation");
+
+    // Apply the migration
+    let sql = generate_sql(&ops);
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap();
+    }
+
+    // Verify both partitions exist
+    let after_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    assert!(after_schema.partitions.contains_key("public.logs_2024_01"));
+    assert!(after_schema.partitions.contains_key("public.logs_2024_02"));
+
+    // Verify diff is now empty
+    let final_ops = compute_diff(&after_schema, &desired_schema);
+    assert!(final_ops.is_empty(), "Diff should be empty after migration");
+}
+
 // ==================== Filtering Integration Tests ====================
 
 #[tokio::test]
