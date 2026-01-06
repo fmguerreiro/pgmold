@@ -873,15 +873,18 @@ async fn partition_migration_apply() {
     let ops = compute_diff(&current_schema, &desired_schema);
 
     assert!(
-        ops.iter().any(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "sales")),
+        ops.iter()
+            .any(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "sales")),
         "Should create partitioned table"
     );
     assert!(
-        ops.iter().any(|op| matches!(op, MigrationOp::CreatePartition(p) if p.name == "sales_2024_q1")),
+        ops.iter()
+            .any(|op| matches!(op, MigrationOp::CreatePartition(p) if p.name == "sales_2024_q1")),
         "Should create Q1 partition"
     );
     assert!(
-        ops.iter().any(|op| matches!(op, MigrationOp::CreatePartition(p) if p.name == "sales_2024_q2")),
+        ops.iter()
+            .any(|op| matches!(op, MigrationOp::CreatePartition(p) if p.name == "sales_2024_q2")),
         "Should create Q2 partition"
     );
 
@@ -992,25 +995,32 @@ async fn partition_add_new_partition() {
         .unwrap();
 
     // Should have the existing partition
-    assert!(current_schema.partitions.contains_key("public.logs_2024_01"));
-    assert!(!current_schema.partitions.contains_key("public.logs_2024_02"));
+    assert!(current_schema
+        .partitions
+        .contains_key("public.logs_2024_01"));
+    assert!(!current_schema
+        .partitions
+        .contains_key("public.logs_2024_02"));
 
     // Compute diff - should only create the new partition
     let ops = compute_diff(&current_schema, &desired_schema);
 
     // Should NOT recreate the table or existing partition
     assert!(
-        !ops.iter().any(|op| matches!(op, MigrationOp::CreateTable(_))),
+        !ops.iter()
+            .any(|op| matches!(op, MigrationOp::CreateTable(_))),
         "Should not recreate existing table"
     );
     assert!(
-        !ops.iter().any(|op| matches!(op, MigrationOp::CreatePartition(p) if p.name == "logs_2024_01")),
+        !ops.iter()
+            .any(|op| matches!(op, MigrationOp::CreatePartition(p) if p.name == "logs_2024_01")),
         "Should not recreate existing partition"
     );
 
     // Should only create the new partition
     assert!(
-        ops.iter().any(|op| matches!(op, MigrationOp::CreatePartition(p) if p.name == "logs_2024_02")),
+        ops.iter()
+            .any(|op| matches!(op, MigrationOp::CreatePartition(p) if p.name == "logs_2024_02")),
         "Should create new partition"
     );
     assert_eq!(ops.len(), 1, "Should have exactly one operation");
@@ -1018,10 +1028,7 @@ async fn partition_add_new_partition() {
     // Apply the migration
     let sql = generate_sql(&ops);
     for stmt in &sql {
-        sqlx::query(stmt)
-            .execute(connection.pool())
-            .await
-            .unwrap();
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
     // Verify both partitions exist
@@ -1031,6 +1038,100 @@ async fn partition_add_new_partition() {
 
     assert!(after_schema.partitions.contains_key("public.logs_2024_01"));
     assert!(after_schema.partitions.contains_key("public.logs_2024_02"));
+
+    // Verify diff is now empty
+    let final_ops = compute_diff(&after_schema, &desired_schema);
+    assert!(final_ops.is_empty(), "Diff should be empty after migration");
+}
+
+#[tokio::test]
+async fn partition_remove_partition() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create partitioned table with two partitions
+    sqlx::query(
+        r#"
+        CREATE TABLE metrics (
+            id INT NOT NULL,
+            recorded_at DATE NOT NULL,
+            value DECIMAL(10,2)
+        ) PARTITION BY RANGE (recorded_at)
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE metrics_2024_q1 PARTITION OF metrics
+            FOR VALUES FROM ('2024-01-01') TO ('2024-04-01')
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE metrics_2024_q2 PARTITION OF metrics
+            FOR VALUES FROM ('2024-04-01') TO ('2024-07-01')
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    // Define desired schema with only one partition (Q1)
+    let desired_schema = parse_sql_string(
+        r#"
+        CREATE TABLE metrics (
+            id INT NOT NULL,
+            recorded_at DATE NOT NULL,
+            value DECIMAL(10,2)
+        ) PARTITION BY RANGE (recorded_at);
+
+        CREATE TABLE metrics_2024_q1 PARTITION OF metrics
+            FOR VALUES FROM ('2024-01-01') TO ('2024-04-01');
+        "#,
+    )
+    .unwrap();
+
+    // Introspect current state
+    let current_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    // Should have both partitions initially
+    assert!(current_schema.partitions.contains_key("public.metrics_2024_q1"));
+    assert!(current_schema.partitions.contains_key("public.metrics_2024_q2"));
+
+    // Compute diff - should only drop Q2 partition
+    let ops = compute_diff(&current_schema, &desired_schema);
+
+    assert!(
+        ops.iter().any(|op| matches!(op, MigrationOp::DropPartition(name) if name == "public.metrics_2024_q2")),
+        "Should drop Q2 partition"
+    );
+    assert_eq!(ops.len(), 1, "Should have exactly one operation");
+
+    // Apply the migration (DropPartition generates DROP TABLE)
+    let sql = generate_sql(&ops);
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap();
+    }
+
+    // Verify only Q1 partition remains
+    let after_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    assert!(after_schema.partitions.contains_key("public.metrics_2024_q1"));
+    assert!(!after_schema.partitions.contains_key("public.metrics_2024_q2"));
 
     // Verify diff is now empty
     let final_ops = compute_diff(&after_schema, &desired_schema);
