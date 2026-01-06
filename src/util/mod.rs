@@ -68,6 +68,120 @@ fn normalize_expression_regex(expr: &str) -> String {
     re_paren_close.replace_all(&result, ")").to_string()
 }
 
+/// Finds the position of the matching closing paren for an opening paren at `open_pos`
+fn find_matching_paren(s: &str, open_pos: usize) -> Option<usize> {
+    let chars: Vec<char> = s.chars().collect();
+    if open_pos >= chars.len() || chars[open_pos] != '(' {
+        return None;
+    }
+    let mut depth = 0;
+    for (i, c) in chars.iter().enumerate().skip(open_pos) {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Removes outer parens around a pattern like EXISTS
+/// (EXISTS (...)) -> EXISTS (...)
+fn remove_outer_parens_around_pattern(s: &str, pattern: &str) -> String {
+    let search = format!("({}", pattern);
+    let mut result = s.to_string();
+    while let Some(pos) = result.find(&search) {
+        // Find the matching closing paren for the opening paren at pos
+        if let Some(close_pos) = find_matching_paren(&result, pos) {
+            // Remove the outer parens: remove char at close_pos first, then at pos
+            let mut chars: Vec<char> = result.chars().collect();
+            chars.remove(close_pos);
+            chars.remove(pos);
+            result = chars.into_iter().collect();
+        } else {
+            break;
+        }
+    }
+    result
+}
+
+/// Removes parens around JOINs in FROM clause
+/// FROM (table1 JOIN table2 ON (...)) -> FROM table1 JOIN table2 ON (...)
+fn remove_from_join_parens(s: &str) -> String {
+    let re = Regex::new(r"\bFROM\s*\(").unwrap();
+    let mut result = s.to_string();
+
+    // We need to process iteratively since each removal changes positions
+    loop {
+        let mut found = false;
+        if let Some(mat) = re.find(&result) {
+            // The open paren position is at mat.end() - 1
+            let open_pos = mat.end() - 1;
+
+            // Check if this is followed by a JOIN pattern (not a subquery)
+            let after_paren = &result[mat.end()..];
+            // Check if it looks like "identifier identifier JOIN" or "identifier JOIN"
+            let re_join_pattern = Regex::new(r"^\s*\w+\s+\w*\s*JOIN\b").unwrap();
+            if re_join_pattern.is_match(after_paren) {
+                if let Some(close_pos) = find_matching_paren(&result, open_pos) {
+                    let mut chars: Vec<char> = result.chars().collect();
+                    chars.remove(close_pos);
+                    chars.remove(open_pos);
+                    result = chars.into_iter().collect();
+                    found = true;
+                }
+            }
+        }
+        if !found {
+            break;
+        }
+    }
+    result
+}
+
+/// Removes outer parens in WHERE clauses
+/// WHERE ((...) AND (...)) -> WHERE (...) AND (...)
+fn remove_where_outer_parens(s: &str) -> String {
+    let re = Regex::new(r"\bWHERE\s*\(\(").unwrap();
+    let mut result = s.to_string();
+
+    loop {
+        let mut found = false;
+        if let Some(mat) = re.find(&result) {
+            // The first open paren is at mat.end() - 2, second at mat.end() - 1
+            let outer_open_pos = mat.end() - 2;
+
+            if let Some(outer_close_pos) = find_matching_paren(&result, outer_open_pos) {
+                // Find the inner matching paren (the second `(`)
+                if let Some(inner_close) = find_matching_paren(&result, mat.end() - 1) {
+                    // Only remove outer if the inner close is followed by AND/OR
+                    let between = &result[inner_close + 1..outer_close_pos];
+                    let trimmed = between.trim();
+                    if trimmed.is_empty()
+                        || trimmed.starts_with("AND")
+                        || trimmed.starts_with("OR")
+                    {
+                        let mut chars: Vec<char> = result.chars().collect();
+                        chars.remove(outer_close_pos);
+                        chars.remove(outer_open_pos);
+                        result = chars.into_iter().collect();
+                        found = true;
+                    }
+                }
+            }
+        }
+        if !found {
+            break;
+        }
+    }
+    result
+}
+
 pub fn normalize_view_query(query: &str) -> String {
     // Step 1: Strip ::text from string literals
     // PostgreSQL adds ::text to string literals like 'value'::text
@@ -123,6 +237,18 @@ pub fn normalize_view_query(query: &str) -> String {
         }
         result = new_result;
     }
+
+    // Step 10: Remove outer parens around EXISTS with balanced paren matching
+    // PostgreSQL wraps EXISTS in extra parens: (EXISTS (...)) -> EXISTS (...)
+    result = remove_outer_parens_around_pattern(&result, "EXISTS");
+
+    // Step 11: Remove parens around JOINs in FROM clause with balanced matching
+    // PostgreSQL adds parens: FROM (table1 JOIN table2 ON ...) -> FROM table1 JOIN table2 ON ...
+    result = remove_from_join_parens(&result);
+
+    // Step 12: Remove outer parens in WHERE clauses with compound conditions
+    // PostgreSQL adds: WHERE ((...) AND (...)) -> WHERE (...) AND (...)
+    result = remove_where_outer_parens(&result);
 
     result
 }
@@ -215,10 +341,11 @@ mod tests {
     }
 
     #[test]
-    fn normalize_view_query_preserves_necessary_nested_parens() {
-        // Parens containing subexpressions should be preserved
+    fn normalize_view_query_removes_outer_parens_in_where_compound() {
+        // PostgreSQL adds outer parens around compound WHERE conditions: WHERE ((x) AND (y))
+        // We normalize by removing the outer parens
         let input = "SELECT * FROM a WHERE ((x > 0) AND (y < 10))";
-        let expected = "SELECT * FROM a WHERE ((x > 0) AND (y < 10))";
+        let expected = "SELECT * FROM a WHERE (x > 0) AND (y < 10)";
         assert_eq!(normalize_view_query(input), expected);
     }
 
@@ -241,6 +368,22 @@ mod tests {
     fn normalize_view_query_handles_not_ilike_operator() {
         let input = "SELECT * FROM users WHERE name !~~* 'Test%'";
         let expected = "SELECT * FROM users WHERE name NOT ILIKE 'Test%'";
+        assert_eq!(normalize_view_query(input), expected);
+    }
+
+    #[test]
+    fn normalize_view_query_handles_exists_with_nested_join() {
+        // PostgreSQL wraps EXISTS in extra parens and adds parens around JOINs inside subqueries
+        let input = "(EXISTS (SELECT 1 FROM (roles r JOIN user_roles ur ON ((ur.role_id = r.id))) WHERE ((ur.user_id = u.id) AND (r.name ~~ 'admin_%'::text))))";
+        let expected = "EXISTS (SELECT 1 FROM roles r JOIN user_roles ur ON (ur.role_id = r.id) WHERE (ur.user_id = u.id) AND (r.name LIKE 'admin_%'))";
+        assert_eq!(normalize_view_query(input), expected);
+    }
+
+    #[test]
+    fn normalize_view_query_handles_complex_view_with_case_and_exists() {
+        // Full complex view pattern from bug report
+        let input = "SELECT u.id, u.email, 'active'::text AS status, CASE WHEN (EXISTS (SELECT 1 FROM (roles r JOIN user_roles ur ON ((ur.role_id = r.id))) WHERE ((ur.user_id = u.id) AND (r.name ~~ 'admin_%'::text)))) THEN 'admin'::text ELSE 'user'::text END AS role_type FROM users u WHERE (EXISTS (SELECT 1 FROM (user_roles ur JOIN roles r ON ((ur.role_id = r.id))) WHERE ((ur.user_id = u.id) AND (r.name ~~ 'enterprise_%'::text))))";
+        let expected = "SELECT u.id, u.email, 'active' AS status, CASE WHEN EXISTS (SELECT 1 FROM roles r JOIN user_roles ur ON (ur.role_id = r.id) WHERE (ur.user_id = u.id) AND (r.name LIKE 'admin_%')) THEN 'admin' ELSE 'user' END AS role_type FROM users u WHERE EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON (ur.role_id = r.id) WHERE (ur.user_id = u.id) AND (r.name LIKE 'enterprise_%'))";
         assert_eq!(normalize_view_query(input), expected);
     }
 
