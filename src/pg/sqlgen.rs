@@ -324,6 +324,19 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         }
 
         MigrationOp::AlterDomain { name, changes } => generate_alter_domain(name, changes),
+
+        MigrationOp::BackfillHint { hint, .. } => {
+            vec![format!("-- Backfill required: {}", hint)]
+        }
+
+        MigrationOp::SetColumnNotNull { table, column } => {
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![format!(
+                "ALTER TABLE {} ALTER COLUMN {} SET NOT NULL;",
+                quote_qualified(&schema, &table_name),
+                quote_ident(column)
+            )]
+        }
     }
 }
 
@@ -2117,6 +2130,49 @@ mod tests {
         assert!(
             !ddl.contains("\"\"\""),
             "Should not have triple quotes in: {ddl}"
+        );
+    }
+
+    #[test]
+    fn sqlgen_backfill_hint() {
+        let op = MigrationOp::BackfillHint {
+            table: "users".to_string(),
+            column: "email".to_string(),
+            hint: "UPDATE users SET email = <value> WHERE email IS NULL;".to_string(),
+        };
+        let sql = generate_sql(&vec![op]);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "-- Backfill required: UPDATE users SET email = <value> WHERE email IS NULL;"
+        );
+    }
+
+    #[test]
+    fn sqlgen_set_column_not_null() {
+        let op = MigrationOp::SetColumnNotNull {
+            table: "users".to_string(),
+            column: "email".to_string(),
+        };
+        let sql = generate_sql(&vec![op]);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"users\" ALTER COLUMN \"email\" SET NOT NULL;"
+        );
+    }
+
+    #[test]
+    fn sqlgen_set_column_not_null_with_schema() {
+        let op = MigrationOp::SetColumnNotNull {
+            table: "auth.users".to_string(),
+            column: "email".to_string(),
+        };
+        let sql = generate_sql(&vec![op]);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"auth\".\"users\" ALTER COLUMN \"email\" SET NOT NULL;"
         );
     }
 }

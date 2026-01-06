@@ -47,6 +47,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut create_domains = Vec::new();
     let mut drop_domains = Vec::new();
     let mut alter_domains = Vec::new();
+    let mut backfill_hints = Vec::new();
+    let mut set_column_not_nulls = Vec::new();
 
     for op in ops {
         match op {
@@ -90,6 +92,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::CreateDomain(_) => create_domains.push(op),
             MigrationOp::DropDomain(_) => drop_domains.push(op),
             MigrationOp::AlterDomain { .. } => alter_domains.push(op),
+            MigrationOp::BackfillHint { .. } => backfill_hints.push(op),
+            MigrationOp::SetColumnNotNull { .. } => set_column_not_nulls.push(op),
         }
     }
 
@@ -134,6 +138,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(add_primary_keys);
     result.extend(add_indexes);
     result.extend(alter_columns);
+    result.extend(set_column_not_nulls);
     result.extend(add_foreign_keys);
     result.extend(add_check_constraints);
     result.extend(set_sequence_owners);
