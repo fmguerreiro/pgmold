@@ -1,4 +1,4 @@
-use crate::util::{canonicalize_expression, normalize_view_query};
+use crate::util::{canonicalize_expression, views_semantically_equal};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -295,17 +295,18 @@ pub struct View {
 }
 
 impl View {
-    /// Compares two views semantically, accounting for PostgreSQL's normalization.
-    /// Handles differences like:
+    /// Compares two views semantically using AST-based comparison.
+    /// This handles PostgreSQL's normalization differences robustly:
+    /// - Parentheses (structural, not textual)
     /// - 'literal' vs 'literal'::text
-    /// - LIKE vs ~~
+    /// - LIKE vs ~~ operators
     /// - Type cast case differences
     /// - Whitespace formatting
     pub fn semantically_equals(&self, other: &View) -> bool {
         self.name == other.name
             && self.schema == other.schema
             && self.materialized == other.materialized
-            && normalize_view_query(&self.query) == normalize_view_query(&other.query)
+            && views_semantically_equal(&self.query, &other.query)
     }
 }
 
