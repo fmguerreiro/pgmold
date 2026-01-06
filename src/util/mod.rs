@@ -1,4 +1,7 @@
 use regex::Regex;
+use sqlparser::ast::{
+    BinaryOperator, DataType, Expr, Query, Select, SetExpr, Statement, Value,
+};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use thiserror::Error;
@@ -345,6 +348,331 @@ pub fn normalize_view_query(query: &str) -> String {
     result
 }
 
+/// Compares two SQL view queries semantically using AST comparison.
+/// This is more robust than text normalization because it compares structure, not text.
+/// Falls back to regex-based normalization if parsing fails.
+pub fn views_semantically_equal(query1: &str, query2: &str) -> bool {
+    let dialect = PostgreSqlDialect {};
+
+    let ast1 = Parser::parse_sql(&dialect, query1);
+    let ast2 = Parser::parse_sql(&dialect, query2);
+
+    match (ast1, ast2) {
+        (Ok(stmts1), Ok(stmts2)) => {
+            if stmts1.len() != stmts2.len() {
+                return false;
+            }
+            stmts1
+                .into_iter()
+                .zip(stmts2)
+                .all(|(s1, s2)| normalize_statement(&s1) == normalize_statement(&s2))
+        }
+        _ => {
+            // Fallback to regex normalization if parsing fails
+            normalize_view_query(query1) == normalize_view_query(query2)
+        }
+    }
+}
+
+/// Normalizes a SQL statement to a canonical form for comparison.
+fn normalize_statement(stmt: &Statement) -> Statement {
+    match stmt {
+        Statement::Query(query) => Statement::Query(Box::new(normalize_query(query))),
+        other => other.clone(),
+    }
+}
+
+/// Normalizes a query to canonical form.
+fn normalize_query(query: &Query) -> Query {
+    Query {
+        with: query.with.clone(),
+        body: Box::new(normalize_set_expr(&query.body)),
+        order_by: query.order_by.clone(),
+        limit_clause: query.limit_clause.clone(),
+        fetch: query.fetch.clone(),
+        locks: query.locks.clone(),
+        for_clause: query.for_clause.clone(),
+        settings: query.settings.clone(),
+        format_clause: query.format_clause.clone(),
+        pipe_operators: query.pipe_operators.clone(),
+    }
+}
+
+/// Normalizes a set expression (SELECT, UNION, etc).
+fn normalize_set_expr(body: &SetExpr) -> SetExpr {
+    match body {
+        SetExpr::Select(select) => SetExpr::Select(Box::new(normalize_select(select))),
+        SetExpr::Query(q) => SetExpr::Query(Box::new(normalize_query(q))),
+        SetExpr::SetOperation {
+            op,
+            set_quantifier,
+            left,
+            right,
+        } => SetExpr::SetOperation {
+            op: op.clone(),
+            set_quantifier: *set_quantifier,
+            left: Box::new(normalize_set_expr(left)),
+            right: Box::new(normalize_set_expr(right)),
+        },
+        other => other.clone(),
+    }
+}
+
+/// Normalizes a SELECT statement.
+fn normalize_select(select: &Select) -> Select {
+    Select {
+        select_token: select.select_token.clone(),
+        distinct: select.distinct.clone(),
+        top: select.top.clone(),
+        top_before_distinct: select.top_before_distinct,
+        projection: select
+            .projection
+            .iter()
+            .map(|p| normalize_select_item(p))
+            .collect(),
+        exclude: select.exclude.clone(),
+        into: select.into.clone(),
+        from: select.from.clone(),
+        lateral_views: select.lateral_views.clone(),
+        prewhere: select.prewhere.as_ref().map(|e| normalize_expr(e)),
+        selection: select.selection.as_ref().map(|e| normalize_expr(e)),
+        group_by: select.group_by.clone(),
+        cluster_by: select.cluster_by.clone(),
+        distribute_by: select.distribute_by.clone(),
+        sort_by: select.sort_by.clone(),
+        having: select.having.as_ref().map(|e| normalize_expr(e)),
+        named_window: select.named_window.clone(),
+        qualify: select.qualify.as_ref().map(|e| normalize_expr(e)),
+        window_before_qualify: select.window_before_qualify,
+        value_table_mode: select.value_table_mode,
+        connect_by: select.connect_by.clone(),
+        flavor: select.flavor.clone(),
+    }
+}
+
+/// Normalizes a select item.
+fn normalize_select_item(item: &sqlparser::ast::SelectItem) -> sqlparser::ast::SelectItem {
+    use sqlparser::ast::SelectItem;
+    match item {
+        SelectItem::UnnamedExpr(e) => SelectItem::UnnamedExpr(normalize_expr(e)),
+        SelectItem::ExprWithAlias { expr, alias } => SelectItem::ExprWithAlias {
+            expr: normalize_expr(expr),
+            alias: alias.clone(),
+        },
+        other => other.clone(),
+    }
+}
+
+/// Normalizes an expression to canonical form.
+/// Key normalizations:
+/// - Unwrap Nested (parentheses)
+/// - Convert PGLikeMatch (~~) to Like
+/// - Strip ::text casts from string literals
+fn normalize_expr(expr: &Expr) -> Expr {
+    match expr {
+        // Unwrap nested expressions (parentheses)
+        Expr::Nested(inner) => normalize_expr(inner),
+
+        // Convert PostgreSQL ~~ operator to LIKE
+        Expr::BinaryOp { left, op, right } => {
+            let norm_left = normalize_expr(left);
+            let norm_right = normalize_expr(right);
+
+            match op {
+                BinaryOperator::PGLikeMatch => Expr::Like {
+                    negated: false,
+                    any: false,
+                    expr: Box::new(norm_left),
+                    pattern: Box::new(norm_right),
+                    escape_char: None,
+                },
+                BinaryOperator::PGNotLikeMatch => Expr::Like {
+                    negated: true,
+                    any: false,
+                    expr: Box::new(norm_left),
+                    pattern: Box::new(norm_right),
+                    escape_char: None,
+                },
+                BinaryOperator::PGILikeMatch => Expr::ILike {
+                    negated: false,
+                    any: false,
+                    expr: Box::new(norm_left),
+                    pattern: Box::new(norm_right),
+                    escape_char: None,
+                },
+                BinaryOperator::PGNotILikeMatch => Expr::ILike {
+                    negated: true,
+                    any: false,
+                    expr: Box::new(norm_left),
+                    pattern: Box::new(norm_right),
+                    escape_char: None,
+                },
+                _ => Expr::BinaryOp {
+                    left: Box::new(norm_left),
+                    op: op.clone(),
+                    right: Box::new(norm_right),
+                },
+            }
+        }
+
+        // Strip ::text cast from string literals
+        Expr::Cast {
+            kind,
+            expr: inner,
+            data_type,
+            format,
+        } => {
+            let norm_inner = normalize_expr(inner);
+            // If casting a string literal to text, just return the string
+            if matches!(data_type, DataType::Text) {
+                if let Expr::Value(v) = &norm_inner {
+                    if matches!(
+                        v.value,
+                        Value::SingleQuotedString(_) | Value::DoubleQuotedString(_)
+                    ) {
+                        return norm_inner;
+                    }
+                }
+            }
+            Expr::Cast {
+                kind: kind.clone(),
+                expr: Box::new(norm_inner),
+                data_type: data_type.clone(),
+                format: format.clone(),
+            }
+        }
+
+        // Normalize subquery expressions
+        Expr::Subquery(q) => Expr::Subquery(Box::new(normalize_query(q))),
+        Expr::Exists { subquery, negated } => Expr::Exists {
+            subquery: Box::new(normalize_query(subquery)),
+            negated: *negated,
+        },
+        Expr::InSubquery {
+            expr: inner,
+            subquery,
+            negated,
+        } => Expr::InSubquery {
+            expr: Box::new(normalize_expr(inner)),
+            subquery: Box::new(normalize_query(subquery)),
+            negated: *negated,
+        },
+
+        // Normalize Like/ILike patterns
+        Expr::Like {
+            negated,
+            any,
+            expr: inner,
+            pattern,
+            escape_char,
+        } => Expr::Like {
+            negated: *negated,
+            any: *any,
+            expr: Box::new(normalize_expr(inner)),
+            pattern: Box::new(normalize_expr(pattern)),
+            escape_char: escape_char.clone(),
+        },
+        Expr::ILike {
+            negated,
+            any,
+            expr: inner,
+            pattern,
+            escape_char,
+        } => Expr::ILike {
+            negated: *negated,
+            any: *any,
+            expr: Box::new(normalize_expr(inner)),
+            pattern: Box::new(normalize_expr(pattern)),
+            escape_char: escape_char.clone(),
+        },
+
+        // Normalize CASE expressions
+        Expr::Case {
+            case_token,
+            end_token,
+            operand,
+            conditions,
+            else_result,
+        } => Expr::Case {
+            case_token: case_token.clone(),
+            end_token: end_token.clone(),
+            operand: operand.as_ref().map(|e| Box::new(normalize_expr(e))),
+            conditions: conditions
+                .iter()
+                .map(|cw| sqlparser::ast::CaseWhen {
+                    condition: normalize_expr(&cw.condition),
+                    result: normalize_expr(&cw.result),
+                })
+                .collect(),
+            else_result: else_result.as_ref().map(|e| Box::new(normalize_expr(e))),
+        },
+
+        // Normalize function calls
+        Expr::Function(f) => {
+            let mut func = f.clone();
+            func.args = match &f.args {
+                sqlparser::ast::FunctionArguments::List(args) => {
+                    sqlparser::ast::FunctionArguments::List(sqlparser::ast::FunctionArgumentList {
+                        duplicate_treatment: args.duplicate_treatment,
+                        args: args
+                            .args
+                            .iter()
+                            .map(|arg| match arg {
+                                sqlparser::ast::FunctionArg::Unnamed(
+                                    sqlparser::ast::FunctionArgExpr::Expr(e),
+                                ) => sqlparser::ast::FunctionArg::Unnamed(
+                                    sqlparser::ast::FunctionArgExpr::Expr(normalize_expr(e)),
+                                ),
+                                other => other.clone(),
+                            })
+                            .collect(),
+                        clauses: args.clauses.clone(),
+                    })
+                }
+                other => other.clone(),
+            };
+            Expr::Function(func)
+        }
+
+        // Normalize unary operations
+        Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
+            op: op.clone(),
+            expr: Box::new(normalize_expr(inner)),
+        },
+
+        // Normalize IN lists
+        Expr::InList {
+            expr: inner,
+            list,
+            negated,
+        } => Expr::InList {
+            expr: Box::new(normalize_expr(inner)),
+            list: list.iter().map(|e| normalize_expr(e)).collect(),
+            negated: *negated,
+        },
+
+        // Normalize BETWEEN
+        Expr::Between {
+            expr: inner,
+            negated,
+            low,
+            high,
+        } => Expr::Between {
+            expr: Box::new(normalize_expr(inner)),
+            negated: *negated,
+            low: Box::new(normalize_expr(low)),
+            high: Box::new(normalize_expr(high)),
+        },
+
+        // Normalize IS NULL / IS NOT NULL
+        Expr::IsNull(inner) => Expr::IsNull(Box::new(normalize_expr(inner))),
+        Expr::IsNotNull(inner) => Expr::IsNotNull(Box::new(normalize_expr(inner))),
+
+        // Pass through other expressions unchanged
+        other => other.clone(),
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum SchemaError {
     #[error("Parse error: {0}")]
@@ -571,3 +899,90 @@ mod tests {
         assert_eq!(result, "name NOT LIKE 'test%'");
     }
 }
+
+    #[test]
+    fn ast_comparison_handles_like_vs_tilde() {
+        // AST-based comparison should treat LIKE and ~~ as equivalent
+        let like_sql = "SELECT * FROM t WHERE name LIKE 'test%'";
+        let tilde_sql = "SELECT * FROM t WHERE name ~~ 'test%'";
+        assert!(views_semantically_equal(like_sql, tilde_sql));
+    }
+
+    #[test]
+    fn ast_comparison_handles_not_like_vs_not_tilde() {
+        let not_like_sql = "SELECT * FROM t WHERE name NOT LIKE 'test%'";
+        let not_tilde_sql = "SELECT * FROM t WHERE name !~~ 'test%'";
+        assert!(views_semantically_equal(not_like_sql, not_tilde_sql));
+    }
+
+    #[test]
+    fn ast_comparison_handles_ilike_vs_tilde_star() {
+        let ilike_sql = "SELECT * FROM t WHERE name ILIKE 'test%'";
+        let tilde_star_sql = "SELECT * FROM t WHERE name ~~* 'test%'";
+        assert!(views_semantically_equal(ilike_sql, tilde_star_sql));
+    }
+
+    #[test]
+    fn ast_comparison_handles_parens() {
+        // AST-based comparison should treat parens as structural, not textual
+        let no_parens = "SELECT * FROM t WHERE a = 'x'";
+        let single_parens = "SELECT * FROM t WHERE (a = 'x')";
+        let double_parens = "SELECT * FROM t WHERE ((a = 'x'))";
+
+        assert!(views_semantically_equal(no_parens, single_parens));
+        assert!(views_semantically_equal(no_parens, double_parens));
+        assert!(views_semantically_equal(single_parens, double_parens));
+    }
+
+    #[test]
+    fn ast_comparison_handles_nested_parens_in_boolean() {
+        // Complex boolean with various paren levels
+        let minimal = "SELECT * FROM t WHERE a = 'x' OR b = 'y' AND c = 'z'";
+        let with_parens = "SELECT * FROM t WHERE (a = 'x') OR ((b = 'y') AND (c = 'z'))";
+        let more_parens = "SELECT * FROM t WHERE ((a = 'x') OR ((b = 'y') AND (c = 'z')))";
+
+        assert!(views_semantically_equal(minimal, with_parens));
+        assert!(views_semantically_equal(minimal, more_parens));
+    }
+
+    #[test]
+    fn ast_comparison_handles_text_cast_on_strings() {
+        // String literal with and without ::text should be equivalent
+        let without_cast = "SELECT 'value' FROM t";
+        let with_cast = "SELECT 'value'::text FROM t";
+        assert!(views_semantically_equal(without_cast, with_cast));
+    }
+
+    #[test]
+    fn ast_comparison_handles_type_cast_case() {
+        // Type cast case should not matter (already normalized by parser)
+        let upper = "SELECT id::TEXT FROM t";
+        let lower = "SELECT id::text FROM t";
+        assert!(views_semantically_equal(upper, lower));
+    }
+
+    #[test]
+    fn ast_comparison_handles_complex_view() {
+        // Real-world complex view with multiple normalizations needed
+        let db_form = "SELECT u.id, 'active' AS status FROM users u WHERE EXISTS (SELECT 1 FROM roles r WHERE r.user_id = u.id AND r.name LIKE 'admin_%')";
+        let schema_form = "SELECT u.id, 'active'::text AS status FROM users u WHERE (EXISTS (SELECT 1 FROM roles r WHERE ((r.user_id = u.id) AND (r.name ~~ 'admin_%'::text))))";
+        assert!(views_semantically_equal(db_form, schema_form));
+    }
+
+    #[test]
+    fn ast_comparison_detects_real_differences() {
+        // Different table names should not be equal
+        let query1 = "SELECT * FROM users";
+        let query2 = "SELECT * FROM accounts";
+        assert!(!views_semantically_equal(query1, query2));
+
+        // Different column selection should not be equal
+        let query3 = "SELECT id FROM users";
+        let query4 = "SELECT name FROM users";
+        assert!(!views_semantically_equal(query3, query4));
+
+        // Different WHERE conditions should not be equal
+        let query5 = "SELECT * FROM t WHERE a = 1";
+        let query6 = "SELECT * FROM t WHERE a = 2";
+        assert!(!views_semantically_equal(query5, query6));
+    }
