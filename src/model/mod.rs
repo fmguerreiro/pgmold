@@ -74,6 +74,7 @@ pub enum PgType {
     Uuid,
     Json,
     Jsonb,
+    Vector(Option<u32>),
     CustomEnum(String),
     Named(String),
 }
@@ -1078,5 +1079,23 @@ mod tests {
         };
 
         assert!(!view1.semantically_equals(&view2));
+    }
+
+    #[test]
+    fn vector_type_without_dimension() {
+        let vector_type = PgType::Vector(None);
+        match vector_type {
+            PgType::Vector(None) => (),
+            _ => panic!("Expected Vector(None)"),
+        }
+    }
+
+    #[test]
+    fn vector_type_with_dimension() {
+        let vector_type = PgType::Vector(Some(1536));
+        match vector_type {
+            PgType::Vector(Some(1536)) => (),
+            _ => panic!("Expected Vector(Some(1536))"),
+        }
     }
 }
