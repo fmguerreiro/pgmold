@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use clap::{ArgAction, Parser, Subcommand};
+use serde::Serialize;
 use sqlx::Executor;
 
 use pgmold::diff::{compute_diff, planner::plan_migration};
@@ -13,6 +14,14 @@ use pgmold::parser::load_schema_sources;
 use pgmold::pg::connection::PgConnection;
 use pgmold::pg::introspect::introspect_schema;
 use pgmold::pg::sqlgen::generate_sql;
+
+#[derive(Serialize)]
+struct PlanOutput {
+    operations: Vec<String>,
+    statements: Vec<String>,
+    lock_warnings: Vec<String>,
+    statement_count: usize,
+}
 
 #[derive(Parser)]
 #[command(name = "pgmold")]
@@ -58,6 +67,9 @@ enum Commands {
         /// Include objects owned by extensions (e.g., PostGIS functions). Default: false (excludes extension objects)
         #[arg(long)]
         include_extension_objects: bool,
+        /// Output plan as JSON for CI integration
+        #[arg(long)]
+        json: bool,
     },
 
     /// Apply migrations
@@ -218,6 +230,7 @@ pub async fn run() -> Result<()> {
             include_types,
             exclude_types,
             include_extension_objects,
+            json,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -242,22 +255,32 @@ pub async fn run() -> Result<()> {
             };
             let lock_warnings = detect_lock_hazards(&ops);
 
-            for warning in &lock_warnings {
-                println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
-            }
-
             let sql = generate_sql(&ops);
 
-            if sql.is_empty() {
-                println!("No changes required.");
+            if json {
+                let output = PlanOutput {
+                    operations: ops.iter().map(|op| format!("{op:?}")).collect(),
+                    statements: sql.clone(),
+                    lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
+                    statement_count: sql.len(),
+                };
+                println!("{}", serde_json::to_string_pretty(&output).unwrap());
             } else {
-                if !lock_warnings.is_empty() {
-                    println!();
+                for warning in &lock_warnings {
+                    println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
                 }
-                println!("Migration plan ({} statements):", sql.len());
-                for statement in &sql {
-                    println!("{statement}");
-                    println!();
+
+                if sql.is_empty() {
+                    println!("No changes required.");
+                } else {
+                    if !lock_warnings.is_empty() {
+                        println!();
+                    }
+                    println!("Migration plan ({} statements):", sql.len());
+                    for statement in &sql {
+                        println!("{statement}");
+                        println!();
+                    }
                 }
             }
             Ok(())
@@ -694,6 +717,43 @@ mod tests {
             assert_eq!(exclude_types, vec![ObjectType::Triggers]);
         } else {
             panic!("Expected Dump command");
+        }
+    }
+
+    #[test]
+    fn cli_parses_json_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--json",
+        ]);
+
+        if let Commands::Plan { json, .. } = args.command {
+            assert!(json);
+        } else {
+            panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn cli_json_flag_defaults_false() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+        ]);
+
+        if let Commands::Plan { json, .. } = args.command {
+            assert!(!json);
+        } else {
+            panic!("Expected Plan command");
         }
     }
 }
