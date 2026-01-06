@@ -547,11 +547,21 @@ async fn introspect_columns(
 ) -> Result<BTreeMap<String, Column>> {
     let rows = sqlx::query(
         r#"
-        SELECT column_name, data_type, character_maximum_length,
-               is_nullable, column_default, udt_name, udt_schema
-        FROM information_schema.columns
-        WHERE table_schema = $1 AND table_name = $2
-        ORDER BY ordinal_position
+        SELECT
+            c.column_name,
+            c.data_type,
+            c.character_maximum_length,
+            c.is_nullable,
+            c.column_default,
+            c.udt_name,
+            c.udt_schema,
+            a.atttypmod
+        FROM information_schema.columns c
+        JOIN pg_catalog.pg_class t ON t.relname = c.table_name
+        JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace AND n.nspname = c.table_schema
+        JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attname = c.column_name
+        WHERE c.table_schema = $1 AND c.table_name = $2
+        ORDER BY c.ordinal_position
         "#,
     )
     .bind(table_schema)
@@ -569,8 +579,9 @@ async fn introspect_columns(
         let column_default: Option<String> = row.get("column_default");
         let udt_name: String = row.get("udt_name");
         let udt_schema: String = row.get("udt_schema");
+        let atttypmod: i32 = row.get("atttypmod");
 
-        let pg_type = map_pg_type(&data_type, char_max_length, &udt_schema, &udt_name);
+        let pg_type = map_pg_type(&data_type, char_max_length, &udt_schema, &udt_name, atttypmod);
 
         columns.insert(
             name.clone(),
@@ -592,6 +603,7 @@ fn map_pg_type(
     char_max_length: Option<i32>,
     udt_schema: &str,
     udt_name: &str,
+    atttypmod: i32,
 ) -> PgType {
     match data_type {
         "integer" => PgType::Integer,
@@ -606,7 +618,18 @@ fn map_pg_type(
         "uuid" => PgType::Uuid,
         "json" => PgType::Json,
         "jsonb" => PgType::Jsonb,
-        "USER-DEFINED" => PgType::CustomEnum(format!("{udt_schema}.{udt_name}")),
+        "USER-DEFINED" => {
+            if udt_name == "vector" {
+                let dimension = if atttypmod > 0 {
+                    Some(atttypmod as u32)
+                } else {
+                    None
+                };
+                PgType::Vector(dimension)
+            } else {
+                PgType::CustomEnum(format!("{udt_schema}.{udt_name}"))
+            }
+        }
         _ => PgType::Text,
     }
 }

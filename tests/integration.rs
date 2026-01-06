@@ -1634,3 +1634,59 @@ async fn plan_json_output_format() {
         .any(|s| s.as_str().unwrap().contains("ADD COLUMN") && s.as_str().unwrap().contains("email"));
     assert!(has_add_column, "Should have ADD COLUMN for email");
 }
+
+#[tokio::test]
+async fn introspect_vector_type() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE TYPE vector AS (placeholder int)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE embeddings (
+            id BIGINT PRIMARY KEY,
+            embedding vector
+        )
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        UPDATE pg_attribute
+        SET atttypmod = 1536
+        WHERE attrelid = 'embeddings'::regclass
+        AND attname = 'embedding'
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let table = schema
+        .tables
+        .get("public.embeddings")
+        .expect("embeddings table should exist");
+
+    let embedding_col = table
+        .columns
+        .get("embedding")
+        .expect("embedding column should exist");
+
+    match &embedding_col.data_type {
+        pgmold::model::PgType::Vector(dim) => {
+            assert_eq!(*dim, Some(1536), "Vector dimension should be 1536");
+        }
+        other => panic!("Expected Vector type, got {:?}", other),
+    }
+}
