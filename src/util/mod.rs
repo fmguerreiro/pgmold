@@ -161,9 +161,7 @@ fn remove_where_outer_parens(s: &str) -> String {
                 if let Some(inner_close) = find_matching_paren(&result, mat.end() - 1) {
                     let between = &result[inner_close + 1..outer_close_pos];
                     let trimmed = between.trim();
-                    if trimmed.is_empty()
-                        || trimmed.starts_with("AND")
-                        || trimmed.starts_with("OR")
+                    if trimmed.is_empty() || trimmed.starts_with("AND") || trimmed.starts_with("OR")
                     {
                         let mut chars: Vec<char> = result.chars().collect();
                         chars.remove(outer_close_pos);
@@ -448,7 +446,8 @@ mod tests {
         // Combined case from bug report: PostgreSQL normalizes AS, casts, operators
         // Parens around simple expressions are also removed
         let input = "SELECT 'enterprise'::text AS type, (r.name ~~ 'enterprise_%'::text) AS is_enterprise FROM roles r";
-        let expected = "SELECT 'enterprise' AS type, r.name LIKE 'enterprise_%' AS is_enterprise FROM roles r";
+        let expected =
+            "SELECT 'enterprise' AS type, r.name LIKE 'enterprise_%' AS is_enterprise FROM roles r";
         assert_eq!(normalize_view_query(input), expected);
     }
 
@@ -515,7 +514,8 @@ mod tests {
         // Boolean expressions: extra parens around operands should be normalized
         // Both forms should normalize to the same minimal form
         let db_form = "SELECT * FROM t WHERE a = 'x' OR b = 'y' AND c = 'z'";
-        let schema_form = "SELECT * FROM t WHERE ((a = 'x'::text) OR ((b = 'y'::text) AND (c = 'z'::text)))";
+        let schema_form =
+            "SELECT * FROM t WHERE ((a = 'x'::text) OR ((b = 'y'::text) AND (c = 'z'::text)))";
         // Both should normalize to: WHERE a = 'x' OR b = 'y' AND c = 'z'
         let expected = "SELECT * FROM t WHERE a = 'x' OR b = 'y' AND c = 'z'";
         assert_eq!(normalize_view_query(db_form), expected);
