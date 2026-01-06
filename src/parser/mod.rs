@@ -45,7 +45,10 @@ fn parse_policy_command(cmd: &Option<sqlparser::ast::CreatePolicyCommand>) -> Po
 fn parse_for_values(for_values: &Option<ForValues>) -> Result<PartitionBound> {
     match for_values {
         Some(ForValues::In(values)) => Ok(PartitionBound::List {
-            values: values.iter().map(|e| normalize_expr(&e.to_string())).collect(),
+            values: values
+                .iter()
+                .map(|e| normalize_expr(&e.to_string()))
+                .collect(),
         }),
         Some(ForValues::From { from, to }) => Ok(PartitionBound::Range {
             from: from.iter().map(partition_bound_value_to_string).collect(),
@@ -195,9 +198,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     roles: to
                         .iter()
                         .flat_map(|owners| {
-                            owners.iter().map(|o| {
-                                crate::pg::sqlgen::strip_ident_quotes(&o.to_string())
-                            })
+                            owners
+                                .iter()
+                                .map(|o| crate::pg::sqlgen::strip_ident_quotes(&o.to_string()))
                         })
                         .collect(),
                     using_expr: using.as_ref().map(|e| normalize_expr(&e.to_string())),
@@ -294,7 +297,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                         .name
                                         .as_ref()
                                         .map(|n| n.to_string().trim_matches('"').to_string())
-                                        .unwrap_or_else(|| format!("{}_check", tbl_name));
+                                        .unwrap_or_else(|| format!("{tbl_name}_check"));
 
                                     table.check_constraints.push(CheckConstraint {
                                         name: constraint_name,
@@ -975,10 +978,16 @@ fn parse_create_function(
                         None => ArgMode::In,
                     };
                     FunctionArg {
-                        name: arg.name.as_ref().map(|n| crate::pg::sqlgen::strip_ident_quotes(&n.value)),
+                        name: arg
+                            .name
+                            .as_ref()
+                            .map(|n| crate::pg::sqlgen::strip_ident_quotes(&n.value)),
                         data_type: crate::model::normalize_pg_type(&arg.data_type.to_string()),
                         mode,
-                        default: arg.default_expr.as_ref().map(|e| e.to_string().to_lowercase()),
+                        default: arg
+                            .default_expr
+                            .as_ref()
+                            .map(|e| e.to_string().to_lowercase()),
                     }
                 })
                 .collect()
@@ -2258,7 +2267,8 @@ CREATE TABLE analytics.events_2024 PARTITION OF analytics.events
 
     #[test]
     fn parses_domain_with_named_constraint() {
-        let sql = "CREATE DOMAIN positive_int AS INTEGER CONSTRAINT must_be_positive CHECK (VALUE > 0);";
+        let sql =
+            "CREATE DOMAIN positive_int AS INTEGER CONSTRAINT must_be_positive CHECK (VALUE > 0);";
 
         let schema = parse_sql_string(sql).expect("Should parse");
 
@@ -2340,12 +2350,10 @@ CREATE DOMAIN us_postal_code AS TEXT
                 default: None,
                 not_null: false,
                 collation: None,
-                check_constraints: vec![
-                    DomainConstraint {
-                        name: None,
-                        expression: "VALUE ~ '@'".to_string(),
-                    }
-                ],
+                check_constraints: vec![DomainConstraint {
+                    name: None,
+                    expression: "VALUE ~ '@'".to_string(),
+                }],
             },
         );
 
@@ -2354,7 +2362,10 @@ CREATE DOMAIN us_postal_code AS TEXT
         let parsed = parse_sql_string(&sql).expect("Should parse generated SQL");
         let fingerprint_after = parsed.fingerprint();
 
-        assert_eq!(fingerprint_before, fingerprint_after, "Domain should round-trip correctly");
+        assert_eq!(
+            fingerprint_before, fingerprint_after,
+            "Domain should round-trip correctly"
+        );
         assert_eq!(parsed.domains.len(), 1);
         let parsed_domain = &parsed.domains["public.email_address"];
         assert_eq!(parsed_domain.data_type, PgType::Text);
@@ -2375,12 +2386,10 @@ CREATE DOMAIN us_postal_code AS TEXT
                 default: None,
                 not_null: false,
                 collation: None,
-                check_constraints: vec![
-                    DomainConstraint {
-                        name: None,
-                        expression: "VALUE ~ '@'".to_string(),
-                    }
-                ],
+                check_constraints: vec![DomainConstraint {
+                    name: None,
+                    expression: "VALUE ~ '@'".to_string(),
+                }],
             },
         );
 
@@ -2430,9 +2439,11 @@ CREATE DOMAIN us_postal_code AS TEXT
         let parsed = parse_sql_string(&sql).expect("Should parse generated SQL");
         let fingerprint_after = parsed.fingerprint();
 
-        assert_eq!(fingerprint_before, fingerprint_after, "Domain and table should round-trip correctly");
+        assert_eq!(
+            fingerprint_before, fingerprint_after,
+            "Domain and table should round-trip correctly"
+        );
     }
-
 
     #[test]
     fn parses_policy_with_quoted_role_names() {
@@ -2446,7 +2457,10 @@ CREATE DOMAIN us_postal_code AS TEXT
         let policy = &table.policies[0];
 
         assert_eq!(policy.roles.len(), 1);
-        assert_eq!(policy.roles[0], "authenticated", "Role name should not have quotes");
+        assert_eq!(
+            policy.roles[0], "authenticated",
+            "Role name should not have quotes"
+        );
     }
 
     #[test]
@@ -2460,7 +2474,11 @@ CREATE DOMAIN us_postal_code AS TEXT
         let schema = parse_sql_string(sql).unwrap();
         let table = schema.tables.get("public.users").unwrap();
 
-        assert_eq!(table.policies.len(), 1, "Policy should be associated with table");
+        assert_eq!(
+            table.policies.len(),
+            1,
+            "Policy should be associated with table"
+        );
         assert_eq!(table.policies[0].name, "admin_policy");
         assert_eq!(table.policies[0].roles, vec!["authenticated"]);
     }
@@ -2477,7 +2495,11 @@ CREATE DOMAIN us_postal_code AS TEXT
         let schema = parse_sql_string(sql).unwrap();
         let table = schema.tables.get("public.users").unwrap();
 
-        assert_eq!(table.policies.len(), 2, "Both policies should be associated");
+        assert_eq!(
+            table.policies.len(),
+            2,
+            "Both policies should be associated"
+        );
         // Policies are sorted by name
         let names: Vec<&str> = table.policies.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"first_policy"));
@@ -2493,7 +2515,10 @@ CREATE DOMAIN us_postal_code AS TEXT
         // The policy references a non-existent table, which should result in pending_policies
         // being non-empty, but parse_sql_string uses finalize_partial which doesn't error
         let schema = result.unwrap();
-        assert!(schema.pending_policies.len() == 1, "Orphaned policy should remain in pending");
+        assert!(
+            schema.pending_policies.len() == 1,
+            "Orphaned policy should remain in pending"
+        );
         assert_eq!(schema.pending_policies[0].name, "orphan_policy");
     }
 
@@ -2518,7 +2543,10 @@ CREATE DOMAIN us_postal_code AS TEXT
             RETURNS boolean LANGUAGE sql AS $$ SELECT true $$;
         "#;
         let schema = parse_sql_string(sql).unwrap();
-        let func = schema.functions.get("auth.is_org_admin(text, uuid)").unwrap();
+        let func = schema
+            .functions
+            .get("auth.is_org_admin(text, uuid)")
+            .unwrap();
 
         assert_eq!(func.arguments[0].name, Some("p_role_name".to_string()));
         assert_eq!(func.arguments[1].name, Some("p_enterprise_id".to_string()));
@@ -2579,9 +2607,10 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
         let schema = parse_sql_string(sql).unwrap();
 
         assert_eq!(schema.triggers.len(), 1, "Should parse exactly one trigger");
-        let trigger = schema.triggers.get("auth.users.on_auth_user_created").expect(
-            "Trigger should be keyed as auth.users.on_auth_user_created"
-        );
+        let trigger = schema
+            .triggers
+            .get("auth.users.on_auth_user_created")
+            .expect("Trigger should be keyed as auth.users.on_auth_user_created");
         assert_eq!(trigger.name, "on_auth_user_created");
         assert_eq!(trigger.target_schema, "auth");
         assert_eq!(trigger.target_name, "users");

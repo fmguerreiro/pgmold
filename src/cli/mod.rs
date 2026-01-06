@@ -610,12 +610,7 @@ mod tests {
 
     #[test]
     fn cli_exclude_defaults_empty() {
-        let args = Cli::parse_from([
-            "pgmold",
-            "dump",
-            "--database",
-            "db:postgres://localhost/db",
-        ]);
+        let args = Cli::parse_from(["pgmold", "dump", "--database", "db:postgres://localhost/db"]);
 
         if let Commands::Dump { exclude, .. } = args.command {
             assert_eq!(exclude, Vec::<String>::new());
@@ -640,7 +635,10 @@ mod tests {
         ]);
 
         if let Commands::Plan { include_types, .. } = args.command {
-            assert_eq!(include_types, vec![ObjectType::Tables, ObjectType::Functions]);
+            assert_eq!(
+                include_types,
+                vec![ObjectType::Tables, ObjectType::Functions]
+            );
         } else {
             panic!("Expected Plan command");
         }
@@ -662,7 +660,10 @@ mod tests {
         ]);
 
         if let Commands::Apply { exclude_types, .. } = args.command {
-            assert_eq!(exclude_types, vec![ObjectType::Triggers, ObjectType::Sequences]);
+            assert_eq!(
+                exclude_types,
+                vec![ObjectType::Triggers, ObjectType::Sequences]
+            );
         } else {
             panic!("Expected Apply command");
         }
@@ -683,7 +684,12 @@ mod tests {
             "triggers",
         ]);
 
-        if let Commands::Dump { include_types, exclude_types, .. } = args.command {
+        if let Commands::Dump {
+            include_types,
+            exclude_types,
+            ..
+        } = args.command
+        {
             assert_eq!(include_types, vec![ObjectType::Tables]);
             assert_eq!(exclude_types, vec![ObjectType::Triggers]);
         } else {

@@ -41,8 +41,7 @@ impl FromStr for ObjectType {
             "foreignkeys" => Ok(ObjectType::ForeignKeys),
             "checkconstraints" => Ok(ObjectType::CheckConstraints),
             _ => Err(format!(
-                "Invalid object type '{}'. Valid types: extensions, tables, enums, domains, functions, views, triggers, sequences, partitions, policies, indexes, foreignkeys, checkconstraints",
-                s
+                "Invalid object type '{s}'. Valid types: extensions, tables, enums, domains, functions, views, triggers, sequences, partitions, policies, indexes, foreignkeys, checkconstraints"
             )),
         }
     }
@@ -65,7 +64,7 @@ impl fmt::Display for ObjectType {
             ObjectType::ForeignKeys => "foreignkeys",
             ObjectType::CheckConstraints => "checkconstraints",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -169,8 +168,8 @@ impl Filter {
         }
 
         // Check if include_types contains only nested types
-        let has_only_nested = !self.include_types.is_empty()
-            && self.include_types.iter().all(|t| t.is_nested());
+        let has_only_nested =
+            !self.include_types.is_empty() && self.include_types.iter().all(|t| t.is_nested());
 
         // Include Tables when any nested type is in include_types
         // (nested types like Policies, Indexes, etc. are stored inside tables)
@@ -221,7 +220,9 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
     Schema {
         extensions: filter_field(&schema.extensions, filter, ObjectType::Extensions),
         tables: if filter.should_include_type(ObjectType::Tables) {
-            schema.tables.iter()
+            schema
+                .tables
+                .iter()
                 .filter(|(key, value)| filter.should_include_with_both(key, &value.name))
                 .map(|(k, v)| (k.clone(), filter_table(v, filter)))
                 .collect()
@@ -311,9 +312,9 @@ impl HasName for crate::model::Extension {
 mod tests {
     use super::*;
     use crate::model::{
-        Domain, EnumType, Extension, Function, Volatility, SecurityType,
-        Partition, PartitionBound, PgType, Sequence, SequenceDataType,
-        Table, Trigger, TriggerTiming, TriggerEvent, TriggerEnabled, View,
+        Domain, EnumType, Extension, Function, Partition, PartitionBound, PgType, SecurityType,
+        Sequence, SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent, TriggerTiming,
+        View, Volatility,
     };
 
     #[test]
@@ -442,7 +443,8 @@ mod tests {
             },
         );
 
-        let filter = Filter::new(&["users".to_string(), "posts".to_string()], &[], &[], &[]).unwrap();
+        let filter =
+            Filter::new(&["users".to_string(), "posts".to_string()], &[], &[], &[]).unwrap();
         let filtered = filter_schema(&schema, &filter);
 
         assert_eq!(filtered.tables.len(), 2);
@@ -470,152 +472,194 @@ mod tests {
     fn all_object_types_filtered() {
         let mut schema = Schema::default();
 
-        schema.tables.insert("public.users".to_string(), Table {
-            schema: "public".to_string(),
-            name: "users".to_string(),
-            columns: BTreeMap::new(),
-            indexes: vec![],
-            primary_key: None,
-            foreign_keys: vec![],
-            check_constraints: vec![],
-            comment: None,
-            row_level_security: false,
-            policies: vec![],
-            partition_by: None,
-        });
-        schema.tables.insert("public._temp".to_string(), Table {
-            schema: "public".to_string(),
-            name: "_temp".to_string(),
-            columns: BTreeMap::new(),
-            indexes: vec![],
-            primary_key: None,
-            foreign_keys: vec![],
-            check_constraints: vec![],
-            comment: None,
-            row_level_security: false,
-            policies: vec![],
-            partition_by: None,
-        });
+        schema.tables.insert(
+            "public.users".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: vec![],
+                primary_key: None,
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                comment: None,
+                row_level_security: false,
+                policies: vec![],
+                partition_by: None,
+            },
+        );
+        schema.tables.insert(
+            "public._temp".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "_temp".to_string(),
+                columns: BTreeMap::new(),
+                indexes: vec![],
+                primary_key: None,
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                comment: None,
+                row_level_security: false,
+                policies: vec![],
+                partition_by: None,
+            },
+        );
 
-        schema.views.insert("public.user_view".to_string(), View {
-            name: "user_view".to_string(),
-            schema: "public".to_string(),
-            query: "SELECT * FROM users".to_string(),
-            materialized: false,
-        });
-        schema.views.insert("public._temp_view".to_string(), View {
-            name: "_temp_view".to_string(),
-            schema: "public".to_string(),
-            query: "SELECT 1".to_string(),
-            materialized: false,
-        });
+        schema.views.insert(
+            "public.user_view".to_string(),
+            View {
+                name: "user_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT * FROM users".to_string(),
+                materialized: false,
+            },
+        );
+        schema.views.insert(
+            "public._temp_view".to_string(),
+            View {
+                name: "_temp_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT 1".to_string(),
+                materialized: false,
+            },
+        );
 
-        schema.triggers.insert("public.users.audit_trigger".to_string(), Trigger {
-            name: "audit_trigger".to_string(),
-            target_schema: "public".to_string(),
-            target_name: "users".to_string(),
-            timing: TriggerTiming::Before,
-            events: vec![TriggerEvent::Insert],
-            update_columns: vec![],
-            for_each_row: true,
-            when_clause: None,
-            function_schema: "public".to_string(),
-            function_name: "audit_fn".to_string(),
-            function_args: vec![],
-            enabled: TriggerEnabled::Origin,
-            old_table_name: None,
-            new_table_name: None,
-        });
-        schema.triggers.insert("public.users._temp_trigger".to_string(), Trigger {
-            name: "_temp_trigger".to_string(),
-            target_schema: "public".to_string(),
-            target_name: "users".to_string(),
-            timing: TriggerTiming::Before,
-            events: vec![TriggerEvent::Insert],
-            update_columns: vec![],
-            for_each_row: true,
-            when_clause: None,
-            function_schema: "public".to_string(),
-            function_name: "temp_fn".to_string(),
-            function_args: vec![],
-            enabled: TriggerEnabled::Origin,
-            old_table_name: None,
-            new_table_name: None,
-        });
+        schema.triggers.insert(
+            "public.users.audit_trigger".to_string(),
+            Trigger {
+                name: "audit_trigger".to_string(),
+                target_schema: "public".to_string(),
+                target_name: "users".to_string(),
+                timing: TriggerTiming::Before,
+                events: vec![TriggerEvent::Insert],
+                update_columns: vec![],
+                for_each_row: true,
+                when_clause: None,
+                function_schema: "public".to_string(),
+                function_name: "audit_fn".to_string(),
+                function_args: vec![],
+                enabled: TriggerEnabled::Origin,
+                old_table_name: None,
+                new_table_name: None,
+            },
+        );
+        schema.triggers.insert(
+            "public.users._temp_trigger".to_string(),
+            Trigger {
+                name: "_temp_trigger".to_string(),
+                target_schema: "public".to_string(),
+                target_name: "users".to_string(),
+                timing: TriggerTiming::Before,
+                events: vec![TriggerEvent::Insert],
+                update_columns: vec![],
+                for_each_row: true,
+                when_clause: None,
+                function_schema: "public".to_string(),
+                function_name: "temp_fn".to_string(),
+                function_args: vec![],
+                enabled: TriggerEnabled::Origin,
+                old_table_name: None,
+                new_table_name: None,
+            },
+        );
 
-        schema.enums.insert("public.status".to_string(), EnumType {
-            schema: "public".to_string(),
-            name: "status".to_string(),
-            values: vec!["active".to_string(), "inactive".to_string()],
-        });
-        schema.enums.insert("public._temp_enum".to_string(), EnumType {
-            schema: "public".to_string(),
-            name: "_temp_enum".to_string(),
-            values: vec!["a".to_string(), "b".to_string()],
-        });
+        schema.enums.insert(
+            "public.status".to_string(),
+            EnumType {
+                schema: "public".to_string(),
+                name: "status".to_string(),
+                values: vec!["active".to_string(), "inactive".to_string()],
+            },
+        );
+        schema.enums.insert(
+            "public._temp_enum".to_string(),
+            EnumType {
+                schema: "public".to_string(),
+                name: "_temp_enum".to_string(),
+                values: vec!["a".to_string(), "b".to_string()],
+            },
+        );
 
-        schema.domains.insert("public.email".to_string(), Domain {
-            schema: "public".to_string(),
-            name: "email".to_string(),
-            data_type: PgType::Text,
-            default: None,
-            not_null: false,
-            collation: None,
-            check_constraints: vec![],
-        });
-        schema.domains.insert("public._temp_domain".to_string(), Domain {
-            schema: "public".to_string(),
-            name: "_temp_domain".to_string(),
-            data_type: PgType::Text,
-            default: None,
-            not_null: false,
-            collation: None,
-            check_constraints: vec![],
-        });
+        schema.domains.insert(
+            "public.email".to_string(),
+            Domain {
+                schema: "public".to_string(),
+                name: "email".to_string(),
+                data_type: PgType::Text,
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: vec![],
+            },
+        );
+        schema.domains.insert(
+            "public._temp_domain".to_string(),
+            Domain {
+                schema: "public".to_string(),
+                name: "_temp_domain".to_string(),
+                data_type: PgType::Text,
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: vec![],
+            },
+        );
 
-        schema.sequences.insert("public.user_seq".to_string(), Sequence {
-            name: "user_seq".to_string(),
-            schema: "public".to_string(),
-            data_type: SequenceDataType::BigInt,
-            start: Some(1),
-            increment: Some(1),
-            min_value: None,
-            max_value: None,
-            cycle: false,
-            cache: None,
-            owned_by: None,
-        });
-        schema.sequences.insert("public._temp_seq".to_string(), Sequence {
-            name: "_temp_seq".to_string(),
-            schema: "public".to_string(),
-            data_type: SequenceDataType::BigInt,
-            start: Some(1),
-            increment: Some(1),
-            min_value: None,
-            max_value: None,
-            cycle: false,
-            cache: None,
-            owned_by: None,
-        });
+        schema.sequences.insert(
+            "public.user_seq".to_string(),
+            Sequence {
+                name: "user_seq".to_string(),
+                schema: "public".to_string(),
+                data_type: SequenceDataType::BigInt,
+                start: Some(1),
+                increment: Some(1),
+                min_value: None,
+                max_value: None,
+                cycle: false,
+                cache: None,
+                owned_by: None,
+            },
+        );
+        schema.sequences.insert(
+            "public._temp_seq".to_string(),
+            Sequence {
+                name: "_temp_seq".to_string(),
+                schema: "public".to_string(),
+                data_type: SequenceDataType::BigInt,
+                start: Some(1),
+                increment: Some(1),
+                min_value: None,
+                max_value: None,
+                cycle: false,
+                cache: None,
+                owned_by: None,
+            },
+        );
 
-        schema.partitions.insert("public.users_2024".to_string(), Partition {
-            schema: "public".to_string(),
-            name: "users_2024".to_string(),
-            parent_schema: "public".to_string(),
-            parent_name: "users".to_string(),
-            bound: PartitionBound::Default,
-            indexes: vec![],
-            check_constraints: vec![],
-        });
-        schema.partitions.insert("public._temp_part".to_string(), Partition {
-            schema: "public".to_string(),
-            name: "_temp_part".to_string(),
-            parent_schema: "public".to_string(),
-            parent_name: "users".to_string(),
-            bound: PartitionBound::Default,
-            indexes: vec![],
-            check_constraints: vec![],
-        });
+        schema.partitions.insert(
+            "public.users_2024".to_string(),
+            Partition {
+                schema: "public".to_string(),
+                name: "users_2024".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "users".to_string(),
+                bound: PartitionBound::Default,
+                indexes: vec![],
+                check_constraints: vec![],
+            },
+        );
+        schema.partitions.insert(
+            "public._temp_part".to_string(),
+            Partition {
+                schema: "public".to_string(),
+                name: "_temp_part".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "users".to_string(),
+                bound: PartitionBound::Default,
+                indexes: vec![],
+                check_constraints: vec![],
+            },
+        );
 
         let filter = Filter::new(&[], &["_*".to_string()], &[], &[]).unwrap();
         let filtered = filter_schema(&schema, &filter);
@@ -698,23 +742,47 @@ mod tests {
 
     #[test]
     fn object_type_from_str_valid_lowercase() {
-        assert_eq!("extensions".parse::<ObjectType>().unwrap(), ObjectType::Extensions);
+        assert_eq!(
+            "extensions".parse::<ObjectType>().unwrap(),
+            ObjectType::Extensions
+        );
         assert_eq!("tables".parse::<ObjectType>().unwrap(), ObjectType::Tables);
         assert_eq!("enums".parse::<ObjectType>().unwrap(), ObjectType::Enums);
-        assert_eq!("domains".parse::<ObjectType>().unwrap(), ObjectType::Domains);
-        assert_eq!("functions".parse::<ObjectType>().unwrap(), ObjectType::Functions);
+        assert_eq!(
+            "domains".parse::<ObjectType>().unwrap(),
+            ObjectType::Domains
+        );
+        assert_eq!(
+            "functions".parse::<ObjectType>().unwrap(),
+            ObjectType::Functions
+        );
         assert_eq!("views".parse::<ObjectType>().unwrap(), ObjectType::Views);
-        assert_eq!("triggers".parse::<ObjectType>().unwrap(), ObjectType::Triggers);
-        assert_eq!("sequences".parse::<ObjectType>().unwrap(), ObjectType::Sequences);
-        assert_eq!("partitions".parse::<ObjectType>().unwrap(), ObjectType::Partitions);
+        assert_eq!(
+            "triggers".parse::<ObjectType>().unwrap(),
+            ObjectType::Triggers
+        );
+        assert_eq!(
+            "sequences".parse::<ObjectType>().unwrap(),
+            ObjectType::Sequences
+        );
+        assert_eq!(
+            "partitions".parse::<ObjectType>().unwrap(),
+            ObjectType::Partitions
+        );
     }
 
     #[test]
     fn object_type_from_str_case_insensitive() {
-        assert_eq!("EXTENSIONS".parse::<ObjectType>().unwrap(), ObjectType::Extensions);
+        assert_eq!(
+            "EXTENSIONS".parse::<ObjectType>().unwrap(),
+            ObjectType::Extensions
+        );
         assert_eq!("Tables".parse::<ObjectType>().unwrap(), ObjectType::Tables);
         assert_eq!("EnUmS".parse::<ObjectType>().unwrap(), ObjectType::Enums);
-        assert_eq!("DOMAINS".parse::<ObjectType>().unwrap(), ObjectType::Domains);
+        assert_eq!(
+            "DOMAINS".parse::<ObjectType>().unwrap(),
+            ObjectType::Domains
+        );
     }
 
     #[test]
@@ -757,12 +825,8 @@ mod tests {
 
     #[test]
     fn should_include_type_with_include_types() {
-        let filter = Filter::new(
-            &[],
-            &[],
-            &[ObjectType::Tables, ObjectType::Functions],
-            &[]
-        ).unwrap();
+        let filter =
+            Filter::new(&[], &[], &[ObjectType::Tables, ObjectType::Functions], &[]).unwrap();
         assert!(filter.should_include_type(ObjectType::Tables));
         assert!(filter.should_include_type(ObjectType::Functions));
         assert!(!filter.should_include_type(ObjectType::Views));
@@ -775,8 +839,9 @@ mod tests {
             &[],
             &[],
             &[],
-            &[ObjectType::Triggers, ObjectType::Sequences]
-        ).unwrap();
+            &[ObjectType::Triggers, ObjectType::Sequences],
+        )
+        .unwrap();
         assert!(filter.should_include_type(ObjectType::Tables));
         assert!(filter.should_include_type(ObjectType::Functions));
         assert!(!filter.should_include_type(ObjectType::Triggers));
@@ -789,8 +854,9 @@ mod tests {
             &[],
             &[],
             &[ObjectType::Tables, ObjectType::Functions],
-            &[ObjectType::Functions]
-        ).unwrap();
+            &[ObjectType::Functions],
+        )
+        .unwrap();
         assert!(filter.should_include_type(ObjectType::Tables));
         assert!(!filter.should_include_type(ObjectType::Functions));
         assert!(!filter.should_include_type(ObjectType::Views));
@@ -923,18 +989,42 @@ mod tests {
 
     #[test]
     fn object_type_from_str_nested_types() {
-        assert_eq!("policies".parse::<ObjectType>().unwrap(), ObjectType::Policies);
-        assert_eq!("indexes".parse::<ObjectType>().unwrap(), ObjectType::Indexes);
-        assert_eq!("foreignkeys".parse::<ObjectType>().unwrap(), ObjectType::ForeignKeys);
-        assert_eq!("checkconstraints".parse::<ObjectType>().unwrap(), ObjectType::CheckConstraints);
+        assert_eq!(
+            "policies".parse::<ObjectType>().unwrap(),
+            ObjectType::Policies
+        );
+        assert_eq!(
+            "indexes".parse::<ObjectType>().unwrap(),
+            ObjectType::Indexes
+        );
+        assert_eq!(
+            "foreignkeys".parse::<ObjectType>().unwrap(),
+            ObjectType::ForeignKeys
+        );
+        assert_eq!(
+            "checkconstraints".parse::<ObjectType>().unwrap(),
+            ObjectType::CheckConstraints
+        );
     }
 
     #[test]
     fn object_type_from_str_nested_types_case_insensitive() {
-        assert_eq!("POLICIES".parse::<ObjectType>().unwrap(), ObjectType::Policies);
-        assert_eq!("Indexes".parse::<ObjectType>().unwrap(), ObjectType::Indexes);
-        assert_eq!("ForeignKeys".parse::<ObjectType>().unwrap(), ObjectType::ForeignKeys);
-        assert_eq!("CheckConstraints".parse::<ObjectType>().unwrap(), ObjectType::CheckConstraints);
+        assert_eq!(
+            "POLICIES".parse::<ObjectType>().unwrap(),
+            ObjectType::Policies
+        );
+        assert_eq!(
+            "Indexes".parse::<ObjectType>().unwrap(),
+            ObjectType::Indexes
+        );
+        assert_eq!(
+            "ForeignKeys".parse::<ObjectType>().unwrap(),
+            ObjectType::ForeignKeys
+        );
+        assert_eq!(
+            "CheckConstraints".parse::<ObjectType>().unwrap(),
+            ObjectType::CheckConstraints
+        );
     }
 
     #[test]
@@ -968,12 +1058,7 @@ mod tests {
 
     #[test]
     fn nested_type_included_by_default_when_include_has_only_top_level() {
-        let filter = Filter::new(
-            &[],
-            &[],
-            &[ObjectType::Tables],
-            &[]
-        ).unwrap();
+        let filter = Filter::new(&[], &[], &[ObjectType::Tables], &[]).unwrap();
         assert!(filter.should_include_type(ObjectType::Tables));
         assert!(filter.should_include_type(ObjectType::Policies));
         assert!(filter.should_include_type(ObjectType::Indexes));
@@ -983,12 +1068,7 @@ mod tests {
 
     #[test]
     fn nested_type_excluded_when_in_exclude_types() {
-        let filter = Filter::new(
-            &[],
-            &[],
-            &[],
-            &[ObjectType::Policies]
-        ).unwrap();
+        let filter = Filter::new(&[], &[], &[], &[ObjectType::Policies]).unwrap();
         assert!(filter.should_include_type(ObjectType::Tables));
         assert!(!filter.should_include_type(ObjectType::Policies));
         assert!(filter.should_include_type(ObjectType::Indexes));
@@ -996,18 +1076,9 @@ mod tests {
 
     #[test]
     fn include_types_with_nested_same_as_without_nested() {
-        let filter_without = Filter::new(
-            &[],
-            &[],
-            &[ObjectType::Tables],
-            &[]
-        ).unwrap();
-        let filter_with = Filter::new(
-            &[],
-            &[],
-            &[ObjectType::Tables, ObjectType::Policies],
-            &[]
-        ).unwrap();
+        let filter_without = Filter::new(&[], &[], &[ObjectType::Tables], &[]).unwrap();
+        let filter_with =
+            Filter::new(&[], &[], &[ObjectType::Tables, ObjectType::Policies], &[]).unwrap();
 
         assert_eq!(
             filter_without.should_include_type(ObjectType::Tables),
@@ -1029,12 +1100,8 @@ mod tests {
 
     #[test]
     fn nested_type_defaults_to_included_even_with_exclude_on_unrelated_type() {
-        let filter = Filter::new(
-            &[],
-            &[],
-            &[ObjectType::Functions],
-            &[ObjectType::Indexes]
-        ).unwrap();
+        let filter =
+            Filter::new(&[], &[], &[ObjectType::Functions], &[ObjectType::Indexes]).unwrap();
         assert!(filter.should_include_type(ObjectType::Functions));
         assert!(!filter.should_include_type(ObjectType::Indexes));
         assert!(filter.should_include_type(ObjectType::Policies));
@@ -1069,19 +1136,24 @@ mod tests {
         };
 
         let filter = Filter::new(&[], &[], &[], &[ObjectType::Policies]).unwrap();
-        let filtered_schema = filter_schema(&Schema {
-            tables: vec![("public.users".to_string(), table)].into_iter().collect(),
-            ..Default::default()
-        }, &filter);
+        let filtered_schema = filter_schema(
+            &Schema {
+                tables: vec![("public.users".to_string(), table)]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+            &filter,
+        );
 
         let filtered_table = filtered_schema.tables.get("public.users").unwrap();
         assert_eq!(filtered_table.policies.len(), 0);
-        assert_eq!(filtered_table.row_level_security, true);
+        assert!(filtered_table.row_level_security);
     }
 
     #[test]
     fn filter_table_strips_indexes_and_foreign_keys() {
-        use crate::model::{Index, IndexType, ForeignKey, ReferentialAction};
+        use crate::model::{ForeignKey, Index, IndexType, ReferentialAction};
 
         let table = Table {
             schema: "public".to_string(),
@@ -1114,12 +1186,18 @@ mod tests {
             &[],
             &[],
             &[],
-            &[ObjectType::Indexes, ObjectType::ForeignKeys]
-        ).unwrap();
-        let filtered_schema = filter_schema(&Schema {
-            tables: vec![("public.users".to_string(), table)].into_iter().collect(),
-            ..Default::default()
-        }, &filter);
+            &[ObjectType::Indexes, ObjectType::ForeignKeys],
+        )
+        .unwrap();
+        let filtered_schema = filter_schema(
+            &Schema {
+                tables: vec![("public.users".to_string(), table)]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+            &filter,
+        );
 
         let filtered_table = filtered_schema.tables.get("public.users").unwrap();
         assert_eq!(filtered_table.indexes.len(), 0);
@@ -1158,10 +1236,15 @@ mod tests {
         };
 
         let filter = Filter::new(&[], &[], &[], &[]).unwrap();
-        let filtered_schema = filter_schema(&Schema {
-            tables: vec![("public.users".to_string(), table.clone())].into_iter().collect(),
-            ..Default::default()
-        }, &filter);
+        let filtered_schema = filter_schema(
+            &Schema {
+                tables: vec![("public.users".to_string(), table.clone())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+            &filter,
+        );
 
         let filtered_table = filtered_schema.tables.get("public.users").unwrap();
         assert_eq!(filtered_table.indexes.len(), 1);
@@ -1201,20 +1284,30 @@ mod tests {
         };
 
         let filter = Filter::new(&[], &[], &[ObjectType::Tables], &[]).unwrap();
-        let filtered_schema = filter_schema(&Schema {
-            tables: vec![("public.users".to_string(), table)].into_iter().collect(),
-            functions: vec![("public.fn".to_string(), Function {
-                name: "fn".to_string(),
-                schema: "public".to_string(),
-                arguments: vec![],
-                return_type: "void".to_string(),
-                language: "sql".to_string(),
-                body: "SELECT 1".to_string(),
-                volatility: Volatility::Volatile,
-                security: SecurityType::Invoker,
-            })].into_iter().collect(),
-            ..Default::default()
-        }, &filter);
+        let filtered_schema = filter_schema(
+            &Schema {
+                tables: vec![("public.users".to_string(), table)]
+                    .into_iter()
+                    .collect(),
+                functions: vec![(
+                    "public.fn".to_string(),
+                    Function {
+                        name: "fn".to_string(),
+                        schema: "public".to_string(),
+                        arguments: vec![],
+                        return_type: "void".to_string(),
+                        language: "sql".to_string(),
+                        body: "SELECT 1".to_string(),
+                        volatility: Volatility::Volatile,
+                        security: SecurityType::Invoker,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            },
+            &filter,
+        );
 
         assert_eq!(filtered_schema.tables.len(), 1);
         assert_eq!(filtered_schema.functions.len(), 0);
@@ -1256,20 +1349,30 @@ mod tests {
         assert!(filter.should_include_type(ObjectType::Policies));
         assert!(!filter.should_include_type(ObjectType::Functions));
 
-        let filtered_schema = filter_schema(&Schema {
-            tables: vec![("public.users".to_string(), table)].into_iter().collect(),
-            functions: vec![("public.fn".to_string(), Function {
-                name: "fn".to_string(),
-                schema: "public".to_string(),
-                arguments: vec![],
-                return_type: "void".to_string(),
-                language: "sql".to_string(),
-                body: "SELECT 1".to_string(),
-                volatility: Volatility::Volatile,
-                security: SecurityType::Invoker,
-            })].into_iter().collect(),
-            ..Default::default()
-        }, &filter);
+        let filtered_schema = filter_schema(
+            &Schema {
+                tables: vec![("public.users".to_string(), table)]
+                    .into_iter()
+                    .collect(),
+                functions: vec![(
+                    "public.fn".to_string(),
+                    Function {
+                        name: "fn".to_string(),
+                        schema: "public".to_string(),
+                        arguments: vec![],
+                        return_type: "void".to_string(),
+                        language: "sql".to_string(),
+                        body: "SELECT 1".to_string(),
+                        volatility: Volatility::Volatile,
+                        security: SecurityType::Invoker,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            },
+            &filter,
+        );
 
         assert_eq!(filtered_schema.tables.len(), 1);
         assert_eq!(filtered_schema.functions.len(), 0);
@@ -1309,10 +1412,15 @@ mod tests {
         assert!(!filter.should_include_type(ObjectType::Policies));
         assert!(!filter.should_include_type(ObjectType::Functions));
 
-        let filtered_schema = filter_schema(&Schema {
-            tables: vec![("public.users".to_string(), table)].into_iter().collect(),
-            ..Default::default()
-        }, &filter);
+        let filtered_schema = filter_schema(
+            &Schema {
+                tables: vec![("public.users".to_string(), table)]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+            &filter,
+        );
 
         assert_eq!(filtered_schema.tables.len(), 1);
         let filtered_table = filtered_schema.tables.get("public.users").unwrap();

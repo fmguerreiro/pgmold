@@ -20,8 +20,7 @@ pub async fn introspect_schema(
         introspect_tables(connection, target_schemas, include_extension_objects).await?;
     schema.functions =
         introspect_functions(connection, target_schemas, include_extension_objects).await?;
-    schema.views =
-        introspect_views(connection, target_schemas, include_extension_objects).await?;
+    schema.views = introspect_views(connection, target_schemas, include_extension_objects).await?;
     schema.triggers =
         introspect_triggers(connection, target_schemas, include_extension_objects).await?;
     schema.sequences =
@@ -192,11 +191,11 @@ async fn introspect_domains(
         let name: String = row.get("domain_name");
         let base_type: String = row.get("base_type");
         let not_null: bool = row.get("not_null");
-        let default_expr: Option<String> = row.get::<Option<String>, &str>("default_expr")
+        let default_expr: Option<String> = row
+            .get::<Option<String>, &str>("default_expr")
             .filter(|s| !s.is_empty());
 
-        let check_constraints =
-            introspect_domain_constraints(connection, &schema, &name).await?;
+        let check_constraints = introspect_domain_constraints(connection, &schema, &name).await?;
 
         let data_type = match base_type.as_str() {
             "integer" | "int4" => PgType::Integer,
@@ -985,12 +984,12 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
                 };
 
             // Parse mode (IN, OUT, INOUT)
-            let (mode, arg_rest) = if arg_without_default.starts_with("INOUT ") {
-                (ArgMode::InOut, &arg_without_default[6..])
-            } else if arg_without_default.starts_with("OUT ") {
-                (ArgMode::Out, &arg_without_default[4..])
-            } else if arg_without_default.starts_with("IN ") {
-                (ArgMode::In, &arg_without_default[3..])
+            let (mode, arg_rest) = if let Some(rest) = arg_without_default.strip_prefix("INOUT ") {
+                (ArgMode::InOut, rest)
+            } else if let Some(rest) = arg_without_default.strip_prefix("OUT ") {
+                (ArgMode::Out, rest)
+            } else if let Some(rest) = arg_without_default.strip_prefix("IN ") {
+                (ArgMode::In, rest)
             } else {
                 (ArgMode::In, arg_without_default)
             };
@@ -1178,8 +1177,8 @@ async fn introspect_triggers(
             events.push(TriggerEvent::Truncate);
         }
 
-        let when_clause = extract_when_clause(&trigger_def)
-            .map(|w| crate::util::normalize_type_casts(&w));
+        let when_clause =
+            extract_when_clause(&trigger_def).map(|w| crate::util::normalize_type_casts(&w));
 
         let enabled = match tgenabled as u8 as char {
             'D' => TriggerEnabled::Disabled,

@@ -160,9 +160,7 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
 
     // Finalize: associate all pending policies with their tables.
     // This handles policies defined in separate files from their tables.
-    merged
-        .finalize()
-        .map_err(|e| SchemaError::ParseError(e))?;
+    merged.finalize().map_err(SchemaError::ParseError)?;
 
     Ok(merged)
 }
@@ -545,7 +543,9 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
             "Should have loaded 1 trigger, but got triggers: {:?}",
             schema.triggers.keys().collect::<Vec<_>>()
         );
-        assert!(schema.triggers.contains_key("auth.users.on_auth_user_created"));
+        assert!(schema
+            .triggers
+            .contains_key("auth.users.on_auth_user_created"));
     }
 
     #[test]
@@ -572,7 +572,11 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
     #[test]
     fn load_merges_extensions() {
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("extensions.sql"), "CREATE EXTENSION pgcrypto;").unwrap();
+        fs::write(
+            dir.path().join("extensions.sql"),
+            "CREATE EXTENSION pgcrypto;",
+        )
+        .unwrap();
         fs::write(dir.path().join("other.sql"), "CREATE EXTENSION uuid_ossp;").unwrap();
 
         let sources = vec![format!("{}/*.sql", dir.path().display())];
@@ -602,7 +606,11 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
     #[test]
     fn load_merges_sequences() {
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("sequences.sql"), "CREATE SEQUENCE user_id_seq;").unwrap();
+        fs::write(
+            dir.path().join("sequences.sql"),
+            "CREATE SEQUENCE user_id_seq;",
+        )
+        .unwrap();
 
         let sources = vec![format!("{}/*.sql", dir.path().display())];
         let schema = load_schema_sources(&sources).unwrap();
@@ -620,13 +628,21 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
             "CREATE EXTENSION pgcrypto;",
         )
         .unwrap();
-        fs::write(dir.path().join("02_domains.sql"), "CREATE DOMAIN email AS TEXT;").unwrap();
+        fs::write(
+            dir.path().join("02_domains.sql"),
+            "CREATE DOMAIN email AS TEXT;",
+        )
+        .unwrap();
         fs::write(
             dir.path().join("03_enums.sql"),
             "CREATE TYPE status AS ENUM ('active', 'inactive');",
         )
         .unwrap();
-        fs::write(dir.path().join("04_sequences.sql"), "CREATE SEQUENCE counter_seq;").unwrap();
+        fs::write(
+            dir.path().join("04_sequences.sql"),
+            "CREATE SEQUENCE counter_seq;",
+        )
+        .unwrap();
         fs::write(
             dir.path().join("05_tables.sql"),
             "CREATE TABLE users (id INT PRIMARY KEY, email email, status status);",
@@ -729,8 +745,7 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
         let err = result.unwrap_err().to_string();
         assert!(
             err.contains("nonexistent_table"),
-            "Error should mention the missing table: {}",
-            err
+            "Error should mention the missing table: {err}"
         );
     }
 }

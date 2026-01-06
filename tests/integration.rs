@@ -350,9 +350,10 @@ async fn multi_schema_table_management() {
         sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
-    let final_schema = introspect_schema(&connection, &["auth".to_string(), "api".to_string()], false)
-        .await
-        .unwrap();
+    let final_schema =
+        introspect_schema(&connection, &["auth".to_string(), "api".to_string()], false)
+            .await
+            .unwrap();
     assert!(final_schema.tables.contains_key("auth.users"));
     assert!(final_schema.tables.contains_key("api.sessions"));
 
@@ -567,9 +568,13 @@ async fn dump_multi_schema() {
         .await
         .unwrap();
 
-    let schema = introspect_schema(&connection, &["public".to_string(), "auth".to_string()], false)
-        .await
-        .unwrap();
+    let schema = introspect_schema(
+        &connection,
+        &["public".to_string(), "auth".to_string()],
+        false,
+    )
+    .await
+    .unwrap();
 
     let dump = generate_dump(&schema, None);
 
@@ -1086,9 +1091,13 @@ async fn exclude_pattern_filters_across_schemas() {
         .await
         .unwrap();
 
-    let current = introspect_schema(&connection, &["public".to_string(), "auth".to_string()], false)
-        .await
-        .unwrap();
+    let current = introspect_schema(
+        &connection,
+        &["public".to_string(), "auth".to_string()],
+        false,
+    )
+    .await
+    .unwrap();
     assert_eq!(current.tables.len(), 4);
 
     let filter = Filter::new(&[], &["_*".to_string()], &[], &[]).unwrap();
@@ -1184,9 +1193,13 @@ async fn qualified_schema_pattern_filters() {
         .await
         .unwrap();
 
-    let current = introspect_schema(&connection, &["public".to_string(), "auth".to_string()], false)
-        .await
-        .unwrap();
+    let current = introspect_schema(
+        &connection,
+        &["public".to_string(), "auth".to_string()],
+        false,
+    )
+    .await
+    .unwrap();
     assert_eq!(current.tables.len(), 3);
 
     let filter = Filter::new(&[], &["public._*".to_string()], &[], &[]).unwrap();
@@ -1245,7 +1258,10 @@ async fn extension_objects_excluded_by_default() {
         "User functions should be included"
     );
 
-    let has_citext_func = schema_without_ext.functions.keys().any(|k| k.contains("citext"));
+    let has_citext_func = schema_without_ext
+        .functions
+        .keys()
+        .any(|k| k.contains("citext"));
     assert!(
         !has_citext_func,
         "citext extension functions should NOT be included when include_extension_objects=false"
@@ -1255,7 +1271,10 @@ async fn extension_objects_excluded_by_default() {
         .await
         .unwrap();
 
-    let has_citext_func_included = schema_with_ext.functions.keys().any(|k| k.contains("citext"));
+    let has_citext_func_included = schema_with_ext
+        .functions
+        .keys()
+        .any(|k| k.contains("citext"));
     assert!(
         has_citext_func_included,
         "citext extension functions SHOULD be included when include_extension_objects=true"

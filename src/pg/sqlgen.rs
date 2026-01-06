@@ -323,9 +323,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             )]
         }
 
-        MigrationOp::AlterDomain { name, changes } => {
-            generate_alter_domain(name, changes)
-        }
+        MigrationOp::AlterDomain { name, changes } => generate_alter_domain(name, changes),
     }
 }
 
@@ -882,11 +880,11 @@ fn generate_create_domain(domain: &Domain) -> String {
     )];
 
     if let Some(ref collation) = domain.collation {
-        parts.push(format!("COLLATE {}", collation));
+        parts.push(format!("COLLATE {collation}"));
     }
 
     if let Some(ref default) = domain.default {
-        parts.push(format!("DEFAULT {}", default));
+        parts.push(format!("DEFAULT {default}"));
     }
 
     if domain.not_null {
@@ -895,7 +893,11 @@ fn generate_create_domain(domain: &Domain) -> String {
 
     for constraint in &domain.check_constraints {
         let constraint_sql = match &constraint.name {
-            Some(name) => format!("CONSTRAINT {} CHECK ({})", quote_ident(name), constraint.expression),
+            Some(name) => format!(
+                "CONSTRAINT {} CHECK ({})",
+                quote_ident(name),
+                constraint.expression
+            ),
             None => format!("CHECK ({})", constraint.expression),
         };
         parts.push(constraint_sql);
@@ -912,19 +914,21 @@ fn generate_alter_domain(name: &str, changes: &DomainChanges) -> Vec<String> {
     if let Some(ref default_change) = changes.default {
         match default_change {
             Some(new_default) => {
-                statements.push(format!("ALTER DOMAIN {} SET DEFAULT {};", qualified, new_default));
+                statements.push(format!(
+                    "ALTER DOMAIN {qualified} SET DEFAULT {new_default};"
+                ));
             }
             None => {
-                statements.push(format!("ALTER DOMAIN {} DROP DEFAULT;", qualified));
+                statements.push(format!("ALTER DOMAIN {qualified} DROP DEFAULT;"));
             }
         }
     }
 
     if let Some(not_null) = changes.not_null {
         if not_null {
-            statements.push(format!("ALTER DOMAIN {} SET NOT NULL;", qualified));
+            statements.push(format!("ALTER DOMAIN {qualified} SET NOT NULL;"));
         } else {
-            statements.push(format!("ALTER DOMAIN {} DROP NOT NULL;", qualified));
+            statements.push(format!("ALTER DOMAIN {qualified} DROP NOT NULL;"));
         }
     }
 
@@ -1936,7 +1940,10 @@ mod tests {
         let ops = vec![MigrationOp::CreateDomain(domain)];
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert_eq!(sql[0], "CREATE DOMAIN \"public\".\"email\" AS VARCHAR(255);");
+        assert_eq!(
+            sql[0],
+            "CREATE DOMAIN \"public\".\"email\" AS VARCHAR(255);"
+        );
     }
 
     #[test]
@@ -2069,7 +2076,7 @@ mod tests {
 
     #[test]
     fn generate_function_ddl_quotes_parameter_names_correctly() {
-        use crate::model::{Function, FunctionArg, ArgMode, Volatility, SecurityType};
+        use crate::model::{ArgMode, Function, FunctionArg, SecurityType, Volatility};
 
         let func = Function {
             name: "is_org_admin".to_string(),
@@ -2097,8 +2104,17 @@ mod tests {
 
         let ddl = generate_create_function(&func);
 
-        assert!(ddl.contains("\"p_role_name\" text"), "Expected single-quoted param name, got: {}", ddl);
-        assert!(ddl.contains("\"p_enterprise_id\" uuid DEFAULT null::uuid"), "Expected single-quoted param with default, got: {}", ddl);
-        assert!(!ddl.contains("\"\"\""), "Should not have triple quotes in: {}", ddl);
+        assert!(
+            ddl.contains("\"p_role_name\" text"),
+            "Expected single-quoted param name, got: {ddl}"
+        );
+        assert!(
+            ddl.contains("\"p_enterprise_id\" uuid DEFAULT null::uuid"),
+            "Expected single-quoted param with default, got: {ddl}"
+        );
+        assert!(
+            !ddl.contains("\"\"\""),
+            "Should not have triple quotes in: {ddl}"
+        );
     }
 }
