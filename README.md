@@ -120,6 +120,9 @@ pgmold lint --schema sql:schema.sql
 
 # Monitor for drift
 pgmold monitor --schema sql:schema.sql --database db:postgres://localhost/mydb
+
+# Detect drift (returns JSON report with exit code 1 if drift detected)
+pgmold drift --schema sql:schema.sql --database db:postgres://localhost/mydb --json
 ```
 
 ## Guides
@@ -256,6 +259,81 @@ pgmold diff --from "db:postgres://localhost/mydb" --to "sql:schema/" > migration
 The `migrate generate` command auto-detects the next migration number by scanning existing files.
 
 This lets you use pgmold for diffing while keeping your existing migration runner.
+
+### CI Integration
+
+pgmold includes a GitHub Action for detecting schema drift in CI/CD pipelines. This catches when manual database changes drift from your schema files.
+
+#### GitHub Action Usage
+
+```yaml
+- name: Check for schema drift
+  uses: fmguerreiro/pgmold/.github/actions/drift-check@main
+  with:
+    schema: 'sql:schema/'
+    database: ${{ secrets.DATABASE_URL }}
+    target-schemas: 'public,auth'
+    fail-on-drift: 'true'
+```
+
+**Inputs:**
+- `schema` (required): Path to schema SQL file(s). Can be a single file or multiple files (space-separated).
+- `database` (required): PostgreSQL connection string.
+- `target-schemas` (optional): Comma-separated list of schemas to introspect. Default: `public`.
+- `version` (optional): pgmold version to install. Default: `latest`.
+- `fail-on-drift` (optional): Whether to fail the action if drift is detected. Default: `true`.
+
+**Outputs:**
+- `has-drift`: Whether drift was detected (true/false).
+- `expected-fingerprint`: Expected schema fingerprint from SQL files.
+- `actual-fingerprint`: Actual schema fingerprint from database.
+- `report`: Full JSON drift report.
+
+#### Example Workflow
+
+See `.github/workflows/drift-check-example.yml.example` for a complete example. Basic usage:
+
+```yaml
+name: Schema Drift Check
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # Daily at 8am UTC
+  workflow_dispatch:
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for schema drift
+        uses: fmguerreiro/pgmold/.github/actions/drift-check@main
+        with:
+          schema: 'sql:schema/'
+          database: ${{ secrets.DATABASE_URL }}
+```
+
+#### CLI Drift Detection
+
+For local or custom CI environments, use the `drift` command directly:
+
+```bash
+# Get JSON report with exit code 1 if drift detected
+pgmold drift --schema sql:schema/ --database postgres://localhost/mydb --json
+
+# Example output:
+# {
+#   "has_drift": true,
+#   "expected_fingerprint": "abc123...",
+#   "actual_fingerprint": "def456...",
+#   "differences": [
+#     "Table users has extra column in database: last_login TIMESTAMP"
+#   ]
+# }
+```
+
+The drift detection compares SHA256 fingerprints of normalized schemas. Any difference (new tables, altered columns, changed indexes) triggers drift.
 
 ## Safety Rules
 
