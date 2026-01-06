@@ -39,6 +39,13 @@ fn normalize_expression_regex(expr: &str) -> String {
     let re_string_text_cast = Regex::new(r"'([^']*)'::text").unwrap();
     let result = re_string_text_cast.replace_all(expr, "'$1'");
 
+    // ILIKE variants must come before LIKE variants
+    let re_not_ilike = Regex::new(r"\s*!~~\*\s*").unwrap();
+    let result = re_not_ilike.replace_all(&result, " NOT ILIKE ");
+
+    let re_ilike = Regex::new(r"\s*~~\*\s*").unwrap();
+    let result = re_ilike.replace_all(&result, " ILIKE ");
+
     let re_not_like = Regex::new(r"\s*!~~\s*").unwrap();
     let result = re_not_like.replace_all(&result, " NOT LIKE ");
 
@@ -67,11 +74,26 @@ pub fn normalize_view_query(query: &str) -> String {
     let re_string_text_cast = Regex::new(r"'([^']*)'::text").unwrap();
     let without_text_cast = re_string_text_cast.replace_all(query, "'$1'");
 
-    // Step 2: Normalize ~~ to LIKE (PostgreSQL uses ~~ internally for LIKE)
-    let re_like_op = Regex::new(r"\s*~~\s*").unwrap();
-    let with_like = re_like_op.replace_all(&without_text_cast, " LIKE ");
+    // Step 2: Normalize !~~* to NOT ILIKE (must come BEFORE ~~ handling)
+    // PostgreSQL uses !~~* internally for NOT ILIKE (case-insensitive NOT LIKE)
+    let re_not_ilike_op = Regex::new(r"\s*!~~\*\s*").unwrap();
+    let with_not_ilike = re_not_ilike_op.replace_all(&without_text_cast, " NOT ILIKE ");
 
-    // Step 3: Normalize type casts to lowercase (single-word types only, multiword like 'character varying' are handled consistently by PostgreSQL)
+    // Step 3: Normalize ~~* to ILIKE (must come BEFORE ~~ handling)
+    // PostgreSQL uses ~~* internally for ILIKE (case-insensitive LIKE)
+    let re_ilike_op = Regex::new(r"\s*~~\*\s*").unwrap();
+    let with_ilike = re_ilike_op.replace_all(&with_not_ilike, " ILIKE ");
+
+    // Step 4: Normalize !~~ to NOT LIKE (must come BEFORE ~~ handling)
+    // PostgreSQL uses !~~ internally for NOT LIKE
+    let re_not_like_op = Regex::new(r"\s*!~~\s*").unwrap();
+    let with_not_like = re_not_like_op.replace_all(&with_ilike, " NOT LIKE ");
+
+    // Step 5: Normalize ~~ to LIKE (PostgreSQL uses ~~ internally for LIKE)
+    let re_like_op = Regex::new(r"\s*~~\s*").unwrap();
+    let with_like = re_like_op.replace_all(&with_not_like, " LIKE ");
+
+    // Step 6: Normalize type casts to lowercase (single-word types only, multiword like 'character varying' are handled consistently by PostgreSQL)
     let re_type_cast = Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").unwrap();
     let lowercased_casts = re_type_cast
         .replace_all(&with_like, |caps: &regex::Captures| {
@@ -79,17 +101,30 @@ pub fn normalize_view_query(query: &str) -> String {
         })
         .to_string();
 
-    // Step 4: Collapse whitespace
+    // Step 7: Collapse whitespace
     let re_ws = Regex::new(r"\s+").unwrap();
     let collapsed = re_ws.replace_all(lowercased_casts.trim(), " ");
 
-    // Step 5: Normalize whitespace around parentheses
+    // Step 8: Normalize whitespace around parentheses
     let re_paren_open = Regex::new(r"\(\s+").unwrap();
     let re_paren_close = Regex::new(r"\s+\)").unwrap();
     let no_space_after_open = re_paren_open.replace_all(&collapsed, "(");
-    re_paren_close
-        .replace_all(&no_space_after_open, ")")
-        .to_string()
+    let normalized_paren_space = re_paren_close.replace_all(&no_space_after_open, ")");
+
+    // Step 9: Normalize double parentheses to single
+    // PostgreSQL adds extra parens around conditions in JOINs: ON ((a = b)) -> ON (a = b)
+    // We iteratively remove double parens until stable
+    let re_double_paren = Regex::new(r"\(\(([^()]*)\)\)").unwrap();
+    let mut result = normalized_paren_space.to_string();
+    loop {
+        let new_result = re_double_paren.replace_all(&result, "($1)").to_string();
+        if new_result == result {
+            break;
+        }
+        result = new_result;
+    }
+
+    result
 }
 
 #[derive(Error, Debug)]
@@ -153,6 +188,59 @@ mod tests {
     fn normalize_view_query_removes_spaces_around_parens() {
         let input = "SELECT * FROM ( SELECT id FROM users )";
         let expected = "SELECT * FROM (SELECT id FROM users)";
+        assert_eq!(normalize_view_query(input), expected);
+    }
+
+    #[test]
+    fn normalize_view_query_handles_not_like_operator() {
+        let input = "SELECT * FROM users WHERE name !~~ 'test%'";
+        let expected = "SELECT * FROM users WHERE name NOT LIKE 'test%'";
+        assert_eq!(normalize_view_query(input), expected);
+    }
+
+    #[test]
+    fn normalize_view_query_normalizes_double_parentheses() {
+        // PostgreSQL adds extra parens around conditions in JOINs
+        let input = "SELECT * FROM a JOIN b ON ((a.id = b.id))";
+        let expected = "SELECT * FROM a JOIN b ON (a.id = b.id)";
+        assert_eq!(normalize_view_query(input), expected);
+    }
+
+    #[test]
+    fn normalize_view_query_handles_nested_double_parentheses() {
+        // Triple nested parens should be reduced
+        let input = "SELECT * FROM a WHERE (((x > 0)))";
+        let expected = "SELECT * FROM a WHERE (x > 0)";
+        assert_eq!(normalize_view_query(input), expected);
+    }
+
+    #[test]
+    fn normalize_view_query_preserves_necessary_nested_parens() {
+        // Parens containing subexpressions should be preserved
+        let input = "SELECT * FROM a WHERE ((x > 0) AND (y < 10))";
+        let expected = "SELECT * FROM a WHERE ((x > 0) AND (y < 10))";
+        assert_eq!(normalize_view_query(input), expected);
+    }
+
+    #[test]
+    fn normalize_view_query_handles_complex_postgresql_normalization() {
+        // Combined case from bug report: PostgreSQL normalizes AS, casts, operators
+        let input = "SELECT 'enterprise'::text AS type, (r.name ~~ 'enterprise_%'::text) AS is_enterprise FROM roles r";
+        let expected = "SELECT 'enterprise' AS type, (r.name LIKE 'enterprise_%') AS is_enterprise FROM roles r";
+        assert_eq!(normalize_view_query(input), expected);
+    }
+
+    #[test]
+    fn normalize_view_query_handles_ilike_operator() {
+        let input = "SELECT * FROM users WHERE name ~~* 'Test%'";
+        let expected = "SELECT * FROM users WHERE name ILIKE 'Test%'";
+        assert_eq!(normalize_view_query(input), expected);
+    }
+
+    #[test]
+    fn normalize_view_query_handles_not_ilike_operator() {
+        let input = "SELECT * FROM users WHERE name !~~* 'Test%'";
+        let expected = "SELECT * FROM users WHERE name NOT ILIKE 'Test%'";
         assert_eq!(normalize_view_query(input), expected);
     }
 
