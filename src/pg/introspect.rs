@@ -620,7 +620,9 @@ fn map_pg_type(
         "jsonb" => PgType::Jsonb,
         "USER-DEFINED" => {
             if udt_name == "vector" {
-                let dimension = if atttypmod > 0 {
+                // pgvector stores dimension directly in atttypmod
+                // -1 means no dimension constraint (e.g., vector vs vector(1536))
+                let dimension = if atttypmod != -1 {
                     Some(atttypmod as u32)
                 } else {
                     None
