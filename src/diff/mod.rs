@@ -339,16 +339,31 @@ fn diff_functions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     for (sig, func) in &to.functions {
         if let Some(from_func) = from.functions.get(sig) {
             if !from_func.semantically_equals(func) {
-                ops.push(MigrationOp::AlterFunction {
-                    name: qualified_name(&func.schema, &func.name),
-                    args: func
-                        .arguments
-                        .iter()
-                        .map(|a| a.data_type.clone())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    new_function: func.clone(),
-                });
+                // PostgreSQL doesn't allow changing parameter names or defaults via
+                // CREATE OR REPLACE FUNCTION. We must DROP + CREATE in these cases.
+                if from_func.requires_drop_recreate(func) {
+                    ops.push(MigrationOp::DropFunction {
+                        name: qualified_name(&from_func.schema, &from_func.name),
+                        args: from_func
+                            .arguments
+                            .iter()
+                            .map(|a| a.data_type.clone())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    });
+                    ops.push(MigrationOp::CreateFunction(func.clone()));
+                } else {
+                    ops.push(MigrationOp::AlterFunction {
+                        name: qualified_name(&func.schema, &func.name),
+                        args: func
+                            .arguments
+                            .iter()
+                            .map(|a| a.data_type.clone())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        new_function: func.clone(),
+                    });
+                }
             }
         } else {
             ops.push(MigrationOp::CreateFunction(func.clone()));
@@ -824,7 +839,7 @@ fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{IndexType, ReferentialAction, SecurityType, SequenceDataType, Volatility};
+    use crate::model::{ArgMode, FunctionArg, IndexType, ReferentialAction, SecurityType, SequenceDataType, Volatility};
     use std::collections::BTreeMap;
 
     fn empty_schema() -> Schema {
@@ -1143,6 +1158,173 @@ mod tests {
             matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "auth.my_func"),
             "DropFunction should use qualified name with schema, got: {:?}",
             &ops[0]
+        );
+    }
+
+    #[test]
+    fn function_with_changed_param_names_uses_drop_create() {
+        // PostgreSQL doesn't allow changing parameter names via CREATE OR REPLACE.
+        // We must DROP + CREATE in these cases.
+        let mut from = empty_schema();
+        let func_old = Function {
+            name: "my_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("p_user_id".to_string()),
+                data_type: "uuid".to_string(),
+                mode: ArgMode::In,
+                default: None,
+            }],
+            return_type: "void".to_string(),
+            language: "plpgsql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+        from.functions
+            .insert(qualified_name(&func_old.schema, &func_old.signature()), func_old);
+
+        let mut to = empty_schema();
+        let func_new = Function {
+            name: "my_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("user_id".to_string()), // Different name, same type
+                data_type: "uuid".to_string(),
+                mode: ArgMode::In,
+                default: None,
+            }],
+            return_type: "void".to_string(),
+            language: "plpgsql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+        to.functions
+            .insert(qualified_name(&func_new.schema, &func_new.signature()), func_new);
+
+        let ops = compute_diff(&from, &to);
+
+        // Should generate DROP + CREATE, not ALTER
+        assert_eq!(ops.len(), 2, "Should have DROP and CREATE operations");
+        assert!(
+            matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "public.my_func"),
+            "First op should be DropFunction, got: {:?}",
+            &ops[0]
+        );
+        assert!(
+            matches!(&ops[1], MigrationOp::CreateFunction(f) if f.name == "my_func"),
+            "Second op should be CreateFunction, got: {:?}",
+            &ops[1]
+        );
+    }
+
+    #[test]
+    fn function_with_changed_body_uses_alter() {
+        // When only the body changes (not parameter names), we can use CREATE OR REPLACE.
+        let mut from = empty_schema();
+        let func_old = Function {
+            name: "my_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("user_id".to_string()),
+                data_type: "uuid".to_string(),
+                mode: ArgMode::In,
+                default: None,
+            }],
+            return_type: "void".to_string(),
+            language: "plpgsql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+        from.functions
+            .insert(qualified_name(&func_old.schema, &func_old.signature()), func_old);
+
+        let mut to = empty_schema();
+        let func_new = Function {
+            name: "my_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("user_id".to_string()), // Same name
+                data_type: "uuid".to_string(),
+                mode: ArgMode::In,
+                default: None,
+            }],
+            return_type: "void".to_string(),
+            language: "plpgsql".to_string(),
+            body: "SELECT 2".to_string(), // Different body
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+        to.functions
+            .insert(qualified_name(&func_new.schema, &func_new.signature()), func_new);
+
+        let ops = compute_diff(&from, &to);
+
+        // Should use ALTER (CREATE OR REPLACE)
+        assert_eq!(ops.len(), 1, "Should have only ALTER operation");
+        assert!(
+            matches!(&ops[0], MigrationOp::AlterFunction { name, .. } if name == "public.my_func"),
+            "Should be AlterFunction, got: {:?}",
+            &ops[0]
+        );
+    }
+
+    #[test]
+    fn function_with_changed_default_uses_drop_create() {
+        // PostgreSQL doesn't allow changing parameter defaults via CREATE OR REPLACE.
+        let mut from = empty_schema();
+        let func_old = Function {
+            name: "my_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("user_id".to_string()),
+                data_type: "uuid".to_string(),
+                mode: ArgMode::In,
+                default: None,
+            }],
+            return_type: "void".to_string(),
+            language: "plpgsql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+        from.functions
+            .insert(qualified_name(&func_old.schema, &func_old.signature()), func_old);
+
+        let mut to = empty_schema();
+        let func_new = Function {
+            name: "my_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("user_id".to_string()),
+                data_type: "uuid".to_string(),
+                mode: ArgMode::In,
+                default: Some("gen_random_uuid()".to_string()), // Added default
+            }],
+            return_type: "void".to_string(),
+            language: "plpgsql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+        };
+        to.functions
+            .insert(qualified_name(&func_new.schema, &func_new.signature()), func_new);
+
+        let ops = compute_diff(&from, &to);
+
+        // Should generate DROP + CREATE
+        assert_eq!(ops.len(), 2, "Should have DROP and CREATE operations");
+        assert!(
+            matches!(&ops[0], MigrationOp::DropFunction { .. }),
+            "First op should be DropFunction, got: {:?}",
+            &ops[0]
+        );
+        assert!(
+            matches!(&ops[1], MigrationOp::CreateFunction(_)),
+            "Second op should be CreateFunction, got: {:?}",
+            &ops[1]
         );
     }
 
