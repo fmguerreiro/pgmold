@@ -10,9 +10,7 @@ use testcontainers_modules::postgres::Postgres;
 async fn setup_postgres() -> (testcontainers::ContainerAsync<Postgres>, String) {
     let container = Postgres::default().start().await.unwrap();
     let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let url = format!(
-        "postgres://postgres:postgres@127.0.0.1:{port}/postgres"
-    );
+    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     (container, url)
 }
 
@@ -81,8 +79,7 @@ async fn trigger_when_clause_type_cast_roundtrip() {
     let ops = compute_diff(&db_schema, &sql_schema);
     assert!(
         ops.is_empty(),
-        "Trigger with WHEN clause type cast should be semantically equal. Got: {:?}",
-        ops
+        "Trigger with WHEN clause type cast should be semantically equal. Got: {ops:?}"
     );
 }
 
@@ -139,8 +136,7 @@ async fn trigger_event_order_roundtrip() {
     let ops = compute_diff(&db_schema, &sql_schema);
     assert!(
         ops.is_empty(),
-        "Trigger with same events in different order should be equal. Got: {:?}",
-        ops
+        "Trigger with same events in different order should be equal. Got: {ops:?}"
     );
 }
 
@@ -179,8 +175,7 @@ async fn function_volatile_implicit_vs_explicit() {
     let ops = compute_diff(&db_schema, &sql_schema);
     assert!(
         ops.is_empty(),
-        "Function with implicit vs explicit VOLATILE should be equal. Got: {:?}",
-        ops
+        "Function with implicit vs explicit VOLATILE should be equal. Got: {ops:?}"
     );
 }
 
@@ -221,10 +216,6 @@ async fn function_body_whitespace_roundtrip() {
     let ops = compute_diff(&db_schema, &sql_schema);
     assert!(
         ops.is_empty(),
-        "Function with different body whitespace should be equal. Got: {:?}",
-        ops
+        "Function with different body whitespace should be equal. Got: {ops:?}"
     );
 }
-
-
-

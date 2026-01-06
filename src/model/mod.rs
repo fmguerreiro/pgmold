@@ -1,4 +1,4 @@
-use crate::util::normalize_view_query;
+use crate::util::{canonicalize_expression, normalize_view_query};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -123,6 +123,15 @@ pub enum ReferentialAction {
 pub struct CheckConstraint {
     pub name: String,
     pub expression: String,
+}
+
+impl CheckConstraint {
+    /// Compares two check constraints semantically, accounting for PostgreSQL's expression normalization.
+    pub fn semantically_equals(&self, other: &CheckConstraint) -> bool {
+        self.name == other.name
+            && canonicalize_expression(&self.expression)
+                == canonicalize_expression(&other.expression)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -283,7 +292,6 @@ pub struct View {
     pub query: String,
     pub materialized: bool,
 }
-
 
 impl View {
     /// Compares two views semantically, accounting for PostgreSQL's normalization.
@@ -462,7 +470,6 @@ impl Function {
         format!("{}({})", self.name, args)
     }
 }
-
 
 /// Normalizes PostgreSQL type aliases to their canonical forms.
 /// This ensures consistent comparison between parsed SQL and introspected schemas.

@@ -704,28 +704,43 @@ fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Vec<Migration
     let mut ops = Vec::new();
     let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
 
-    for check_constraint in &to_table.check_constraints {
-        if !from_table
+    for to_constraint in &to_table.check_constraints {
+        let matching_from = from_table
             .check_constraints
             .iter()
-            .any(|cc| cc.name == check_constraint.name)
-        {
-            ops.push(MigrationOp::AddCheckConstraint {
-                table: qualified_table_name.clone(),
-                check_constraint: check_constraint.clone(),
-            });
+            .find(|cc| cc.name == to_constraint.name);
+
+        match matching_from {
+            Some(from_constraint) => {
+                if !from_constraint.semantically_equals(to_constraint) {
+                    ops.push(MigrationOp::DropCheckConstraint {
+                        table: qualified_table_name.clone(),
+                        constraint_name: from_constraint.name.clone(),
+                    });
+                    ops.push(MigrationOp::AddCheckConstraint {
+                        table: qualified_table_name.clone(),
+                        check_constraint: to_constraint.clone(),
+                    });
+                }
+            }
+            None => {
+                ops.push(MigrationOp::AddCheckConstraint {
+                    table: qualified_table_name.clone(),
+                    check_constraint: to_constraint.clone(),
+                });
+            }
         }
     }
 
-    for check_constraint in &from_table.check_constraints {
+    for from_constraint in &from_table.check_constraints {
         if !to_table
             .check_constraints
             .iter()
-            .any(|cc| cc.name == check_constraint.name)
+            .any(|cc| cc.name == from_constraint.name)
         {
             ops.push(MigrationOp::DropCheckConstraint {
                 table: qualified_name(&from_table.schema, &from_table.name),
-                constraint_name: check_constraint.name.clone(),
+                constraint_name: from_constraint.name.clone(),
             });
         }
     }
@@ -789,7 +804,9 @@ fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
 /// 2. Normalizing whitespace (handles PostgreSQL's pg_get_expr vs sqlparser formatting)
 fn normalize_expr(expr: &Option<String>) -> Option<String> {
     expr.as_ref().map(|e| {
-        let re = regex::Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*(?:\s+[A-Za-z][A-Za-z0-9_\[\]]*)*)").unwrap();
+        let re =
+            regex::Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*(?:\s+[A-Za-z][A-Za-z0-9_\[\]]*)*)")
+                .unwrap();
         let lowercased = re
             .replace_all(e, |caps: &regex::Captures| {
                 format!("::{}", caps[1].to_lowercase())
@@ -823,7 +840,6 @@ fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
     }
 }
 
-
 /// Normalize whitespace in expression for comparison. Removes spaces after open
 /// parens and before close parens to match PostgreSQL's pg_get_expr vs sqlparser
 /// formatting differences.
@@ -834,7 +850,9 @@ fn normalize_whitespace(expr: &str) -> String {
     let re_paren_open = regex::Regex::new(r"\(\s+").unwrap();
     let re_paren_close = regex::Regex::new(r"\s+\)").unwrap();
     let no_space_after_open = re_paren_open.replace_all(&collapsed, "(");
-    re_paren_close.replace_all(&no_space_after_open, ")").to_string()
+    re_paren_close
+        .replace_all(&no_space_after_open, ")")
+        .to_string()
 }
 
 #[cfg(test)]
@@ -1131,9 +1149,10 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "public.add_numbers"));
+        assert!(
+            matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "public.add_numbers")
+        );
     }
-
 
     #[test]
     fn drop_function_uses_correct_schema() {
@@ -1148,7 +1167,8 @@ mod tests {
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
         };
-        from.functions.insert(qualified_name(&func.schema, &func.signature()), func);
+        from.functions
+            .insert(qualified_name(&func.schema, &func.signature()), func);
         let to = empty_schema();
 
         let ops = compute_diff(&from, &to);
@@ -1160,7 +1180,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn drop_view_uses_correct_schema() {
         let mut from = empty_schema();
@@ -1170,7 +1189,8 @@ mod tests {
             query: "SELECT 1".to_string(),
             materialized: false,
         };
-        from.views.insert(qualified_name(&view.schema, &view.name), view);
+        from.views
+            .insert(qualified_name(&view.schema, &view.name), view);
         let to = empty_schema();
 
         let ops = compute_diff(&from, &to);
@@ -1248,7 +1268,9 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], MigrationOp::AlterView { name, .. } if name == "public.active_users"));
+        assert!(
+            matches!(&ops[0], MigrationOp::AlterView { name, .. } if name == "public.active_users")
+        );
     }
 
     #[test]
@@ -1349,6 +1371,75 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropCheckConstraint { table, constraint_name } if table == "public.products" && constraint_name == "price_positive")
         );
+    }
+
+    #[test]
+    fn check_constraint_ignores_whitespace_differences() {
+        let mut from = empty_schema();
+        let mut from_table = simple_table("products");
+        from_table
+            .check_constraints
+            .push(crate::model::CheckConstraint {
+                name: "price_positive".to_string(),
+                expression: "price   >   0".to_string(),
+            });
+        from.tables.insert("products".to_string(), from_table);
+
+        let mut to = empty_schema();
+        let mut to_table = simple_table("products");
+        to_table
+            .check_constraints
+            .push(crate::model::CheckConstraint {
+                name: "price_positive".to_string(),
+                expression: "price > 0".to_string(),
+            });
+        to.tables.insert("products".to_string(), to_table);
+
+        let ops = compute_diff(&from, &to);
+        assert!(
+            ops.is_empty(),
+            "Should not detect differences for whitespace-only changes in check constraints"
+        );
+    }
+
+    #[test]
+    fn check_constraint_detects_expression_change() {
+        let mut from = empty_schema();
+        let mut from_table = simple_table("products");
+        from_table
+            .check_constraints
+            .push(crate::model::CheckConstraint {
+                name: "price_check".to_string(),
+                expression: "price > 0".to_string(),
+            });
+        from.tables.insert("products".to_string(), from_table);
+
+        let mut to = empty_schema();
+        let mut to_table = simple_table("products");
+        to_table
+            .check_constraints
+            .push(crate::model::CheckConstraint {
+                name: "price_check".to_string(),
+                expression: "price >= 0".to_string(),
+            });
+        to.tables.insert("products".to_string(), to_table);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 2);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::DropCheckConstraint {
+                constraint_name,
+                ..
+            } if constraint_name == "price_check"
+        ));
+        assert!(matches!(
+            &ops[1],
+            MigrationOp::AddCheckConstraint {
+                check_constraint,
+                ..
+            } if check_constraint.name == "price_check" && check_constraint.expression == "price >= 0"
+        ));
     }
 
     #[test]
@@ -1954,21 +2045,25 @@ mod tests {
 
         let mut from = empty_schema();
         let mut from_trigger = make_trigger("audit_trigger", "users");
-        from_trigger.events = vec![TriggerEvent::Delete, TriggerEvent::Insert, TriggerEvent::Update];
+        from_trigger.events = vec![
+            TriggerEvent::Delete,
+            TriggerEvent::Insert,
+            TriggerEvent::Update,
+        ];
         from_trigger.events.sort();
-        from.triggers.insert(
-            "public.users.audit_trigger".to_string(),
-            from_trigger,
-        );
+        from.triggers
+            .insert("public.users.audit_trigger".to_string(), from_trigger);
 
         let mut to = empty_schema();
         let mut to_trigger = make_trigger("audit_trigger", "users");
-        to_trigger.events = vec![TriggerEvent::Insert, TriggerEvent::Update, TriggerEvent::Delete];
+        to_trigger.events = vec![
+            TriggerEvent::Insert,
+            TriggerEvent::Update,
+            TriggerEvent::Delete,
+        ];
         to_trigger.events.sort();
-        to.triggers.insert(
-            "public.users.audit_trigger".to_string(),
-            to_trigger,
-        );
+        to.triggers
+            .insert("public.users.audit_trigger".to_string(), to_trigger);
 
         let ops = compute_diff(&from, &to);
         assert!(
@@ -1977,7 +2072,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn trigger_when_clause_type_cast_case_does_not_affect_comparison() {
         use crate::model::TriggerEvent;
@@ -1985,29 +2079,25 @@ mod tests {
         let mut from = empty_schema();
         let mut from_trigger = make_trigger("log_trigger", "events");
         from_trigger.events = vec![TriggerEvent::Update];
-        from_trigger.when_clause = Some("(OLD.status::TEXT IS DISTINCT FROM NEW.status::TEXT)".to_string());
-        from.triggers.insert(
-            "public.events.log_trigger".to_string(),
-            from_trigger,
-        );
+        from_trigger.when_clause =
+            Some("(OLD.status::TEXT IS DISTINCT FROM NEW.status::TEXT)".to_string());
+        from.triggers
+            .insert("public.events.log_trigger".to_string(), from_trigger);
 
         let mut to = empty_schema();
         let mut to_trigger = make_trigger("log_trigger", "events");
         to_trigger.events = vec![TriggerEvent::Update];
-        to_trigger.when_clause = Some("(OLD.status::text IS DISTINCT FROM NEW.status::text)".to_string());
-        to.triggers.insert(
-            "public.events.log_trigger".to_string(),
-            to_trigger,
-        );
+        to_trigger.when_clause =
+            Some("(OLD.status::text IS DISTINCT FROM NEW.status::text)".to_string());
+        to.triggers
+            .insert("public.events.log_trigger".to_string(), to_trigger);
 
         let ops = compute_diff(&from, &to);
         assert!(
             ops.is_empty(),
-            "Triggers with same WHEN clause but different type cast case should be equal. Got: {:?}",
-            ops
+            "Triggers with same WHEN clause but different type cast case should be equal. Got: {ops:?}"
         );
     }
-
 
     #[test]
     fn policy_expression_comparison_ignores_type_cast_case() {
@@ -2040,7 +2130,10 @@ mod tests {
         to.tables.insert("public.users".to_string(), table);
 
         let ops = compute_diff(&from, &to);
-        assert!(ops.is_empty(), "Should not report differences for type cast case changes");
+        assert!(
+            ops.is_empty(),
+            "Should not report differences for type cast case changes"
+        );
     }
 
     #[test]
@@ -2057,7 +2150,9 @@ mod tests {
             table: "users".to_string(),
             command: crate::model::PolicyCommand::Select,
             roles: vec!["authenticated".to_string()],
-            using_expr: Some("(EXISTS ( SELECT 1 FROM user_roles ur WHERE ur.user_id = auth.uid()))".to_string()),
+            using_expr: Some(
+                "(EXISTS ( SELECT 1 FROM user_roles ur WHERE ur.user_id = auth.uid()))".to_string(),
+            ),
             check_expr: None,
         });
         from.tables.insert("public.users".to_string(), table);
@@ -2071,13 +2166,18 @@ mod tests {
             table: "users".to_string(),
             command: crate::model::PolicyCommand::Select,
             roles: vec!["authenticated".to_string()],
-            using_expr: Some("(EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = auth.uid()))".to_string()),
+            using_expr: Some(
+                "(EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = auth.uid()))".to_string(),
+            ),
             check_expr: None,
         });
         to.tables.insert("public.users".to_string(), table);
 
         let ops = compute_diff(&from, &to);
-        assert!(ops.is_empty(), "Should not report differences for whitespace after parens");
+        assert!(
+            ops.is_empty(),
+            "Should not report differences for whitespace after parens"
+        );
     }
 
     #[test]
@@ -2112,7 +2212,10 @@ mod tests {
         to.tables.insert("public.users".to_string(), table);
 
         let ops = compute_diff(&from, &to);
-        assert!(ops.is_empty(), "Should not report differences for whitespace before parens");
+        assert!(
+            ops.is_empty(),
+            "Should not report differences for whitespace before parens"
+        );
     }
 
     #[test]
@@ -2148,8 +2251,7 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert!(
             ops.is_empty(),
-            "Should not report differences for type cast case changes in column defaults. Got: {:?}",
-            ops
+            "Should not report differences for type cast case changes in column defaults. Got: {ops:?}"
         );
     }
 
@@ -2186,8 +2288,7 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert!(
             ops.is_empty(),
-            "Should not report differences for type cast case changes in NULL defaults. Got: {:?}",
-            ops
+            "Should not report differences for type cast case changes in NULL defaults. Got: {ops:?}"
         );
     }
 
@@ -2238,7 +2339,10 @@ mod tests {
         );
 
         let ops = compute_diff(&from, &to);
-        assert!(ops.is_empty(), "Identical triggers should produce no diff operations");
+        assert!(
+            ops.is_empty(),
+            "Identical triggers should produce no diff operations"
+        );
     }
 
     #[test]
@@ -2259,7 +2363,10 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
             parsed_schema.triggers.keys().collect::<Vec<_>>()
         );
 
-        let parsed_trigger = parsed_schema.triggers.get("auth.users.on_auth_user_created").unwrap();
+        let parsed_trigger = parsed_schema
+            .triggers
+            .get("auth.users.on_auth_user_created")
+            .unwrap();
 
         // Create a mock DB schema that matches what introspection would return
         let db_trigger = crate::model::Trigger {
@@ -2281,19 +2388,52 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
 
         // Check field by field to identify any mismatches
         assert_eq!(parsed_trigger.name, db_trigger.name, "name mismatch");
-        assert_eq!(parsed_trigger.target_schema, db_trigger.target_schema, "target_schema mismatch");
-        assert_eq!(parsed_trigger.target_name, db_trigger.target_name, "target_name mismatch");
+        assert_eq!(
+            parsed_trigger.target_schema, db_trigger.target_schema,
+            "target_schema mismatch"
+        );
+        assert_eq!(
+            parsed_trigger.target_name, db_trigger.target_name,
+            "target_name mismatch"
+        );
         assert_eq!(parsed_trigger.timing, db_trigger.timing, "timing mismatch");
         assert_eq!(parsed_trigger.events, db_trigger.events, "events mismatch");
-        assert_eq!(parsed_trigger.update_columns, db_trigger.update_columns, "update_columns mismatch");
-        assert_eq!(parsed_trigger.for_each_row, db_trigger.for_each_row, "for_each_row mismatch");
-        assert_eq!(parsed_trigger.when_clause, db_trigger.when_clause, "when_clause mismatch");
-        assert_eq!(parsed_trigger.function_schema, db_trigger.function_schema, "function_schema mismatch");
-        assert_eq!(parsed_trigger.function_name, db_trigger.function_name, "function_name mismatch");
-        assert_eq!(parsed_trigger.function_args, db_trigger.function_args, "function_args mismatch");
-        assert_eq!(parsed_trigger.enabled, db_trigger.enabled, "enabled mismatch");
-        assert_eq!(parsed_trigger.old_table_name, db_trigger.old_table_name, "old_table_name mismatch");
-        assert_eq!(parsed_trigger.new_table_name, db_trigger.new_table_name, "new_table_name mismatch");
+        assert_eq!(
+            parsed_trigger.update_columns, db_trigger.update_columns,
+            "update_columns mismatch"
+        );
+        assert_eq!(
+            parsed_trigger.for_each_row, db_trigger.for_each_row,
+            "for_each_row mismatch"
+        );
+        assert_eq!(
+            parsed_trigger.when_clause, db_trigger.when_clause,
+            "when_clause mismatch"
+        );
+        assert_eq!(
+            parsed_trigger.function_schema, db_trigger.function_schema,
+            "function_schema mismatch"
+        );
+        assert_eq!(
+            parsed_trigger.function_name, db_trigger.function_name,
+            "function_name mismatch"
+        );
+        assert_eq!(
+            parsed_trigger.function_args, db_trigger.function_args,
+            "function_args mismatch"
+        );
+        assert_eq!(
+            parsed_trigger.enabled, db_trigger.enabled,
+            "enabled mismatch"
+        );
+        assert_eq!(
+            parsed_trigger.old_table_name, db_trigger.old_table_name,
+            "old_table_name mismatch"
+        );
+        assert_eq!(
+            parsed_trigger.new_table_name, db_trigger.new_table_name,
+            "new_table_name mismatch"
+        );
 
         // Verify semantic equality
         assert!(
@@ -2454,8 +2594,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
 
         assert!(
             trigger_ops.is_empty(),
-            "Should have no trigger diff operations, but got: {:?}",
-            trigger_ops
+            "Should have no trigger diff operations, but got: {trigger_ops:?}"
         );
     }
 }
