@@ -897,7 +897,7 @@ async fn partition_migration_apply() {
         sqlx::query(stmt)
             .execute(connection.pool())
             .await
-            .expect(&format!("Failed to execute: {}", stmt));
+            .unwrap_or_else(|_| panic!("Failed to execute: {stmt}"));
     }
 
     let after_schema = introspect_schema(&connection, &["public".to_string()], false)
@@ -941,8 +941,7 @@ async fn partition_migration_apply() {
     let final_ops = compute_diff(&after_schema, &desired_schema);
     assert!(
         final_ops.is_empty(),
-        "After applying migrations, diff should be empty. Got: {:?}",
-        final_ops
+        "After applying migrations, diff should be empty. Got: {final_ops:?}"
     );
 }
 
@@ -1629,7 +1628,7 @@ async fn plan_json_output_format() {
     assert!(!sql.is_empty(), "Should have SQL statements");
 
     let json_output = serde_json::json!({
-        "operations": ops.iter().map(|op| format!("{:?}", op)).collect::<Vec<_>>(),
+        "operations": ops.iter().map(|op| format!("{op:?}")).collect::<Vec<_>>(),
         "statements": sql.clone(),
         "lock_warnings": Vec::<String>::new(),
         "statement_count": sql.len(),
@@ -1705,7 +1704,7 @@ async fn introspect_vector_type() {
         pgmold::model::PgType::Vector(dim) => {
             assert_eq!(*dim, Some(1536), "Vector dimension should be 1536");
         }
-        other => panic!("Expected Vector type, got {:?}", other),
+        other => panic!("Expected Vector type, got {other:?}"),
     }
 }
 
@@ -1753,7 +1752,7 @@ async fn introspect_vector_type_unconstrained() {
         pgmold::model::PgType::Vector(dim) => {
             assert_eq!(*dim, None, "Unconstrained vector should have no dimension");
         }
-        other => panic!("Expected Vector type, got {:?}", other),
+        other => panic!("Expected Vector type, got {other:?}"),
     }
 }
 
@@ -1791,7 +1790,7 @@ async fn drift_cli_no_drift() {
             "--schema",
             schema_file.path().to_str().unwrap(),
             "--database",
-            &format!("db:{}", url),
+            &format!("db:{url}"),
         ])
         .output()
         .expect("Failed to execute command");
@@ -1847,7 +1846,7 @@ async fn drift_cli_detects_drift() {
             "--schema",
             schema_file.path().to_str().unwrap(),
             "--database",
-            &format!("db:{}", url),
+            &format!("db:{url}"),
         ])
         .output()
         .expect("Failed to execute command");
@@ -1903,7 +1902,7 @@ async fn drift_cli_json_output() {
             "--schema",
             schema_file.path().to_str().unwrap(),
             "--database",
-            &format!("db:{}", url),
+            &format!("db:{url}"),
             "--json",
         ])
         .output()
@@ -1922,4 +1921,99 @@ async fn drift_cli_json_output() {
     assert!(json["actual_fingerprint"].is_string());
     assert!(json["differences"].is_array());
     assert!(!json["differences"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn plan_with_zero_downtime_flag() {
+    use pgmold::expand_contract::expand_operations;
+
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE users (
+            id INT PRIMARY KEY,
+            name TEXT
+        )
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE TABLE users (
+            id INT PRIMARY KEY,
+            name TEXT,
+            email TEXT NOT NULL
+        );
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let ops = plan_migration(compute_diff(&current, &target));
+    let phased_plan = expand_operations(ops);
+
+    assert!(
+        !phased_plan.expand_ops.is_empty(),
+        "Should have expand phase operations"
+    );
+    assert!(
+        !phased_plan.backfill_ops.is_empty(),
+        "Should have backfill phase operations"
+    );
+    assert!(
+        !phased_plan.contract_ops.is_empty(),
+        "Should have contract phase operations"
+    );
+
+    let expand_sql: Vec<String> = phased_plan
+        .expand_ops
+        .iter()
+        .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+        .collect();
+
+    let backfill_sql: Vec<String> = phased_plan
+        .backfill_ops
+        .iter()
+        .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+        .collect();
+
+    let contract_sql: Vec<String> = phased_plan
+        .contract_ops
+        .iter()
+        .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+        .collect();
+
+    assert!(!expand_sql.is_empty(), "Should have expand SQL");
+    assert!(!backfill_sql.is_empty(), "Should have backfill SQL");
+    assert!(!contract_sql.is_empty(), "Should have contract SQL");
+
+    let expand_has_nullable = expand_sql
+        .iter()
+        .any(|s| s.contains("ADD COLUMN") && s.contains("email") && !s.contains("NOT NULL"));
+    assert!(
+        expand_has_nullable,
+        "Expand phase should add nullable column"
+    );
+
+    let backfill_has_hint = backfill_sql.iter().any(|s| s.contains("Backfill required"));
+    assert!(
+        backfill_has_hint,
+        "Backfill phase should have backfill hint"
+    );
+
+    let contract_has_not_null = contract_sql
+        .iter()
+        .any(|s| s.contains("SET NOT NULL") && s.contains("email"));
+    assert!(
+        contract_has_not_null,
+        "Contract phase should add NOT NULL constraint"
+    );
 }
