@@ -6,6 +6,7 @@ use sqlx::Executor;
 use pgmold::diff::{compute_diff, planner::plan_migration};
 use pgmold::drift::detect_drift;
 use pgmold::dump::{generate_dump, generate_split_dump};
+use pgmold::expand_contract::expand_operations;
 use pgmold::filter::{filter_schema, Filter, ObjectType};
 use pgmold::lint::locks::detect_lock_hazards;
 use pgmold::lint::{has_errors, lint_migration_plan, LintOptions, LintSeverity};
@@ -22,6 +23,18 @@ struct PlanOutput {
     statements: Vec<String>,
     lock_warnings: Vec<String>,
     statement_count: usize,
+}
+
+#[derive(Serialize)]
+struct PhasedPlanOutput {
+    expand: PhaseOutput,
+    backfill: PhaseOutput,
+    contract: PhaseOutput,
+}
+
+#[derive(Serialize)]
+struct PhaseOutput {
+    statements: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -79,6 +92,9 @@ enum Commands {
         /// Output plan as JSON for CI integration
         #[arg(long)]
         json: bool,
+        /// Generate zero-downtime migration plan with expand/contract phases
+        #[arg(long)]
+        zero_downtime: bool,
     },
 
     /// Apply migrations
@@ -253,6 +269,7 @@ pub async fn run() -> Result<()> {
             exclude_types,
             include_extension_objects,
             json,
+            zero_downtime,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -275,35 +292,119 @@ pub async fn run() -> Result<()> {
             } else {
                 plan_migration(compute_diff(&filtered_db_schema, &filtered_target))
             };
-            let lock_warnings = detect_lock_hazards(&ops);
 
-            let sql = generate_sql(&ops);
+            if zero_downtime {
+                let phased_plan = expand_operations(ops);
 
-            if json {
-                let output = PlanOutput {
-                    operations: ops.iter().map(|op| format!("{op:?}")).collect(),
-                    statements: sql.clone(),
-                    lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
-                    statement_count: sql.len(),
-                };
-                let json_output = serde_json::to_string_pretty(&output)
-                    .map_err(|e| anyhow!("Failed to serialize plan output to JSON: {e}"))?;
-                println!("{json_output}");
-            } else {
-                for warning in &lock_warnings {
-                    println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
-                }
+                let expand_sql: Vec<String> = phased_plan
+                    .expand_ops
+                    .iter()
+                    .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+                    .collect();
 
-                if sql.is_empty() {
-                    println!("No changes required.");
+                let backfill_sql: Vec<String> = phased_plan
+                    .backfill_ops
+                    .iter()
+                    .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+                    .collect();
+
+                let contract_sql: Vec<String> = phased_plan
+                    .contract_ops
+                    .iter()
+                    .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+                    .collect();
+
+                if json {
+                    let output = PhasedPlanOutput {
+                        expand: PhaseOutput {
+                            statements: expand_sql,
+                        },
+                        backfill: PhaseOutput {
+                            statements: backfill_sql,
+                        },
+                        contract: PhaseOutput {
+                            statements: contract_sql,
+                        },
+                    };
+                    let json_output = serde_json::to_string_pretty(&output).map_err(|e| {
+                        anyhow!("Failed to serialize phased plan output to JSON: {e}")
+                    })?;
+                    println!("{json_output}");
                 } else {
-                    if !lock_warnings.is_empty() {
+                    let total = phased_plan.expand_ops.len()
+                        + phased_plan.backfill_ops.len()
+                        + phased_plan.contract_ops.len();
+
+                    if total == 0 {
+                        println!("No changes required.");
+                    } else {
+                        println!("-- ================================");
+                        println!("-- PHASE 1: EXPAND (safe, online)");
+                        println!("-- ================================");
+                        if phased_plan.expand_ops.is_empty() {
+                            println!("-- (no operations)");
+                        } else {
+                            for statement in &expand_sql {
+                                println!("{statement}");
+                            }
+                        }
                         println!();
+
+                        println!("-- ================================");
+                        println!("-- PHASE 2: BACKFILL (manual/app)");
+                        println!("-- ================================");
+                        if phased_plan.backfill_ops.is_empty() {
+                            println!("-- (no operations)");
+                        } else {
+                            for statement in &backfill_sql {
+                                println!("{statement}");
+                            }
+                        }
+                        println!();
+
+                        println!("-- ================================");
+                        println!("-- PHASE 3: CONTRACT (requires verification)");
+                        println!("-- ================================");
+                        if phased_plan.contract_ops.is_empty() {
+                            println!("-- (no operations)");
+                        } else {
+                            for statement in &contract_sql {
+                                println!("{statement}");
+                            }
+                        }
                     }
-                    println!("Migration plan ({} statements):", sql.len());
-                    for statement in &sql {
-                        println!("{statement}");
-                        println!();
+                }
+            } else {
+                let lock_warnings = detect_lock_hazards(&ops);
+
+                let sql = generate_sql(&ops);
+
+                if json {
+                    let output = PlanOutput {
+                        operations: ops.iter().map(|op| format!("{op:?}")).collect(),
+                        statements: sql.clone(),
+                        lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
+                        statement_count: sql.len(),
+                    };
+                    let json_output = serde_json::to_string_pretty(&output)
+                        .map_err(|e| anyhow!("Failed to serialize plan output to JSON: {e}"))?;
+                    println!("{json_output}");
+                } else {
+                    for warning in &lock_warnings {
+                        println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
+                    }
+
+                    if sql.is_empty() {
+                        println!("No changes required.");
+                    } else {
+                        if !lock_warnings.is_empty() {
+                            println!();
+                        }
+                        println!("Migration plan ({} statements):", sql.len());
+                        for statement in &sql {
+                            println!("{statement}");
+                            println!();
+                        }
                     }
                 }
             }
@@ -823,6 +924,43 @@ mod tests {
 
         if let Commands::Plan { json, .. } = args.command {
             assert!(!json);
+        } else {
+            panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn cli_parses_zero_downtime_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--zero-downtime",
+        ]);
+
+        if let Commands::Plan { zero_downtime, .. } = args.command {
+            assert!(zero_downtime);
+        } else {
+            panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn cli_zero_downtime_flag_defaults_false() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+        ]);
+
+        if let Commands::Plan { zero_downtime, .. } = args.command {
+            assert!(!zero_downtime);
         } else {
             panic!("Expected Plan command");
         }
