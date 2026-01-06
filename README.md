@@ -13,6 +13,7 @@ PostgreSQL schema-as-code management tool. Define schemas in native PostgreSQL D
 - **Diffing**: Compare schemas and generate migration plans
 - **Safety**: Lint rules prevent destructive operations without explicit flags
 - **Drift Detection**: Monitor for schema drift in CI/CD
+- **Zero-Downtime Migrations**: Expand/contract pattern for safe schema changes
 - **Transactional Apply**: All migrations run in a single transaction
 - **Partitioned Tables**: Full support for `PARTITION BY` and `PARTITION OF` syntax
 
@@ -123,6 +124,9 @@ pgmold monitor --schema sql:schema.sql --database db:postgres://localhost/mydb
 
 # Detect drift (returns JSON report with exit code 1 if drift detected)
 pgmold drift --schema sql:schema.sql --database db:postgres://localhost/mydb --json
+
+# Generate zero-downtime migration plan (expand/contract pattern)
+pgmold plan --schema sql:schema.sql --database db:postgres://localhost/mydb --zero-downtime
 ```
 
 ## Guides
@@ -260,6 +264,66 @@ The `migrate generate` command auto-detects the next migration number by scannin
 
 This lets you use pgmold for diffing while keeping your existing migration runner.
 
+### Zero-Downtime Migrations
+
+For schema changes that require careful coordination to avoid downtime, use the `--zero-downtime` flag. This generates a migration plan using the expand/contract pattern:
+
+```bash
+pgmold plan --schema sql:schema.sql --database db:postgres://localhost/mydb --zero-downtime
+```
+
+**Example output** when adding a NOT NULL column:
+
+```sql
+-- ================================
+-- PHASE 1: EXPAND (safe, online)
+-- ================================
+ALTER TABLE "public"."users" ADD COLUMN "email" TEXT;
+
+-- ================================
+-- PHASE 2: BACKFILL (manual/app)
+-- ================================
+-- Backfill required: UPDATE users SET email = <value> WHERE email IS NULL;
+
+-- ================================
+-- PHASE 3: CONTRACT (requires verification)
+-- ================================
+ALTER TABLE "public"."users" ALTER COLUMN "email" SET NOT NULL;
+```
+
+**The three phases:**
+
+1. **Expand**: Safe, online schema changes. Add columns as nullable, create new indexes concurrently, etc. Deploy this first.
+
+2. **Backfill**: Data migration phase. pgmold generates hints for the UPDATE statements needed. Run these during low-traffic periods or batch them in your application.
+
+3. **Contract**: Finalize the schema. Add constraints, drop old columns, etc. Only run after verifying the backfill is complete.
+
+**JSON output** for CI integration:
+
+```bash
+pgmold plan --schema sql:schema.sql --database db:postgres://localhost/mydb --zero-downtime --json
+```
+
+```json
+{
+  "expand": {
+    "statements": ["ALTER TABLE \"public\".\"users\" ADD COLUMN \"email\" TEXT;"]
+  },
+  "backfill": {
+    "statements": ["-- Backfill required: UPDATE users SET email = <value> WHERE email IS NULL;"]
+  },
+  "contract": {
+    "statements": ["ALTER TABLE \"public\".\"users\" ALTER COLUMN \"email\" SET NOT NULL;"]
+  }
+}
+```
+
+Currently supported patterns:
+- Adding NOT NULL columns (split into nullable add → backfill → set NOT NULL)
+
+Future releases will expand support to more zero-downtime patterns (column renames, type changes, etc.).
+
 ### CI Integration
 
 pgmold includes a GitHub Action for detecting schema drift in CI/CD pipelines. This catches when manual database changes drift from your schema files.
@@ -320,7 +384,7 @@ For local or custom CI environments, use the `drift` command directly:
 
 ```bash
 # Get JSON report with exit code 1 if drift detected
-pgmold drift --schema sql:schema/ --database postgres://localhost/mydb --json
+pgmold drift --schema sql:schema/ --database db:postgres://localhost/mydb --json
 
 # Example output:
 # {
@@ -393,7 +457,7 @@ Traditional tools where you write numbered migration files manually.
 - **Multi-database support** → [Atlas](https://atlasgo.io/), [Flyway](https://flywaydb.org), [Liquibase](https://www.liquibase.org/)
 - **HCL/Terraform-style syntax** → [Atlas](https://atlasgo.io/)
 - **Embeddable Go library** → [pg-schema-diff](https://github.com/stripe/pg-schema-diff)
-- **Zero-downtime migrations** → [pgroll](https://github.com/xataio/pgroll), [Reshape](https://github.com/fabianlindfors/reshape)
+- **Advanced zero-downtime migrations** (dual-write, shadow tables) → [pgroll](https://github.com/xataio/pgroll), [Reshape](https://github.com/fabianlindfors/reshape)
 - **Enterprise compliance/audit** → [Liquibase](https://www.liquibase.org/), [Bytebase](https://www.bytebase.com/)
 - **Managed cloud service** → [Atlas Cloud](https://atlasgo.io/cloud/getting-started)
 
