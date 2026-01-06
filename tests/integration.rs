@@ -1796,9 +1796,16 @@ async fn drift_cli_no_drift() {
         .output()
         .expect("Failed to execute command");
 
-    assert!(output.status.success(), "Should exit with code 0 when no drift");
+    assert!(
+        output.status.success(),
+        "Should exit with code 0 when no drift, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("No drift detected") || stdout.contains("in sync"));
+    assert!(
+        stdout.contains("No drift detected"),
+        "Expected 'No drift detected' in output, got: {stdout}"
+    );
 }
 
 #[tokio::test]
@@ -1845,9 +1852,16 @@ async fn drift_cli_detects_drift() {
         .output()
         .expect("Failed to execute command");
 
-    assert!(!output.status.success(), "Should exit with code 1 when drift detected");
+    assert!(
+        !output.status.success(),
+        "Should exit with code 1 when drift detected, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Drift detected") || stdout.contains("drift"));
+    assert!(
+        stdout.contains("Drift detected"),
+        "Expected 'Drift detected' in output, got: {stdout}"
+    );
 }
 
 #[tokio::test]
