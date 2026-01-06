@@ -3,18 +3,24 @@ use crate::parser::load_schema_sources;
 use crate::pg::connection::PgConnection;
 use crate::pg::introspect::introspect_schema;
 use crate::util::Result;
+use serde::Serialize;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DriftReport {
     pub has_drift: bool,
     pub expected_fingerprint: String,
     pub actual_fingerprint: String,
+    #[serde(skip_serializing)]
     pub differences: Vec<MigrationOp>,
 }
 
-pub async fn detect_drift(schema_sources: &[String], conn: &PgConnection) -> Result<DriftReport> {
+pub async fn detect_drift(
+    schema_sources: &[String],
+    conn: &PgConnection,
+    target_schemas: &[String],
+) -> Result<DriftReport> {
     let expected = load_schema_sources(schema_sources)?;
-    let actual = introspect_schema(conn, &[String::from("public")], false).await?;
+    let actual = introspect_schema(conn, target_schemas, false).await?;
 
     let expected_fingerprint = expected.fingerprint();
     let actual_fingerprint = actual.fingerprint();

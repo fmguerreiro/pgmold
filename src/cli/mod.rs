@@ -4,6 +4,7 @@ use serde::Serialize;
 use sqlx::Executor;
 
 use pgmold::diff::{compute_diff, planner::plan_migration};
+use pgmold::drift::detect_drift;
 use pgmold::dump::{generate_dump, generate_split_dump};
 use pgmold::filter::{filter_schema, Filter, ObjectType};
 use pgmold::lint::locks::detect_lock_hazards;
@@ -21,6 +22,14 @@ struct PlanOutput {
     statements: Vec<String>,
     lock_warnings: Vec<String>,
     statement_count: usize,
+}
+
+#[derive(Serialize)]
+struct DriftOutput {
+    has_drift: bool,
+    expected_fingerprint: String,
+    actual_fingerprint: String,
+    differences: Vec<String>,
 }
 
 #[derive(Parser)]
@@ -119,6 +128,19 @@ enum Commands {
         database: String,
         #[arg(long, default_value = "public", value_delimiter = ',')]
         target_schemas: Vec<String>,
+    },
+
+    /// Detect schema drift between SQL files and database
+    Drift {
+        #[arg(long, required = true)]
+        schema: Vec<String>,
+        #[arg(long)]
+        database: String,
+        #[arg(long, default_value = "public", value_delimiter = ',')]
+        target_schemas: Vec<String>,
+        /// Output as JSON for CI integration
+        #[arg(long)]
+        json: bool,
     },
 
     /// Export database schema to SQL DDL
@@ -444,6 +466,53 @@ pub async fn run() -> Result<()> {
                 for op in &ops {
                     println!("  {op:?}");
                 }
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Commands::Drift {
+            schema,
+            database,
+            target_schemas,
+            json,
+        } => {
+            let db_url = parse_db_source(&database)?;
+            let connection = PgConnection::new(&db_url)
+                .await
+                .map_err(|e| anyhow!("{e}"))?;
+
+            let report = detect_drift(&schema, &connection, &target_schemas)
+                .await
+                .map_err(|e| anyhow!("{e}"))?;
+
+            if json {
+                let output = DriftOutput {
+                    has_drift: report.has_drift,
+                    expected_fingerprint: report.expected_fingerprint,
+                    actual_fingerprint: report.actual_fingerprint,
+                    differences: report
+                        .differences
+                        .iter()
+                        .map(|op| format!("{op:?}"))
+                        .collect(),
+                };
+                println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            } else {
+                if report.has_drift {
+                    println!("Drift detected!");
+                    println!("Expected fingerprint: {}", report.expected_fingerprint);
+                    println!("Actual fingerprint:   {}", report.actual_fingerprint);
+                    println!("\nDifferences ({} operations):", report.differences.len());
+                    for op in &report.differences {
+                        println!("  {op:?}");
+                    }
+                } else {
+                    println!("No drift detected. Schema is in sync.");
+                    println!("Fingerprint: {}", report.expected_fingerprint);
+                }
+            }
+
+            if report.has_drift {
                 std::process::exit(1);
             }
             Ok(())
