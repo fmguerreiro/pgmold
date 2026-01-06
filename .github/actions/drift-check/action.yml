@@ -1,0 +1,147 @@
+name: 'pgmold Drift Check'
+description: 'Detect PostgreSQL schema drift using pgmold'
+author: 'fmguerreiro'
+
+inputs:
+  schema:
+    description: 'Path to schema SQL file(s). Can be a single file or multiple files (space-separated).'
+    required: true
+  database:
+    description: 'PostgreSQL connection string (e.g., postgres://user:pass@host:5432/dbname)'
+    required: true
+  target-schemas:
+    description: 'Comma-separated list of schemas to introspect (default: public)'
+    required: false
+    default: 'public'
+  version:
+    description: 'pgmold version to install (default: latest)'
+    required: false
+    default: 'latest'
+  fail-on-drift:
+    description: 'Whether to fail the action if drift is detected (default: true)'
+    required: false
+    default: 'true'
+
+outputs:
+  has-drift:
+    description: 'Whether drift was detected (true/false)'
+    value: ${{ steps.drift.outputs.has-drift }}
+  expected-fingerprint:
+    description: 'Expected schema fingerprint from SQL files'
+    value: ${{ steps.drift.outputs.expected-fingerprint }}
+  actual-fingerprint:
+    description: 'Actual schema fingerprint from database'
+    value: ${{ steps.drift.outputs.actual-fingerprint }}
+  report:
+    description: 'Full JSON drift report'
+    value: ${{ steps.drift.outputs.report }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Determine platform and architecture
+      shell: bash
+      id: platform
+      run: |
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+
+        if [[ "$OS" == "linux" ]]; then
+          if [[ "$ARCH" == "x86_64" ]]; then
+            TARGET="x86_64-unknown-linux-gnu"
+          elif [[ "$ARCH" == "aarch64" ]] || [[ "$ARCH" == "arm64" ]]; then
+            TARGET="aarch64-unknown-linux-gnu"
+          else
+            echo "Unsupported Linux architecture: $ARCH"
+            exit 1
+          fi
+        elif [[ "$OS" == "darwin" ]]; then
+          if [[ "$ARCH" == "x86_64" ]]; then
+            TARGET="x86_64-apple-darwin"
+          elif [[ "$ARCH" == "arm64" ]]; then
+            TARGET="aarch64-apple-darwin"
+          else
+            echo "Unsupported macOS architecture: $ARCH"
+            exit 1
+          fi
+        else
+          echo "Unsupported OS: $OS"
+          exit 1
+        fi
+
+        echo "target=$TARGET" >> $GITHUB_OUTPUT
+
+    - name: Get latest release version
+      shell: bash
+      id: version
+      run: |
+        if [[ "${{ inputs.version }}" == "latest" ]]; then
+          VERSION=$(curl -s https://api.github.com/repos/fmguerreiro/pgmold/releases/latest | jq -r .tag_name)
+        else
+          VERSION="${{ inputs.version }}"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Download and install pgmold
+      shell: bash
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        TARGET="${{ steps.platform.outputs.target }}"
+
+        DOWNLOAD_URL="https://github.com/fmguerreiro/pgmold/releases/download/${VERSION}/pgmold-${TARGET}.tar.gz"
+
+        echo "Downloading pgmold ${VERSION} for ${TARGET}..."
+        curl -L -o pgmold.tar.gz "$DOWNLOAD_URL"
+
+        tar xzf pgmold.tar.gz
+        chmod +x pgmold
+
+        mkdir -p "$HOME/.local/bin"
+        mv pgmold "$HOME/.local/bin/"
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Run drift detection
+      shell: bash
+      id: drift
+      run: |
+        SCHEMA_FILES="${{ inputs.schema }}"
+        DATABASE_URL="${{ inputs.database }}"
+        TARGET_SCHEMAS="${{ inputs.target-schemas }}"
+
+        SCHEMA_ARGS=""
+        for file in $SCHEMA_FILES; do
+          SCHEMA_ARGS="$SCHEMA_ARGS --schema $file"
+        done
+
+        echo "Running drift detection..."
+        OUTPUT=$(pgmold drift $SCHEMA_ARGS \
+          --database "$DATABASE_URL" \
+          --target-schemas "$TARGET_SCHEMAS" \
+          --json)
+
+        echo "Drift detection complete."
+        echo "$OUTPUT" | jq .
+
+        HAS_DRIFT=$(echo "$OUTPUT" | jq -r .has_drift)
+        EXPECTED_FP=$(echo "$OUTPUT" | jq -r .expected_fingerprint)
+        ACTUAL_FP=$(echo "$OUTPUT" | jq -r .actual_fingerprint)
+
+        echo "has-drift=$HAS_DRIFT" >> $GITHUB_OUTPUT
+        echo "expected-fingerprint=$EXPECTED_FP" >> $GITHUB_OUTPUT
+        echo "actual-fingerprint=$ACTUAL_FP" >> $GITHUB_OUTPUT
+
+        {
+          echo 'report<<EOF'
+          echo "$OUTPUT"
+          echo EOF
+        } >> $GITHUB_OUTPUT
+
+        if [[ "$HAS_DRIFT" == "true" && "${{ inputs.fail-on-drift }}" == "true" ]]; then
+          DIFF_COUNT=$(echo "$OUTPUT" | jq '.differences | length')
+          echo "::error::Schema drift detected! Expected: $EXPECTED_FP, Actual: $ACTUAL_FP ($DIFF_COUNT differences)"
+          exit 1
+        fi
+
+branding:
+  icon: 'database'
+  color: 'blue'
