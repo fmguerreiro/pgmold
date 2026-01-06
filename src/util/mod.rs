@@ -1,7 +1,5 @@
 use regex::Regex;
-use sqlparser::ast::{
-    BinaryOperator, DataType, Expr, Query, Select, SetExpr, Statement, Value,
-};
+use sqlparser::ast::{BinaryOperator, DataType, Expr, Query, Select, SetExpr, Statement, Value};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use thiserror::Error;
@@ -374,6 +372,38 @@ pub fn views_semantically_equal(query1: &str, query2: &str) -> bool {
     }
 }
 
+/// Compares two SQL expressions semantically using AST comparison.
+/// Used for policy expressions, trigger WHEN clauses, check constraints, etc.
+/// Falls back to regex-based normalization if parsing fails.
+pub fn expressions_semantically_equal(expr1: &str, expr2: &str) -> bool {
+    let dialect = PostgreSqlDialect {};
+
+    let parse1 = Parser::new(&dialect)
+        .try_with_sql(expr1)
+        .and_then(|mut p| p.parse_expr());
+    let parse2 = Parser::new(&dialect)
+        .try_with_sql(expr2)
+        .and_then(|mut p| p.parse_expr());
+
+    match (parse1, parse2) {
+        (Ok(ast1), Ok(ast2)) => normalize_expr(&ast1) == normalize_expr(&ast2),
+        _ => {
+            // Fallback to regex normalization if parsing fails
+            normalize_expression_regex(expr1) == normalize_expression_regex(expr2)
+        }
+    }
+}
+
+/// Compares two optional SQL expressions semantically.
+/// Returns true if both are None, or both are Some with semantically equal expressions.
+pub fn optional_expressions_equal(expr1: &Option<String>, expr2: &Option<String>) -> bool {
+    match (expr1, expr2) {
+        (None, None) => true,
+        (Some(e1), Some(e2)) => expressions_semantically_equal(e1, e2),
+        _ => false,
+    }
+}
+
 /// Normalizes a SQL statement to a canonical form for comparison.
 fn normalize_statement(stmt: &Statement) -> Statement {
     match stmt {
@@ -409,7 +439,7 @@ fn normalize_set_expr(body: &SetExpr) -> SetExpr {
             left,
             right,
         } => SetExpr::SetOperation {
-            op: op.clone(),
+            op: *op,
             set_quantifier: *set_quantifier,
             left: Box::new(normalize_set_expr(left)),
             right: Box::new(normalize_set_expr(right)),
@@ -428,21 +458,21 @@ fn normalize_select(select: &Select) -> Select {
         projection: select
             .projection
             .iter()
-            .map(|p| normalize_select_item(p))
+            .map(normalize_select_item)
             .collect(),
         exclude: select.exclude.clone(),
         into: select.into.clone(),
         from: select.from.clone(),
         lateral_views: select.lateral_views.clone(),
-        prewhere: select.prewhere.as_ref().map(|e| normalize_expr(e)),
-        selection: select.selection.as_ref().map(|e| normalize_expr(e)),
+        prewhere: select.prewhere.as_ref().map(normalize_expr),
+        selection: select.selection.as_ref().map(normalize_expr),
         group_by: select.group_by.clone(),
         cluster_by: select.cluster_by.clone(),
         distribute_by: select.distribute_by.clone(),
         sort_by: select.sort_by.clone(),
-        having: select.having.as_ref().map(|e| normalize_expr(e)),
+        having: select.having.as_ref().map(normalize_expr),
         named_window: select.named_window.clone(),
-        qualify: select.qualify.as_ref().map(|e| normalize_expr(e)),
+        qualify: select.qualify.as_ref().map(normalize_expr),
         window_before_qualify: select.window_before_qualify,
         value_table_mode: select.value_table_mode,
         connect_by: select.connect_by.clone(),
@@ -636,7 +666,7 @@ fn normalize_expr(expr: &Expr) -> Expr {
 
         // Normalize unary operations
         Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
-            op: op.clone(),
+            op: *op,
             expr: Box::new(normalize_expr(inner)),
         },
 
@@ -647,7 +677,7 @@ fn normalize_expr(expr: &Expr) -> Expr {
             negated,
         } => Expr::InList {
             expr: Box::new(normalize_expr(inner)),
-            list: list.iter().map(|e| normalize_expr(e)).collect(),
+            list: list.iter().map(normalize_expr).collect(),
             negated: *negated,
         },
 
@@ -900,89 +930,89 @@ mod tests {
     }
 }
 
-    #[test]
-    fn ast_comparison_handles_like_vs_tilde() {
-        // AST-based comparison should treat LIKE and ~~ as equivalent
-        let like_sql = "SELECT * FROM t WHERE name LIKE 'test%'";
-        let tilde_sql = "SELECT * FROM t WHERE name ~~ 'test%'";
-        assert!(views_semantically_equal(like_sql, tilde_sql));
-    }
+#[test]
+fn ast_comparison_handles_like_vs_tilde() {
+    // AST-based comparison should treat LIKE and ~~ as equivalent
+    let like_sql = "SELECT * FROM t WHERE name LIKE 'test%'";
+    let tilde_sql = "SELECT * FROM t WHERE name ~~ 'test%'";
+    assert!(views_semantically_equal(like_sql, tilde_sql));
+}
 
-    #[test]
-    fn ast_comparison_handles_not_like_vs_not_tilde() {
-        let not_like_sql = "SELECT * FROM t WHERE name NOT LIKE 'test%'";
-        let not_tilde_sql = "SELECT * FROM t WHERE name !~~ 'test%'";
-        assert!(views_semantically_equal(not_like_sql, not_tilde_sql));
-    }
+#[test]
+fn ast_comparison_handles_not_like_vs_not_tilde() {
+    let not_like_sql = "SELECT * FROM t WHERE name NOT LIKE 'test%'";
+    let not_tilde_sql = "SELECT * FROM t WHERE name !~~ 'test%'";
+    assert!(views_semantically_equal(not_like_sql, not_tilde_sql));
+}
 
-    #[test]
-    fn ast_comparison_handles_ilike_vs_tilde_star() {
-        let ilike_sql = "SELECT * FROM t WHERE name ILIKE 'test%'";
-        let tilde_star_sql = "SELECT * FROM t WHERE name ~~* 'test%'";
-        assert!(views_semantically_equal(ilike_sql, tilde_star_sql));
-    }
+#[test]
+fn ast_comparison_handles_ilike_vs_tilde_star() {
+    let ilike_sql = "SELECT * FROM t WHERE name ILIKE 'test%'";
+    let tilde_star_sql = "SELECT * FROM t WHERE name ~~* 'test%'";
+    assert!(views_semantically_equal(ilike_sql, tilde_star_sql));
+}
 
-    #[test]
-    fn ast_comparison_handles_parens() {
-        // AST-based comparison should treat parens as structural, not textual
-        let no_parens = "SELECT * FROM t WHERE a = 'x'";
-        let single_parens = "SELECT * FROM t WHERE (a = 'x')";
-        let double_parens = "SELECT * FROM t WHERE ((a = 'x'))";
+#[test]
+fn ast_comparison_handles_parens() {
+    // AST-based comparison should treat parens as structural, not textual
+    let no_parens = "SELECT * FROM t WHERE a = 'x'";
+    let single_parens = "SELECT * FROM t WHERE (a = 'x')";
+    let double_parens = "SELECT * FROM t WHERE ((a = 'x'))";
 
-        assert!(views_semantically_equal(no_parens, single_parens));
-        assert!(views_semantically_equal(no_parens, double_parens));
-        assert!(views_semantically_equal(single_parens, double_parens));
-    }
+    assert!(views_semantically_equal(no_parens, single_parens));
+    assert!(views_semantically_equal(no_parens, double_parens));
+    assert!(views_semantically_equal(single_parens, double_parens));
+}
 
-    #[test]
-    fn ast_comparison_handles_nested_parens_in_boolean() {
-        // Complex boolean with various paren levels
-        let minimal = "SELECT * FROM t WHERE a = 'x' OR b = 'y' AND c = 'z'";
-        let with_parens = "SELECT * FROM t WHERE (a = 'x') OR ((b = 'y') AND (c = 'z'))";
-        let more_parens = "SELECT * FROM t WHERE ((a = 'x') OR ((b = 'y') AND (c = 'z')))";
+#[test]
+fn ast_comparison_handles_nested_parens_in_boolean() {
+    // Complex boolean with various paren levels
+    let minimal = "SELECT * FROM t WHERE a = 'x' OR b = 'y' AND c = 'z'";
+    let with_parens = "SELECT * FROM t WHERE (a = 'x') OR ((b = 'y') AND (c = 'z'))";
+    let more_parens = "SELECT * FROM t WHERE ((a = 'x') OR ((b = 'y') AND (c = 'z')))";
 
-        assert!(views_semantically_equal(minimal, with_parens));
-        assert!(views_semantically_equal(minimal, more_parens));
-    }
+    assert!(views_semantically_equal(minimal, with_parens));
+    assert!(views_semantically_equal(minimal, more_parens));
+}
 
-    #[test]
-    fn ast_comparison_handles_text_cast_on_strings() {
-        // String literal with and without ::text should be equivalent
-        let without_cast = "SELECT 'value' FROM t";
-        let with_cast = "SELECT 'value'::text FROM t";
-        assert!(views_semantically_equal(without_cast, with_cast));
-    }
+#[test]
+fn ast_comparison_handles_text_cast_on_strings() {
+    // String literal with and without ::text should be equivalent
+    let without_cast = "SELECT 'value' FROM t";
+    let with_cast = "SELECT 'value'::text FROM t";
+    assert!(views_semantically_equal(without_cast, with_cast));
+}
 
-    #[test]
-    fn ast_comparison_handles_type_cast_case() {
-        // Type cast case should not matter (already normalized by parser)
-        let upper = "SELECT id::TEXT FROM t";
-        let lower = "SELECT id::text FROM t";
-        assert!(views_semantically_equal(upper, lower));
-    }
+#[test]
+fn ast_comparison_handles_type_cast_case() {
+    // Type cast case should not matter (already normalized by parser)
+    let upper = "SELECT id::TEXT FROM t";
+    let lower = "SELECT id::text FROM t";
+    assert!(views_semantically_equal(upper, lower));
+}
 
-    #[test]
-    fn ast_comparison_handles_complex_view() {
-        // Real-world complex view with multiple normalizations needed
-        let db_form = "SELECT u.id, 'active' AS status FROM users u WHERE EXISTS (SELECT 1 FROM roles r WHERE r.user_id = u.id AND r.name LIKE 'admin_%')";
-        let schema_form = "SELECT u.id, 'active'::text AS status FROM users u WHERE (EXISTS (SELECT 1 FROM roles r WHERE ((r.user_id = u.id) AND (r.name ~~ 'admin_%'::text))))";
-        assert!(views_semantically_equal(db_form, schema_form));
-    }
+#[test]
+fn ast_comparison_handles_complex_view() {
+    // Real-world complex view with multiple normalizations needed
+    let db_form = "SELECT u.id, 'active' AS status FROM users u WHERE EXISTS (SELECT 1 FROM roles r WHERE r.user_id = u.id AND r.name LIKE 'admin_%')";
+    let schema_form = "SELECT u.id, 'active'::text AS status FROM users u WHERE (EXISTS (SELECT 1 FROM roles r WHERE ((r.user_id = u.id) AND (r.name ~~ 'admin_%'::text))))";
+    assert!(views_semantically_equal(db_form, schema_form));
+}
 
-    #[test]
-    fn ast_comparison_detects_real_differences() {
-        // Different table names should not be equal
-        let query1 = "SELECT * FROM users";
-        let query2 = "SELECT * FROM accounts";
-        assert!(!views_semantically_equal(query1, query2));
+#[test]
+fn ast_comparison_detects_real_differences() {
+    // Different table names should not be equal
+    let query1 = "SELECT * FROM users";
+    let query2 = "SELECT * FROM accounts";
+    assert!(!views_semantically_equal(query1, query2));
 
-        // Different column selection should not be equal
-        let query3 = "SELECT id FROM users";
-        let query4 = "SELECT name FROM users";
-        assert!(!views_semantically_equal(query3, query4));
+    // Different column selection should not be equal
+    let query3 = "SELECT id FROM users";
+    let query4 = "SELECT name FROM users";
+    assert!(!views_semantically_equal(query3, query4));
 
-        // Different WHERE conditions should not be equal
-        let query5 = "SELECT * FROM t WHERE a = 1";
-        let query6 = "SELECT * FROM t WHERE a = 2";
-        assert!(!views_semantically_equal(query5, query6));
-    }
+    // Different WHERE conditions should not be equal
+    let query5 = "SELECT * FROM t WHERE a = 1";
+    let query6 = "SELECT * FROM t WHERE a = 2";
+    assert!(!views_semantically_equal(query5, query6));
+}

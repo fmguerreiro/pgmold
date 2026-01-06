@@ -124,6 +124,15 @@ pub enum MigrationOp {
         name: String,
         changes: SequenceChanges,
     },
+    BackfillHint {
+        table: String,
+        column: String,
+        hint: String,
+    },
+    SetColumnNotNull {
+        table: String,
+        column: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -431,21 +440,9 @@ fn diff_triggers(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops
 }
 
-fn normalize_when_clause(clause: &Option<String>) -> Option<String> {
-    clause.as_ref().map(|c| {
-        // Lowercase everything first (handles OLD/old, NEW/new differences)
-        let lowered = c.to_lowercase();
-        // Normalize type casts (handles ::TEXT vs ::text)
-        let type_normalized = crate::util::normalize_type_casts(&lowered);
-        // Remove redundant text type casts (PostgreSQL often strips these)
-        let re = regex::Regex::new(r"::text\b").unwrap();
-        let cast_stripped = re.replace_all(&type_normalized, "").to_string();
-        normalize_whitespace(&cast_stripped)
-    })
-}
-
+/// Compares trigger WHEN clauses using AST-based semantic comparison.
 fn when_clauses_equal(from: &Option<String>, to: &Option<String>) -> bool {
-    normalize_when_clause(from) == normalize_when_clause(to)
+    crate::util::optional_expressions_equal(from, to)
 }
 
 fn triggers_semantically_equal(from: &Trigger, to: &Trigger) -> bool {
@@ -799,25 +796,9 @@ fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     ops
 }
 
-/// Normalize an expression for comparison by:
-/// 1. Converting type casts to lowercase (handles `::TEXT` vs `::text`, `::character VARYING` vs `::character varying`)
-/// 2. Normalizing whitespace (handles PostgreSQL's pg_get_expr vs sqlparser formatting)
-fn normalize_expr(expr: &Option<String>) -> Option<String> {
-    expr.as_ref().map(|e| {
-        let re =
-            regex::Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*(?:\s+[A-Za-z][A-Za-z0-9_\[\]]*)*)")
-                .unwrap();
-        let lowercased = re
-            .replace_all(e, |caps: &regex::Captures| {
-                format!("::{}", caps[1].to_lowercase())
-            })
-            .to_string();
-        normalize_whitespace(&lowercased)
-    })
-}
-
+/// Compares two optional expressions using AST-based semantic comparison.
 fn exprs_equal(from: &Option<String>, to: &Option<String>) -> bool {
-    normalize_expr(from) == normalize_expr(to)
+    crate::util::optional_expressions_equal(from, to)
 }
 
 fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
@@ -838,21 +819,6 @@ fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
             None
         },
     }
-}
-
-/// Normalize whitespace in expression for comparison. Removes spaces after open
-/// parens and before close parens to match PostgreSQL's pg_get_expr vs sqlparser
-/// formatting differences.
-fn normalize_whitespace(expr: &str) -> String {
-    let re_ws = regex::Regex::new(r"\s+").unwrap();
-    let collapsed = re_ws.replace_all(expr, " ");
-
-    let re_paren_open = regex::Regex::new(r"\(\s+").unwrap();
-    let re_paren_close = regex::Regex::new(r"\s+\)").unwrap();
-    let no_space_after_open = re_paren_open.replace_all(&collapsed, "(");
-    re_paren_close
-        .replace_all(&no_space_after_open, ")")
-        .to_string()
 }
 
 #[cfg(test)]
