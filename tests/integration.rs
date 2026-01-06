@@ -1,6 +1,7 @@
 use pgmold::diff::{compute_diff, planner::plan_migration, MigrationOp};
 use pgmold::drift::detect_drift;
 use pgmold::lint::{has_errors, lint_migration_plan, LintOptions};
+use pgmold::model::{PartitionBound, PartitionStrategy};
 use pgmold::parser::{load_schema_sources, parse_sql_string};
 use pgmold::pg::connection::PgConnection;
 use pgmold::pg::introspect::introspect_schema;
@@ -840,6 +841,101 @@ async fn partitioned_table_sql_generation() {
     assert!(
         create_partition_sql.contains("FOR VALUES FROM"),
         "Partition should have bound"
+    );
+}
+
+#[tokio::test]
+async fn partition_migration_apply() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let desired_schema = parse_sql_string(
+        r#"
+        CREATE TABLE sales (
+            id INT NOT NULL,
+            sale_date DATE NOT NULL,
+            amount DECIMAL(10,2)
+        ) PARTITION BY RANGE (sale_date);
+
+        CREATE TABLE sales_2024_q1 PARTITION OF sales
+            FOR VALUES FROM ('2024-01-01') TO ('2024-04-01');
+
+        CREATE TABLE sales_2024_q2 PARTITION OF sales
+            FOR VALUES FROM ('2024-04-01') TO ('2024-07-01');
+        "#,
+    )
+    .unwrap();
+
+    let current_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let ops = compute_diff(&current_schema, &desired_schema);
+
+    assert!(
+        ops.iter().any(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "sales")),
+        "Should create partitioned table"
+    );
+    assert!(
+        ops.iter().any(|op| matches!(op, MigrationOp::CreatePartition(p) if p.name == "sales_2024_q1")),
+        "Should create Q1 partition"
+    );
+    assert!(
+        ops.iter().any(|op| matches!(op, MigrationOp::CreatePartition(p) if p.name == "sales_2024_q2")),
+        "Should create Q2 partition"
+    );
+
+    let sql = generate_sql(&ops);
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .expect(&format!("Failed to execute: {}", stmt));
+    }
+
+    let after_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let table = after_schema
+        .tables
+        .get("public.sales")
+        .expect("sales table should exist after migration");
+
+    let partition_by = table
+        .partition_by
+        .as_ref()
+        .expect("sales should have partition_by");
+
+    assert_eq!(partition_by.strategy, PartitionStrategy::Range);
+    assert_eq!(partition_by.columns, vec!["sale_date"]);
+
+    let q1_partition = after_schema
+        .partitions
+        .get("public.sales_2024_q1")
+        .expect("Q1 partition should exist");
+
+    assert_eq!(q1_partition.parent_name, "sales");
+    match &q1_partition.bound {
+        PartitionBound::Range { from, to } => {
+            assert!(from[0].contains("2024-01-01"));
+            assert!(to[0].contains("2024-04-01"));
+        }
+        _ => panic!("Expected Range bound for Q1"),
+    }
+
+    let q2_partition = after_schema
+        .partitions
+        .get("public.sales_2024_q2")
+        .expect("Q2 partition should exist");
+
+    assert_eq!(q2_partition.parent_name, "sales");
+
+    let final_ops = compute_diff(&after_schema, &desired_schema);
+    assert!(
+        final_ops.is_empty(),
+        "After applying migrations, diff should be empty. Got: {:?}",
+        final_ops
     );
 }
 

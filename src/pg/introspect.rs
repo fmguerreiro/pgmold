@@ -303,6 +303,7 @@ async fn introspect_tables(
         JOIN pg_namespace n ON c.relnamespace = n.oid
         WHERE n.nspname = ANY($1::text[])
           AND c.relkind IN ('r', 'p')
+          AND c.relispartition = false
           AND ($2::boolean OR NOT EXISTS (
               SELECT 1 FROM pg_depend d
               WHERE d.objid = c.oid
