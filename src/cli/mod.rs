@@ -286,7 +286,9 @@ pub async fn run() -> Result<()> {
                     lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
                     statement_count: sql.len(),
                 };
-                println!("{}", serde_json::to_string_pretty(&output).unwrap());
+                let json_output = serde_json::to_string_pretty(&output)
+                    .map_err(|e| anyhow!("Failed to serialize plan output to JSON: {e}"))?;
+                println!("{json_output}");
             } else {
                 for warning in &lock_warnings {
                     println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
@@ -496,7 +498,9 @@ pub async fn run() -> Result<()> {
                         .map(|op| format!("{op:?}"))
                         .collect(),
                 };
-                println!("{}", serde_json::to_string_pretty(&output).unwrap());
+                let json_output = serde_json::to_string_pretty(&output)
+                    .map_err(|e| anyhow!("Failed to serialize drift output to JSON: {e}"))?;
+                println!("{json_output}");
             } else {
                 if report.has_drift {
                     println!("Drift detected!");
