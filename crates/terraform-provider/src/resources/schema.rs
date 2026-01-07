@@ -178,13 +178,53 @@ impl Resource for SchemaResource {
 
     async fn create<'a>(
         &self,
-        _diags: &mut Diagnostics,
+        diags: &mut Diagnostics,
         planned_state: Self::State<'a>,
         _config_state: Self::State<'a>,
         _planned_private_state: Self::PrivateState<'a>,
         _provider_meta_state: Self::ProviderMetaState<'a>,
     ) -> Option<(Self::State<'a>, Self::PrivateState<'a>)> {
-        Some((planned_state, ()))
+        let db_url = planned_state.database_url.as_ref().unwrap();
+
+        let connection = match pgmold::pg::connection::PgConnection::new(db_url).await {
+            Ok(c) => c,
+            Err(e) => {
+                diags.root_error_short(format!("Failed to connect to database: {e}"));
+                return None;
+            }
+        };
+
+        let result = match pgmold::apply::apply_migration(
+            &[planned_state.schema_file.clone()],
+            &connection,
+            pgmold::apply::ApplyOptions {
+                dry_run: false,
+                allow_destructive: planned_state.allow_destructive,
+            },
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                diags.root_error_short(format!("Migration failed: {e}"));
+                return None;
+            }
+        };
+
+        if pgmold::lint::has_errors(&result.lint_results) {
+            for lint in &result.lint_results {
+                if lint.severity == pgmold::lint::LintSeverity::Error {
+                    diags.root_error_short(format!("{}", lint.message));
+                }
+            }
+            return None;
+        }
+
+        let mut state = planned_state;
+        state.applied_at = Some(chrono::Utc::now().to_rfc3339());
+        state.migration_count = Some(result.operations.len() as u32);
+
+        Some((state, ()))
     }
 
     async fn update<'a>(
