@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "crates/terraform-provider"]
+resolver = "2"
+
 [package]
 name = "pgmold"
 version = "0.14.9"
