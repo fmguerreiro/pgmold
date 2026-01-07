@@ -1,3 +1,3 @@
 mod provider;
 
-pub use provider::PgmoldProvider;
+pub use provider::{PgmoldProvider, ProviderConfig};

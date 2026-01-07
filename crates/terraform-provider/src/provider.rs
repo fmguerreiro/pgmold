@@ -1,13 +1,105 @@
-use tf_provider::{schema::Schema, value::ValueEmpty, Diagnostics, Provider};
+use std::collections::HashMap;
 
-#[derive(Default)]
-pub struct PgmoldProvider;
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use tf_provider::{
+    schema::{Attribute, AttributeConstraint, AttributeType, Block, Description, Schema},
+    Diagnostics, DynamicResource, Provider,
+};
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    pub database_url: Option<String>,
+    pub target_schemas: Option<Vec<String>>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct PgmoldProvider {
+    pub config: Option<ProviderConfig>,
+}
+
+#[async_trait]
 impl Provider for PgmoldProvider {
-    type Config<'a> = ValueEmpty;
-    type MetaState<'a> = ValueEmpty;
+    type Config<'a> = ProviderConfig;
+    type MetaState<'a> = ();
 
     fn schema(&self, _diags: &mut Diagnostics) -> Option<Schema> {
-        None
+        let mut attributes = HashMap::new();
+
+        attributes.insert(
+            "database_url".to_string(),
+            Attribute {
+                description: Description::plain("PostgreSQL connection URL"),
+                attr_type: AttributeType::String,
+                constraint: AttributeConstraint::Optional,
+                sensitive: true,
+                ..Default::default()
+            },
+        );
+
+        attributes.insert(
+            "target_schemas".to_string(),
+            Attribute {
+                description: Description::plain("PostgreSQL schemas to manage (default: public)"),
+                attr_type: AttributeType::List(Box::new(AttributeType::String)),
+                constraint: AttributeConstraint::Optional,
+                ..Default::default()
+            },
+        );
+
+        Some(Schema {
+            version: 1,
+            block: Block {
+                description: Description::plain("pgmold PostgreSQL schema management provider"),
+                attributes,
+                ..Default::default()
+            },
+        })
+    }
+
+    async fn configure<'a>(
+        &self,
+        _diags: &mut Diagnostics,
+        _terraform_version: String,
+        _config: Self::Config<'a>,
+    ) -> Option<()> {
+        Some(())
+    }
+
+    fn get_resources(
+        &self,
+        _diags: &mut Diagnostics,
+    ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
+        let resources: HashMap<String, Box<dyn DynamicResource>> = HashMap::new();
+        Some(resources)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_schema_has_database_url() {
+        let provider = PgmoldProvider::default();
+        let mut diags = Diagnostics::default();
+        let schema = provider.schema(&mut diags).expect("schema should exist");
+
+        let attr = schema.block.attributes.get("database_url")
+            .expect("database_url attribute should exist");
+
+        assert!(attr.sensitive, "database_url should be sensitive");
+    }
+
+    #[test]
+    fn provider_schema_has_target_schemas() {
+        let provider = PgmoldProvider::default();
+        let mut diags = Diagnostics::default();
+        let schema = provider.schema(&mut diags).expect("schema should exist");
+
+        let attr = schema.block.attributes.get("target_schemas")
+            .expect("target_schemas attribute should exist");
+
+        assert!(matches!(attr.attr_type, AttributeType::List(_)));
     }
 }
