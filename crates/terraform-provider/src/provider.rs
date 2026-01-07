@@ -7,6 +7,8 @@ use tf_provider::{
     Diagnostics, DynamicResource, Provider,
 };
 
+use crate::resources::SchemaResource;
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub database_url: Option<String>,
@@ -70,7 +72,8 @@ impl Provider for PgmoldProvider {
         &self,
         _diags: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
-        let resources: HashMap<String, Box<dyn DynamicResource>> = HashMap::new();
+        let mut resources: HashMap<String, Box<dyn DynamicResource>> = HashMap::new();
+        resources.insert("pgmold_schema".to_string(), Box::new(SchemaResource));
         Some(resources)
     }
 }
@@ -101,5 +104,17 @@ mod tests {
             .expect("target_schemas attribute should exist");
 
         assert!(matches!(attr.attr_type, AttributeType::List(_)));
+    }
+
+    #[test]
+    fn provider_returns_schema_resource() {
+        let provider = PgmoldProvider::default();
+        let mut diags = Diagnostics::default();
+
+        let resources = provider.get_resources(&mut diags);
+
+        assert!(resources.is_some());
+        let resources = resources.unwrap();
+        assert!(resources.contains_key("pgmold_schema"), "should have pgmold_schema resource");
     }
 }
