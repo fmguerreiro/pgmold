@@ -121,12 +121,37 @@ impl Resource for SchemaResource {
 
     async fn plan_create<'a>(
         &self,
-        _diags: &mut Diagnostics,
+        diags: &mut Diagnostics,
         proposed_state: Self::State<'a>,
         _config_state: Self::State<'a>,
         _provider_meta_state: Self::ProviderMetaState<'a>,
     ) -> Option<(Self::State<'a>, Self::PrivateState<'a>)> {
-        Some((proposed_state, ()))
+        if proposed_state.database_url.is_none() {
+            diags.root_error_short("database_url is required");
+            return None;
+        }
+
+        let schema_path = std::path::Path::new(&proposed_state.schema_file);
+        if !schema_path.exists() {
+            diags.root_error_short(format!("schema_file not found: {}", proposed_state.schema_file));
+            return None;
+        }
+
+        let schema_hash = match crate::util::compute_schema_hash(schema_path) {
+            Ok(h) => h,
+            Err(e) => {
+                diags.root_error_short(format!("Failed to read schema file: {e}"));
+                return None;
+            }
+        };
+
+        let id = format!("pgmold-{}", &schema_hash[..8]);
+
+        let mut state = proposed_state;
+        state.id = id;
+        state.schema_hash = Some(schema_hash);
+
+        Some((state, ()))
     }
 
     async fn plan_update<'a>(
@@ -188,6 +213,8 @@ impl Resource for SchemaResource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::NamedTempFile;
+    use std::io::Write;
 
     #[test]
     fn schema_state_defaults_allow_destructive_false() {
@@ -219,5 +246,46 @@ mod tests {
         for name in ["database_url", "target_schemas", "allow_destructive", "zero_downtime"] {
             assert!(schema.block.attributes.contains_key(name), "missing: {name}");
         }
+    }
+
+    #[tokio::test]
+    async fn plan_create_computes_schema_hash() {
+        let mut schema_file = NamedTempFile::new().unwrap();
+        writeln!(schema_file, "CREATE TABLE users (id INT PRIMARY KEY);").unwrap();
+
+        let resource = SchemaResource;
+        let mut diags = Diagnostics::default();
+
+        let proposed = SchemaResourceState {
+            schema_file: schema_file.path().to_string_lossy().to_string(),
+            database_url: Some("postgres://test".to_string()),
+            ..Default::default()
+        };
+
+        let result = resource.plan_create(&mut diags, proposed.clone(), proposed, ()).await;
+
+        assert!(result.is_some(), "plan_create should return Some");
+        let (state, _) = result.unwrap();
+        assert!(state.schema_hash.is_some(), "schema_hash should be computed");
+        assert_eq!(state.schema_hash.unwrap().len(), 64);
+    }
+
+    #[tokio::test]
+    async fn plan_create_fails_without_database_url() {
+        let mut schema_file = NamedTempFile::new().unwrap();
+        writeln!(schema_file, "CREATE TABLE users (id INT);").unwrap();
+
+        let resource = SchemaResource;
+        let mut diags = Diagnostics::default();
+
+        let proposed = SchemaResourceState {
+            schema_file: schema_file.path().to_string_lossy().to_string(),
+            database_url: None,
+            ..Default::default()
+        };
+
+        let result = resource.plan_create(&mut diags, proposed.clone(), proposed, ()).await;
+
+        assert!(result.is_none() || !diags.errors.is_empty());
     }
 }
