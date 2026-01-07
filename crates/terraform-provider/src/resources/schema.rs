@@ -127,7 +127,7 @@ impl Resource for SchemaResource {
         _provider_meta_state: Self::ProviderMetaState<'a>,
     ) -> Option<(Self::State<'a>, Self::PrivateState<'a>)> {
         if proposed_state.database_url.is_none() {
-            diags.root_error_short("database_url is required");
+            diags.root_error_short("database_url is required (either at resource or provider level)");
             return None;
         }
 
@@ -145,7 +145,8 @@ impl Resource for SchemaResource {
             }
         };
 
-        let id = format!("pgmold-{}", &schema_hash[..8]);
+        let path_hash = crate::util::compute_path_hash(schema_path);
+        let id = format!("pgmold-{}", &path_hash[..8]);
 
         let mut state = proposed_state;
         state.id = id;
@@ -156,14 +157,35 @@ impl Resource for SchemaResource {
 
     async fn plan_update<'a>(
         &self,
-        _diags: &mut Diagnostics,
+        diags: &mut Diagnostics,
         _prior_state: Self::State<'a>,
         proposed_state: Self::State<'a>,
         _config_state: Self::State<'a>,
         _prior_private_state: Self::PrivateState<'a>,
         _provider_meta_state: Self::ProviderMetaState<'a>,
     ) -> Option<(Self::State<'a>, Self::PrivateState<'a>, Vec<AttributePath>)> {
-        Some((proposed_state, (), vec![]))
+        let schema_path = std::path::Path::new(&proposed_state.schema_file);
+        if !schema_path.exists() {
+            diags.root_error_short(format!("schema_file not found: {}", proposed_state.schema_file));
+            return None;
+        }
+
+        let schema_hash = match crate::util::compute_schema_hash(schema_path) {
+            Ok(h) => h,
+            Err(e) => {
+                diags.root_error_short(format!("Failed to read schema file: {e}"));
+                return None;
+            }
+        };
+
+        let path_hash = crate::util::compute_path_hash(schema_path);
+        let id = format!("pgmold-{}", &path_hash[..8]);
+
+        let mut state = proposed_state;
+        state.id = id;
+        state.schema_hash = Some(schema_hash);
+
+        Some((state, (), vec![]))
     }
 
     async fn plan_destroy<'a>(
@@ -189,7 +211,8 @@ impl Resource for SchemaResource {
         let connection = match pgmold::pg::connection::PgConnection::new(db_url).await {
             Ok(c) => c,
             Err(e) => {
-                diags.root_error_short(format!("Failed to connect to database: {e}"));
+                let sanitized = crate::util::sanitize_db_error(&format!("{e}"));
+                diags.root_error_short(format!("Failed to connect to database: {sanitized}"));
                 return None;
             }
         };
@@ -229,14 +252,55 @@ impl Resource for SchemaResource {
 
     async fn update<'a>(
         &self,
-        _diags: &mut Diagnostics,
+        diags: &mut Diagnostics,
         _prior_state: Self::State<'a>,
         planned_state: Self::State<'a>,
         _config_state: Self::State<'a>,
         _planned_private_state: Self::PrivateState<'a>,
         _provider_meta_state: Self::ProviderMetaState<'a>,
     ) -> Option<(Self::State<'a>, Self::PrivateState<'a>)> {
-        Some((planned_state, ()))
+        let db_url = planned_state.database_url.as_ref().unwrap();
+
+        let connection = match pgmold::pg::connection::PgConnection::new(db_url).await {
+            Ok(c) => c,
+            Err(e) => {
+                let sanitized = crate::util::sanitize_db_error(&format!("{e}"));
+                diags.root_error_short(format!("Failed to connect to database: {sanitized}"));
+                return None;
+            }
+        };
+
+        let result = match pgmold::apply::apply_migration(
+            &[planned_state.schema_file.clone()],
+            &connection,
+            pgmold::apply::ApplyOptions {
+                dry_run: false,
+                allow_destructive: planned_state.allow_destructive,
+            },
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                diags.root_error_short(format!("Migration failed: {e}"));
+                return None;
+            }
+        };
+
+        if pgmold::lint::has_errors(&result.lint_results) {
+            for lint in &result.lint_results {
+                if lint.severity == pgmold::lint::LintSeverity::Error {
+                    diags.root_error_short(format!("{}", lint.message));
+                }
+            }
+            return None;
+        }
+
+        let mut state = planned_state;
+        state.applied_at = Some(chrono::Utc::now().to_rfc3339());
+        state.migration_count = Some(result.operations.len() as u32);
+
+        Some((state, ()))
     }
 
     async fn destroy<'a>(

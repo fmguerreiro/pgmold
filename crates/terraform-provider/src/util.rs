@@ -9,6 +9,30 @@ pub fn compute_schema_hash(path: &Path) -> anyhow::Result<String> {
     Ok(format!("{:x}", result))
 }
 
+pub fn compute_path_hash(path: &Path) -> String {
+    let canonical_path = path.canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf());
+    let path_str = canonical_path.to_string_lossy();
+    let mut hasher = Sha256::new();
+    hasher.update(path_str.as_bytes());
+    let result = hasher.finalize();
+    format!("{:x}", result)
+}
+
+pub fn sanitize_db_error(error: &str) -> String {
+    error
+        .lines()
+        .map(|line| {
+            if line.contains("password") || line.contains("PASSWORD") {
+                "Database connection failed (credentials redacted)".to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

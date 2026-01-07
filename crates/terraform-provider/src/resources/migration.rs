@@ -12,6 +12,7 @@ pub struct MigrationResourceState {
     pub database_url: Option<String>,
     pub output_dir: String,
     pub prefix: Option<String>,
+    pub target_schemas: Option<Vec<String>>,
     pub schema_hash: Option<String>,
     pub migration_file: Option<String>,
     pub migration_number: Option<u32>,
@@ -26,6 +27,7 @@ impl Default for MigrationResourceState {
             database_url: None,
             output_dir: String::new(),
             prefix: None,
+            target_schemas: None,
             schema_hash: None,
             migration_file: None,
             migration_number: None,
@@ -76,6 +78,12 @@ impl Resource for MigrationResource {
                     ("prefix", Attribute {
                         description: Description::plain("Optional prefix like 'V' for Flyway"),
                         attr_type: AttributeType::String,
+                        constraint: AttributeConstraint::Optional,
+                        ..Default::default()
+                    }),
+                    ("target_schemas", Attribute {
+                        description: Description::plain("PostgreSQL schemas to introspect (default: public)"),
+                        attr_type: AttributeType::List(Box::new(AttributeType::String)),
                         constraint: AttributeConstraint::Optional,
                         ..Default::default()
                     }),
@@ -137,6 +145,14 @@ impl Resource for MigrationResource {
             return None;
         }
 
+        let output_dir = std::path::Path::new(&proposed_state.output_dir);
+        if let Some(parent) = output_dir.parent() {
+            if !parent.exists() {
+                diags.root_error_short(format!("output_dir parent does not exist: {}", parent.display()));
+                return None;
+            }
+        }
+
         let schema_hash = match crate::util::compute_schema_hash(schema_path) {
             Ok(h) => h,
             Err(e) => {
@@ -188,14 +204,18 @@ impl Resource for MigrationResource {
         let connection = match pgmold::pg::connection::PgConnection::new(db_url).await {
             Ok(c) => c,
             Err(e) => {
-                diags.root_error_short(format!("Failed to connect to database: {e}"));
+                let sanitized = crate::util::sanitize_db_error(&format!("{e}"));
+                diags.root_error_short(format!("Failed to connect to database: {sanitized}"));
                 return None;
             }
         };
 
+        let target_schemas = planned_state.target_schemas.clone()
+            .unwrap_or_else(|| vec!["public".to_string()]);
+
         let current = match pgmold::pg::introspect::introspect_schema(
             &connection,
-            &["public".to_string()],
+            &target_schemas,
             false,
         )
         .await
@@ -221,6 +241,20 @@ impl Resource for MigrationResource {
             let mut state = planned_state;
             state.operations = Some(vec![]);
             return Some((state, ()));
+        }
+
+        let lint_results = pgmold::lint::lint_migration_plan(&operations, &pgmold::lint::LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        });
+
+        if pgmold::lint::has_errors(&lint_results) {
+            for lint in &lint_results {
+                if lint.severity == pgmold::lint::LintSeverity::Error {
+                    diags.root_error_short(format!("{}", lint.message));
+                }
+            }
+            return None;
         }
 
         let migration_number = find_next_migration_number(output_dir, planned_state.prefix.as_deref());
@@ -253,14 +287,104 @@ impl Resource for MigrationResource {
 
     async fn update<'a>(
         &self,
-        _diags: &mut Diagnostics,
-        _prior_state: Self::State<'a>,
+        diags: &mut Diagnostics,
+        prior_state: Self::State<'a>,
         planned_state: Self::State<'a>,
         _config_state: Self::State<'a>,
         _planned_private_state: Self::PrivateState<'a>,
         _provider_meta_state: Self::ProviderMetaState<'a>,
     ) -> Option<(Self::State<'a>, Self::PrivateState<'a>)> {
-        Some((planned_state, ()))
+        let db_url = planned_state.database_url.as_ref()?;
+        let output_dir = std::path::Path::new(&planned_state.output_dir);
+
+        let connection = match pgmold::pg::connection::PgConnection::new(db_url).await {
+            Ok(c) => c,
+            Err(e) => {
+                let sanitized = crate::util::sanitize_db_error(&format!("{e}"));
+                diags.root_error_short(format!("Failed to connect to database: {sanitized}"));
+                return None;
+            }
+        };
+
+        let target_schemas = planned_state.target_schemas.clone()
+            .unwrap_or_else(|| vec!["public".to_string()]);
+
+        let current = match pgmold::pg::introspect::introspect_schema(
+            &connection,
+            &target_schemas,
+            false,
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                diags.root_error_short(format!("Failed to introspect database: {e}"));
+                return None;
+            }
+        };
+
+        let target = match pgmold::parser::parse_sql_file(&planned_state.schema_file) {
+            Ok(s) => s,
+            Err(e) => {
+                diags.root_error_short(format!("Failed to parse schema file: {e}"));
+                return None;
+            }
+        };
+
+        let operations = pgmold::diff::compute_diff(&current, &target);
+
+        if operations.is_empty() {
+            let mut state = planned_state;
+            state.operations = Some(vec![]);
+            return Some((state, ()));
+        }
+
+        let lint_results = pgmold::lint::lint_migration_plan(&operations, &pgmold::lint::LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        });
+
+        if pgmold::lint::has_errors(&lint_results) {
+            for lint in &lint_results {
+                if lint.severity == pgmold::lint::LintSeverity::Error {
+                    diags.root_error_short(format!("{}", lint.message));
+                }
+            }
+            return None;
+        }
+
+        if let Some(old_file) = &prior_state.migration_file {
+            if std::path::Path::new(old_file).exists() {
+                let _ = std::fs::remove_file(old_file);
+            }
+        }
+
+        let migration_number = find_next_migration_number(output_dir, planned_state.prefix.as_deref());
+
+        let sql = pgmold::pg::sqlgen::generate_sql(&operations);
+        let op_summaries: Vec<String> = operations.iter().map(|op| format!("{op:?}")).collect();
+
+        if let Err(e) = std::fs::create_dir_all(output_dir) {
+            diags.root_error_short(format!("Failed to create output directory: {e}"));
+            return None;
+        }
+
+        let prefix = planned_state.prefix.as_deref().unwrap_or("");
+        let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+        let filename = format!("{prefix}{migration_number:04}_{timestamp}.sql");
+        let filepath = output_dir.join(&filename);
+
+        if let Err(e) = std::fs::write(&filepath, sql.join("\n")) {
+            diags.root_error_short(format!("Failed to write migration file: {e}"));
+            return None;
+        }
+
+        let mut state = planned_state;
+        state.migration_file = Some(filepath.to_string_lossy().to_string());
+        state.migration_number = Some(migration_number);
+        state.operations = Some(op_summaries);
+
+        Some((state, ()))
     }
 
     async fn destroy<'a>(

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -6,6 +7,7 @@ use tf_provider::{
     schema::{Attribute, AttributeConstraint, AttributeType, Block, Description, Schema},
     Diagnostics, DynamicResource, Provider,
 };
+use tokio::sync::RwLock;
 
 use crate::resources::{SchemaResource, MigrationResource};
 
@@ -17,7 +19,7 @@ pub struct ProviderConfig {
 
 #[derive(Debug, Default, Clone)]
 pub struct PgmoldProvider {
-    pub config: Option<ProviderConfig>,
+    pub config: Arc<RwLock<Option<ProviderConfig>>>,
 }
 
 #[async_trait]
@@ -63,8 +65,10 @@ impl Provider for PgmoldProvider {
         &self,
         _diags: &mut Diagnostics,
         _terraform_version: String,
-        _config: Self::Config<'a>,
+        config: Self::Config<'a>,
     ) -> Option<()> {
+        let mut guard = self.config.write().await;
+        *guard = Some(config);
         Some(())
     }
 
