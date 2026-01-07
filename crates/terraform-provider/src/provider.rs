@@ -7,7 +7,7 @@ use tf_provider::{
     Diagnostics, DynamicResource, Provider,
 };
 
-use crate::resources::SchemaResource;
+use crate::resources::{SchemaResource, MigrationResource};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
@@ -74,6 +74,7 @@ impl Provider for PgmoldProvider {
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
         let mut resources: HashMap<String, Box<dyn DynamicResource>> = HashMap::new();
         resources.insert("pgmold_schema".to_string(), Box::new(SchemaResource));
+        resources.insert("pgmold_migration".to_string(), Box::new(MigrationResource));
         Some(resources)
     }
 }
@@ -116,5 +117,17 @@ mod tests {
         assert!(resources.is_some());
         let resources = resources.unwrap();
         assert!(resources.contains_key("pgmold_schema"), "should have pgmold_schema resource");
+    }
+
+    #[test]
+    fn provider_returns_migration_resource() {
+        let provider = PgmoldProvider::default();
+        let mut diags = Diagnostics::default();
+
+        let resources = provider.get_resources(&mut diags);
+
+        assert!(resources.is_some());
+        let resources = resources.unwrap();
+        assert!(resources.contains_key("pgmold_migration"), "should have pgmold_migration resource");
     }
 }
