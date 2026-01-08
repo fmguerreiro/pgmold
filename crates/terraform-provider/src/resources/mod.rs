@@ -1,5 +1,5 @@
-pub mod schema;
 pub mod migration;
+pub mod schema;
 
-pub use schema::SchemaResource;
 pub use migration::MigrationResource;
+pub use schema::SchemaResource;

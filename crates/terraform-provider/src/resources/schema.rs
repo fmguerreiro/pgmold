@@ -1,109 +1,104 @@
+use std::borrow::Cow;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tf_provider::{
+    map,
     schema::{Attribute, AttributeConstraint, AttributeType, Block, Description, Schema},
+    value::{Value, ValueBool, ValueEmpty, ValueList, ValueNumber, ValueString},
     AttributePath, Diagnostics, Resource,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaResourceState {
-    pub id: String,
-    pub schema_file: String,
-    pub database_url: Option<String>,
-    pub target_schemas: Option<Vec<String>>,
-    pub allow_destructive: bool,
-    pub zero_downtime: bool,
-    pub schema_hash: Option<String>,
-    pub applied_at: Option<String>,
-    pub migration_count: Option<u32>,
-}
-
-impl Default for SchemaResourceState {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            schema_file: String::new(),
-            database_url: None,
-            target_schemas: None,
-            allow_destructive: false,
-            zero_downtime: false,
-            schema_hash: None,
-            applied_at: None,
-            migration_count: None,
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SchemaResourceState<'a> {
+    #[serde(borrow)]
+    pub id: ValueString<'a>,
+    #[serde(borrow)]
+    pub schema_file: ValueString<'a>,
+    #[serde(borrow)]
+    pub database_url: ValueString<'a>,
+    #[serde(borrow)]
+    pub target_schemas: ValueList<ValueString<'a>>,
+    pub allow_destructive: ValueBool,
+    pub zero_downtime: ValueBool,
+    #[serde(borrow)]
+    pub schema_hash: ValueString<'a>,
+    #[serde(borrow)]
+    pub applied_at: ValueString<'a>,
+    pub migration_count: ValueNumber,
 }
 
 pub struct SchemaResource;
 
 #[async_trait]
 impl Resource for SchemaResource {
-    type State<'a> = SchemaResourceState;
-    type PrivateState<'a> = ();
-    type ProviderMetaState<'a> = ();
+    type State<'a> = SchemaResourceState<'a>;
+    type PrivateState<'a> = ValueEmpty;
+    type ProviderMetaState<'a> = ValueEmpty;
 
     fn schema(&self, _diags: &mut Diagnostics) -> Option<Schema> {
         Some(Schema {
             version: 1,
             block: Block {
+                version: 1,
                 description: Description::plain("Manages PostgreSQL schema declaratively"),
-                attributes: [
-                    ("id", Attribute {
+                attributes: map! {
+                    "id" => Attribute {
                         description: Description::plain("Resource identifier"),
                         attr_type: AttributeType::String,
                         constraint: AttributeConstraint::Computed,
                         ..Default::default()
-                    }),
-                    ("schema_file", Attribute {
+                    },
+                    "schema_file" => Attribute {
                         description: Description::plain("Path to SQL schema file"),
                         attr_type: AttributeType::String,
                         constraint: AttributeConstraint::Required,
                         ..Default::default()
-                    }),
-                    ("database_url", Attribute {
+                    },
+                    "database_url" => Attribute {
                         description: Description::plain("PostgreSQL connection URL"),
                         attr_type: AttributeType::String,
                         constraint: AttributeConstraint::Optional,
                         sensitive: true,
                         ..Default::default()
-                    }),
-                    ("target_schemas", Attribute {
+                    },
+                    "target_schemas" => Attribute {
                         description: Description::plain("PostgreSQL schemas to manage"),
                         attr_type: AttributeType::List(Box::new(AttributeType::String)),
                         constraint: AttributeConstraint::Optional,
                         ..Default::default()
-                    }),
-                    ("allow_destructive", Attribute {
+                    },
+                    "allow_destructive" => Attribute {
                         description: Description::plain("Allow destructive operations"),
                         attr_type: AttributeType::Bool,
                         constraint: AttributeConstraint::Optional,
                         ..Default::default()
-                    }),
-                    ("zero_downtime", Attribute {
+                    },
+                    "zero_downtime" => Attribute {
                         description: Description::plain("Use expand/contract pattern"),
                         attr_type: AttributeType::Bool,
                         constraint: AttributeConstraint::Optional,
                         ..Default::default()
-                    }),
-                    ("schema_hash", Attribute {
+                    },
+                    "schema_hash" => Attribute {
                         description: Description::plain("SHA256 hash of schema file"),
                         attr_type: AttributeType::String,
                         constraint: AttributeConstraint::Computed,
                         ..Default::default()
-                    }),
-                    ("applied_at", Attribute {
+                    },
+                    "applied_at" => Attribute {
                         description: Description::plain("Timestamp of last migration"),
                         attr_type: AttributeType::String,
                         constraint: AttributeConstraint::Computed,
                         ..Default::default()
-                    }),
-                    ("migration_count", Attribute {
+                    },
+                    "migration_count" => Attribute {
                         description: Description::plain("Number of operations applied"),
                         attr_type: AttributeType::Number,
                         constraint: AttributeConstraint::Computed,
                         ..Default::default()
-                    }),
-                ].into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+                    }
+                },
                 ..Default::default()
             },
         })
@@ -126,14 +121,17 @@ impl Resource for SchemaResource {
         _config_state: Self::State<'a>,
         _provider_meta_state: Self::ProviderMetaState<'a>,
     ) -> Option<(Self::State<'a>, Self::PrivateState<'a>)> {
-        if proposed_state.database_url.is_none() {
-            diags.root_error_short("database_url is required (either at resource or provider level)");
+        if proposed_state.database_url.is_null() {
+            diags.root_error_short(
+                "database_url is required (either at resource or provider level)",
+            );
             return None;
         }
 
-        let schema_path = std::path::Path::new(&proposed_state.schema_file);
+        let schema_file_str = proposed_state.schema_file.as_str();
+        let schema_path = std::path::Path::new(schema_file_str);
         if !schema_path.exists() {
-            diags.root_error_short(format!("schema_file not found: {}", proposed_state.schema_file));
+            diags.root_error_short(format!("schema_file not found: {schema_file_str}"));
             return None;
         }
 
@@ -149,10 +147,13 @@ impl Resource for SchemaResource {
         let id = format!("pgmold-{}", &path_hash[..8]);
 
         let mut state = proposed_state;
-        state.id = id;
-        state.schema_hash = Some(schema_hash);
+        state.id = Value::Value(Cow::Owned(id));
+        state.schema_hash = Value::Value(Cow::Owned(schema_hash));
+        // Mark computed fields as Unknown during plan so Terraform knows they'll be set during apply
+        state.applied_at = Value::Unknown;
+        state.migration_count = Value::Unknown;
 
-        Some((state, ()))
+        Some((state, Default::default()))
     }
 
     async fn plan_update<'a>(
@@ -164,9 +165,10 @@ impl Resource for SchemaResource {
         _prior_private_state: Self::PrivateState<'a>,
         _provider_meta_state: Self::ProviderMetaState<'a>,
     ) -> Option<(Self::State<'a>, Self::PrivateState<'a>, Vec<AttributePath>)> {
-        let schema_path = std::path::Path::new(&proposed_state.schema_file);
+        let schema_file_str = proposed_state.schema_file.as_str();
+        let schema_path = std::path::Path::new(schema_file_str);
         if !schema_path.exists() {
-            diags.root_error_short(format!("schema_file not found: {}", proposed_state.schema_file));
+            diags.root_error_short(format!("schema_file not found: {schema_file_str}"));
             return None;
         }
 
@@ -182,20 +184,23 @@ impl Resource for SchemaResource {
         let id = format!("pgmold-{}", &path_hash[..8]);
 
         let mut state = proposed_state;
-        state.id = id;
-        state.schema_hash = Some(schema_hash);
+        state.id = Value::Value(Cow::Owned(id));
+        state.schema_hash = Value::Value(Cow::Owned(schema_hash));
+        // Mark computed fields as Unknown during plan so Terraform knows they'll be set during apply
+        state.applied_at = Value::Unknown;
+        state.migration_count = Value::Unknown;
 
-        Some((state, (), vec![]))
+        Some((state, Default::default(), vec![]))
     }
 
     async fn plan_destroy<'a>(
         &self,
         _diags: &mut Diagnostics,
         _prior_state: Self::State<'a>,
-        _prior_private_state: Self::PrivateState<'a>,
+        prior_private_state: Self::PrivateState<'a>,
         _provider_meta_state: Self::ProviderMetaState<'a>,
-    ) -> Option<()> {
-        Some(())
+    ) -> Option<Self::PrivateState<'a>> {
+        Some(prior_private_state)
     }
 
     async fn create<'a>(
@@ -206,7 +211,7 @@ impl Resource for SchemaResource {
         _planned_private_state: Self::PrivateState<'a>,
         _provider_meta_state: Self::ProviderMetaState<'a>,
     ) -> Option<(Self::State<'a>, Self::PrivateState<'a>)> {
-        let db_url = planned_state.database_url.as_ref().unwrap();
+        let db_url = planned_state.database_url.as_str();
 
         let connection = match pgmold::pg::connection::PgConnection::new(db_url).await {
             Ok(c) => c,
@@ -217,12 +222,15 @@ impl Resource for SchemaResource {
             }
         };
 
+        let schema_file = planned_state.schema_file.as_str().to_string();
+        let allow_destructive = planned_state.allow_destructive.unwrap_or(false);
+
         let result = match pgmold::apply::apply_migration(
-            &[planned_state.schema_file.clone()],
+            &[schema_file],
             &connection,
             pgmold::apply::ApplyOptions {
                 dry_run: false,
-                allow_destructive: planned_state.allow_destructive,
+                allow_destructive,
             },
         )
         .await
@@ -237,17 +245,17 @@ impl Resource for SchemaResource {
         if pgmold::lint::has_errors(&result.lint_results) {
             for lint in &result.lint_results {
                 if lint.severity == pgmold::lint::LintSeverity::Error {
-                    diags.root_error_short(format!("{}", lint.message));
+                    diags.root_error_short(lint.message.to_string());
                 }
             }
             return None;
         }
 
         let mut state = planned_state;
-        state.applied_at = Some(chrono::Utc::now().to_rfc3339());
-        state.migration_count = Some(result.operations.len() as u32);
+        state.applied_at = Value::Value(Cow::Owned(chrono::Utc::now().to_rfc3339()));
+        state.migration_count = Value::Value(result.operations.len() as i64);
 
-        Some((state, ()))
+        Some((state, Default::default()))
     }
 
     async fn update<'a>(
@@ -259,7 +267,7 @@ impl Resource for SchemaResource {
         _planned_private_state: Self::PrivateState<'a>,
         _provider_meta_state: Self::ProviderMetaState<'a>,
     ) -> Option<(Self::State<'a>, Self::PrivateState<'a>)> {
-        let db_url = planned_state.database_url.as_ref().unwrap();
+        let db_url = planned_state.database_url.as_str();
 
         let connection = match pgmold::pg::connection::PgConnection::new(db_url).await {
             Ok(c) => c,
@@ -270,12 +278,15 @@ impl Resource for SchemaResource {
             }
         };
 
+        let schema_file = planned_state.schema_file.as_str().to_string();
+        let allow_destructive = planned_state.allow_destructive.unwrap_or(false);
+
         let result = match pgmold::apply::apply_migration(
-            &[planned_state.schema_file.clone()],
+            &[schema_file],
             &connection,
             pgmold::apply::ApplyOptions {
                 dry_run: false,
-                allow_destructive: planned_state.allow_destructive,
+                allow_destructive,
             },
         )
         .await
@@ -290,17 +301,17 @@ impl Resource for SchemaResource {
         if pgmold::lint::has_errors(&result.lint_results) {
             for lint in &result.lint_results {
                 if lint.severity == pgmold::lint::LintSeverity::Error {
-                    diags.root_error_short(format!("{}", lint.message));
+                    diags.root_error_short(lint.message.to_string());
                 }
             }
             return None;
         }
 
         let mut state = planned_state;
-        state.applied_at = Some(chrono::Utc::now().to_rfc3339());
-        state.migration_count = Some(result.operations.len() as u32);
+        state.applied_at = Value::Value(Cow::Owned(chrono::Utc::now().to_rfc3339()));
+        state.migration_count = Value::Value(result.operations.len() as i64);
 
-        Some((state, ()))
+        Some((state, Default::default()))
     }
 
     async fn destroy<'a>(
@@ -317,19 +328,20 @@ impl Resource for SchemaResource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
+    use tf_provider::value::ValueEmpty;
 
     #[test]
-    fn schema_state_defaults_allow_destructive_false() {
+    fn schema_state_defaults_allow_destructive_null() {
         let state = SchemaResourceState::default();
-        assert!(!state.allow_destructive);
+        assert!(state.allow_destructive.is_null());
     }
 
     #[test]
-    fn schema_state_defaults_zero_downtime_false() {
+    fn schema_state_defaults_zero_downtime_null() {
         let state = SchemaResourceState::default();
-        assert!(!state.zero_downtime);
+        assert!(state.zero_downtime.is_null());
     }
 
     #[test]
@@ -347,8 +359,16 @@ mod tests {
         let mut diags = Diagnostics::default();
         let schema = resource.schema(&mut diags).expect("schema should exist");
 
-        for name in ["database_url", "target_schemas", "allow_destructive", "zero_downtime"] {
-            assert!(schema.block.attributes.contains_key(name), "missing: {name}");
+        for name in [
+            "database_url",
+            "target_schemas",
+            "allow_destructive",
+            "zero_downtime",
+        ] {
+            assert!(
+                schema.block.attributes.contains_key(name),
+                "missing: {name}"
+            );
         }
     }
 
@@ -361,17 +381,27 @@ mod tests {
         let mut diags = Diagnostics::default();
 
         let proposed = SchemaResourceState {
-            schema_file: schema_file.path().to_string_lossy().to_string(),
-            database_url: Some("postgres://test".to_string()),
+            schema_file: Value::Value(Cow::Owned(schema_file.path().to_string_lossy().to_string())),
+            database_url: Value::Value(Cow::Borrowed("postgres://test")),
             ..Default::default()
         };
 
-        let result = resource.plan_create(&mut diags, proposed.clone(), proposed, ()).await;
+        let result = resource
+            .plan_create(
+                &mut diags,
+                proposed.clone(),
+                proposed,
+                ValueEmpty::default(),
+            )
+            .await;
 
         assert!(result.is_some(), "plan_create should return Some");
         let (state, _) = result.unwrap();
-        assert!(state.schema_hash.is_some(), "schema_hash should be computed");
-        assert_eq!(state.schema_hash.unwrap().len(), 64);
+        assert!(
+            state.schema_hash.is_value(),
+            "schema_hash should be computed"
+        );
+        assert_eq!(state.schema_hash.as_str().len(), 64);
     }
 
     #[tokio::test]
@@ -383,12 +413,19 @@ mod tests {
         let mut diags = Diagnostics::default();
 
         let proposed = SchemaResourceState {
-            schema_file: schema_file.path().to_string_lossy().to_string(),
-            database_url: None,
+            schema_file: Value::Value(Cow::Owned(schema_file.path().to_string_lossy().to_string())),
+            database_url: Value::Null,
             ..Default::default()
         };
 
-        let result = resource.plan_create(&mut diags, proposed.clone(), proposed, ()).await;
+        let result = resource
+            .plan_create(
+                &mut diags,
+                proposed.clone(),
+                proposed,
+                ValueEmpty::default(),
+            )
+            .await;
 
         assert!(result.is_none() || !diags.errors.is_empty());
     }

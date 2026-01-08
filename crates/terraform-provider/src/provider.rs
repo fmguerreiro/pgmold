@@ -9,7 +9,7 @@ use tf_provider::{
 };
 use tokio::sync::RwLock;
 
-use crate::resources::{SchemaResource, MigrationResource};
+use crate::resources::{MigrationResource, SchemaResource};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
@@ -54,6 +54,7 @@ impl Provider for PgmoldProvider {
         Some(Schema {
             version: 1,
             block: Block {
+                version: 1,
                 description: Description::plain("pgmold PostgreSQL schema management provider"),
                 attributes,
                 ..Default::default()
@@ -77,8 +78,8 @@ impl Provider for PgmoldProvider {
         _diags: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
         let mut resources: HashMap<String, Box<dyn DynamicResource>> = HashMap::new();
-        resources.insert("pgmold_schema".to_string(), Box::new(SchemaResource));
-        resources.insert("pgmold_migration".to_string(), Box::new(MigrationResource));
+        resources.insert("schema".to_string(), Box::new(SchemaResource));
+        resources.insert("migration".to_string(), Box::new(MigrationResource));
         Some(resources)
     }
 }
@@ -93,7 +94,10 @@ mod tests {
         let mut diags = Diagnostics::default();
         let schema = provider.schema(&mut diags).expect("schema should exist");
 
-        let attr = schema.block.attributes.get("database_url")
+        let attr = schema
+            .block
+            .attributes
+            .get("database_url")
             .expect("database_url attribute should exist");
 
         assert!(attr.sensitive, "database_url should be sensitive");
@@ -105,7 +109,10 @@ mod tests {
         let mut diags = Diagnostics::default();
         let schema = provider.schema(&mut diags).expect("schema should exist");
 
-        let attr = schema.block.attributes.get("target_schemas")
+        let attr = schema
+            .block
+            .attributes
+            .get("target_schemas")
             .expect("target_schemas attribute should exist");
 
         assert!(matches!(attr.attr_type, AttributeType::List(_)));
@@ -120,7 +127,10 @@ mod tests {
 
         assert!(resources.is_some());
         let resources = resources.unwrap();
-        assert!(resources.contains_key("pgmold_schema"), "should have pgmold_schema resource");
+        assert!(
+            resources.contains_key("schema"),
+            "should have schema resource"
+        );
     }
 
     #[test]
@@ -132,6 +142,9 @@ mod tests {
 
         assert!(resources.is_some());
         let resources = resources.unwrap();
-        assert!(resources.contains_key("pgmold_migration"), "should have pgmold_migration resource");
+        assert!(
+            resources.contains_key("migration"),
+            "should have migration resource"
+        );
     }
 }

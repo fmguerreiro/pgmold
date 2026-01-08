@@ -2,10 +2,11 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tf_provider::{
     schema::{Attribute, AttributeConstraint, AttributeType, Block, Description, Schema},
+    value::ValueEmpty,
     AttributePath, Diagnostics, Resource,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MigrationResourceState {
     pub id: String,
     pub schema_file: String,
@@ -19,99 +20,118 @@ pub struct MigrationResourceState {
     pub operations: Option<Vec<String>>,
 }
 
-impl Default for MigrationResourceState {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            schema_file: String::new(),
-            database_url: None,
-            output_dir: String::new(),
-            prefix: None,
-            target_schemas: None,
-            schema_hash: None,
-            migration_file: None,
-            migration_number: None,
-            operations: None,
-        }
-    }
-}
-
 pub struct MigrationResource;
 
 #[async_trait]
 impl Resource for MigrationResource {
     type State<'a> = MigrationResourceState;
-    type PrivateState<'a> = ();
-    type ProviderMetaState<'a> = ();
+    type PrivateState<'a> = ValueEmpty;
+    type ProviderMetaState<'a> = ValueEmpty;
 
     fn schema(&self, _diags: &mut Diagnostics) -> Option<Schema> {
         Some(Schema {
             version: 1,
             block: Block {
+                version: 1,
                 description: Description::plain("Generates numbered migration files"),
                 attributes: [
-                    ("id", Attribute {
-                        description: Description::plain("Resource identifier"),
-                        attr_type: AttributeType::String,
-                        constraint: AttributeConstraint::Computed,
-                        ..Default::default()
-                    }),
-                    ("schema_file", Attribute {
-                        description: Description::plain("Path to SQL schema file"),
-                        attr_type: AttributeType::String,
-                        constraint: AttributeConstraint::Required,
-                        ..Default::default()
-                    }),
-                    ("database_url", Attribute {
-                        description: Description::plain("PostgreSQL connection URL"),
-                        attr_type: AttributeType::String,
-                        constraint: AttributeConstraint::Required,
-                        sensitive: true,
-                        ..Default::default()
-                    }),
-                    ("output_dir", Attribute {
-                        description: Description::plain("Directory to write migration files"),
-                        attr_type: AttributeType::String,
-                        constraint: AttributeConstraint::Required,
-                        ..Default::default()
-                    }),
-                    ("prefix", Attribute {
-                        description: Description::plain("Optional prefix like 'V' for Flyway"),
-                        attr_type: AttributeType::String,
-                        constraint: AttributeConstraint::Optional,
-                        ..Default::default()
-                    }),
-                    ("target_schemas", Attribute {
-                        description: Description::plain("PostgreSQL schemas to introspect (default: public)"),
-                        attr_type: AttributeType::List(Box::new(AttributeType::String)),
-                        constraint: AttributeConstraint::Optional,
-                        ..Default::default()
-                    }),
-                    ("schema_hash", Attribute {
-                        description: Description::plain("SHA256 hash of schema file"),
-                        attr_type: AttributeType::String,
-                        constraint: AttributeConstraint::Computed,
-                        ..Default::default()
-                    }),
-                    ("migration_file", Attribute {
-                        description: Description::plain("Path to generated migration file"),
-                        attr_type: AttributeType::String,
-                        constraint: AttributeConstraint::Computed,
-                        ..Default::default()
-                    }),
-                    ("migration_number", Attribute {
-                        description: Description::plain("Auto-incremented migration number"),
-                        attr_type: AttributeType::Number,
-                        constraint: AttributeConstraint::Computed,
-                        ..Default::default()
-                    }),
-                    ("operations", Attribute {
-                        description: Description::plain("List of migration operations"),
-                        attr_type: AttributeType::List(Box::new(AttributeType::String)),
-                        constraint: AttributeConstraint::Computed,
-                        ..Default::default()
-                    }),
-                ].into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+                    (
+                        "id",
+                        Attribute {
+                            description: Description::plain("Resource identifier"),
+                            attr_type: AttributeType::String,
+                            constraint: AttributeConstraint::Computed,
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "schema_file",
+                        Attribute {
+                            description: Description::plain("Path to SQL schema file"),
+                            attr_type: AttributeType::String,
+                            constraint: AttributeConstraint::Required,
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "database_url",
+                        Attribute {
+                            description: Description::plain("PostgreSQL connection URL"),
+                            attr_type: AttributeType::String,
+                            constraint: AttributeConstraint::Required,
+                            sensitive: true,
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "output_dir",
+                        Attribute {
+                            description: Description::plain("Directory to write migration files"),
+                            attr_type: AttributeType::String,
+                            constraint: AttributeConstraint::Required,
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "prefix",
+                        Attribute {
+                            description: Description::plain("Optional prefix like 'V' for Flyway"),
+                            attr_type: AttributeType::String,
+                            constraint: AttributeConstraint::Optional,
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "target_schemas",
+                        Attribute {
+                            description: Description::plain(
+                                "PostgreSQL schemas to introspect (default: public)",
+                            ),
+                            attr_type: AttributeType::List(Box::new(AttributeType::String)),
+                            constraint: AttributeConstraint::Optional,
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "schema_hash",
+                        Attribute {
+                            description: Description::plain("SHA256 hash of schema file"),
+                            attr_type: AttributeType::String,
+                            constraint: AttributeConstraint::Computed,
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "migration_file",
+                        Attribute {
+                            description: Description::plain("Path to generated migration file"),
+                            attr_type: AttributeType::String,
+                            constraint: AttributeConstraint::Computed,
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "migration_number",
+                        Attribute {
+                            description: Description::plain("Auto-incremented migration number"),
+                            attr_type: AttributeType::Number,
+                            constraint: AttributeConstraint::Computed,
+                            ..Default::default()
+                        },
+                    ),
+                    (
+                        "operations",
+                        Attribute {
+                            description: Description::plain("List of migration operations"),
+                            attr_type: AttributeType::List(Box::new(AttributeType::String)),
+                            constraint: AttributeConstraint::Computed,
+                            ..Default::default()
+                        },
+                    ),
+                ]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
                 ..Default::default()
             },
         })
@@ -141,14 +161,20 @@ impl Resource for MigrationResource {
 
         let schema_path = std::path::Path::new(&proposed_state.schema_file);
         if !schema_path.exists() {
-            diags.root_error_short(format!("schema_file not found: {}", proposed_state.schema_file));
+            diags.root_error_short(format!(
+                "schema_file not found: {}",
+                proposed_state.schema_file
+            ));
             return None;
         }
 
         let output_dir = std::path::Path::new(&proposed_state.output_dir);
         if let Some(parent) = output_dir.parent() {
             if !parent.exists() {
-                diags.root_error_short(format!("output_dir parent does not exist: {}", parent.display()));
+                diags.root_error_short(format!(
+                    "output_dir parent does not exist: {}",
+                    parent.display()
+                ));
                 return None;
             }
         }
@@ -165,7 +191,7 @@ impl Resource for MigrationResource {
         state.id = format!("pgmold-migration-{}", &schema_hash[..8]);
         state.schema_hash = Some(schema_hash);
 
-        Some((state, ()))
+        Some((state, Default::default()))
     }
 
     async fn plan_update<'a>(
@@ -177,17 +203,17 @@ impl Resource for MigrationResource {
         _prior_private_state: Self::PrivateState<'a>,
         _provider_meta_state: Self::ProviderMetaState<'a>,
     ) -> Option<(Self::State<'a>, Self::PrivateState<'a>, Vec<AttributePath>)> {
-        Some((proposed_state, (), vec![]))
+        Some((proposed_state, Default::default(), vec![]))
     }
 
     async fn plan_destroy<'a>(
         &self,
         _diags: &mut Diagnostics,
         _prior_state: Self::State<'a>,
-        _prior_private_state: Self::PrivateState<'a>,
+        prior_private_state: Self::PrivateState<'a>,
         _provider_meta_state: Self::ProviderMetaState<'a>,
-    ) -> Option<()> {
-        Some(())
+    ) -> Option<Self::PrivateState<'a>> {
+        Some(prior_private_state)
     }
 
     async fn create<'a>(
@@ -210,22 +236,21 @@ impl Resource for MigrationResource {
             }
         };
 
-        let target_schemas = planned_state.target_schemas.clone()
+        let target_schemas = planned_state
+            .target_schemas
+            .clone()
             .unwrap_or_else(|| vec!["public".to_string()]);
 
-        let current = match pgmold::pg::introspect::introspect_schema(
-            &connection,
-            &target_schemas,
-            false,
-        )
-        .await
-        {
-            Ok(s) => s,
-            Err(e) => {
-                diags.root_error_short(format!("Failed to introspect database: {e}"));
-                return None;
-            }
-        };
+        let current =
+            match pgmold::pg::introspect::introspect_schema(&connection, &target_schemas, false)
+                .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    diags.root_error_short(format!("Failed to introspect database: {e}"));
+                    return None;
+                }
+            };
 
         let target = match pgmold::parser::parse_sql_file(&planned_state.schema_file) {
             Ok(s) => s,
@@ -240,24 +265,28 @@ impl Resource for MigrationResource {
         if operations.is_empty() {
             let mut state = planned_state;
             state.operations = Some(vec![]);
-            return Some((state, ()));
+            return Some((state, Default::default()));
         }
 
-        let lint_results = pgmold::lint::lint_migration_plan(&operations, &pgmold::lint::LintOptions {
-            allow_destructive: false,
-            is_production: false,
-        });
+        let lint_results = pgmold::lint::lint_migration_plan(
+            &operations,
+            &pgmold::lint::LintOptions {
+                allow_destructive: false,
+                is_production: false,
+            },
+        );
 
         if pgmold::lint::has_errors(&lint_results) {
             for lint in &lint_results {
                 if lint.severity == pgmold::lint::LintSeverity::Error {
-                    diags.root_error_short(format!("{}", lint.message));
+                    diags.root_error_short(lint.message.to_string());
                 }
             }
             return None;
         }
 
-        let migration_number = find_next_migration_number(output_dir, planned_state.prefix.as_deref());
+        let migration_number =
+            find_next_migration_number(output_dir, planned_state.prefix.as_deref());
 
         let sql = pgmold::pg::sqlgen::generate_sql(&operations);
         let op_summaries: Vec<String> = operations.iter().map(|op| format!("{op:?}")).collect();
@@ -282,7 +311,7 @@ impl Resource for MigrationResource {
         state.migration_number = Some(migration_number);
         state.operations = Some(op_summaries);
 
-        Some((state, ()))
+        Some((state, Default::default()))
     }
 
     async fn update<'a>(
@@ -306,22 +335,21 @@ impl Resource for MigrationResource {
             }
         };
 
-        let target_schemas = planned_state.target_schemas.clone()
+        let target_schemas = planned_state
+            .target_schemas
+            .clone()
             .unwrap_or_else(|| vec!["public".to_string()]);
 
-        let current = match pgmold::pg::introspect::introspect_schema(
-            &connection,
-            &target_schemas,
-            false,
-        )
-        .await
-        {
-            Ok(s) => s,
-            Err(e) => {
-                diags.root_error_short(format!("Failed to introspect database: {e}"));
-                return None;
-            }
-        };
+        let current =
+            match pgmold::pg::introspect::introspect_schema(&connection, &target_schemas, false)
+                .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    diags.root_error_short(format!("Failed to introspect database: {e}"));
+                    return None;
+                }
+            };
 
         let target = match pgmold::parser::parse_sql_file(&planned_state.schema_file) {
             Ok(s) => s,
@@ -336,18 +364,21 @@ impl Resource for MigrationResource {
         if operations.is_empty() {
             let mut state = planned_state;
             state.operations = Some(vec![]);
-            return Some((state, ()));
+            return Some((state, Default::default()));
         }
 
-        let lint_results = pgmold::lint::lint_migration_plan(&operations, &pgmold::lint::LintOptions {
-            allow_destructive: false,
-            is_production: false,
-        });
+        let lint_results = pgmold::lint::lint_migration_plan(
+            &operations,
+            &pgmold::lint::LintOptions {
+                allow_destructive: false,
+                is_production: false,
+            },
+        );
 
         if pgmold::lint::has_errors(&lint_results) {
             for lint in &lint_results {
                 if lint.severity == pgmold::lint::LintSeverity::Error {
-                    diags.root_error_short(format!("{}", lint.message));
+                    diags.root_error_short(lint.message.to_string());
                 }
             }
             return None;
@@ -359,7 +390,8 @@ impl Resource for MigrationResource {
             }
         }
 
-        let migration_number = find_next_migration_number(output_dir, planned_state.prefix.as_deref());
+        let migration_number =
+            find_next_migration_number(output_dir, planned_state.prefix.as_deref());
 
         let sql = pgmold::pg::sqlgen::generate_sql(&operations);
         let op_summaries: Vec<String> = operations.iter().map(|op| format!("{op:?}")).collect();
@@ -384,7 +416,7 @@ impl Resource for MigrationResource {
         state.migration_number = Some(migration_number);
         state.operations = Some(op_summaries);
 
-        Some((state, ()))
+        Some((state, Default::default()))
     }
 
     async fn destroy<'a>(
@@ -422,8 +454,8 @@ fn find_next_migration_number(output_dir: &std::path::Path, prefix: Option<&str>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::io::Write;
+    use tempfile::TempDir;
 
     #[test]
     fn migration_state_has_default_empty_prefix() {
@@ -478,7 +510,10 @@ mod tests {
         let schema = resource.schema(&mut diags).expect("schema should exist");
 
         for name in ["schema_file", "database_url", "output_dir"] {
-            assert!(schema.block.attributes.contains_key(name), "missing: {name}");
+            assert!(
+                schema.block.attributes.contains_key(name),
+                "missing: {name}"
+            );
         }
     }
 
@@ -488,8 +523,17 @@ mod tests {
         let mut diags = Diagnostics::default();
         let schema = resource.schema(&mut diags).expect("schema should exist");
 
-        for name in ["id", "schema_hash", "migration_file", "migration_number", "operations"] {
-            assert!(schema.block.attributes.contains_key(name), "missing: {name}");
+        for name in [
+            "id",
+            "schema_hash",
+            "migration_file",
+            "migration_number",
+            "operations",
+        ] {
+            assert!(
+                schema.block.attributes.contains_key(name),
+                "missing: {name}"
+            );
         }
     }
 
@@ -508,11 +552,21 @@ mod tests {
             ..Default::default()
         };
 
-        let result = resource.plan_create(&mut diags, proposed.clone(), proposed, ()).await;
+        let result = resource
+            .plan_create(
+                &mut diags,
+                proposed.clone(),
+                proposed,
+                ValueEmpty::default(),
+            )
+            .await;
 
         assert!(result.is_some(), "plan_create should return Some");
         let (state, _) = result.unwrap();
-        assert!(state.schema_hash.is_some(), "schema_hash should be computed");
+        assert!(
+            state.schema_hash.is_some(),
+            "schema_hash should be computed"
+        );
         assert_eq!(state.schema_hash.unwrap().len(), 64);
     }
 
@@ -531,7 +585,14 @@ mod tests {
             ..Default::default()
         };
 
-        let result = resource.plan_create(&mut diags, proposed.clone(), proposed, ()).await;
+        let result = resource
+            .plan_create(
+                &mut diags,
+                proposed.clone(),
+                proposed,
+                ValueEmpty::default(),
+            )
+            .await;
 
         assert!(result.is_none() || !diags.errors.is_empty());
     }
@@ -548,7 +609,14 @@ mod tests {
             ..Default::default()
         };
 
-        let result = resource.plan_create(&mut diags, proposed.clone(), proposed, ()).await;
+        let result = resource
+            .plan_create(
+                &mut diags,
+                proposed.clone(),
+                proposed,
+                ValueEmpty::default(),
+            )
+            .await;
 
         assert!(result.is_none() || !diags.errors.is_empty());
     }

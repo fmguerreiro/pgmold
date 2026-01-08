@@ -1,4 +1,4 @@
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 pub fn compute_schema_hash(path: &Path) -> anyhow::Result<String> {
@@ -6,17 +6,16 @@ pub fn compute_schema_hash(path: &Path) -> anyhow::Result<String> {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     let result = hasher.finalize();
-    Ok(format!("{:x}", result))
+    Ok(format!("{result:x}"))
 }
 
 pub fn compute_path_hash(path: &Path) -> String {
-    let canonical_path = path.canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf());
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let path_str = canonical_path.to_string_lossy();
     let mut hasher = Sha256::new();
     hasher.update(path_str.as_bytes());
     let result = hasher.finalize();
-    format!("{:x}", result)
+    format!("{result:x}")
 }
 
 pub fn sanitize_db_error(error: &str) -> String {
@@ -36,8 +35,8 @@ pub fn sanitize_db_error(error: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn compute_hash_returns_sha256() {
