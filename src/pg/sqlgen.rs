@@ -724,8 +724,21 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
         SecurityType::Invoker => "SECURITY INVOKER",
     };
 
+    let config_clause = if func.config_params.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " {}",
+            func.config_params
+                .iter()
+                .map(|(k, v)| format!("SET {} = {}", k, v))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    };
+
     format!(
-        "{} {}({}) RETURNS {} LANGUAGE {} {} {} AS $${}$$;",
+        "{} {}({}) RETURNS {} LANGUAGE {} {} {}{} AS $${}$$;",
         create_stmt,
         quote_qualified(&func.schema, &func.name),
         args,
@@ -733,6 +746,7 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
         func.language,
         volatility,
         security,
+        config_clause,
         func.body
     )
 }
@@ -2175,6 +2189,59 @@ mod tests {
         assert_eq!(
             sql[0],
             "ALTER TABLE \"auth\".\"users\" ALTER COLUMN \"email\" SET NOT NULL;"
+        );
+    }
+
+    #[test]
+    fn generate_function_ddl_with_config_params() {
+        use crate::model::{Function, SecurityType, Volatility};
+
+        let func = Function {
+            name: "test_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "void".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Definer,
+            config_params: vec![("search_path".to_string(), "public".to_string())],
+            owner: None,
+        };
+
+        let ddl = generate_create_function(&func);
+
+        assert!(
+            ddl.contains("SET search_path = public"),
+            "Expected SET clause in: {ddl}"
+        );
+    }
+
+    #[test]
+    fn generate_function_ddl_with_multiple_config_params() {
+        use crate::model::{Function, SecurityType, Volatility};
+
+        let func = Function {
+            name: "test_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "void".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Definer,
+            config_params: vec![
+                ("search_path".to_string(), "public".to_string()),
+                ("work_mem".to_string(), "'64MB'".to_string()),
+            ],
+            owner: None,
+        };
+
+        let ddl = generate_create_function(&func);
+
+        assert!(
+            ddl.contains("SET search_path = public SET work_mem = '64MB'"),
+            "Expected multiple SET clauses in: {ddl}"
         );
     }
 }
