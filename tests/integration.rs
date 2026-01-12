@@ -2017,3 +2017,30 @@ async fn plan_with_zero_downtime_flag() {
         "Contract phase should add NOT NULL constraint"
     );
 }
+
+#[tokio::test]
+async fn introspects_function_config_params() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let setup_sql = r#"
+        CREATE FUNCTION test_func() RETURNS void
+        LANGUAGE sql SECURITY DEFINER
+        SET search_path = public
+        AS $$ SELECT 1 $$;
+    "#;
+
+    sqlx::query(setup_sql)
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let func = schema.functions.get("public.test_func()").unwrap();
+
+    assert_eq!(func.config_params.len(), 1);
+    assert_eq!(func.config_params[0].0, "search_path");
+    assert_eq!(func.config_params[0].1, "public");
+}

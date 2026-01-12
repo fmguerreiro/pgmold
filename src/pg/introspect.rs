@@ -933,7 +933,8 @@ async fn introspect_functions(
             l.lanname as language,
             p.prosrc as body,
             p.provolatile as volatility,
-            p.prosecdef as security_definer
+            p.prosecdef as security_definer,
+            p.proconfig as config_params
         FROM pg_proc p
         JOIN pg_namespace n ON p.pronamespace = n.oid
         JOIN pg_language l ON p.prolang = l.oid
@@ -977,6 +978,23 @@ async fn introspect_functions(
 
         let arguments = parse_function_arguments(&arguments_str);
 
+        let config_params_raw: Option<Vec<String>> = row.get("config_params");
+        let config_params: Vec<(String, String)> = config_params_raw
+            .unwrap_or_default()
+            .into_iter()
+            .map(|param| {
+                let parts: Vec<&str> = param.splitn(2, '=').collect();
+                if parts.len() == 2 {
+                    Ok((parts[0].to_string(), parts[1].to_string()))
+                } else {
+                    Err(SchemaError::DatabaseError(format!(
+                        "Malformed config parameter in function {}.{}: '{}'",
+                        schema, name, param
+                    )))
+                }
+            })
+            .collect::<crate::util::Result<Vec<_>>>()?;
+
         let func = Function {
             name: name.clone(),
             schema: schema.clone(),
@@ -986,7 +1004,7 @@ async fn introspect_functions(
             body: body.trim().to_string(),
             volatility,
             security,
-            config_params: vec![],
+            config_params,
             owner: None,
         };
 
