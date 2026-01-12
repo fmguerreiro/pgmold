@@ -2044,3 +2044,76 @@ async fn introspects_function_config_params() {
     assert_eq!(func.config_params[0].0, "search_path");
     assert_eq!(func.config_params[0].1, "public");
 }
+
+#[tokio::test]
+async fn function_config_params_round_trip() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE SCHEMA auth")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema_sql = r#"
+        CREATE SCHEMA auth;
+        CREATE FUNCTION auth.hook(event jsonb) RETURNS jsonb
+        LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = auth, pg_temp, public
+        AS $$ BEGIN RETURN event; END; $$;
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let parsed_func = parsed_schema.functions.get("auth.hook(jsonb)").unwrap();
+    assert!(
+        !parsed_func.config_params.is_empty(),
+        "Parsed function should have config_params"
+    );
+
+    let current = introspect_schema(&connection, &["auth".to_string()], false)
+        .await
+        .unwrap();
+
+    let ops = compute_diff(&current, &parsed_schema);
+    let planned = plan_migration(ops);
+    let sql = generate_sql(&planned);
+
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap();
+    }
+
+    let introspected = introspect_schema(&connection, &["auth".to_string()], false)
+        .await
+        .unwrap();
+    let introspected_func = introspected.functions.get("auth.hook(jsonb)").unwrap();
+
+    assert_eq!(
+        parsed_func.config_params.len(),
+        introspected_func.config_params.len(),
+        "config_params count should match"
+    );
+
+    assert_eq!(
+        parsed_func.config_params[0].0,
+        introspected_func.config_params[0].0,
+        "config_params key should match"
+    );
+
+    let diff_ops = compute_diff(&introspected, &parsed_schema);
+    let func_ops: Vec<_> = diff_ops
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateFunction(_) | MigrationOp::AlterFunction { .. }
+            )
+        })
+        .collect();
+    assert!(
+        func_ops.is_empty(),
+        "Should have no function diff after round-trip, got: {func_ops:?}"
+    );
+}
