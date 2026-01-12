@@ -212,10 +212,14 @@ pub struct Function {
     pub body: String,
     pub volatility: Volatility,
     pub security: SecurityType,
+    pub config_params: Vec<(String, String)>,
+    pub owner: Option<String>,
 }
 
 impl Function {
     /// Compares two functions ignoring whitespace differences in their bodies.
+    /// Note: ownership (`owner` field) is not compared here, as ownership changes
+    /// are handled separately by the diff system (see MigrationOp::SetFunctionOwner).
     pub fn semantically_equals(&self, other: &Function) -> bool {
         self.name == other.name
             && self.schema == other.schema
@@ -224,6 +228,7 @@ impl Function {
             && self.language == other.language
             && self.volatility == other.volatility
             && self.security == other.security
+            && self.config_params == other.config_params
             && normalize_sql_body(&self.body) == normalize_sql_body(&other.body)
     }
 
@@ -594,6 +599,8 @@ mod tests {
             body: "BEGIN\n    RETURN 42;\nEND;".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
 
         let func2 = Function {
@@ -605,6 +612,8 @@ mod tests {
             body: "BEGIN RETURN 42; END;".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
 
         assert!(func1.semantically_equals(&func2));
@@ -621,6 +630,8 @@ mod tests {
             body: "$$BEGIN RETURN 42; END;$$".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
 
         let introspected_body = Function {
@@ -632,6 +643,8 @@ mod tests {
             body: "BEGIN RETURN 42; END;".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
 
         assert!(parsed_body.semantically_equals(&introspected_body));
@@ -880,6 +893,8 @@ mod tests {
             body: "SELECT 1".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
 
         let func_lowercase = Function {
@@ -896,6 +911,8 @@ mod tests {
             body: "SELECT 1".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
 
         assert_eq!(
@@ -933,6 +950,8 @@ mod tests {
             body: "SELECT a + b".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
 
         let func_integer = Function {
@@ -957,6 +976,8 @@ mod tests {
             body: "SELECT a + b".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
 
         assert_eq!(
@@ -1117,5 +1138,23 @@ mod tests {
             PgType::Vector(Some(1536)) => (),
             _ => panic!("Expected Vector(Some(1536))"),
         }
+    }
+
+    #[test]
+    fn function_with_config_params() {
+        let func = Function {
+            name: "test".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "void".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+            config_params: vec![("search_path".to_string(), "public".to_string())],
+            owner: None,
+        };
+        assert_eq!(func.config_params.len(), 1);
+        assert_eq!(func.config_params[0].0, "search_path");
     }
 }

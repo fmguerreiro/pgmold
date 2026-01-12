@@ -456,6 +456,8 @@ mod tests {
                 body: "SELECT 1".to_string(),
                 volatility: crate::model::Volatility::Volatile,
                 security: crate::model::SecurityType::Invoker,
+                config_params: vec![],
+                owner: None,
             },
         );
 
@@ -471,6 +473,8 @@ mod tests {
                 body: "SELECT 2".to_string(),
                 volatility: crate::model::Volatility::Volatile,
                 security: crate::model::SecurityType::Invoker,
+                config_params: vec![],
+                owner: None,
             },
         );
 

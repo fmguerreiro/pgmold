@@ -986,6 +986,8 @@ async fn introspect_functions(
             body: body.trim().to_string(),
             volatility,
             security,
+            config_params: vec![],
+            owner: None,
         };
 
         let key = qualified_name(&schema, &func.signature());

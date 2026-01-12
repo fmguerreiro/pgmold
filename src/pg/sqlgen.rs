@@ -2115,6 +2115,8 @@ mod tests {
             body: "SELECT true".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Definer,
+            config_params: vec![],
+            owner: None,
         };
 
         let ddl = generate_create_function(&func);

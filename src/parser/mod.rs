@@ -1012,6 +1012,8 @@ fn parse_create_function(
         body,
         volatility,
         security: security_type,
+        config_params: vec![],
+        owner: None,
     })
 }
 

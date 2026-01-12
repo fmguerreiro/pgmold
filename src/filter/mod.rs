@@ -331,6 +331,8 @@ mod tests {
                 body: "SELECT 1".to_string(),
                 volatility: Volatility::Volatile,
                 security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
             },
         );
         schema.functions.insert(
@@ -344,6 +346,8 @@ mod tests {
                 body: "SELECT 2".to_string(),
                 volatility: Volatility::Volatile,
                 security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
             },
         );
 
@@ -367,6 +371,8 @@ mod tests {
                 body: "SELECT 1".to_string(),
                 volatility: Volatility::Volatile,
                 security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
             },
         );
         schema.functions.insert(
@@ -380,6 +386,8 @@ mod tests {
                 body: "SELECT 2".to_string(),
                 volatility: Volatility::Volatile,
                 security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
             },
         );
 
@@ -876,6 +884,8 @@ mod tests {
                 body: "SELECT 1".to_string(),
                 volatility: Volatility::Volatile,
                 security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
             },
         );
         schema.tables.insert(
@@ -916,6 +926,8 @@ mod tests {
                 body: "SELECT 1".to_string(),
                 volatility: Volatility::Volatile,
                 security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
             },
         );
         schema.tables.insert(
@@ -1300,6 +1312,8 @@ mod tests {
                         body: "SELECT 1".to_string(),
                         volatility: Volatility::Volatile,
                         security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
                     },
                 )]
                 .into_iter()
@@ -1365,6 +1379,8 @@ mod tests {
                         body: "SELECT 1".to_string(),
                         volatility: Volatility::Volatile,
                         security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
                     },
                 )]
                 .into_iter()

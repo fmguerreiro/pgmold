@@ -1104,6 +1104,8 @@ mod tests {
             body: "SELECT 1 + 1".to_string(),
             volatility: Volatility::Immutable,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
         to.functions.insert(func.signature(), func);
 
@@ -1124,6 +1126,8 @@ mod tests {
             body: "SELECT 1 + 1".to_string(),
             volatility: Volatility::Immutable,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
         from.functions.insert(func.signature(), func);
         let to = empty_schema();
@@ -1147,6 +1151,8 @@ mod tests {
             body: "SELECT 1".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
         from.functions
             .insert(qualified_name(&func.schema, &func.signature()), func);
@@ -1180,6 +1186,8 @@ mod tests {
             body: "SELECT 1".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
         from.functions
             .insert(qualified_name(&func_old.schema, &func_old.signature()), func_old);
@@ -1199,6 +1207,8 @@ mod tests {
             body: "SELECT 1".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
         to.functions
             .insert(qualified_name(&func_new.schema, &func_new.signature()), func_new);
@@ -1237,6 +1247,8 @@ mod tests {
             body: "SELECT 1".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
         from.functions
             .insert(qualified_name(&func_old.schema, &func_old.signature()), func_old);
@@ -1256,6 +1268,8 @@ mod tests {
             body: "SELECT 2".to_string(), // Different body
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
         to.functions
             .insert(qualified_name(&func_new.schema, &func_new.signature()), func_new);
@@ -1289,6 +1303,8 @@ mod tests {
             body: "SELECT 1".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
         from.functions
             .insert(qualified_name(&func_old.schema, &func_old.signature()), func_old);
@@ -1308,6 +1324,8 @@ mod tests {
             body: "SELECT 1".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
         to.functions
             .insert(qualified_name(&func_new.schema, &func_new.signature()), func_new);
@@ -1454,6 +1472,8 @@ mod tests {
             body: "BEGIN END;".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
         from.functions.insert(func1.signature(), func1);
 
@@ -1467,6 +1487,8 @@ mod tests {
             body: "BEGIN\n    END;".to_string(),
             volatility: Volatility::Volatile,
             security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
         };
         to.functions.insert(func2.signature(), func2);
 
@@ -2697,6 +2719,8 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 body: "BEGIN RETURN NEW; END;".to_string(),
                 volatility: crate::model::Volatility::Volatile,
                 security: crate::model::SecurityType::Invoker,
+                config_params: vec![],
+                owner: None,
             },
         );
         db_schema.functions.insert(
@@ -2710,6 +2734,8 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 body: "BEGIN RETURN NEW; END;".to_string(),
                 volatility: crate::model::Volatility::Volatile,
                 security: crate::model::SecurityType::Invoker,
+                config_params: vec![],
+                owner: None,
             },
         );
         db_schema.functions.insert(
@@ -2723,6 +2749,8 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 body: "BEGIN RETURN NEW; END;".to_string(),
                 volatility: crate::model::Volatility::Volatile,
                 security: crate::model::SecurityType::Invoker,
+                config_params: vec![],
+                owner: None,
             },
         );
 
