@@ -319,6 +319,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 language,
                 behavior,
                 security,
+                set_params,
                 ..
             }) => {
                 let (func_schema, func_name) = extract_qualified_name(&name);
@@ -331,6 +332,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     language.as_ref(),
                     behavior.as_ref(),
                     security.as_ref(),
+                    &set_params,
                 )?;
                 let key = qualified_name(&func_schema, &func.signature());
                 schema.functions.insert(key, func);
@@ -933,6 +935,7 @@ fn parse_create_function(
     language: Option<&sqlparser::ast::Ident>,
     behavior: Option<&sqlparser::ast::FunctionBehavior>,
     security: Option<&sqlparser::ast::FunctionSecurity>,
+    set_params: &[sqlparser::ast::FunctionDefinitionSetParam],
 ) -> Result<Function> {
     let return_type_str = return_type
         .map(|rt| crate::model::normalize_pg_type(&rt.to_string()))
@@ -1003,6 +1006,20 @@ fn parse_create_function(
         })
         .unwrap_or_default();
 
+    let config_params: Vec<(String, String)> = set_params
+        .iter()
+        .map(|param| {
+            let key = param.name.to_string().to_lowercase();
+            let value = match &param.value {
+                sqlparser::ast::FunctionSetValue::Values(exprs) => {
+                    exprs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(", ")
+                }
+                sqlparser::ast::FunctionSetValue::FromCurrent => "FROM CURRENT".to_string(),
+            };
+            (key, value)
+        })
+        .collect();
+
     Ok(Function {
         schema: schema.to_string(),
         name: name.to_string(),
@@ -1012,7 +1029,7 @@ fn parse_create_function(
         body,
         volatility,
         security: security_type,
-        config_params: vec![],
+        config_params,
         owner: None,
     })
 }
@@ -1401,6 +1418,24 @@ CREATE TABLE products (
         assert_eq!(func.name, "custom_access_token_hook");
         assert_eq!(func.language, "plpgsql");
         assert_eq!(func.security, SecurityType::Definer);
+        assert_eq!(func.config_params.len(), 1);
+        assert_eq!(func.config_params[0].0, "search_path");
+        assert_eq!(func.config_params[0].1, "auth, pg_temp, public");
+    }
+
+    #[test]
+    fn parses_function_with_set_from_current() {
+        let sql = r#"
+            CREATE FUNCTION public.test_func() RETURNS void
+            LANGUAGE plpgsql
+            SET timezone FROM CURRENT
+            AS $$ BEGIN END; $$;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let func = schema.functions.get("public.test_func()").unwrap();
+        assert_eq!(func.config_params.len(), 1);
+        assert_eq!(func.config_params[0].0, "timezone");
+        assert_eq!(func.config_params[0].1, "FROM CURRENT");
     }
 
     #[test]
