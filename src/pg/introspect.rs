@@ -934,10 +934,12 @@ async fn introspect_functions(
             p.prosrc as body,
             p.provolatile as volatility,
             p.prosecdef as security_definer,
-            p.proconfig as config_params
+            p.proconfig as config_params,
+            r.rolname as owner
         FROM pg_proc p
         JOIN pg_namespace n ON p.pronamespace = n.oid
         JOIN pg_language l ON p.prolang = l.oid
+        JOIN pg_roles r ON p.proowner = r.oid
         WHERE n.nspname = ANY($1::text[])
           AND p.prokind = 'f'
           AND ($2::boolean OR NOT EXISTS (
@@ -995,6 +997,8 @@ async fn introspect_functions(
             })
             .collect::<crate::util::Result<Vec<_>>>()?;
 
+        let owner: String = row.get("owner");
+
         let func = Function {
             name: name.clone(),
             schema: schema.clone(),
@@ -1005,7 +1009,7 @@ async fn introspect_functions(
             volatility,
             security,
             config_params,
-            owner: None,
+            owner: Some(owner),
         };
 
         let key = qualified_name(&schema, &func.signature());

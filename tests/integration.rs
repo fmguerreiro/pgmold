@@ -2117,3 +2117,31 @@ async fn function_config_params_round_trip() {
         "Should have no function diff after round-trip, got: {func_ops:?}"
     );
 }
+
+#[tokio::test]
+async fn introspects_function_owner() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE ROLE test_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE FUNCTION test_func() RETURNS void LANGUAGE sql AS $$ SELECT 1 $$")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("ALTER FUNCTION test_func() OWNER TO test_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let func = schema.functions.get("public.test_func()").unwrap();
+
+    assert_eq!(func.owner, Some("test_owner".to_string()));
+}
