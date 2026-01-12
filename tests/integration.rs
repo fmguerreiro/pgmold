@@ -2145,3 +2145,69 @@ async fn introspects_function_owner() {
 
     assert_eq!(func.owner, Some("test_owner".to_string()));
 }
+
+#[tokio::test]
+async fn function_owner_round_trip() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE ROLE custom_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema_sql = r#"
+        CREATE FUNCTION test_func() RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
+        ALTER FUNCTION test_func() OWNER TO custom_owner;
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let parsed_func = parsed_schema.functions.get("public.test_func()").unwrap();
+    assert_eq!(
+        parsed_func.owner,
+        Some("custom_owner".to_string()),
+        "Parsed function should have owner"
+    );
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let ops = compute_diff(&current, &parsed_schema);
+    let planned = plan_migration(ops);
+    let sql = generate_sql(&planned);
+
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap();
+    }
+
+    let introspected = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let introspected_func = introspected.functions.get("public.test_func()").unwrap();
+
+    assert_eq!(
+        parsed_func.owner, introspected_func.owner,
+        "Owner should match after round-trip"
+    );
+
+    let diff_ops = compute_diff(&introspected, &parsed_schema);
+    let func_ops: Vec<_> = diff_ops
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateFunction(_)
+                    | MigrationOp::AlterFunction { .. }
+                    | MigrationOp::DropFunction { .. }
+            )
+        })
+        .collect();
+    assert!(
+        func_ops.is_empty(),
+        "Should have no function diff after round-trip, got: {func_ops:?}"
+    );
+}
