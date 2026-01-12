@@ -85,7 +85,7 @@ fn preprocess_sql(sql: &str) -> String {
     // Match SET search_path until newline or AS keyword
     let set_search_path_re =
         Regex::new(r"(?i)\bSET\s+search_path\s+TO\s+'[^']*'(?:\s*,\s*'[^']*')*").unwrap();
-    // Remove ALTER FUNCTION statements (ownership, etc.)
+    // Remove ALTER FUNCTION statements (sqlparser doesn't support them, but we'll parse OWNER TO separately)
     let alter_function_re = Regex::new(r"(?i)ALTER\s+FUNCTION\s+[^;]+;").unwrap();
     // Remove ALTER SEQUENCE statements (sqlparser doesn't support them)
     let alter_sequence_re = Regex::new(r"(?i)ALTER\s+SEQUENCE\s+[^;]+;").unwrap();
@@ -98,6 +98,8 @@ fn preprocess_sql(sql: &str) -> String {
 }
 
 pub fn parse_sql_string(sql: &str) -> Result<Schema> {
+    use regex::Regex;
+
     let preprocessed_sql = preprocess_sql(sql);
     let dialect = PostgreSqlDialect {};
     let statements = Parser::parse_sql(&dialect, &preprocessed_sql)
@@ -571,6 +573,32 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 schema.sequences.insert(key, sequence);
             }
             _ => {}
+        }
+    }
+
+    // Extract ALTER FUNCTION OWNER TO statements and apply to functions
+    let alter_owner_re = Regex::new(
+        r#"(?i)ALTER\s+FUNCTION\s+(?:["']?([^"'\s(]+)["']?\.)?["']?([^"'\s(]+)["']?\s*\(([^)]*)\)\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
+    ).unwrap();
+
+    for cap in alter_owner_re.captures_iter(sql) {
+        let schema_part = cap.get(1).map(|m| m.as_str().trim_matches('"'));
+        let func_name = cap.get(2).unwrap().as_str().trim_matches('"');
+        let args_str = cap.get(3).unwrap().as_str();
+        let owner = cap.get(4).unwrap().as_str().trim_matches('"');
+
+        // Find matching function and set owner
+        for (key, func) in schema.functions.iter_mut() {
+            let qualified = format!("{}.{}", func.schema, func.name);
+            let matches = if let Some(schema_name) = schema_part {
+                qualified == format!("{}.{}", schema_name, func_name) && key.contains(args_str)
+            } else {
+                (func.name == func_name || qualified.ends_with(&format!(".{}", func_name))) && key.contains(args_str)
+            };
+            if matches {
+                func.owner = Some(owner.to_string());
+                break;
+            }
         }
     }
 
@@ -1459,6 +1487,17 @@ CREATE TABLE products (
         let schema = parse_sql_string(sql).unwrap();
         let func = schema.functions.get("public.default_func()").unwrap();
         assert_eq!(func.security, SecurityType::Invoker);
+    }
+
+    #[test]
+    fn parses_alter_function_owner_to() {
+        let sql = r#"
+            CREATE FUNCTION auth.hook() RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
+            ALTER FUNCTION auth.hook() OWNER TO supabase_auth_admin;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let func = schema.functions.get("auth.hook()").unwrap();
+        assert_eq!(func.owner, Some("supabase_auth_admin".to_string()));
     }
 
     #[test]

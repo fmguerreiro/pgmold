@@ -223,7 +223,13 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             changes,
         } => generate_alter_policy(table, name, changes),
 
-        MigrationOp::CreateFunction(func) => vec![generate_create_function(func)],
+        MigrationOp::CreateFunction(func) => {
+            let mut statements = vec![generate_create_function(func)];
+            if let Some(ref owner) = func.owner {
+                statements.push(generate_alter_function_owner(func, owner));
+            }
+            statements
+        }
 
         MigrationOp::DropFunction { name, args } => {
             let (schema, func_name) = parse_qualified_name(name);
@@ -748,6 +754,22 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
         security,
         config_clause,
         func.body
+    )
+}
+
+fn generate_alter_function_owner(func: &Function, owner: &str) -> String {
+    let args = func
+        .arguments
+        .iter()
+        .map(|arg| arg.data_type.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!(
+        "ALTER FUNCTION {}({}) OWNER TO {};",
+        quote_qualified(&func.schema, &func.name),
+        args,
+        quote_ident(owner)
     )
 }
 
