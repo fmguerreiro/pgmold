@@ -236,13 +236,10 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             changes,
         } => generate_alter_policy(table, name, changes),
 
-        MigrationOp::CreateFunction(func) => {
-            let mut statements = vec![generate_create_function(func)];
-            if let Some(ref owner) = func.owner {
-                statements.push(generate_alter_function_owner(func, owner));
-            }
-            statements
-        }
+        // Note: We don't generate ALTER FUNCTION ... OWNER TO for new functions.
+        // PostgreSQL automatically sets the owner to the creating user.
+        // Changing ownership requires schema ownership which the user may not have.
+        MigrationOp::CreateFunction(func) => vec![generate_create_function(func)],
 
         MigrationOp::DropFunction { name, args } => {
             let (schema, func_name) = parse_qualified_name(name);
@@ -767,22 +764,6 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
         security,
         config_clause,
         func.body
-    )
-}
-
-fn generate_alter_function_owner(func: &Function, owner: &str) -> String {
-    let args = func
-        .arguments
-        .iter()
-        .map(|arg| arg.data_type.clone())
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    format!(
-        "ALTER FUNCTION {}({}) OWNER TO {};",
-        quote_qualified(&func.schema, &func.name),
-        args,
-        quote_ident(owner)
     )
 }
 
@@ -2297,6 +2278,41 @@ mod tests {
         assert!(
             ddl.contains("SET search_path = public SET work_mem = '64MB'"),
             "Expected multiple SET clauses in: {ddl}"
+        );
+    }
+
+    #[test]
+    fn create_function_does_not_generate_owner_to() {
+        use crate::model::{Function, SecurityType, Volatility};
+
+        // Function with owner set (e.g., from introspection or schema file)
+        let func = Function {
+            name: "my_func".to_string(),
+            schema: "auth".to_string(),
+            arguments: vec![],
+            return_type: "void".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: Some("supabase_auth_admin".to_string()),
+        };
+
+        let ops = vec![MigrationOp::CreateFunction(func)];
+        let sql = generate_sql(&ops);
+
+        // Should only generate CREATE FUNCTION, not ALTER FUNCTION ... OWNER TO
+        assert_eq!(sql.len(), 1, "Expected 1 SQL statement, got {}", sql.len());
+        assert!(
+            sql[0].starts_with("CREATE FUNCTION"),
+            "Expected CREATE FUNCTION, got: {}",
+            sql[0]
+        );
+        assert!(
+            !sql[0].contains("OWNER TO"),
+            "Should not contain OWNER TO: {}",
+            sql[0]
         );
     }
 }

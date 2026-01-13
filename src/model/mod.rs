@@ -225,8 +225,8 @@ pub struct Function {
 
 impl Function {
     /// Compares two functions ignoring whitespace differences in their bodies.
-    /// Note: ownership (`owner` field) is not compared here, as ownership changes
-    /// are handled separately by the diff system (see MigrationOp::SetFunctionOwner).
+    /// Note: ownership (`owner` field) is not compared here. pgmold does not
+    /// manage function ownership - PostgreSQL sets it to the creating user.
     pub fn semantically_equals(&self, other: &Function) -> bool {
         self.name == other.name
             && self.schema == other.schema
