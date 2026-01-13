@@ -335,6 +335,65 @@ pgmold drift --schema sql:schema/ --database postgres://localhost/mydb --json
 
 The drift detection compares SHA256 fingerprints of normalized schemas. Any difference (new tables, altered columns, changed indexes) triggers drift.
 
+## Terraform Provider
+
+pgmold is available as a Terraform provider for infrastructure-as-code workflows.
+
+### Installation
+
+```hcl
+terraform {
+  required_providers {
+    pgmold = {
+      source  = "fmguerreiro/pgmold"
+      version = "~> 0.3"
+    }
+  }
+}
+
+provider "pgmold" {}
+```
+
+### Usage
+
+```hcl
+resource "pgmold_schema" "app" {
+  schema_file       = "${path.module}/schema.sql"
+  database_url      = var.database_url
+  allow_destructive = false  # Set true to allow DROP operations
+}
+```
+
+When you change `schema.sql`, Terraform will diff against the live database and apply only the necessary migrations.
+
+### Attributes
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `schema_file` | string | yes | Path to SQL schema file |
+| `database_url` | string | yes | PostgreSQL connection URL |
+| `target_schemas` | list(string) | no | PostgreSQL schemas to manage (default: `["public"]`) |
+| `allow_destructive` | bool | no | Allow DROP operations (default: `false`) |
+
+**Computed attributes:**
+- `id` - Resource identifier
+- `schema_hash` - SHA256 hash of schema file
+- `applied_at` - Timestamp of last migration
+- `migration_count` - Number of operations applied
+
+### Migration Resource
+
+Generate numbered migration files instead of applying directly:
+
+```hcl
+resource "pgmold_migration" "app" {
+  schema_file  = "${path.module}/schema.sql"
+  database_url = var.database_url
+  output_dir   = "${path.module}/migrations"
+  prefix       = "V"  # Flyway-style prefix
+}
+```
+
 ## Safety Rules
 
 By default, pgmold blocks destructive operations:
