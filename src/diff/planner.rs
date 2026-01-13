@@ -127,6 +127,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     let create_tables = order_table_creates(create_tables);
     let drop_tables = order_table_drops(drop_tables);
+    let create_views = order_view_creates(create_views);
 
     let mut result = Vec::new();
 
@@ -215,6 +216,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     }
 
     let create_tables = order_table_creates(create_tables);
+    let create_views = order_view_creates(create_views);
 
     let mut result = Vec::new();
 
@@ -233,6 +235,190 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     result
 }
+
+
+/// Extract table/view references from a SQL query string.
+/// Returns qualified names (schema.name) of all referenced relations.
+fn extract_relation_references(query: &str) -> HashSet<String> {
+    use sqlparser::ast::{
+        TableFactor, TableWithJoins, Query, SetExpr, Select, SelectItem, Expr, 
+        Statement, FunctionArguments, FunctionArgumentList, FunctionArg,
+        FunctionArgExpr
+    };
+    use sqlparser::dialect::PostgreSqlDialect;
+    use sqlparser::parser::Parser;
+
+    let mut refs = HashSet::new();
+    let dialect = PostgreSqlDialect {};
+
+    let sql = format!("SELECT * FROM ({query}) AS subq");
+    let parse_result = Parser::parse_sql(&dialect, &sql);
+
+    let statements = match parse_result {
+        Ok(stmts) => stmts,
+        Err(_) => match Parser::parse_sql(&dialect, query) {
+            Ok(stmts) => stmts,
+            Err(_) => return refs,
+        },
+    };
+
+    fn extract_from_expr(expr: &Expr, refs: &mut HashSet<String>) {
+        match expr {
+            Expr::Subquery(query) => extract_from_query(query, refs),
+            Expr::InSubquery { subquery, .. } => extract_from_query(subquery, refs),
+            Expr::Exists { subquery, .. } => extract_from_query(subquery, refs),
+            Expr::BinaryOp { left, right, .. } => {
+                extract_from_expr(left, refs);
+                extract_from_expr(right, refs);
+            }
+            Expr::UnaryOp { expr, .. } => extract_from_expr(expr, refs),
+            Expr::Nested(e) => extract_from_expr(e, refs),
+            Expr::Case { operand, conditions, else_result, .. } => {
+                if let Some(op) = operand {
+                    extract_from_expr(op, refs);
+                }
+                for cw in conditions {
+                    extract_from_expr(&cw.condition, refs);
+                    extract_from_expr(&cw.result, refs);
+                }
+                if let Some(else_r) = else_result {
+                    extract_from_expr(else_r, refs);
+                }
+            }
+            Expr::Function(f) => {
+                if let FunctionArguments::List(FunctionArgumentList { args, .. }) = &f.args {
+                    for arg in args {
+                        if let FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) = arg {
+                            extract_from_expr(e, refs);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn extract_from_select(select: &Select, refs: &mut HashSet<String>) {
+        for table_with_joins in &select.from {
+            extract_from_table_with_joins(table_with_joins, refs);
+        }
+
+        if let Some(selection) = &select.selection {
+            extract_from_expr(selection, refs);
+        }
+
+        for item in &select.projection {
+            if let SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } = item {
+                extract_from_expr(expr, refs);
+            }
+        }
+
+        if let Some(having) = &select.having {
+            extract_from_expr(having, refs);
+        }
+    }
+
+    fn extract_from_table_with_joins(twj: &TableWithJoins, refs: &mut HashSet<String>) {
+        extract_from_table_factor(&twj.relation, refs);
+        for join in &twj.joins {
+            extract_from_table_factor(&join.relation, refs);
+        }
+    }
+
+    fn extract_from_table_factor(factor: &TableFactor, refs: &mut HashSet<String>) {
+        match factor {
+            TableFactor::Table { name, .. } => {
+                let parts: Vec<String> = name.0.iter().map(|p| p.to_string().trim_matches('"').to_string()).collect();
+                let qualified = if parts.len() == 1 {
+                    format!("public.{}", parts[0])
+                } else {
+                    format!("{}.{}", parts[0], parts[1])
+                };
+                refs.insert(qualified);
+            }
+            TableFactor::Derived { subquery, .. } => {
+                extract_from_query(subquery, refs);
+            }
+            TableFactor::NestedJoin { table_with_joins, .. } => {
+                extract_from_table_with_joins(table_with_joins, refs);
+            }
+            _ => {}
+        }
+    }
+
+    fn extract_from_query(query: &Query, refs: &mut HashSet<String>) {
+        if let Some(with) = &query.with {
+            for cte in &with.cte_tables {
+                extract_from_query(&cte.query, refs);
+            }
+        }
+
+        extract_from_set_expr(&query.body, refs);
+    }
+
+    fn extract_from_set_expr(set_expr: &SetExpr, refs: &mut HashSet<String>) {
+        match set_expr {
+            SetExpr::Select(select) => extract_from_select(select, refs),
+            SetExpr::Query(query) => extract_from_query(query, refs),
+            SetExpr::SetOperation { left, right, .. } => {
+                extract_from_set_expr(left, refs);
+                extract_from_set_expr(right, refs);
+            }
+            _ => {}
+        }
+    }
+
+    for statement in &statements {
+        if let Statement::Query(query) = statement {
+            extract_from_query(query, &mut refs);
+        }
+    }
+
+    refs
+}
+
+/// Topologically sort CreateView operations by their dependencies.
+/// Views that are referenced by other views must be created first.
+fn order_view_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+    if ops.is_empty() {
+        return ops;
+    }
+
+    let mut view_ops: HashMap<String, MigrationOp> = HashMap::new();
+    let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
+
+    let view_names: HashSet<String> = ops
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::CreateView(ref view) = op {
+                Some(qualified_name(&view.schema, &view.name))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for op in ops {
+        if let MigrationOp::CreateView(ref view) = op {
+            let qualified_view_name = qualified_name(&view.schema, &view.name);
+
+            let all_refs = extract_relation_references(&view.query);
+
+            // Only keep references to views being created; tables are created first
+            let deps: HashSet<String> = all_refs
+                .into_iter()
+                .filter(|r| view_names.contains(r) && *r != qualified_view_name)
+                .collect();
+
+            dependencies.insert(qualified_view_name.clone(), deps);
+            view_ops.insert(qualified_view_name, op);
+        }
+    }
+
+    topological_sort(&view_ops, &dependencies)
+}
+
+
 
 /// Topologically sort CreateTable operations by FK dependencies.
 /// Tables that are referenced by other tables must be created first.
@@ -637,6 +823,87 @@ mod tests {
             add_enum_value_pos < create_table_pos,
             "AddEnumValue must come before CreateTable"
         );
+    }
+
+
+    #[test]
+    fn create_views_ordered_by_view_dependencies() {
+        // view_c depends on view_b which depends on view_a
+        let view_a = View {
+            name: "view_a".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT * FROM users".to_string(),
+            materialized: false,
+        };
+        let view_b = View {
+            name: "view_b".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT * FROM public.view_a".to_string(),
+            materialized: false,
+        };
+        let view_c = View {
+            name: "view_c".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT * FROM public.view_b JOIN public.view_a ON true".to_string(),
+            materialized: false,
+        };
+
+        let ops = vec![
+            MigrationOp::CreateView(view_c),
+            MigrationOp::CreateView(view_a),
+            MigrationOp::CreateView(view_b),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let view_order: Vec<String> = planned
+            .iter()
+            .filter_map(|op| {
+                if let MigrationOp::CreateView(v) = op {
+                    Some(v.name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let view_a_pos = view_order.iter().position(|n| n == "view_a").unwrap();
+        let view_b_pos = view_order.iter().position(|n| n == "view_b").unwrap();
+        let view_c_pos = view_order.iter().position(|n| n == "view_c").unwrap();
+
+        assert!(
+            view_a_pos < view_b_pos,
+            "view_a must be created before view_b"
+        );
+        assert!(
+            view_b_pos < view_c_pos,
+            "view_b must be created before view_c"
+        );
+        assert!(
+            view_a_pos < view_c_pos,
+            "view_a must be created before view_c"
+        );
+    }
+
+
+    #[test]
+    fn extract_relation_references_from_view_query() {
+        let refs = extract_relation_references("SELECT * FROM users JOIN orders ON users.id = orders.user_id");
+        assert!(refs.contains("public.users"));
+        assert!(refs.contains("public.orders"));
+    }
+
+    #[test]
+    fn extract_relation_references_with_schema() {
+        let refs = extract_relation_references("SELECT * FROM auth.users JOIN public.orders ON auth.users.id = public.orders.user_id");
+        assert!(refs.contains("auth.users"));
+        assert!(refs.contains("public.orders"));
+    }
+
+    #[test]
+    fn extract_relation_references_from_subquery() {
+        let refs = extract_relation_references("SELECT * FROM (SELECT * FROM inner_table) AS sub");
+        assert!(refs.contains("public.inner_table"));
     }
 
     #[test]
