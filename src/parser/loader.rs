@@ -142,6 +142,18 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
             merged.extensions.insert(name, extension);
         }
 
+        for (name, pg_schema) in schema.schemas {
+            if let Some(existing_path) = object_sources.get(&format!("schema:{name}")) {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate schema \"{name}\" defined in:\n  - {}\n  - {}",
+                    existing_path.display(),
+                    path.display()
+                )));
+            }
+            object_sources.insert(format!("schema:{name}"), path.clone());
+            merged.schemas.insert(name, pg_schema);
+        }
+
         for (name, partition) in schema.partitions {
             if let Some(existing_path) = object_sources.get(&format!("partition:{name}")) {
                 return Err(SchemaError::ParseError(format!(
@@ -628,6 +640,11 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
         // Comprehensive test to ensure all schema types are merged
         let dir = TempDir::new().unwrap();
         fs::write(
+            dir.path().join("00_schemas.sql"),
+            "CREATE SCHEMA IF NOT EXISTS auth;",
+        )
+        .unwrap();
+        fs::write(
             dir.path().join("01_extensions.sql"),
             "CREATE EXTENSION pgcrypto;",
         )
@@ -671,6 +688,11 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
         let sources = vec![format!("{}/*.sql", dir.path().display())];
         let schema = load_schema_sources(&sources).unwrap();
 
+        assert_eq!(schema.schemas.len(), 1, "Should have 1 schema");
+        assert!(
+            schema.schemas.contains_key("auth"),
+            "Should have auth schema"
+        );
         assert_eq!(schema.extensions.len(), 1, "Should have 1 extension");
         assert_eq!(schema.domains.len(), 1, "Should have 1 domain");
         assert_eq!(schema.enums.len(), 1, "Should have 1 enum");
