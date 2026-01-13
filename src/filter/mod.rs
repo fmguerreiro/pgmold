@@ -7,6 +7,7 @@ use crate::model::Schema;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ObjectType {
+    Schemas,
     Extensions,
     Tables,
     Enums,
@@ -27,6 +28,7 @@ impl FromStr for ObjectType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
+            "schemas" => Ok(ObjectType::Schemas),
             "extensions" => Ok(ObjectType::Extensions),
             "tables" => Ok(ObjectType::Tables),
             "enums" => Ok(ObjectType::Enums),
@@ -41,7 +43,7 @@ impl FromStr for ObjectType {
             "foreignkeys" => Ok(ObjectType::ForeignKeys),
             "checkconstraints" => Ok(ObjectType::CheckConstraints),
             _ => Err(format!(
-                "Invalid object type '{s}'. Valid types: extensions, tables, enums, domains, functions, views, triggers, sequences, partitions, policies, indexes, foreignkeys, checkconstraints"
+                "Invalid object type '{s}'. Valid types: schemas, extensions, tables, enums, domains, functions, views, triggers, sequences, partitions, policies, indexes, foreignkeys, checkconstraints"
             )),
         }
     }
@@ -50,6 +52,7 @@ impl FromStr for ObjectType {
 impl fmt::Display for ObjectType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
+            ObjectType::Schemas => "schemas",
             ObjectType::Extensions => "extensions",
             ObjectType::Tables => "tables",
             ObjectType::Enums => "enums",
@@ -218,6 +221,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
     }
 
     Schema {
+        schemas: filter_field(&schema.schemas, filter, ObjectType::Schemas),
         extensions: filter_field(&schema.extensions, filter, ObjectType::Extensions),
         tables: if filter.should_include_type(ObjectType::Tables) {
             schema
@@ -308,6 +312,12 @@ impl HasName for crate::model::Extension {
     }
 }
 
+impl HasName for crate::model::PgSchema {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,8 +341,8 @@ mod tests {
                 body: "SELECT 1".to_string(),
                 volatility: Volatility::Volatile,
                 security: SecurityType::Invoker,
-            config_params: vec![],
-            owner: None,
+                config_params: vec![],
+                owner: None,
             },
         );
         schema.functions.insert(
@@ -346,8 +356,8 @@ mod tests {
                 body: "SELECT 2".to_string(),
                 volatility: Volatility::Volatile,
                 security: SecurityType::Invoker,
-            config_params: vec![],
-            owner: None,
+                config_params: vec![],
+                owner: None,
             },
         );
 
@@ -371,8 +381,8 @@ mod tests {
                 body: "SELECT 1".to_string(),
                 volatility: Volatility::Volatile,
                 security: SecurityType::Invoker,
-            config_params: vec![],
-            owner: None,
+                config_params: vec![],
+                owner: None,
             },
         );
         schema.functions.insert(
@@ -386,8 +396,8 @@ mod tests {
                 body: "SELECT 2".to_string(),
                 volatility: Volatility::Volatile,
                 security: SecurityType::Invoker,
-            config_params: vec![],
-            owner: None,
+                config_params: vec![],
+                owner: None,
             },
         );
 
@@ -884,8 +894,8 @@ mod tests {
                 body: "SELECT 1".to_string(),
                 volatility: Volatility::Volatile,
                 security: SecurityType::Invoker,
-            config_params: vec![],
-            owner: None,
+                config_params: vec![],
+                owner: None,
             },
         );
         schema.tables.insert(
@@ -926,8 +936,8 @@ mod tests {
                 body: "SELECT 1".to_string(),
                 volatility: Volatility::Volatile,
                 security: SecurityType::Invoker,
-            config_params: vec![],
-            owner: None,
+                config_params: vec![],
+                owner: None,
             },
         );
         schema.tables.insert(
@@ -1312,8 +1322,8 @@ mod tests {
                         body: "SELECT 1".to_string(),
                         volatility: Volatility::Volatile,
                         security: SecurityType::Invoker,
-            config_params: vec![],
-            owner: None,
+                        config_params: vec![],
+                        owner: None,
                     },
                 )]
                 .into_iter()
@@ -1379,8 +1389,8 @@ mod tests {
                         body: "SELECT 1".to_string(),
                         volatility: Volatility::Volatile,
                         security: SecurityType::Invoker,
-            config_params: vec![],
-            owner: None,
+                        config_params: vec![],
+                        owner: None,
                     },
                 )]
                 .into_iter()

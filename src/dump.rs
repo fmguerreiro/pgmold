@@ -6,6 +6,10 @@ use crate::pg::sqlgen::generate_sql;
 pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
+    for pg_schema in schema.schemas.values() {
+        ops.push(MigrationOp::CreateSchema(pg_schema.clone()));
+    }
+
     for extension in schema.extensions.values() {
         ops.push(MigrationOp::CreateExtension(extension.clone()));
     }

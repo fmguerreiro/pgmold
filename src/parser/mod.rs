@@ -373,6 +373,19 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 };
                 schema.extensions.insert(ext_name, ext);
             }
+            Statement::CreateSchema { schema_name, .. } => {
+                use sqlparser::ast::SchemaName;
+                let name = match &schema_name {
+                    SchemaName::Simple(obj) => obj.to_string().trim_matches('"').to_string(),
+                    SchemaName::UnnamedAuthorization(ident) => {
+                        ident.to_string().trim_matches('"').to_string()
+                    }
+                    SchemaName::NamedAuthorization(obj, _) => {
+                        obj.to_string().trim_matches('"').to_string()
+                    }
+                };
+                schema.schemas.insert(name.clone(), PgSchema { name });
+            }
             Statement::CreateDomain(sqlparser::ast::CreateDomain {
                 name,
                 data_type,
@@ -593,7 +606,8 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             let matches = if let Some(schema_name) = schema_part {
                 qualified == format!("{}.{}", schema_name, func_name) && key.contains(args_str)
             } else {
-                (func.name == func_name || qualified.ends_with(&format!(".{}", func_name))) && key.contains(args_str)
+                (func.name == func_name || qualified.ends_with(&format!(".{}", func_name)))
+                    && key.contains(args_str)
             };
             if matches {
                 func.owner = Some(owner.to_string());
@@ -1039,9 +1053,11 @@ fn parse_create_function(
         .map(|param| {
             let key = param.name.to_string().to_lowercase();
             let value = match &param.value {
-                sqlparser::ast::FunctionSetValue::Values(exprs) => {
-                    exprs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(", ")
-                }
+                sqlparser::ast::FunctionSetValue::Values(exprs) => exprs
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 sqlparser::ast::FunctionSetValue::FromCurrent => "FROM CURRENT".to_string(),
             };
             (key, value)
@@ -1221,6 +1237,23 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
         let uuid_ext = &schema.extensions["uuid-ossp"];
         assert_eq!(uuid_ext.name, "uuid-ossp");
+    }
+
+    #[test]
+    fn parse_create_schema() {
+        let sql = r#"
+CREATE SCHEMA IF NOT EXISTS "myschema";
+CREATE SCHEMA auth;
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert_eq!(schema.schemas.len(), 2);
+        assert!(schema.schemas.contains_key("myschema"));
+        assert!(schema.schemas.contains_key("auth"));
+
+        let myschema = &schema.schemas["myschema"];
+        assert_eq!(myschema.name, "myschema");
     }
 
     #[test]

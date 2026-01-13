@@ -12,6 +12,7 @@ pub async fn introspect_schema(
 ) -> Result<Schema> {
     let mut schema = Schema::new();
 
+    schema.schemas = introspect_schemas(connection, target_schemas).await?;
     schema.extensions = introspect_extensions(connection).await?;
     schema.enums = introspect_enums(connection, target_schemas, include_extension_objects).await?;
     schema.domains =
@@ -74,6 +75,39 @@ pub async fn introspect_schema(
     }
 
     Ok(schema)
+}
+
+async fn introspect_schemas(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, PgSchema>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT nspname as name
+        FROM pg_namespace
+        WHERE nspname NOT LIKE 'pg_%'
+          AND nspname != 'information_schema'
+        "#,
+    )
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch schemas: {e}")))?;
+
+    let mut schemas = BTreeMap::new();
+    for row in rows {
+        let name: String = row.get("name");
+        // Always skip 'public' schema - it's a default schema that always exists in PostgreSQL.
+        // Users who want to manage 'public' must include CREATE SCHEMA "public" in their SQL.
+        if name == "public" {
+            continue;
+        }
+        // Only include schemas that match target_schemas filter (or all if empty)
+        if target_schemas.is_empty() || target_schemas.contains(&name) {
+            schemas.insert(name.clone(), PgSchema { name });
+        }
+    }
+
+    Ok(schemas)
 }
 
 async fn introspect_extensions(connection: &PgConnection) -> Result<BTreeMap<String, Extension>> {

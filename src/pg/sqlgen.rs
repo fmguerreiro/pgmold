@@ -14,6 +14,19 @@ pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
 
 fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
     match op {
+        MigrationOp::CreateSchema(pg_schema) => {
+            vec![format!(
+                "CREATE SCHEMA IF NOT EXISTS {};",
+                quote_ident(&pg_schema.name)
+            )]
+        }
+        MigrationOp::DropSchema(name) => {
+            vec![format!(
+                "DROP SCHEMA IF EXISTS {} CASCADE;",
+                quote_ident(name)
+            )]
+        }
+
         MigrationOp::CreateExtension(ext) => {
             let mut sql = format!("CREATE EXTENSION IF NOT EXISTS {}", quote_ident(&ext.name));
             if let Some(ref schema) = ext.schema {
@@ -1459,6 +1472,26 @@ mod tests {
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
         assert_eq!(sql[0], "DROP EXTENSION IF EXISTS \"uuid-ossp\";");
+    }
+
+    #[test]
+    fn create_schema_generates_valid_sql() {
+        let ops = vec![MigrationOp::CreateSchema(crate::model::PgSchema {
+            name: "auth".to_string(),
+        })];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "CREATE SCHEMA IF NOT EXISTS \"auth\";");
+    }
+
+    #[test]
+    fn drop_schema_generates_valid_sql() {
+        let ops = vec![MigrationOp::DropSchema("old_schema".to_string())];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "DROP SCHEMA IF EXISTS \"old_schema\" CASCADE;");
     }
 
     #[test]

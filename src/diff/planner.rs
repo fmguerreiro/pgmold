@@ -6,6 +6,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 /// Creates are ordered first (with tables topologically sorted by FK dependencies),
 /// then drops are ordered last (in reverse dependency order).
 pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+    let mut create_schemas = Vec::new();
+    let mut drop_schemas = Vec::new();
     let mut create_extensions = Vec::new();
     let mut drop_extensions = Vec::new();
     let mut create_enums = Vec::new();
@@ -52,6 +54,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     for op in ops {
         match op {
+            MigrationOp::CreateSchema(_) => create_schemas.push(op),
+            MigrationOp::DropSchema(_) => drop_schemas.push(op),
             MigrationOp::CreateExtension(_) => create_extensions.push(op),
             MigrationOp::DropExtension(_) => drop_extensions.push(op),
             MigrationOp::CreateEnum(_) => create_enums.push(op),
@@ -126,6 +130,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     let mut result = Vec::new();
 
+    result.extend(create_schemas);
     result.extend(create_extensions);
     result.extend(create_enums);
     result.extend(add_enum_values);
@@ -169,6 +174,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(drop_domains);
     result.extend(drop_enums);
     result.extend(drop_extensions);
+    result.extend(drop_schemas);
 
     result
 }
@@ -177,6 +183,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 /// Unlike plan_migration, this keeps OWNED BY inline in CREATE SEQUENCE
 /// by placing sequences after tables they reference.
 pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+    let mut create_schemas = Vec::new();
     let mut create_extensions = Vec::new();
     let mut create_enums = Vec::new();
     let mut create_domains = Vec::new();
@@ -191,6 +198,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     for op in ops {
         match op {
+            MigrationOp::CreateSchema(_) => create_schemas.push(op),
             MigrationOp::CreateExtension(_) => create_extensions.push(op),
             MigrationOp::CreateEnum(_) => create_enums.push(op),
             MigrationOp::CreateDomain(_) => create_domains.push(op),
@@ -210,6 +218,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     let mut result = Vec::new();
 
+    result.extend(create_schemas);
     result.extend(create_extensions);
     result.extend(create_enums);
     result.extend(create_domains);

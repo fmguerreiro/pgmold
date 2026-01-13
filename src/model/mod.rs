@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Schema {
+    pub schemas: BTreeMap<String, PgSchema>,
     pub extensions: BTreeMap<String, Extension>,
     pub tables: BTreeMap<String, Table>,
     pub enums: BTreeMap<String, EnumType>,
@@ -173,6 +174,12 @@ pub struct EnumType {
     pub schema: String,
     pub name: String,
     pub values: Vec<String>,
+}
+
+/// Represents a PostgreSQL schema (namespace).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PgSchema {
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -422,6 +429,7 @@ pub fn parse_qualified_name(qname: &str) -> (String, String) {
 impl Schema {
     pub fn new() -> Self {
         Schema {
+            schemas: BTreeMap::new(),
             extensions: BTreeMap::new(),
             tables: BTreeMap::new(),
             enums: BTreeMap::new(),

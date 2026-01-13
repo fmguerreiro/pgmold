@@ -329,6 +329,9 @@ async fn multi_schema_table_management() {
         .unwrap();
 
     let sql = r#"
+        CREATE SCHEMA IF NOT EXISTS auth;
+        CREATE SCHEMA IF NOT EXISTS api;
+
         CREATE TABLE auth.users (
             id INTEGER PRIMARY KEY,
             email TEXT NOT NULL
@@ -2079,10 +2082,7 @@ async fn function_config_params_round_trip() {
     let sql = generate_sql(&planned);
 
     for stmt in &sql {
-        sqlx::query(stmt)
-            .execute(connection.pool())
-            .await
-            .unwrap();
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
     let introspected = introspect_schema(&connection, &["auth".to_string()], false)
@@ -2097,8 +2097,7 @@ async fn function_config_params_round_trip() {
     );
 
     assert_eq!(
-        parsed_func.config_params[0].0,
-        introspected_func.config_params[0].0,
+        parsed_func.config_params[0].0, introspected_func.config_params[0].0,
         "config_params key should match"
     );
 
@@ -2178,10 +2177,7 @@ async fn function_owner_round_trip() {
     let sql = generate_sql(&planned);
 
     for stmt in &sql {
-        sqlx::query(stmt)
-            .execute(connection.pool())
-            .await
-            .unwrap();
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
     let introspected = introspect_schema(&connection, &["public".to_string()], false)
@@ -2209,5 +2205,77 @@ async fn function_owner_round_trip() {
     assert!(
         func_ops.is_empty(),
         "Should have no function diff after round-trip, got: {func_ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn schema_creation_round_trip() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let schema_sql = r#"
+        CREATE SCHEMA IF NOT EXISTS "myschema";
+        CREATE TYPE "myschema"."Status" AS ENUM ('ACTIVE', 'INACTIVE');
+        CREATE TABLE "myschema"."Item" (
+            "id" TEXT NOT NULL,
+            "status" "myschema"."Status" NOT NULL,
+            CONSTRAINT "Item_pkey" PRIMARY KEY ("id")
+        );
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    assert!(
+        parsed_schema.schemas.contains_key("myschema"),
+        "Parsed schema should contain 'myschema'"
+    );
+
+    // Introspect fresh database - myschema doesn't exist yet
+    let current = introspect_schema(&connection, &["myschema".to_string()], false)
+        .await
+        .unwrap();
+
+    // Compute diff - should include CreateSchema
+    let ops = compute_diff(&current, &parsed_schema);
+    let schema_ops: Vec<_> = ops
+        .iter()
+        .filter(|op| matches!(op, MigrationOp::CreateSchema(_)))
+        .collect();
+    assert_eq!(
+        schema_ops.len(),
+        1,
+        "Should have exactly one CreateSchema op"
+    );
+
+    // Execute migration
+    let planned = plan_migration(ops);
+    let sql = generate_sql(&planned);
+
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Introspect again
+    let introspected = introspect_schema(&connection, &["myschema".to_string()], false)
+        .await
+        .unwrap();
+    assert!(
+        introspected.schemas.contains_key("myschema"),
+        "Introspected schema should contain 'myschema'"
+    );
+
+    // Verify no diff after round-trip
+    let diff_ops = compute_diff(&introspected, &parsed_schema);
+    let remaining_schema_ops: Vec<_> = diff_ops
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateSchema(_) | MigrationOp::DropSchema(_)
+            )
+        })
+        .collect();
+    assert!(
+        remaining_schema_ops.is_empty(),
+        "Should have no schema diff after round-trip, got: {remaining_schema_ops:?}"
     );
 }

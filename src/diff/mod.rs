@@ -2,12 +2,14 @@ pub mod planner;
 
 use crate::model::{
     qualified_name, CheckConstraint, Column, Domain, EnumType, Extension, ForeignKey, Function,
-    Index, Partition, PgType, Policy, PrimaryKey, Sequence, SequenceDataType, SequenceOwner, Table,
-    Trigger, TriggerEnabled, View,
+    Index, Partition, PgSchema, PgType, Policy, PrimaryKey, Sequence, SequenceDataType,
+    SequenceOwner, Table, Trigger, TriggerEnabled, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOp {
+    CreateSchema(PgSchema),
+    DropSchema(String),
     CreateExtension(Extension),
     DropExtension(String),
     CreateEnum(EnumType),
@@ -178,6 +180,7 @@ use crate::model::Schema;
 pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
+    ops.extend(diff_schemas(from, to));
     ops.extend(diff_extensions(from, to));
     ops.extend(diff_enums(from, to));
     ops.extend(diff_domains(from, to));
@@ -197,6 +200,24 @@ pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
             ops.extend(diff_check_constraints(from_table, to_table));
             ops.extend(diff_rls(from_table, to_table));
             ops.extend(diff_policies(from_table, to_table));
+        }
+    }
+
+    ops
+}
+
+fn diff_schemas(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for (name, pg_schema) in &to.schemas {
+        if !from.schemas.contains_key(name) {
+            ops.push(MigrationOp::CreateSchema(pg_schema.clone()));
+        }
+    }
+
+    for name in from.schemas.keys() {
+        if !to.schemas.contains_key(name) {
+            ops.push(MigrationOp::DropSchema(name.clone()));
         }
     }
 
@@ -839,7 +860,10 @@ fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ArgMode, FunctionArg, IndexType, ReferentialAction, SecurityType, SequenceDataType, Volatility};
+    use crate::model::{
+        ArgMode, FunctionArg, IndexType, ReferentialAction, SecurityType, SequenceDataType,
+        Volatility,
+    };
     use std::collections::BTreeMap;
 
     fn empty_schema() -> Schema {
@@ -1189,8 +1213,10 @@ mod tests {
             config_params: vec![],
             owner: None,
         };
-        from.functions
-            .insert(qualified_name(&func_old.schema, &func_old.signature()), func_old);
+        from.functions.insert(
+            qualified_name(&func_old.schema, &func_old.signature()),
+            func_old,
+        );
 
         let mut to = empty_schema();
         let func_new = Function {
@@ -1210,8 +1236,10 @@ mod tests {
             config_params: vec![],
             owner: None,
         };
-        to.functions
-            .insert(qualified_name(&func_new.schema, &func_new.signature()), func_new);
+        to.functions.insert(
+            qualified_name(&func_new.schema, &func_new.signature()),
+            func_new,
+        );
 
         let ops = compute_diff(&from, &to);
 
@@ -1250,8 +1278,10 @@ mod tests {
             config_params: vec![],
             owner: None,
         };
-        from.functions
-            .insert(qualified_name(&func_old.schema, &func_old.signature()), func_old);
+        from.functions.insert(
+            qualified_name(&func_old.schema, &func_old.signature()),
+            func_old,
+        );
 
         let mut to = empty_schema();
         let func_new = Function {
@@ -1271,8 +1301,10 @@ mod tests {
             config_params: vec![],
             owner: None,
         };
-        to.functions
-            .insert(qualified_name(&func_new.schema, &func_new.signature()), func_new);
+        to.functions.insert(
+            qualified_name(&func_new.schema, &func_new.signature()),
+            func_new,
+        );
 
         let ops = compute_diff(&from, &to);
 
@@ -1306,8 +1338,10 @@ mod tests {
             config_params: vec![],
             owner: None,
         };
-        from.functions
-            .insert(qualified_name(&func_old.schema, &func_old.signature()), func_old);
+        from.functions.insert(
+            qualified_name(&func_old.schema, &func_old.signature()),
+            func_old,
+        );
 
         let mut to = empty_schema();
         let func_new = Function {
@@ -1327,8 +1361,10 @@ mod tests {
             config_params: vec![],
             owner: None,
         };
-        to.functions
-            .insert(qualified_name(&func_new.schema, &func_new.signature()), func_new);
+        to.functions.insert(
+            qualified_name(&func_new.schema, &func_new.signature()),
+            func_new,
+        );
 
         let ops = compute_diff(&from, &to);
 
@@ -1810,6 +1846,38 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], MigrationOp::DropExtension(name) if name == "pgcrypto"));
+    }
+
+    #[test]
+    fn detects_added_schema() {
+        let from = empty_schema();
+        let mut to = empty_schema();
+        to.schemas.insert(
+            "auth".to_string(),
+            crate::model::PgSchema {
+                name: "auth".to_string(),
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], MigrationOp::CreateSchema(s) if s.name == "auth"));
+    }
+
+    #[test]
+    fn detects_removed_schema() {
+        let mut from = empty_schema();
+        from.schemas.insert(
+            "old_schema".to_string(),
+            crate::model::PgSchema {
+                name: "old_schema".to_string(),
+            },
+        );
+        let to = empty_schema();
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], MigrationOp::DropSchema(name) if name == "old_schema"));
     }
 
     fn make_trigger(name: &str, target: &str) -> crate::model::Trigger {
