@@ -200,6 +200,16 @@ pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
             ops.extend(diff_check_constraints(from_table, to_table));
             ops.extend(diff_rls(from_table, to_table));
             ops.extend(diff_policies(from_table, to_table));
+        } else {
+            // New table: emit RLS and policies (table creation handled by diff_tables)
+            if to_table.row_level_security {
+                ops.push(MigrationOp::EnableRls {
+                    table: qualified_name(&to_table.schema, &to_table.name),
+                });
+            }
+            for policy in &to_table.policies {
+                ops.push(MigrationOp::CreatePolicy(policy.clone()));
+            }
         }
     }
 
@@ -2839,6 +2849,44 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         assert!(
             trigger_ops.is_empty(),
             "Should have no trigger diff operations, but got: {trigger_ops:?}"
+        );
+    }
+
+    #[test]
+    fn new_table_with_rls_and_policies_emits_ops() {
+        let from = empty_schema();
+        let mut to = empty_schema();
+
+        let mut table = simple_table("users");
+        table.row_level_security = true;
+        table.policies = vec![crate::model::Policy {
+            name: "users_select".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: crate::model::PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("true".to_string()),
+            check_expr: None,
+        }];
+        to.tables.insert("public.users".to_string(), table);
+
+        let ops = compute_diff(&from, &to);
+
+        let has_create_table = ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "users"));
+        let has_enable_rls = ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::EnableRls { table } if table == "public.users"));
+        let has_create_policy = ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::CreatePolicy(p) if p.name == "users_select"));
+
+        assert!(has_create_table, "Should emit CreateTable");
+        assert!(has_enable_rls, "Should emit EnableRls for new table with RLS");
+        assert!(
+            has_create_policy,
+            "Should emit CreatePolicy for new table with policies"
         );
     }
 }
