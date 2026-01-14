@@ -314,6 +314,7 @@ mod tests {
                 max_value: Some(9223372036854775807),
                 cache: Some(1),
                 cycle: false,
+            owner: None,
                 owned_by: Some(SequenceOwner {
                     table_schema: "public".to_string(),
                     table_name: "users".to_string(),

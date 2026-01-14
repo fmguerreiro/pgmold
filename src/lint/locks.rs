@@ -697,6 +697,8 @@ mod tests {
                 schema: "public".to_string(),
                 query: "SELECT * FROM users WHERE active = true".to_string(),
                 materialized: false,
+
+                owner: None,
             },
         }];
         let warnings = detect_lock_hazards(&ops);

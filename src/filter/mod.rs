@@ -426,6 +426,8 @@ mod tests {
                 row_level_security: false,
                 policies: vec![],
                 partition_by: None,
+
+                owner: None,
             },
         );
         schema.tables.insert(
@@ -442,6 +444,8 @@ mod tests {
                 row_level_security: false,
                 policies: vec![],
                 partition_by: None,
+
+                owner: None,
             },
         );
         schema.tables.insert(
@@ -458,6 +462,8 @@ mod tests {
                 row_level_security: false,
                 policies: vec![],
                 partition_by: None,
+
+                owner: None,
             },
         );
 
@@ -504,6 +510,8 @@ mod tests {
                 row_level_security: false,
                 policies: vec![],
                 partition_by: None,
+
+                owner: None,
             },
         );
         schema.tables.insert(
@@ -520,6 +528,8 @@ mod tests {
                 row_level_security: false,
                 policies: vec![],
                 partition_by: None,
+
+                owner: None,
             },
         );
 
@@ -530,6 +540,8 @@ mod tests {
                 schema: "public".to_string(),
                 query: "SELECT * FROM users".to_string(),
                 materialized: false,
+
+                owner: None,
             },
         );
         schema.views.insert(
@@ -539,6 +551,8 @@ mod tests {
                 schema: "public".to_string(),
                 query: "SELECT 1".to_string(),
                 materialized: false,
+
+                owner: None,
             },
         );
 
@@ -587,6 +601,8 @@ mod tests {
                 schema: "public".to_string(),
                 name: "status".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
+
+                owner: None,
             },
         );
         schema.enums.insert(
@@ -595,6 +611,8 @@ mod tests {
                 schema: "public".to_string(),
                 name: "_temp_enum".to_string(),
                 values: vec!["a".to_string(), "b".to_string()],
+
+                owner: None,
             },
         );
 
@@ -608,6 +626,8 @@ mod tests {
                 not_null: false,
                 collation: None,
                 check_constraints: vec![],
+
+                owner: None,
             },
         );
         schema.domains.insert(
@@ -620,6 +640,8 @@ mod tests {
                 not_null: false,
                 collation: None,
                 check_constraints: vec![],
+
+                owner: None,
             },
         );
 
@@ -636,6 +658,8 @@ mod tests {
                 cycle: false,
                 cache: None,
                 owned_by: None,
+
+                owner: None,
             },
         );
         schema.sequences.insert(
@@ -651,6 +675,8 @@ mod tests {
                 cycle: false,
                 cache: None,
                 owned_by: None,
+
+                owner: None,
             },
         );
 
@@ -664,6 +690,8 @@ mod tests {
                 bound: PartitionBound::Default,
                 indexes: vec![],
                 check_constraints: vec![],
+
+                owner: None,
             },
         );
         schema.partitions.insert(
@@ -676,6 +704,8 @@ mod tests {
                 bound: PartitionBound::Default,
                 indexes: vec![],
                 check_constraints: vec![],
+
+                owner: None,
             },
         );
 
@@ -912,6 +942,8 @@ mod tests {
                 row_level_security: false,
                 policies: vec![],
                 partition_by: None,
+
+                owner: None,
             },
         );
 
@@ -954,6 +986,8 @@ mod tests {
                 row_level_security: false,
                 policies: vec![],
                 partition_by: None,
+
+                owner: None,
             },
         );
         schema.views.insert(
@@ -963,6 +997,8 @@ mod tests {
                 schema: "public".to_string(),
                 query: "SELECT * FROM users".to_string(),
                 materialized: false,
+
+                owner: None,
             },
         );
 
@@ -999,6 +1035,8 @@ mod tests {
                 row_level_security: false,
                 policies: vec![],
                 partition_by: None,
+
+                owner: None,
             },
         );
 
@@ -1155,6 +1193,8 @@ mod tests {
                 check_expr: None,
             }],
             partition_by: None,
+
+            owner: None,
         };
 
         let filter = Filter::new(&[], &[], &[], &[ObjectType::Policies]).unwrap();
@@ -1202,6 +1242,8 @@ mod tests {
             row_level_security: false,
             policies: vec![],
             partition_by: None,
+
+            owner: None,
         };
 
         let filter = Filter::new(
@@ -1255,6 +1297,8 @@ mod tests {
                 check_expr: None,
             }],
             partition_by: None,
+
+            owner: None,
         };
 
         let filter = Filter::new(&[], &[], &[], &[]).unwrap();
@@ -1303,6 +1347,8 @@ mod tests {
                 check_expr: None,
             }],
             partition_by: None,
+
+            owner: None,
         };
 
         let filter = Filter::new(&[], &[], &[ObjectType::Tables], &[]).unwrap();
@@ -1365,6 +1411,8 @@ mod tests {
                 check_expr: None,
             }],
             partition_by: None,
+
+            owner: None,
         };
 
         let filter = Filter::new(&[], &[], &[ObjectType::Policies], &[]).unwrap();
@@ -1429,6 +1477,8 @@ mod tests {
             row_level_security: false,
             policies: vec![],
             partition_by: None,
+
+            owner: None,
         };
 
         let filter = Filter::new(&[], &[], &[ObjectType::Indexes], &[]).unwrap();

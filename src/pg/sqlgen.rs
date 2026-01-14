@@ -1090,6 +1090,8 @@ mod tests {
             name: "user_role".to_string(),
             schema: "public".to_string(),
             values: vec!["admin".to_string(), "user".to_string(), "guest".to_string()],
+
+            owner: None,
         })];
 
         let sql = generate_sql(&ops);
@@ -1183,6 +1185,8 @@ mod tests {
             row_level_security: false,
             policies: vec![],
             partition_by: None,
+
+            owner: None,
         })];
 
         let sql = generate_sql(&ops);
@@ -1246,6 +1250,8 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT * FROM users WHERE active = true".to_string(),
             materialized: false,
+
+            owner: None,
         })];
 
         let sql = generate_sql(&ops);
@@ -1263,6 +1269,8 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT COUNT(*) FROM users".to_string(),
             materialized: true,
+
+            owner: None,
         })];
 
         let sql = generate_sql(&ops);
@@ -1505,6 +1513,8 @@ mod tests {
             row_level_security: false,
             policies: vec![],
             partition_by: None,
+
+            owner: None,
         };
 
         let op = MigrationOp::CreateTable(table);
@@ -1771,6 +1781,8 @@ mod tests {
             cycle: false,
             cache: None,
             owned_by: None,
+
+            owner: None,
         };
         let op = MigrationOp::CreateSequence(seq);
         let sql = generate_sql(&vec![op]);
@@ -1794,6 +1806,7 @@ mod tests {
             min_value: Some(1),
             max_value: Some(1000),
             cycle: true,
+            owner: None,
             cache: Some(10),
             owned_by: Some(SequenceOwner {
                 table_schema: "auth".to_string(),
@@ -2002,6 +2015,8 @@ mod tests {
             not_null: false,
             collation: None,
             check_constraints: vec![],
+
+            owner: None,
         };
 
         let ops = vec![MigrationOp::CreateDomain(domain)];
@@ -2025,6 +2040,8 @@ mod tests {
             not_null: true,
             collation: None,
             check_constraints: vec![],
+
+            owner: None,
         };
 
         let ops = vec![MigrationOp::CreateDomain(domain)];
@@ -2051,6 +2068,7 @@ mod tests {
                 name: Some("positive_check".to_string()),
                 expression: "VALUE > 0".to_string(),
             }],
+            owner: None,
         };
 
         let ops = vec![MigrationOp::CreateDomain(domain)];

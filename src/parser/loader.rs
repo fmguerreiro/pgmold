@@ -352,6 +352,8 @@ mod tests {
                 row_level_security: false,
                 policies: Vec::new(),
                 partition_by: None,
+
+                owner: None,
             },
         );
 
@@ -370,6 +372,8 @@ mod tests {
                 row_level_security: false,
                 policies: Vec::new(),
                 partition_by: None,
+
+                owner: None,
             },
         );
 
@@ -398,6 +402,8 @@ mod tests {
                 row_level_security: false,
                 policies: Vec::new(),
                 partition_by: None,
+
+                owner: None,
             },
         );
 
@@ -416,6 +422,8 @@ mod tests {
                 row_level_security: false,
                 policies: Vec::new(),
                 partition_by: None,
+
+                owner: None,
             },
         );
 
@@ -436,6 +444,8 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
                 values: vec!["active".to_string()],
+
+                owner: None,
             },
         );
 
@@ -446,6 +456,8 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
                 values: vec!["inactive".to_string()],
+
+                owner: None,
             },
         );
 

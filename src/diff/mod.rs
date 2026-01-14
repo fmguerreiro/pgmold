@@ -893,6 +893,8 @@ mod tests {
             row_level_security: false,
             policies: Vec::new(),
             partition_by: None,
+
+            owner: None,
         }
     }
 
@@ -916,6 +918,8 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
+
+                owner: None,
             },
         );
 
@@ -933,6 +937,8 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
                 values: vec!["active".to_string()],
+
+                owner: None,
             },
         );
         let to = empty_schema();
@@ -1400,6 +1406,8 @@ mod tests {
             schema: "reporting".to_string(),
             query: "SELECT 1".to_string(),
             materialized: false,
+
+            owner: None,
         };
         from.views
             .insert(qualified_name(&view.schema, &view.name), view);
@@ -1425,6 +1433,8 @@ mod tests {
                 schema: "public".to_string(),
                 query: "SELECT * FROM users WHERE active = true".to_string(),
                 materialized: false,
+
+                owner: None,
             },
         );
 
@@ -1443,6 +1453,8 @@ mod tests {
                 schema: "public".to_string(),
                 query: "SELECT * FROM users WHERE active = true".to_string(),
                 materialized: false,
+
+                owner: None,
             },
         );
         let to = empty_schema();
@@ -1464,6 +1476,8 @@ mod tests {
                 schema: "public".to_string(),
                 query: "SELECT * FROM users WHERE active = true".to_string(),
                 materialized: false,
+
+                owner: None,
             },
         );
 
@@ -1475,6 +1489,8 @@ mod tests {
                 schema: "public".to_string(),
                 query: "SELECT id, email FROM users WHERE active = true".to_string(),
                 materialized: false,
+
+                owner: None,
             },
         );
 
@@ -1496,6 +1512,8 @@ mod tests {
                 schema: "public".to_string(),
                 query: "SELECT COUNT(*) FROM users".to_string(),
                 materialized: true,
+
+                owner: None,
             },
         );
 
@@ -1667,6 +1685,8 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
+
+                owner: None,
             },
         );
 
@@ -1676,6 +1696,7 @@ mod tests {
             EnumType {
                 name: "status".to_string(),
                 schema: "public".to_string(),
+            owner: None,
                 values: vec![
                     "active".to_string(),
                     "pending".to_string(),
@@ -1703,6 +1724,8 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
+
+                owner: None,
             },
         );
 
@@ -1712,6 +1735,7 @@ mod tests {
             EnumType {
                 name: "status".to_string(),
                 schema: "public".to_string(),
+            owner: None,
                 values: vec![
                     "pending".to_string(),
                     "active".to_string(),
@@ -1739,6 +1763,8 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
+
+                owner: None,
             },
         );
 
@@ -1748,6 +1774,7 @@ mod tests {
             EnumType {
                 name: "status".to_string(),
                 schema: "public".to_string(),
+            owner: None,
                 values: vec![
                     "active".to_string(),
                     "inactive".to_string(),
@@ -1775,6 +1802,8 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
                 values: vec!["active".to_string()],
+
+                owner: None,
             },
         );
 
@@ -1784,6 +1813,7 @@ mod tests {
             EnumType {
                 name: "status".to_string(),
                 schema: "public".to_string(),
+            owner: None,
                 values: vec![
                     "pending".to_string(),
                     "active".to_string(),
@@ -1805,6 +1835,8 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
+
+                owner: None,
             },
         );
 
@@ -1815,6 +1847,8 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
+
+                owner: None,
             },
         );
 
@@ -1978,6 +2012,8 @@ mod tests {
                 schema: "public".to_string(),
                 query: "SELECT id, name FROM users WHERE active = true".to_string(),
                 materialized: false,
+
+                owner: None,
             },
         );
 
@@ -2029,6 +2065,8 @@ mod tests {
                 cycle: false,
                 cache: None,
                 owned_by: None,
+
+                owner: None,
             },
         );
 
@@ -2054,6 +2092,8 @@ mod tests {
                 cycle: false,
                 cache: None,
                 owned_by: None,
+
+                owner: None,
             },
         );
         let to = empty_schema();
@@ -2080,6 +2120,8 @@ mod tests {
                 cycle: false,
                 cache: None,
                 owned_by: None,
+
+                owner: None,
             },
         );
         let mut to = empty_schema();
@@ -2096,6 +2138,8 @@ mod tests {
                 cycle: false,
                 cache: None,
                 owned_by: None,
+
+                owner: None,
             },
         );
 
@@ -2121,6 +2165,8 @@ mod tests {
                 cycle: false,
                 cache: None,
                 owned_by: None,
+
+                owner: None,
             },
         );
         let mut to = empty_schema();
@@ -2137,6 +2183,8 @@ mod tests {
                 cycle: false,
                 cache: None,
                 owned_by: None,
+
+                owner: None,
             },
         );
 
@@ -2165,6 +2213,8 @@ mod tests {
                 cycle: false,
                 cache: None,
                 owned_by: None,
+
+                owner: None,
             },
         );
         let mut to = empty_schema();
@@ -2181,6 +2231,8 @@ mod tests {
                 cycle: false,
                 cache: None,
                 owned_by: None,
+
+                owner: None,
             },
         );
 

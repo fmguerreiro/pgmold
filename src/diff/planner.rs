@@ -571,6 +571,8 @@ mod tests {
             row_level_security: false,
             policies: Vec::new(),
             partition_by: None,
+
+            owner: None,
         }
     }
 
@@ -757,6 +759,8 @@ mod tests {
                 name: "user_role".to_string(),
                 schema: "public".to_string(),
                 values: vec!["admin".to_string(), "user".to_string()],
+
+                owner: None,
             }),
         ];
 
@@ -797,6 +801,8 @@ mod tests {
                 name: "user_role".to_string(),
                 schema: "public".to_string(),
                 values: vec!["admin".to_string(), "user".to_string()],
+
+                owner: None,
             }),
         ];
 
@@ -834,18 +840,24 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT * FROM users".to_string(),
             materialized: false,
+
+            owner: None,
         };
         let view_b = View {
             name: "view_b".to_string(),
             schema: "public".to_string(),
             query: "SELECT * FROM public.view_a".to_string(),
             materialized: false,
+
+            owner: None,
         };
         let view_c = View {
             name: "view_c".to_string(),
             schema: "public".to_string(),
             query: "SELECT * FROM public.view_b JOIN public.view_a ON true".to_string(),
             materialized: false,
+
+            owner: None,
         };
 
         let ops = vec![
@@ -917,6 +929,7 @@ mod tests {
             min_value: Some(1),
             max_value: Some(9223372036854775807),
             cycle: false,
+            owner: None,
             cache: Some(1),
             owned_by: Some(SequenceOwner {
                 table_schema: "public".to_string(),
