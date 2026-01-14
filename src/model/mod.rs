@@ -51,7 +51,6 @@ pub struct Table {
     pub row_level_security: bool,
     pub policies: Vec<Policy>,
     pub partition_by: Option<PartitionKey>,
-    #[serde(skip)]
     pub owner: Option<String>,
 }
 
@@ -1341,5 +1340,48 @@ mod tests {
         let deserialized: Table = serde_json::from_str(&json).expect("Failed to deserialize");
         assert_eq!(table, deserialized);
         assert_eq!(deserialized.owner, Some("postgres".to_string()));
+    }
+
+    #[test]
+    fn fingerprint_differs_when_owner_differs() {
+        let mut schema1 = Schema::new();
+        schema1.tables.insert(
+            "public.users".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: Vec::new(),
+                primary_key: None,
+                foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
+                comment: None,
+                row_level_security: false,
+                policies: Vec::new(),
+                partition_by: None,
+                owner: Some("postgres".to_string()),
+            },
+        );
+
+        let mut schema2 = Schema::new();
+        schema2.tables.insert(
+            "public.users".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: Vec::new(),
+                primary_key: None,
+                foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
+                comment: None,
+                row_level_security: false,
+                policies: Vec::new(),
+                partition_by: None,
+                owner: None,
+            },
+        );
+
+        assert_ne!(schema1.fingerprint(), schema2.fingerprint());
     }
 }
