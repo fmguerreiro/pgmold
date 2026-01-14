@@ -87,6 +87,10 @@ fn preprocess_sql(sql: &str) -> String {
         Regex::new(r"(?i)\bSET\s+search_path\s+TO\s+'[^']*'(?:\s*,\s*'[^']*')*").unwrap();
     // Remove ALTER FUNCTION statements (sqlparser doesn't support them, but we'll parse OWNER TO separately)
     let alter_function_re = Regex::new(r"(?i)ALTER\s+FUNCTION\s+[^;]+;").unwrap();
+    // Remove ALTER TABLE ... OWNER TO statements (sqlparser doesn't support OWNER TO for tables)
+    let alter_table_owner_re = Regex::new(r"(?i)ALTER\s+TABLE\s+[^;]+\s+OWNER\s+TO\s+[^;]+;").unwrap();
+    // Remove ALTER VIEW statements (sqlparser doesn't support them)
+    let alter_view_re = Regex::new(r"(?i)ALTER\s+VIEW\s+[^;]+;").unwrap();
     // Remove ALTER SEQUENCE statements (sqlparser doesn't support them)
     let alter_sequence_re = Regex::new(r"(?i)ALTER\s+SEQUENCE\s+[^;]+;").unwrap();
     // Remove ALTER TYPE statements (sqlparser doesn't fully support them)
@@ -96,6 +100,8 @@ fn preprocess_sql(sql: &str) -> String {
 
     let processed = set_search_path_re.replace_all(sql, "");
     let processed = alter_function_re.replace_all(&processed, "");
+    let processed = alter_table_owner_re.replace_all(&processed, "");
+    let processed = alter_view_re.replace_all(&processed, "");
     let processed = alter_sequence_re.replace_all(&processed, "");
     let processed = alter_type_re.replace_all(&processed, "");
     let processed = alter_domain_re.replace_all(&processed, "");
@@ -669,6 +675,75 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             };
             if matches {
                 domain.owner = Some(owner.to_string());
+                break;
+            }
+        }
+    }
+
+    // Extract ALTER TABLE OWNER TO statements and apply to tables
+    let alter_table_owner_re = Regex::new(
+        r#"(?i)ALTER\s+TABLE\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
+    ).unwrap();
+
+    for cap in alter_table_owner_re.captures_iter(sql) {
+        let schema_part = cap.get(1).map(|m| m.as_str().trim_matches('"'));
+        let table_name = cap.get(2).unwrap().as_str().trim_matches('"');
+        let owner = cap.get(3).unwrap().as_str().trim_matches('"');
+
+        for (_key, table) in schema.tables.iter_mut() {
+            let matches = if let Some(schema_name) = schema_part {
+                table.schema == schema_name && table.name == table_name
+            } else {
+                table.name == table_name
+            };
+            if matches {
+                table.owner = Some(owner.to_string());
+                break;
+            }
+        }
+    }
+
+    // Extract ALTER VIEW OWNER TO statements and apply to views
+    let alter_view_owner_re = Regex::new(
+        r#"(?i)ALTER\s+VIEW\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
+    ).unwrap();
+
+    for cap in alter_view_owner_re.captures_iter(sql) {
+        let schema_part = cap.get(1).map(|m| m.as_str().trim_matches('"'));
+        let view_name = cap.get(2).unwrap().as_str().trim_matches('"');
+        let owner = cap.get(3).unwrap().as_str().trim_matches('"');
+
+        for (_key, view) in schema.views.iter_mut() {
+            let matches = if let Some(schema_name) = schema_part {
+                view.schema == schema_name && view.name == view_name
+            } else {
+                view.name == view_name
+            };
+            if matches {
+                view.owner = Some(owner.to_string());
+                break;
+            }
+        }
+    }
+
+    // Extract ALTER SEQUENCE OWNER TO statements and apply to sequences
+    let alter_sequence_owner_re = Regex::new(
+        r#"(?i)ALTER\s+SEQUENCE\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
+    ).unwrap();
+
+    for cap in alter_sequence_owner_re.captures_iter(sql) {
+        let schema_part = cap.get(1).map(|m| m.as_str().trim_matches('"'));
+        let sequence_name = cap.get(2).unwrap().as_str().trim_matches('"');
+        let owner = cap.get(3).unwrap().as_str().trim_matches('"');
+
+        for (_key, sequence) in schema.sequences.iter_mut() {
+            let matches = if let Some(schema_name) = schema_part {
+                sequence.schema == schema_name && sequence.name == sequence_name
+            } else {
+                sequence.name == sequence_name
+            };
+            if matches {
+                sequence.owner = Some(owner.to_string());
                 break;
             }
         }
@@ -1618,6 +1693,62 @@ CREATE TABLE products (
         let schema = parse_sql_string(sql).unwrap();
         let domain = schema.domains.get("public.email").unwrap();
         assert_eq!(domain.owner, Some("domain_owner".to_string()));
+    }
+
+    #[test]
+    fn parses_alter_table_owner_to() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            ALTER TABLE users OWNER TO table_owner;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.owner, Some("table_owner".to_string()));
+    }
+
+    #[test]
+    fn parses_alter_view_owner_to() {
+        let sql = r#"
+            CREATE TABLE base (id INTEGER);
+            CREATE VIEW user_view AS SELECT id FROM base;
+            ALTER VIEW user_view OWNER TO view_owner;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let view = schema.views.get("public.user_view").unwrap();
+        assert_eq!(view.owner, Some("view_owner".to_string()));
+    }
+
+    #[test]
+    fn parses_alter_sequence_owner_to() {
+        let sql = r#"
+            CREATE SEQUENCE user_id_seq;
+            ALTER SEQUENCE user_id_seq OWNER TO seq_owner;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let sequence = schema.sequences.get("public.user_id_seq").unwrap();
+        assert_eq!(sequence.owner, Some("seq_owner".to_string()));
+    }
+
+    #[test]
+    fn owner_roundtrip_preserves_table_owner() {
+        use crate::dump::generate_dump;
+        let sql = r#"
+            CREATE TABLE users (id BIGINT PRIMARY KEY);
+            ALTER TABLE users OWNER TO test_owner;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        assert_eq!(
+            schema.tables.get("public.users").unwrap().owner,
+            Some("test_owner".to_string())
+        );
+
+        let dump = generate_dump(&schema, None);
+        let reparsed = parse_sql_string(&dump).unwrap();
+        assert_eq!(
+            reparsed.tables.get("public.users").unwrap().owner,
+            Some("test_owner".to_string()),
+            "Owner should be preserved after roundtrip"
+        );
     }
 
     #[test]

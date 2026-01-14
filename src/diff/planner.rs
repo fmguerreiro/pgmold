@@ -199,6 +199,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut create_triggers = Vec::new();
     let mut enable_rls = Vec::new();
     let mut create_policies = Vec::new();
+    let mut alter_owners = Vec::new();
 
     for op in ops {
         match op {
@@ -214,6 +215,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::CreateTrigger(_) => create_triggers.push(op),
             MigrationOp::EnableRls { .. } => enable_rls.push(op),
             MigrationOp::CreatePolicy(_) => create_policies.push(op),
+            MigrationOp::AlterOwner { .. } => alter_owners.push(op),
             _ => {}
         }
     }
@@ -235,6 +237,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(create_policies);
     result.extend(create_views);
     result.extend(create_triggers);
+    result.extend(alter_owners);
 
     result
 }
