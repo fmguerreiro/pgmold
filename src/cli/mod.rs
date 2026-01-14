@@ -95,6 +95,9 @@ enum Commands {
         /// Generate zero-downtime migration plan with expand/contract phases
         #[arg(long)]
         zero_downtime: bool,
+        /// Include ownership management (ALTER ... OWNER TO) in schema comparison
+        #[arg(long)]
+        manage_ownership: bool,
     },
 
     /// Apply migrations
@@ -124,6 +127,9 @@ enum Commands {
         /// Include objects owned by extensions (e.g., PostGIS functions). Default: false (excludes extension objects)
         #[arg(long)]
         include_extension_objects: bool,
+        /// Include ownership management (ALTER ... OWNER TO) in schema comparison
+        #[arg(long)]
+        manage_ownership: bool,
     },
 
     /// Lint schema or migration plan
@@ -216,6 +222,9 @@ enum MigrateAction {
         /// Target schemas (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
         target_schemas: Vec<String>,
+        /// Include ownership management (ALTER ... OWNER TO) in schema comparison
+        #[arg(long)]
+        manage_ownership: bool,
     },
 }
 
@@ -270,6 +279,7 @@ pub async fn run() -> Result<()> {
             include_extension_objects,
             json,
             zero_downtime,
+            manage_ownership: _manage_ownership,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -421,6 +431,7 @@ pub async fn run() -> Result<()> {
             include_types,
             exclude_types,
             include_extension_objects,
+            manage_ownership: _manage_ownership,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -713,6 +724,7 @@ pub async fn run() -> Result<()> {
                 migrations,
                 name,
                 target_schemas,
+                manage_ownership: _manage_ownership,
             } => {
                 let target = load_sql_schema(&schema)?;
                 let db_url = parse_db_source(&database)?;
@@ -963,6 +975,71 @@ mod tests {
             assert!(!zero_downtime);
         } else {
             panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn cli_parses_manage_ownership_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--manage-ownership",
+        ]);
+
+        if let Commands::Plan {
+            manage_ownership, ..
+        } = args.command
+        {
+            assert!(manage_ownership);
+        } else {
+            panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn cli_manage_ownership_flag_defaults_false() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+        ]);
+
+        if let Commands::Plan {
+            manage_ownership, ..
+        } = args.command
+        {
+            assert!(!manage_ownership);
+        } else {
+            panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn cli_apply_parses_manage_ownership_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "apply",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--manage-ownership",
+        ]);
+
+        if let Commands::Apply {
+            manage_ownership, ..
+        } = args.command
+        {
+            assert!(manage_ownership);
+        } else {
+            panic!("Expected Apply command");
         }
     }
 }
