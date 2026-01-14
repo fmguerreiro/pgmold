@@ -2406,3 +2406,59 @@ async fn introspects_sequence_owner() {
 
     assert_eq!(sequence.owner, Some("sequence_owner".to_string()));
 }
+
+#[tokio::test]
+async fn introspects_enum_owner() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE ROLE enum_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE TYPE user_role AS ENUM ('admin', 'user', 'guest')")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("ALTER TYPE user_role OWNER TO enum_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let enum_type = schema.enums.get("public.user_role").unwrap();
+
+    assert_eq!(enum_type.owner, Some("enum_owner".to_string()));
+}
+
+#[tokio::test]
+async fn introspects_domain_owner() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE ROLE domain_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE DOMAIN email_address AS TEXT CHECK (VALUE ~ '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$')")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("ALTER DOMAIN email_address OWNER TO domain_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let domain = schema.domains.get("public.email_address").unwrap();
+
+    assert_eq!(domain.owner, Some("domain_owner".to_string()));
+}

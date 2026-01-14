@@ -152,17 +152,18 @@ async fn introspect_enums(
 ) -> Result<BTreeMap<String, EnumType>> {
     let rows = sqlx::query(
         r#"
-        SELECT n.nspname, t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) as labels
+        SELECT n.nspname, t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) as labels, r.rolname AS owner
         FROM pg_type t
         JOIN pg_enum e ON t.oid = e.enumtypid
         JOIN pg_namespace n ON t.typnamespace = n.oid
+        JOIN pg_roles r ON t.typowner = r.oid
         WHERE n.nspname = ANY($1::text[])
           AND ($2::boolean OR NOT EXISTS (
               SELECT 1 FROM pg_depend d
               WHERE d.objid = t.oid
               AND d.deptype = 'e'
           ))
-        GROUP BY n.nspname, t.typname
+        GROUP BY n.nspname, t.typname, r.rolname
         "#,
     )
     .bind(target_schemas)
@@ -176,11 +177,12 @@ async fn introspect_enums(
         let schema: String = row.get("nspname");
         let name: String = row.get("typname");
         let labels: Vec<String> = row.get("labels");
+        let owner: String = row.get("owner");
         let enum_type = EnumType {
             name: name.clone(),
             schema: schema.clone(),
             values: labels,
-            owner: None,
+            owner: Some(owner),
         };
         let qualified_name = format!("{schema}.{name}");
         enums.insert(qualified_name, enum_type);
@@ -201,10 +203,12 @@ async fn introspect_domains(
             t.typname AS domain_name,
             bt.typname AS base_type,
             t.typnotnull AS not_null,
-            pg_get_expr(t.typdefaultbin, 0) AS default_expr
+            pg_get_expr(t.typdefaultbin, 0) AS default_expr,
+            r.rolname AS owner
         FROM pg_type t
         JOIN pg_namespace n ON t.typnamespace = n.oid
         JOIN pg_type bt ON t.typbasetype = bt.oid
+        JOIN pg_roles r ON t.typowner = r.oid
         WHERE t.typtype = 'd'
             AND n.nspname = ANY($1::text[])
             AND ($2::boolean OR NOT EXISTS (
@@ -229,6 +233,7 @@ async fn introspect_domains(
         let default_expr: Option<String> = row
             .get::<Option<String>, &str>("default_expr")
             .filter(|s| !s.is_empty());
+        let owner: String = row.get("owner");
 
         let check_constraints = introspect_domain_constraints(connection, &schema, &name).await?;
 
@@ -265,7 +270,7 @@ async fn introspect_domains(
             not_null,
             collation: None,
             check_constraints,
-            owner: None,
+            owner: Some(owner),
         };
         let qualified_name = format!("{schema}.{name}");
         domains.insert(qualified_name, domain);

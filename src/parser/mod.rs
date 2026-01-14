@@ -89,10 +89,16 @@ fn preprocess_sql(sql: &str) -> String {
     let alter_function_re = Regex::new(r"(?i)ALTER\s+FUNCTION\s+[^;]+;").unwrap();
     // Remove ALTER SEQUENCE statements (sqlparser doesn't support them)
     let alter_sequence_re = Regex::new(r"(?i)ALTER\s+SEQUENCE\s+[^;]+;").unwrap();
+    // Remove ALTER TYPE statements (sqlparser doesn't fully support them)
+    let alter_type_re = Regex::new(r"(?i)ALTER\s+TYPE\s+[^;]+;").unwrap();
+    // Remove ALTER DOMAIN statements (sqlparser doesn't support them)
+    let alter_domain_re = Regex::new(r"(?i)ALTER\s+DOMAIN\s+[^;]+;").unwrap();
 
     let processed = set_search_path_re.replace_all(sql, "");
     let processed = alter_function_re.replace_all(&processed, "");
     let processed = alter_sequence_re.replace_all(&processed, "");
+    let processed = alter_type_re.replace_all(&processed, "");
+    let processed = alter_domain_re.replace_all(&processed, "");
 
     processed.to_string()
 }
@@ -615,6 +621,54 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             };
             if matches {
                 func.owner = Some(owner.to_string());
+                break;
+            }
+        }
+    }
+
+    // Extract ALTER TYPE OWNER TO statements and apply to enums
+    let alter_type_owner_re = Regex::new(
+        r#"(?i)ALTER\s+TYPE\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
+    ).unwrap();
+
+    for cap in alter_type_owner_re.captures_iter(sql) {
+        let schema_part = cap.get(1).map(|m| m.as_str().trim_matches('"'));
+        let type_name = cap.get(2).unwrap().as_str().trim_matches('"');
+        let owner = cap.get(3).unwrap().as_str().trim_matches('"');
+
+        // Try to match enum
+        for (_key, enum_type) in schema.enums.iter_mut() {
+            let matches = if let Some(schema_name) = schema_part {
+                enum_type.schema == schema_name && enum_type.name == type_name
+            } else {
+                enum_type.name == type_name
+            };
+            if matches {
+                enum_type.owner = Some(owner.to_string());
+                break;
+            }
+        }
+    }
+
+    // Extract ALTER DOMAIN OWNER TO statements and apply to domains
+    let alter_domain_owner_re = Regex::new(
+        r#"(?i)ALTER\s+DOMAIN\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
+    ).unwrap();
+
+    for cap in alter_domain_owner_re.captures_iter(sql) {
+        let schema_part = cap.get(1).map(|m| m.as_str().trim_matches('"'));
+        let domain_name = cap.get(2).unwrap().as_str().trim_matches('"');
+        let owner = cap.get(3).unwrap().as_str().trim_matches('"');
+
+        // Match domain
+        for (_key, domain) in schema.domains.iter_mut() {
+            let matches = if let Some(schema_name) = schema_part {
+                domain.schema == schema_name && domain.name == domain_name
+            } else {
+                domain.name == domain_name
+            };
+            if matches {
+                domain.owner = Some(owner.to_string());
                 break;
             }
         }
@@ -1542,6 +1596,28 @@ CREATE TABLE products (
         let schema = parse_sql_string(sql).unwrap();
         let func = schema.functions.get("auth.hook()").unwrap();
         assert_eq!(func.owner, Some("supabase_auth_admin".to_string()));
+    }
+
+    #[test]
+    fn parses_alter_type_owner_to() {
+        let sql = r#"
+            CREATE TYPE user_role AS ENUM ('admin', 'user', 'guest');
+            ALTER TYPE user_role OWNER TO enum_owner;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let enum_type = schema.enums.get("public.user_role").unwrap();
+        assert_eq!(enum_type.owner, Some("enum_owner".to_string()));
+    }
+
+    #[test]
+    fn parses_alter_domain_owner_to() {
+        let sql = r#"
+            CREATE DOMAIN email AS TEXT;
+            ALTER DOMAIN email OWNER TO domain_owner;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let domain = schema.domains.get("public.email").unwrap();
+        assert_eq!(domain.owner, Some("domain_owner".to_string()));
     }
 
     #[test]

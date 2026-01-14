@@ -16,20 +16,57 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
 
     for enum_type in schema.enums.values() {
         ops.push(MigrationOp::CreateEnum(enum_type.clone()));
+        if let Some(ref owner) = enum_type.owner {
+            ops.push(MigrationOp::AlterOwner {
+                object_kind: crate::diff::OwnerObjectKind::Type,
+                schema: enum_type.schema.clone(),
+                name: enum_type.name.clone(),
+                args: None,
+                new_owner: owner.clone(),
+            });
+        }
     }
 
     for domain in schema.domains.values() {
         ops.push(MigrationOp::CreateDomain(domain.clone()));
+        if let Some(ref owner) = domain.owner {
+            ops.push(MigrationOp::AlterOwner {
+                object_kind: crate::diff::OwnerObjectKind::Domain,
+                schema: domain.schema.clone(),
+                name: domain.name.clone(),
+                args: None,
+                new_owner: owner.clone(),
+            });
+        }
     }
 
     for sequence in schema.sequences.values() {
         ops.push(MigrationOp::CreateSequence(sequence.clone()));
+        if let Some(ref owner) = sequence.owner {
+            ops.push(MigrationOp::AlterOwner {
+                object_kind: crate::diff::OwnerObjectKind::Sequence,
+                schema: sequence.schema.clone(),
+                name: sequence.name.clone(),
+                args: None,
+                new_owner: owner.clone(),
+            });
+        }
     }
 
     for table in schema.tables.values() {
         ops.push(MigrationOp::CreateTable(table.clone()));
         // Note: indexes, foreign_keys, and check_constraints are handled by
         // generate_create_table in sqlgen.rs, so we don't create separate ops here.
+
+        if let Some(ref owner) = table.owner {
+            ops.push(MigrationOp::AlterOwner {
+                object_kind: crate::diff::OwnerObjectKind::Table,
+                schema: table.schema.clone(),
+                name: table.name.clone(),
+                args: None,
+                new_owner: owner.clone(),
+            });
+        }
 
         let table_qualified = qualified_name(&table.schema, &table.name);
 
@@ -50,10 +87,32 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
 
     for function in schema.functions.values() {
         ops.push(MigrationOp::CreateFunction(function.clone()));
+        if let Some(ref owner) = function.owner {
+            ops.push(MigrationOp::AlterOwner {
+                object_kind: crate::diff::OwnerObjectKind::Function,
+                schema: function.schema.clone(),
+                name: function.signature(),
+                args: Some(function.arguments
+                    .iter()
+                    .map(|a| crate::model::normalize_pg_type(&a.data_type))
+                    .collect::<Vec<_>>()
+                    .join(", ")),
+                new_owner: owner.clone(),
+            });
+        }
     }
 
     for view in schema.views.values() {
         ops.push(MigrationOp::CreateView(view.clone()));
+        if let Some(ref owner) = view.owner {
+            ops.push(MigrationOp::AlterOwner {
+                object_kind: crate::diff::OwnerObjectKind::View,
+                schema: view.schema.clone(),
+                name: view.name.clone(),
+                args: None,
+                new_owner: owner.clone(),
+            });
+        }
     }
 
     for trigger in schema.triggers.values() {
