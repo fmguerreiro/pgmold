@@ -51,6 +51,7 @@ pub struct Table {
     pub row_level_security: bool,
     pub policies: Vec<Policy>,
     pub partition_by: Option<PartitionKey>,
+    #[serde(skip)]
     pub owner: Option<String>,
 }
 

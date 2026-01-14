@@ -336,9 +336,10 @@ async fn introspect_tables(
 ) -> Result<BTreeMap<String, Table>> {
     let rows = sqlx::query(
         r#"
-        SELECT n.nspname AS table_schema, c.relname AS table_name
+        SELECT n.nspname AS table_schema, c.relname AS table_name, r.rolname AS owner
         FROM pg_class c
         JOIN pg_namespace n ON c.relnamespace = n.oid
+        JOIN pg_roles r ON c.relowner = r.oid
         WHERE n.nspname = ANY($1::text[])
           AND c.relkind IN ('r', 'p')
           AND c.relispartition = false
@@ -359,6 +360,7 @@ async fn introspect_tables(
     for row in rows {
         let schema: String = row.get("table_schema");
         let name: String = row.get("table_name");
+        let owner: String = row.get("owner");
         let table = Table {
             name: name.clone(),
             schema: schema.clone(),
@@ -371,7 +373,7 @@ async fn introspect_tables(
             row_level_security: false,
             policies: Vec::new(),
             partition_by: None,
-            owner: None,
+            owner: Some(owner),
         };
         let qualified_name = format!("{schema}.{name}");
         tables.insert(qualified_name, table);

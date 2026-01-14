@@ -2279,3 +2279,31 @@ async fn schema_creation_round_trip() {
         "Should have no schema diff after round-trip, got: {remaining_schema_ops:?}"
     );
 }
+
+#[tokio::test]
+async fn introspects_table_owner() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE ROLE table_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE TABLE users (id BIGINT PRIMARY KEY, email TEXT NOT NULL)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("ALTER TABLE users OWNER TO table_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let table = schema.tables.get("public.users").unwrap();
+
+    assert_eq!(table.owner, Some("table_owner".to_string()));
+}
