@@ -279,7 +279,7 @@ pub async fn run() -> Result<()> {
             include_extension_objects,
             json,
             zero_downtime,
-            manage_ownership: _manage_ownership,
+            manage_ownership,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -298,9 +298,17 @@ pub async fn run() -> Result<()> {
             let filtered_db_schema = filter_schema(&db_schema, &filter);
 
             let ops = if reverse {
-                plan_migration(compute_diff(&filtered_target, &filtered_db_schema))
+                plan_migration(pgmold::diff::compute_diff_with_flags(
+                    &filtered_target,
+                    &filtered_db_schema,
+                    manage_ownership,
+                ))
             } else {
-                plan_migration(compute_diff(&filtered_db_schema, &filtered_target))
+                plan_migration(pgmold::diff::compute_diff_with_flags(
+                    &filtered_db_schema,
+                    &filtered_target,
+                    manage_ownership,
+                ))
             };
 
             if zero_downtime {
@@ -431,7 +439,7 @@ pub async fn run() -> Result<()> {
             include_types,
             exclude_types,
             include_extension_objects,
-            manage_ownership: _manage_ownership,
+            manage_ownership,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -450,7 +458,11 @@ pub async fn run() -> Result<()> {
 
             let filtered_db_schema = filter_schema(&db_schema, &filter);
 
-            let ops = plan_migration(compute_diff(&filtered_db_schema, &filtered_target));
+            let ops = plan_migration(pgmold::diff::compute_diff_with_flags(
+                &filtered_db_schema,
+                &filtered_target,
+                manage_ownership,
+            ));
             let lint_options = LintOptions {
                 allow_destructive,
                 ..Default::default()
@@ -724,7 +736,7 @@ pub async fn run() -> Result<()> {
                 migrations,
                 name,
                 target_schemas,
-                manage_ownership: _manage_ownership,
+                manage_ownership,
             } => {
                 let target = load_sql_schema(&schema)?;
                 let db_url = parse_db_source(&database)?;
@@ -735,7 +747,11 @@ pub async fn run() -> Result<()> {
                     .await
                     .map_err(|e| anyhow!("{e}"))?;
 
-                let ops = plan_migration(compute_diff(&current, &target));
+                let ops = plan_migration(pgmold::diff::compute_diff_with_flags(
+                    &current,
+                    &target,
+                    manage_ownership,
+                ));
                 let sql = generate_sql(&ops);
 
                 if sql.is_empty() {

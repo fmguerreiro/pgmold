@@ -192,21 +192,29 @@ pub enum EnumValuePosition {
     After(String),
 }
 
-use crate::model::Schema;
+use crate::model::{parse_qualified_name, Schema};
 
 pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+    compute_diff_with_flags(from, to, false)
+}
+
+pub fn compute_diff_with_flags(
+    from: &Schema,
+    to: &Schema,
+    manage_ownership: bool,
+) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     ops.extend(diff_schemas(from, to));
     ops.extend(diff_extensions(from, to));
-    ops.extend(diff_enums(from, to));
-    ops.extend(diff_domains(from, to));
-    ops.extend(diff_tables(from, to));
+    ops.extend(diff_enums(from, to, manage_ownership));
+    ops.extend(diff_domains(from, to, manage_ownership));
+    ops.extend(diff_tables(from, to, manage_ownership));
     ops.extend(diff_partitions(from, to));
-    ops.extend(diff_functions(from, to));
-    ops.extend(diff_views(from, to));
+    ops.extend(diff_functions(from, to, manage_ownership));
+    ops.extend(diff_views(from, to, manage_ownership));
     ops.extend(diff_triggers(from, to));
-    ops.extend(diff_sequences(from, to));
+    ops.extend(diff_sequences(from, to, manage_ownership));
 
     for (name, to_table) in &to.tables {
         if let Some(from_table) = from.tables.get(name) {
@@ -269,14 +277,38 @@ fn diff_extensions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops
 }
 
-fn diff_enums(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+fn diff_enums(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, to_enum) in &to.enums {
         if let Some(from_enum) = from.enums.get(name) {
             ops.extend(diff_enum_values(name, from_enum, to_enum));
+            if manage_ownership && from_enum.owner != to_enum.owner {
+                if let Some(ref new_owner) = to_enum.owner {
+                    let (schema, enum_name) = parse_qualified_name(name);
+                    ops.push(MigrationOp::AlterOwner {
+                        object_kind: OwnerObjectKind::Type,
+                        schema,
+                        name: enum_name,
+                        args: None,
+                        new_owner: new_owner.clone(),
+                    });
+                }
+            }
         } else {
             ops.push(MigrationOp::CreateEnum(to_enum.clone()));
+            if manage_ownership {
+                if let Some(ref owner) = to_enum.owner {
+                    let (schema, enum_name) = parse_qualified_name(name);
+                    ops.push(MigrationOp::AlterOwner {
+                        object_kind: OwnerObjectKind::Type,
+                        schema,
+                        name: enum_name,
+                        args: None,
+                        new_owner: owner.clone(),
+                    });
+                }
+            }
         }
     }
 
@@ -313,7 +345,7 @@ fn diff_enum_values(name: &str, from: &EnumType, to: &EnumType) -> Vec<Migration
     ops
 }
 
-fn diff_domains(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+fn diff_domains(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, to_domain) in &to.domains {
@@ -331,8 +363,32 @@ fn diff_domains(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                     changes,
                 });
             }
+            if manage_ownership && from_domain.owner != to_domain.owner {
+                if let Some(ref new_owner) = to_domain.owner {
+                    let (schema, domain_name) = parse_qualified_name(name);
+                    ops.push(MigrationOp::AlterOwner {
+                        object_kind: OwnerObjectKind::Domain,
+                        schema,
+                        name: domain_name,
+                        args: None,
+                        new_owner: new_owner.clone(),
+                    });
+                }
+            }
         } else {
             ops.push(MigrationOp::CreateDomain(to_domain.clone()));
+            if manage_ownership {
+                if let Some(ref owner) = to_domain.owner {
+                    let (schema, domain_name) = parse_qualified_name(name);
+                    ops.push(MigrationOp::AlterOwner {
+                        object_kind: OwnerObjectKind::Domain,
+                        schema,
+                        name: domain_name,
+                        args: None,
+                        new_owner: owner.clone(),
+                    });
+                }
+            }
         }
     }
 
@@ -345,12 +401,37 @@ fn diff_domains(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops
 }
 
-fn diff_tables(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+fn diff_tables(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, table) in &to.tables {
-        if !from.tables.contains_key(name) {
+        if let Some(from_table) = from.tables.get(name) {
+            if manage_ownership && from_table.owner != table.owner {
+                if let Some(ref new_owner) = table.owner {
+                    let (schema, table_name) = parse_qualified_name(name);
+                    ops.push(MigrationOp::AlterOwner {
+                        object_kind: OwnerObjectKind::Table,
+                        schema,
+                        name: table_name,
+                        args: None,
+                        new_owner: new_owner.clone(),
+                    });
+                }
+            }
+        } else {
             ops.push(MigrationOp::CreateTable(table.clone()));
+            if manage_ownership {
+                if let Some(ref owner) = table.owner {
+                    let (schema, table_name) = parse_qualified_name(name);
+                    ops.push(MigrationOp::AlterOwner {
+                        object_kind: OwnerObjectKind::Table,
+                        schema,
+                        name: table_name,
+                        args: None,
+                        new_owner: owner.clone(),
+                    });
+                }
+            }
         }
     }
 
@@ -381,7 +462,7 @@ fn diff_partitions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops
 }
 
-fn diff_functions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+fn diff_functions(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (sig, func) in &to.functions {
@@ -413,8 +494,42 @@ fn diff_functions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                     });
                 }
             }
+            if manage_ownership && from_func.owner != func.owner {
+                if let Some(ref new_owner) = func.owner {
+                    let args_str = func
+                        .arguments
+                        .iter()
+                        .map(|a| a.data_type.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    ops.push(MigrationOp::AlterOwner {
+                        object_kind: OwnerObjectKind::Function,
+                        schema: func.schema.clone(),
+                        name: func.name.clone(),
+                        args: Some(args_str),
+                        new_owner: new_owner.clone(),
+                    });
+                }
+            }
         } else {
             ops.push(MigrationOp::CreateFunction(func.clone()));
+            if manage_ownership {
+                if let Some(ref owner) = func.owner {
+                    let args_str = func
+                        .arguments
+                        .iter()
+                        .map(|a| a.data_type.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    ops.push(MigrationOp::AlterOwner {
+                        object_kind: OwnerObjectKind::Function,
+                        schema: func.schema.clone(),
+                        name: func.name.clone(),
+                        args: Some(args_str),
+                        new_owner: owner.clone(),
+                    });
+                }
+            }
         }
     }
 
@@ -435,7 +550,7 @@ fn diff_functions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops
 }
 
-fn diff_views(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+fn diff_views(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, view) in &to.views {
@@ -446,8 +561,32 @@ fn diff_views(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                     new_view: view.clone(),
                 });
             }
+            if manage_ownership && from_view.owner != view.owner {
+                if let Some(ref new_owner) = view.owner {
+                    let (schema, view_name) = parse_qualified_name(name);
+                    ops.push(MigrationOp::AlterOwner {
+                        object_kind: OwnerObjectKind::View,
+                        schema,
+                        name: view_name,
+                        args: None,
+                        new_owner: new_owner.clone(),
+                    });
+                }
+            }
         } else {
             ops.push(MigrationOp::CreateView(view.clone()));
+            if manage_ownership {
+                if let Some(ref owner) = view.owner {
+                    let (schema, view_name) = parse_qualified_name(name);
+                    ops.push(MigrationOp::AlterOwner {
+                        object_kind: OwnerObjectKind::View,
+                        schema,
+                        name: view_name,
+                        args: None,
+                        new_owner: owner.clone(),
+                    });
+                }
+            }
         }
     }
 
@@ -542,13 +681,25 @@ fn only_enabled_differs(from: &Trigger, to: &Trigger) -> bool {
         && from.new_table_name == to.new_table_name
 }
 
-fn diff_sequences(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+fn diff_sequences(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, to_seq) in &to.sequences {
         match from.sequences.get(name) {
             None => {
                 ops.push(MigrationOp::CreateSequence(to_seq.clone()));
+                if manage_ownership {
+                    if let Some(ref owner) = to_seq.owner {
+                        let (schema, seq_name) = parse_qualified_name(name);
+                        ops.push(MigrationOp::AlterOwner {
+                            object_kind: OwnerObjectKind::Sequence,
+                            schema,
+                            name: seq_name,
+                            args: None,
+                            new_owner: owner.clone(),
+                        });
+                    }
+                }
             }
             Some(from_seq) => {
                 if let Some(changes) = compute_sequence_changes(from_seq, to_seq) {
@@ -556,6 +707,18 @@ fn diff_sequences(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                         name: name.clone(),
                         changes,
                     });
+                }
+                if manage_ownership && from_seq.owner != to_seq.owner {
+                    if let Some(ref new_owner) = to_seq.owner {
+                        let (schema, seq_name) = parse_qualified_name(name);
+                        ops.push(MigrationOp::AlterOwner {
+                            object_kind: OwnerObjectKind::Sequence,
+                            schema,
+                            name: seq_name,
+                            args: None,
+                            new_owner: new_owner.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -2957,5 +3120,284 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             has_create_policy,
             "Should emit CreatePolicy for new table with policies"
         );
+    }
+
+    #[test]
+    fn detects_table_owner_change_when_flag_enabled() {
+        let mut from = empty_schema();
+        let mut from_table = simple_table("users");
+        from_table.owner = Some("oldowner".to_string());
+        from.tables.insert("users".to_string(), from_table);
+
+        let mut to = empty_schema();
+        let mut to_table = simple_table("users");
+        to_table.owner = Some("newowner".to_string());
+        to.tables.insert("users".to_string(), to_table);
+
+        let ops = compute_diff_with_flags(&from, &to, true);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterOwner {
+                object_kind: OwnerObjectKind::Table,
+                schema,
+                name,
+                new_owner,
+                ..
+            } if schema == "public" && name == "users" && new_owner == "newowner"
+        ));
+    }
+
+    #[test]
+    fn ignores_table_owner_change_when_flag_disabled() {
+        let mut from = empty_schema();
+        let mut from_table = simple_table("users");
+        from_table.owner = Some("oldowner".to_string());
+        from.tables.insert("users".to_string(), from_table);
+
+        let mut to = empty_schema();
+        let mut to_table = simple_table("users");
+        to_table.owner = Some("newowner".to_string());
+        to.tables.insert("users".to_string(), to_table);
+
+        let ops = compute_diff_with_flags(&from, &to, false);
+        assert_eq!(ops.len(), 0);
+    }
+
+    #[test]
+    fn detects_view_owner_change_when_flag_enabled() {
+        let mut from = empty_schema();
+        from.views.insert(
+            "user_view".to_string(),
+            View {
+                name: "user_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT * FROM users".to_string(),
+                materialized: false,
+                owner: Some("oldowner".to_string()),
+            },
+        );
+
+        let mut to = empty_schema();
+        to.views.insert(
+            "user_view".to_string(),
+            View {
+                name: "user_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT * FROM users".to_string(),
+                materialized: false,
+                owner: Some("newowner".to_string()),
+            },
+        );
+
+        let ops = compute_diff_with_flags(&from, &to, true);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterOwner {
+                object_kind: OwnerObjectKind::View,
+                schema,
+                name,
+                new_owner,
+                ..
+            } if schema == "public" && name == "user_view" && new_owner == "newowner"
+        ));
+    }
+
+    #[test]
+    fn detects_sequence_owner_change_when_flag_enabled() {
+        let mut from = empty_schema();
+        from.sequences.insert(
+            "user_id_seq".to_string(),
+            Sequence {
+                name: "user_id_seq".to_string(),
+                schema: "public".to_string(),
+                data_type: SequenceDataType::BigInt,
+                increment: Some(1),
+                min_value: Some(1),
+                max_value: None,
+                start: Some(1),
+                cache: Some(1),
+                cycle: false,
+                owned_by: None,
+                owner: Some("oldowner".to_string()),
+            },
+        );
+
+        let mut to = empty_schema();
+        to.sequences.insert(
+            "user_id_seq".to_string(),
+            Sequence {
+                name: "user_id_seq".to_string(),
+                schema: "public".to_string(),
+                data_type: SequenceDataType::BigInt,
+                increment: Some(1),
+                min_value: Some(1),
+                max_value: None,
+                start: Some(1),
+                cache: Some(1),
+                cycle: false,
+                owned_by: None,
+                owner: Some("newowner".to_string()),
+            },
+        );
+
+        let ops = compute_diff_with_flags(&from, &to, true);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterOwner {
+                object_kind: OwnerObjectKind::Sequence,
+                schema,
+                name,
+                new_owner,
+                ..
+            } if schema == "public" && name == "user_id_seq" && new_owner == "newowner"
+        ));
+    }
+
+    #[test]
+    fn detects_enum_owner_change_when_flag_enabled() {
+        let mut from = empty_schema();
+        from.enums.insert(
+            "status".to_string(),
+            EnumType {
+                name: "status".to_string(),
+                schema: "public".to_string(),
+                values: vec!["active".to_string()],
+                owner: Some("oldowner".to_string()),
+            },
+        );
+
+        let mut to = empty_schema();
+        to.enums.insert(
+            "status".to_string(),
+            EnumType {
+                name: "status".to_string(),
+                schema: "public".to_string(),
+                values: vec!["active".to_string()],
+                owner: Some("newowner".to_string()),
+            },
+        );
+
+        let ops = compute_diff_with_flags(&from, &to, true);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterOwner {
+                object_kind: OwnerObjectKind::Type,
+                schema,
+                name,
+                new_owner,
+                ..
+            } if schema == "public" && name == "status" && new_owner == "newowner"
+        ));
+    }
+
+    #[test]
+    fn detects_domain_owner_change_when_flag_enabled() {
+        let mut from = empty_schema();
+        from.domains.insert(
+            "email".to_string(),
+            Domain {
+                name: "email".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Text,
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: Some("oldowner".to_string()),
+            },
+        );
+
+        let mut to = empty_schema();
+        to.domains.insert(
+            "email".to_string(),
+            Domain {
+                name: "email".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Text,
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: Some("newowner".to_string()),
+            },
+        );
+
+        let ops = compute_diff_with_flags(&from, &to, true);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterOwner {
+                object_kind: OwnerObjectKind::Domain,
+                schema,
+                name,
+                new_owner,
+                ..
+            } if schema == "public" && name == "email" && new_owner == "newowner"
+        ));
+    }
+
+    #[test]
+    fn detects_function_owner_change_when_flag_enabled() {
+        let func_sig = "public.get_user(integer)".to_string();
+        let mut from = empty_schema();
+        from.functions.insert(
+            func_sig.clone(),
+            Function {
+                name: "get_user".to_string(),
+                schema: "public".to_string(),
+                language: "plpgsql".to_string(),
+                arguments: vec![FunctionArg {
+                    name: Some("user_id".to_string()),
+                    data_type: "integer".to_string(),
+                    default: None,
+                    mode: ArgMode::In,
+                }],
+                return_type: "integer".to_string(),
+                body: "BEGIN RETURN user_id; END;".to_string(),
+                volatility: Volatility::Volatile,
+                security: SecurityType::Invoker,
+                config_params: vec![],
+                owner: Some("oldowner".to_string()),
+            },
+        );
+
+        let mut to = empty_schema();
+        to.functions.insert(
+            func_sig.clone(),
+            Function {
+                name: "get_user".to_string(),
+                schema: "public".to_string(),
+                language: "plpgsql".to_string(),
+                arguments: vec![FunctionArg {
+                    name: Some("user_id".to_string()),
+                    data_type: "integer".to_string(),
+                    default: None,
+                    mode: ArgMode::In,
+                }],
+                return_type: "integer".to_string(),
+                body: "BEGIN RETURN user_id; END;".to_string(),
+                volatility: Volatility::Volatile,
+                security: SecurityType::Invoker,
+                config_params: vec![],
+                owner: Some("newowner".to_string()),
+            },
+        );
+
+        let ops = compute_diff_with_flags(&from, &to, true);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterOwner {
+                object_kind: OwnerObjectKind::Function,
+                schema,
+                name,
+                args,
+                new_owner,
+            } if schema == "public" && name == "get_user" && args.as_deref() == Some("integer") && new_owner == "newowner"
+        ));
     }
 }

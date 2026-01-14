@@ -154,6 +154,7 @@ async fn drift_detection() {
             email VARCHAR(255) NOT NULL,
             PRIMARY KEY (id)
         );
+        ALTER TABLE users OWNER TO postgres;
         "#
     )
     .unwrap();
@@ -1781,6 +1782,7 @@ async fn drift_cli_no_drift() {
             email VARCHAR(255) NOT NULL,
             PRIMARY KEY (id)
         );
+        ALTER TABLE users OWNER TO postgres;
         "#
     )
     .unwrap();
@@ -2172,7 +2174,7 @@ async fn function_owner_round_trip() {
         .await
         .unwrap();
 
-    let ops = compute_diff(&current, &parsed_schema);
+    let ops = pgmold::diff::compute_diff_with_flags(&current, &parsed_schema, true);
     let planned = plan_migration(ops);
     let sql = generate_sql(&planned);
 
@@ -2190,7 +2192,7 @@ async fn function_owner_round_trip() {
         "Owner should match after round-trip"
     );
 
-    let diff_ops = compute_diff(&introspected, &parsed_schema);
+    let diff_ops = pgmold::diff::compute_diff_with_flags(&introspected, &parsed_schema, true);
     let func_ops: Vec<_> = diff_ops
         .iter()
         .filter(|op| {

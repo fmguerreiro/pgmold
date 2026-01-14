@@ -91,7 +91,7 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
             ops.push(MigrationOp::AlterOwner {
                 object_kind: crate::diff::OwnerObjectKind::Function,
                 schema: function.schema.clone(),
-                name: function.signature(),
+                name: function.name.clone(),
                 args: Some(function.arguments
                     .iter()
                     .map(|a| crate::model::normalize_pg_type(&a.data_type))
