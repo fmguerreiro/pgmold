@@ -857,7 +857,9 @@ fn parse_data_type(dt: &DataType) -> Result<PgType> {
         DataType::Text => Ok(PgType::Text),
         DataType::Boolean => Ok(PgType::Boolean),
         DataType::Timestamp(_, tz) => {
-            if *tz == sqlparser::ast::TimezoneInfo::WithTimeZone {
+            if *tz == sqlparser::ast::TimezoneInfo::WithTimeZone
+                || *tz == sqlparser::ast::TimezoneInfo::Tz
+            {
                 Ok(PgType::TimestampTz)
             } else {
                 Ok(PgType::Timestamp)
@@ -2760,5 +2762,41 @@ CREATE TABLE embeddings (
 
         let embedding_qualified = &embeddings.columns["embedding_qualified"];
         assert_eq!(embedding_qualified.data_type, PgType::Vector(Some(768)));
+    }
+
+    #[test]
+    fn timestamptz_alias_parses_to_timestamptz_type() {
+        let sql = r#"
+CREATE TABLE "mrv"."Cultivation" (
+    "id" TEXT NOT NULL,
+    "plantingDate" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "Cultivation_pkey" PRIMARY KEY ("id")
+);
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse TIMESTAMPTZ");
+
+        let table = &schema.tables["mrv.Cultivation"];
+        let created_at = &table.columns["createdAt"];
+        let updated_at = &table.columns["updatedAt"];
+        let planting_date = &table.columns["plantingDate"];
+
+        assert_eq!(
+            created_at.data_type,
+            PgType::TimestampTz,
+            "TIMESTAMPTZ should parse to PgType::TimestampTz"
+        );
+        assert_eq!(
+            updated_at.data_type,
+            PgType::TimestampTz,
+            "TIMESTAMPTZ should parse to PgType::TimestampTz"
+        );
+        assert_eq!(
+            planting_date.data_type,
+            PgType::Timestamp,
+            "TIMESTAMP without time zone should parse to PgType::Timestamp"
+        );
     }
 }
