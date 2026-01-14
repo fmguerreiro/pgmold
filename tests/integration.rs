@@ -2307,3 +2307,74 @@ async fn introspects_table_owner() {
 
     assert_eq!(table.owner, Some("table_owner".to_string()));
 }
+
+#[tokio::test]
+async fn introspects_view_owner() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE ROLE view_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE TABLE users (id BIGINT PRIMARY KEY, email TEXT NOT NULL)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE VIEW user_view AS SELECT id, email FROM users")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("ALTER VIEW user_view OWNER TO view_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let view = schema.views.get("public.user_view").unwrap();
+
+    assert_eq!(view.owner, Some("view_owner".to_string()));
+}
+
+#[tokio::test]
+async fn introspects_materialized_view_owner() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE ROLE matview_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE TABLE users (id BIGINT PRIMARY KEY, email TEXT NOT NULL)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("INSERT INTO users VALUES (1, 'test@example.com')")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE MATERIALIZED VIEW user_matview AS SELECT id, email FROM users")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("ALTER MATERIALIZED VIEW user_matview OWNER TO matview_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let view = schema.views.get("public.user_matview").unwrap();
+
+    assert_eq!(view.owner, Some("matview_owner".to_string()));
+}

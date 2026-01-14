@@ -1123,10 +1123,11 @@ async fn introspect_views(
 
     let regular_views = sqlx::query(
         r#"
-        SELECT v.schemaname, v.viewname, v.definition
+        SELECT v.schemaname, v.viewname, v.definition, r.rolname AS owner
         FROM pg_views v
         JOIN pg_class c ON c.relname = v.viewname
         JOIN pg_namespace n ON c.relnamespace = n.oid AND n.nspname = v.schemaname
+        JOIN pg_roles r ON c.relowner = r.oid
         WHERE v.schemaname = ANY($1::text[])
           AND ($2::boolean OR NOT EXISTS (
               SELECT 1 FROM pg_depend d
@@ -1145,13 +1146,14 @@ async fn introspect_views(
         let schema: String = row.get("schemaname");
         let name: String = row.get("viewname");
         let definition: String = row.get("definition");
+        let owner: String = row.get("owner");
 
         let view = View {
             name: name.clone(),
             schema: schema.clone(),
             query: normalize_sql_whitespace(definition.trim_end_matches(';')),
             materialized: false,
-            owner: None,
+            owner: Some(owner),
         };
         let qualified_name = format!("{schema}.{name}");
         views.insert(qualified_name, view);
@@ -1159,10 +1161,11 @@ async fn introspect_views(
 
     let materialized_views = sqlx::query(
         r#"
-        SELECT v.schemaname, v.matviewname, v.definition
+        SELECT v.schemaname, v.matviewname, v.definition, r.rolname AS owner
         FROM pg_matviews v
         JOIN pg_class c ON c.relname = v.matviewname
         JOIN pg_namespace n ON c.relnamespace = n.oid AND n.nspname = v.schemaname
+        JOIN pg_roles r ON c.relowner = r.oid
         WHERE v.schemaname = ANY($1::text[])
           AND ($2::boolean OR NOT EXISTS (
               SELECT 1 FROM pg_depend d
@@ -1181,13 +1184,14 @@ async fn introspect_views(
         let schema: String = row.get("schemaname");
         let name: String = row.get("matviewname");
         let definition: String = row.get("definition");
+        let owner: String = row.get("owner");
 
         let view = View {
             name: name.clone(),
             schema: schema.clone(),
             query: normalize_sql_whitespace(definition.trim_end_matches(';')),
             materialized: true,
-            owner: None,
+            owner: Some(owner),
         };
         let qualified_name = format!("{schema}.{name}");
         views.insert(qualified_name, view);
