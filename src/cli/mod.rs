@@ -1042,4 +1042,33 @@ mod tests {
             panic!("Expected Apply command");
         }
     }
+
+    #[test]
+    fn cli_migrate_generate_parses_manage_ownership_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "migrate",
+            "generate",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "postgres://localhost/db",
+            "--migrations",
+            "migrations",
+            "--name",
+            "test_migration",
+            "--manage-ownership",
+        ]);
+
+        if let Commands::Migrate {
+            action: MigrateAction::Generate {
+                manage_ownership, ..
+            },
+        } = args.command
+        {
+            assert!(manage_ownership);
+        } else {
+            panic!("Expected Migrate Generate command");
+        }
+    }
 }
