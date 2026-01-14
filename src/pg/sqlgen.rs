@@ -941,6 +941,7 @@ fn generate_alter_owner(
         OwnerObjectKind::Sequence => "SEQUENCE",
         OwnerObjectKind::Function => "FUNCTION",
         OwnerObjectKind::Type => "TYPE",
+        OwnerObjectKind::Domain => "DOMAIN",
     };
 
     let qualified_name = quote_qualified(schema, name);
@@ -2378,8 +2379,6 @@ mod tests {
 
     #[test]
     fn alter_owner_table_generates_valid_sql() {
-        use crate::diff::OwnerObjectKind;
-
         let ops = vec![MigrationOp::AlterOwner {
             object_kind: OwnerObjectKind::Table,
             schema: "public".to_string(),
@@ -2398,8 +2397,6 @@ mod tests {
 
     #[test]
     fn alter_owner_view_generates_valid_sql() {
-        use crate::diff::OwnerObjectKind;
-
         let ops = vec![MigrationOp::AlterOwner {
             object_kind: OwnerObjectKind::View,
             schema: "public".to_string(),
@@ -2418,8 +2415,6 @@ mod tests {
 
     #[test]
     fn alter_owner_sequence_generates_valid_sql() {
-        use crate::diff::OwnerObjectKind;
-
         let ops = vec![MigrationOp::AlterOwner {
             object_kind: OwnerObjectKind::Sequence,
             schema: "public".to_string(),
@@ -2438,8 +2433,6 @@ mod tests {
 
     #[test]
     fn alter_owner_function_generates_valid_sql() {
-        use crate::diff::OwnerObjectKind;
-
         let ops = vec![MigrationOp::AlterOwner {
             object_kind: OwnerObjectKind::Function,
             schema: "auth".to_string(),
@@ -2458,8 +2451,6 @@ mod tests {
 
     #[test]
     fn alter_owner_function_no_args_generates_valid_sql() {
-        use crate::diff::OwnerObjectKind;
-
         let ops = vec![MigrationOp::AlterOwner {
             object_kind: OwnerObjectKind::Function,
             schema: "public".to_string(),
@@ -2478,8 +2469,6 @@ mod tests {
 
     #[test]
     fn alter_owner_type_enum_generates_valid_sql() {
-        use crate::diff::OwnerObjectKind;
-
         let ops = vec![MigrationOp::AlterOwner {
             object_kind: OwnerObjectKind::Type,
             schema: "public".to_string(),
@@ -2497,11 +2486,9 @@ mod tests {
     }
 
     #[test]
-    fn alter_owner_type_domain_generates_valid_sql() {
-        use crate::diff::OwnerObjectKind;
-
+    fn alter_owner_domain_generates_valid_sql() {
         let ops = vec![MigrationOp::AlterOwner {
-            object_kind: OwnerObjectKind::Type,
+            object_kind: OwnerObjectKind::Domain,
             schema: "public".to_string(),
             name: "email".to_string(),
             args: None,
@@ -2512,7 +2499,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER TYPE \"public\".\"email\" OWNER TO \"domain_owner\";"
+            "ALTER DOMAIN \"public\".\"email\" OWNER TO \"domain_owner\";"
         );
     }
 }

@@ -13,6 +13,7 @@ pub enum OwnerObjectKind {
     Sequence,
     Function,
     Type,
+    Domain,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
