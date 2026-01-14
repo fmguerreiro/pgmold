@@ -845,6 +845,8 @@ fn parse_data_type(dt: &DataType) -> Result<PgType> {
         DataType::Integer(_) | DataType::Int(_) => Ok(PgType::Integer),
         DataType::BigInt(_) => Ok(PgType::BigInt),
         DataType::SmallInt(_) => Ok(PgType::SmallInt),
+        DataType::Real | DataType::Float4 => Ok(PgType::Real),
+        DataType::DoublePrecision | DataType::Float8 => Ok(PgType::DoublePrecision),
         DataType::Varchar(len) => {
             let size = len.as_ref().and_then(|l| match l {
                 sqlparser::ast::CharacterLength::IntegerLength { length, .. } => {
@@ -2762,6 +2764,67 @@ CREATE TABLE embeddings (
 
         let embedding_qualified = &embeddings.columns["embedding_qualified"];
         assert_eq!(embedding_qualified.data_type, PgType::Vector(Some(768)));
+    }
+
+
+    #[test]
+    fn real_parses_correctly() {
+        let sql = r#"
+CREATE TABLE test (
+    "value" REAL
+);
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse REAL");
+        let table = &schema.tables["public.test"];
+        assert_eq!(table.columns["value"].data_type, PgType::Real);
+    }
+
+    #[test]
+    fn float4_parses_to_real() {
+        let sql = r#"
+CREATE TABLE test (
+    "value" FLOAT4
+);
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse FLOAT4");
+        let table = &schema.tables["public.test"];
+        assert_eq!(table.columns["value"].data_type, PgType::Real);
+    }
+
+    #[test]
+    fn float8_parses_to_double_precision() {
+        let sql = r#"
+CREATE TABLE test (
+    "value" FLOAT8
+);
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse FLOAT8");
+        let table = &schema.tables["public.test"];
+        assert_eq!(table.columns["value"].data_type, PgType::DoublePrecision);
+    }
+
+    #[test]
+    fn double_precision_parses_correctly() {
+        let sql = r#"
+CREATE TABLE "mrv"."Procurement" (
+    "id" TEXT NOT NULL,
+    "procurementAmount" DOUBLE PRECISION,
+    CONSTRAINT "Procurement_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "procurement_amount_positive" CHECK ("procurementAmount" > 0)
+);
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse DOUBLE PRECISION");
+
+        let table = &schema.tables["mrv.Procurement"];
+        let procurement_amount = &table.columns["procurementAmount"];
+
+        assert_eq!(
+            procurement_amount.data_type,
+            PgType::DoublePrecision,
+            "DOUBLE PRECISION should parse to PgType::DoublePrecision, not {:?}",
+            procurement_amount.data_type
+        );
     }
 
     #[test]

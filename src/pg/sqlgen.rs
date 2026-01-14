@@ -551,6 +551,8 @@ fn format_pg_type(pg_type: &PgType) -> String {
         PgType::Integer => "INTEGER".to_string(),
         PgType::BigInt => "BIGINT".to_string(),
         PgType::SmallInt => "SMALLINT".to_string(),
+        PgType::Real => "REAL".to_string(),
+        PgType::DoublePrecision => "DOUBLE PRECISION".to_string(),
         PgType::Varchar(Some(len)) => format!("VARCHAR({len})"),
         PgType::Varchar(None) => "VARCHAR".to_string(),
         PgType::Text => "TEXT".to_string(),

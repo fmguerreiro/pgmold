@@ -66,6 +66,8 @@ pub enum PgType {
     Integer,
     BigInt,
     SmallInt,
+    Real,
+    DoublePrecision,
     Varchar(Option<u32>),
     Text,
     Boolean,
