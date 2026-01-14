@@ -1366,12 +1366,14 @@ async fn introspect_sequences(
             s.cache_size,
             c.relname as owned_table,
             cn.nspname as owned_schema,
-            a.attname as owned_column
+            a.attname as owned_column,
+            r.rolname as owner
         FROM pg_sequences s
         JOIN pg_namespace n ON n.nspname = s.schemaname
         LEFT JOIN pg_class seq_class ON seq_class.relname = s.sequencename
             AND seq_class.relnamespace = n.oid
             AND seq_class.relkind = 'S'
+        LEFT JOIN pg_roles r ON seq_class.relowner = r.oid
         LEFT JOIN pg_depend d ON d.objid = seq_class.oid
             AND d.deptype = 'a'
         LEFT JOIN pg_class c ON c.oid = d.refobjid
@@ -1407,6 +1409,7 @@ async fn introspect_sequences(
         let owned_table: Option<String> = row.get("owned_table");
         let owned_schema: Option<String> = row.get("owned_schema");
         let owned_column: Option<String> = row.get("owned_column");
+        let owner: Option<String> = row.get("owner");
 
         let owned_by = match (owned_schema, owned_table, owned_column) {
             (Some(ts), Some(t), Some(c)) => Some(SequenceOwner {
@@ -1438,7 +1441,7 @@ async fn introspect_sequences(
                 cycle: cycle.unwrap_or(false),
                 cache: cache_size,
                 owned_by,
-                owner: None,
+                owner,
             },
         );
     }

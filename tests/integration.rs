@@ -2378,3 +2378,31 @@ async fn introspects_materialized_view_owner() {
 
     assert_eq!(view.owner, Some("matview_owner".to_string()));
 }
+
+#[tokio::test]
+async fn introspects_sequence_owner() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE ROLE sequence_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE SEQUENCE counter_seq START WITH 1 INCREMENT BY 1")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("ALTER SEQUENCE counter_seq OWNER TO sequence_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let sequence = schema.sequences.get("public.counter_seq").unwrap();
+
+    assert_eq!(sequence.owner, Some("sequence_owner".to_string()));
+}
