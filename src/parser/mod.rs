@@ -124,6 +124,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         bound,
                         indexes: Vec::new(),
                         check_constraints: Vec::new(),
+                        owner: None,
                     };
                     let key = qualified_name(&table_schema, &table_name);
                     schema.partitions.insert(key, partition);
@@ -178,6 +179,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         .iter()
                         .map(|l| l.to_string().trim_matches('\'').to_string())
                         .collect(),
+                    owner: None,
                 };
                 let key = qualified_name(&enum_schema, &enum_name);
                 schema.enums.insert(key, enum_type);
@@ -351,6 +353,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     name: view_name.clone(),
                     query: normalize_sql_whitespace(&query.to_string()),
                     materialized,
+                    owner: None,
                 };
                 let key = qualified_name(&view_schema, &view_name);
                 schema.views.insert(key, view);
@@ -424,6 +427,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     not_null,
                     collation: collation.as_ref().map(|c| c.to_string()),
                     check_constraints,
+                    owner: None,
                 };
                 let key = qualified_name(&domain_schema, &domain_name);
                 schema.domains.insert(key, domain);
@@ -648,6 +652,7 @@ fn parse_create_table(
         row_level_security: false,
         policies: Vec::new(),
         partition_by: partition_by.and_then(parse_partition_by),
+        owner: None,
     };
 
     let mut sequences = Vec::new();
@@ -811,6 +816,7 @@ fn parse_column_with_serial(
                 table_name: table_name.to_string(),
                 column_name: col_name,
             }),
+            owner: None,
         };
 
         Ok((column, Some(sequence)))
@@ -1199,6 +1205,7 @@ fn parse_create_sequence(
         cycle,
         cache: final_cache,
         owned_by: owned_by_parsed,
+        owner: None,
     })
 }
 
@@ -2471,6 +2478,7 @@ CREATE DOMAIN us_postal_code AS TEXT
                 data_type: PgType::Text,
                 default: None,
                 not_null: false,
+            owner: None,
                 collation: None,
                 check_constraints: vec![DomainConstraint {
                     name: None,
@@ -2507,6 +2515,7 @@ CREATE DOMAIN us_postal_code AS TEXT
                 data_type: PgType::Text,
                 default: None,
                 not_null: false,
+            owner: None,
                 collation: None,
                 check_constraints: vec![DomainConstraint {
                     name: None,
@@ -2553,6 +2562,8 @@ CREATE DOMAIN us_postal_code AS TEXT
                 row_level_security: false,
                 policies: Vec::new(),
                 partition_by: None,
+
+                owner: None,
             },
         );
 

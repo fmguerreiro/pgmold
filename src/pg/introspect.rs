@@ -180,6 +180,7 @@ async fn introspect_enums(
             name: name.clone(),
             schema: schema.clone(),
             values: labels,
+            owner: None,
         };
         let qualified_name = format!("{schema}.{name}");
         enums.insert(qualified_name, enum_type);
@@ -264,6 +265,7 @@ async fn introspect_domains(
             not_null,
             collation: None,
             check_constraints,
+            owner: None,
         };
         let qualified_name = format!("{schema}.{name}");
         domains.insert(qualified_name, domain);
@@ -369,6 +371,7 @@ async fn introspect_tables(
             row_level_security: false,
             policies: Vec::new(),
             partition_by: None,
+            owner: None,
         };
         let qualified_name = format!("{schema}.{name}");
         tables.insert(qualified_name, table);
@@ -478,6 +481,7 @@ async fn introspect_partitions(
             bound,
             indexes: Vec::new(),
             check_constraints: Vec::new(),
+            owner: None,
         };
 
         let qualified_name = format!("{schema}.{name}");
@@ -1145,6 +1149,7 @@ async fn introspect_views(
             schema: schema.clone(),
             query: normalize_sql_whitespace(definition.trim_end_matches(';')),
             materialized: false,
+            owner: None,
         };
         let qualified_name = format!("{schema}.{name}");
         views.insert(qualified_name, view);
@@ -1180,6 +1185,7 @@ async fn introspect_views(
             schema: schema.clone(),
             query: normalize_sql_whitespace(definition.trim_end_matches(';')),
             materialized: true,
+            owner: None,
         };
         let qualified_name = format!("{schema}.{name}");
         views.insert(qualified_name, view);
@@ -1426,6 +1432,7 @@ async fn introspect_sequences(
                 cycle: cycle.unwrap_or(false),
                 cache: cache_size,
                 owned_by,
+                owner: None,
             },
         );
     }

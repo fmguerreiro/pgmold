@@ -29,6 +29,7 @@ pub struct Domain {
     pub not_null: bool,
     pub collation: Option<String>,
     pub check_constraints: Vec<DomainConstraint>,
+    pub owner: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -50,6 +51,7 @@ pub struct Table {
     pub row_level_security: bool,
     pub policies: Vec<Policy>,
     pub partition_by: Option<PartitionKey>,
+    pub owner: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -169,6 +171,7 @@ pub struct Partition {
     pub bound: PartitionBound,
     pub indexes: Vec<Index>,
     pub check_constraints: Vec<CheckConstraint>,
+    pub owner: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -176,6 +179,7 @@ pub struct EnumType {
     pub schema: String,
     pub name: String,
     pub values: Vec<String>,
+    pub owner: Option<String>,
 }
 
 /// Represents a PostgreSQL schema (namespace).
@@ -325,6 +329,7 @@ pub struct View {
     pub schema: String,
     pub query: String,
     pub materialized: bool,
+    pub owner: Option<String>,
 }
 
 impl View {
@@ -404,6 +409,7 @@ pub struct Sequence {
     pub cycle: bool,
     pub cache: Option<i64>,
     pub owned_by: Option<SequenceOwner>,
+    pub owner: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -550,6 +556,7 @@ mod tests {
                 row_level_security: false,
                 policies: Vec::new(),
                 partition_by: None,
+            owner: None,
             },
         );
 
@@ -568,6 +575,7 @@ mod tests {
                 row_level_security: false,
                 policies: Vec::new(),
                 partition_by: None,
+            owner: None,
             },
         );
 
@@ -700,6 +708,7 @@ mod tests {
             row_level_security: false,
             policies: Vec::new(),
             partition_by: None,
+        owner: None,
         };
         assert_eq!(table.schema, "auth");
     }
@@ -710,6 +719,8 @@ mod tests {
             schema: "auth".to_string(),
             name: "role".to_string(),
             values: vec!["admin".to_string(), "user".to_string()],
+
+            owner: None,
         };
         assert_eq!(enum_type.schema, "auth");
     }
@@ -811,6 +822,7 @@ mod tests {
                 row_level_security: false,
                 policies: Vec::new(),
                 partition_by: None,
+            owner: None,
             },
         );
 
@@ -829,6 +841,7 @@ mod tests {
                 row_level_security: false,
                 policies: Vec::new(),
                 partition_by: None,
+            owner: None,
             },
         );
 
@@ -852,6 +865,7 @@ mod tests {
                 table_name: "users".to_string(),
                 column_name: "id".to_string(),
             }),
+            owner: None,
         };
 
         let json = serde_json::to_string(&sequence).expect("Failed to serialize");
@@ -1025,6 +1039,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT 'supplier' AS type FROM users".to_string(),
             materialized: false,
+        owner: None,
         };
 
         let introspected_view = View {
@@ -1032,6 +1047,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT 'supplier'::text AS type FROM users".to_string(),
             materialized: false,
+        owner: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1044,6 +1060,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT * FROM users WHERE name LIKE 'test%'".to_string(),
             materialized: false,
+        owner: None,
         };
 
         let introspected_view = View {
@@ -1051,6 +1068,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT * FROM users WHERE name ~~ 'test%'::text".to_string(),
             materialized: false,
+        owner: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1063,6 +1081,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT id::TEXT FROM users".to_string(),
             materialized: false,
+        owner: None,
         };
 
         let introspected_view = View {
@@ -1070,6 +1089,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT id::text FROM users".to_string(),
             materialized: false,
+        owner: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1082,6 +1102,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT id, name FROM users WHERE active = true".to_string(),
             materialized: false,
+        owner: None,
         };
 
         let introspected_view = View {
@@ -1089,6 +1110,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT  id,  name  FROM  users  WHERE  active  =  true".to_string(),
             materialized: false,
+        owner: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1101,6 +1123,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT * FROM (SELECT id FROM users)".to_string(),
             materialized: false,
+        owner: None,
         };
 
         let introspected_view = View {
@@ -1108,6 +1131,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT * FROM ( SELECT id FROM users )".to_string(),
             materialized: false,
+        owner: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1120,6 +1144,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT id FROM users".to_string(),
             materialized: false,
+        owner: None,
         };
 
         let view2 = View {
@@ -1127,6 +1152,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT id FROM accounts".to_string(),
             materialized: false,
+        owner: None,
         };
 
         assert!(!view1.semantically_equals(&view2));
@@ -1166,5 +1192,153 @@ mod tests {
         };
         assert_eq!(func.config_params.len(), 1);
         assert_eq!(func.config_params[0].0, "search_path");
+    }
+
+    #[test]
+    fn table_has_owner_field() {
+        let table = Table {
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+            partition_by: None,
+            owner: Some("postgres".to_string()),
+        };
+        assert_eq!(table.owner, Some("postgres".to_string()));
+    }
+
+    #[test]
+    fn view_has_owner_field() {
+        let view = View {
+            name: "user_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT * FROM users".to_string(),
+            materialized: false,
+            owner: Some("postgres".to_string()),
+        };
+        assert_eq!(view.owner, Some("postgres".to_string()));
+    }
+
+    #[test]
+    fn sequence_has_owner_field() {
+        let sequence = Sequence {
+            name: "user_id_seq".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            cache: Some(1),
+            owned_by: None,
+            owner: Some("postgres".to_string()),
+        };
+        assert_eq!(sequence.owner, Some("postgres".to_string()));
+    }
+
+    #[test]
+    fn enum_type_has_owner_field() {
+        let enum_type = EnumType {
+            schema: "public".to_string(),
+            name: "role".to_string(),
+            values: vec!["admin".to_string(), "user".to_string()],
+            owner: Some("postgres".to_string()),
+        };
+        assert_eq!(enum_type.owner, Some("postgres".to_string()));
+    }
+
+    #[test]
+    fn domain_has_owner_field() {
+        let domain = Domain {
+            schema: "public".to_string(),
+            name: "email".to_string(),
+            data_type: PgType::Text,
+            default: None,
+            not_null: false,
+            collation: None,
+            check_constraints: Vec::new(),
+            owner: Some("postgres".to_string()),
+        };
+        assert_eq!(domain.owner, Some("postgres".to_string()));
+    }
+
+    #[test]
+    fn partition_has_owner_field() {
+        let partition = Partition {
+            schema: "public".to_string(),
+            name: "users_2024".to_string(),
+            parent_schema: "public".to_string(),
+            parent_name: "users".to_string(),
+            bound: PartitionBound::Default,
+            indexes: Vec::new(),
+            check_constraints: Vec::new(),
+            owner: Some("postgres".to_string()),
+        };
+        assert_eq!(partition.owner, Some("postgres".to_string()));
+    }
+
+    #[test]
+    fn owner_field_included_in_equality() {
+        let table1 = Table {
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+            partition_by: None,
+            owner: Some("postgres".to_string()),
+        };
+
+        let table2 = Table {
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+            partition_by: None,
+            owner: Some("admin".to_string()),
+        };
+
+        assert_ne!(table1, table2);
+    }
+
+    #[test]
+    fn owner_field_serialization() {
+        let table = Table {
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+            partition_by: None,
+            owner: Some("postgres".to_string()),
+        };
+
+        let json = serde_json::to_string(&table).expect("Failed to serialize");
+        let deserialized: Table = serde_json::from_str(&json).expect("Failed to deserialize");
+        assert_eq!(table, deserialized);
+        assert_eq!(deserialized.owner, Some("postgres".to_string()));
     }
 }
