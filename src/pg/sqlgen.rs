@@ -1,5 +1,6 @@
 use crate::diff::{
-    ColumnChanges, DomainChanges, EnumValuePosition, MigrationOp, PolicyChanges, SequenceChanges,
+    ColumnChanges, DomainChanges, EnumValuePosition, MigrationOp, OwnerObjectKind, PolicyChanges,
+    SequenceChanges,
 };
 use crate::model::{
     parse_qualified_name, CheckConstraint, Column, Domain, ForeignKey, Function, Index, IndexType,
@@ -326,6 +327,14 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         MigrationOp::AlterSequence { name, changes } => {
             vec![generate_alter_sequence(name, changes)]
         }
+
+        MigrationOp::AlterOwner {
+            object_kind,
+            schema,
+            name,
+            args,
+            new_owner,
+        } => vec![generate_alter_owner(object_kind, schema, name, args, new_owner)],
 
         MigrationOp::CreateDomain(domain) => {
             vec![generate_create_domain(domain)]
@@ -917,6 +926,37 @@ fn generate_alter_sequence(name: &str, changes: &SequenceChanges) -> String {
     }
 
     format!("{};", parts.join(" "))
+}
+
+fn generate_alter_owner(
+    object_kind: &OwnerObjectKind,
+    schema: &str,
+    name: &str,
+    args: &Option<String>,
+    new_owner: &str,
+) -> String {
+    let object_type = match object_kind {
+        OwnerObjectKind::Table => "TABLE",
+        OwnerObjectKind::View => "VIEW",
+        OwnerObjectKind::Sequence => "SEQUENCE",
+        OwnerObjectKind::Function => "FUNCTION",
+        OwnerObjectKind::Type => "TYPE",
+    };
+
+    let qualified_name = quote_qualified(schema, name);
+
+    let full_name = if let Some(function_args) = args {
+        format!("{}({})", qualified_name, function_args)
+    } else {
+        qualified_name
+    };
+
+    format!(
+        "ALTER {} {} OWNER TO {};",
+        object_type,
+        full_name,
+        quote_ident(new_owner)
+    )
 }
 
 fn generate_create_domain(domain: &Domain) -> String {
@@ -2333,6 +2373,146 @@ mod tests {
             !sql[0].contains("OWNER TO"),
             "Should not contain OWNER TO: {}",
             sql[0]
+        );
+    }
+
+    #[test]
+    fn alter_owner_table_generates_valid_sql() {
+        use crate::diff::OwnerObjectKind;
+
+        let ops = vec![MigrationOp::AlterOwner {
+            object_kind: OwnerObjectKind::Table,
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            args: None,
+            new_owner: "new_owner".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"users\" OWNER TO \"new_owner\";"
+        );
+    }
+
+    #[test]
+    fn alter_owner_view_generates_valid_sql() {
+        use crate::diff::OwnerObjectKind;
+
+        let ops = vec![MigrationOp::AlterOwner {
+            object_kind: OwnerObjectKind::View,
+            schema: "public".to_string(),
+            name: "active_users".to_string(),
+            args: None,
+            new_owner: "app_user".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER VIEW \"public\".\"active_users\" OWNER TO \"app_user\";"
+        );
+    }
+
+    #[test]
+    fn alter_owner_sequence_generates_valid_sql() {
+        use crate::diff::OwnerObjectKind;
+
+        let ops = vec![MigrationOp::AlterOwner {
+            object_kind: OwnerObjectKind::Sequence,
+            schema: "public".to_string(),
+            name: "users_id_seq".to_string(),
+            args: None,
+            new_owner: "db_admin".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER SEQUENCE \"public\".\"users_id_seq\" OWNER TO \"db_admin\";"
+        );
+    }
+
+    #[test]
+    fn alter_owner_function_generates_valid_sql() {
+        use crate::diff::OwnerObjectKind;
+
+        let ops = vec![MigrationOp::AlterOwner {
+            object_kind: OwnerObjectKind::Function,
+            schema: "auth".to_string(),
+            name: "check_user".to_string(),
+            args: Some("text, uuid".to_string()),
+            new_owner: "supabase_auth_admin".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER FUNCTION \"auth\".\"check_user\"(text, uuid) OWNER TO \"supabase_auth_admin\";"
+        );
+    }
+
+    #[test]
+    fn alter_owner_function_no_args_generates_valid_sql() {
+        use crate::diff::OwnerObjectKind;
+
+        let ops = vec![MigrationOp::AlterOwner {
+            object_kind: OwnerObjectKind::Function,
+            schema: "public".to_string(),
+            name: "get_timestamp".to_string(),
+            args: Some("".to_string()),
+            new_owner: "app_owner".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER FUNCTION \"public\".\"get_timestamp\"() OWNER TO \"app_owner\";"
+        );
+    }
+
+    #[test]
+    fn alter_owner_type_enum_generates_valid_sql() {
+        use crate::diff::OwnerObjectKind;
+
+        let ops = vec![MigrationOp::AlterOwner {
+            object_kind: OwnerObjectKind::Type,
+            schema: "public".to_string(),
+            name: "user_role".to_string(),
+            args: None,
+            new_owner: "role_admin".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TYPE \"public\".\"user_role\" OWNER TO \"role_admin\";"
+        );
+    }
+
+    #[test]
+    fn alter_owner_type_domain_generates_valid_sql() {
+        use crate::diff::OwnerObjectKind;
+
+        let ops = vec![MigrationOp::AlterOwner {
+            object_kind: OwnerObjectKind::Type,
+            schema: "public".to_string(),
+            name: "email".to_string(),
+            args: None,
+            new_owner: "domain_owner".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TYPE \"public\".\"email\" OWNER TO \"domain_owner\";"
         );
     }
 }

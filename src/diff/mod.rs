@@ -7,6 +7,15 @@ use crate::model::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnerObjectKind {
+    Table,
+    View,
+    Sequence,
+    Function,
+    Type,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOp {
     CreateSchema(PgSchema),
     DropSchema(String),
@@ -125,6 +134,13 @@ pub enum MigrationOp {
     AlterSequence {
         name: String,
         changes: SequenceChanges,
+    },
+    AlterOwner {
+        object_kind: OwnerObjectKind,
+        schema: String,
+        name: String,
+        args: Option<String>,
+        new_owner: String,
     },
     BackfillHint {
         table: String,

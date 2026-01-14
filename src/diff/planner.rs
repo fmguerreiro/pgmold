@@ -49,6 +49,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut create_domains = Vec::new();
     let mut drop_domains = Vec::new();
     let mut alter_domains = Vec::new();
+    let mut alter_owners = Vec::new();
     let mut backfill_hints = Vec::new();
     let mut set_column_not_nulls = Vec::new();
 
@@ -96,6 +97,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::CreateDomain(_) => create_domains.push(op),
             MigrationOp::DropDomain(_) => drop_domains.push(op),
             MigrationOp::AlterDomain { .. } => alter_domains.push(op),
+            MigrationOp::AlterOwner { .. } => alter_owners.push(op),
             MigrationOp::BackfillHint { .. } => backfill_hints.push(op),
             MigrationOp::SetColumnNotNull { .. } => set_column_not_nulls.push(op),
         }
@@ -158,6 +160,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(alter_views);
     result.extend(create_triggers);
     result.extend(alter_triggers);
+    result.extend(alter_owners);
 
     result.extend(drop_triggers);
     result.extend(drop_views);
