@@ -455,9 +455,11 @@ async fn introspect_partitions(
             c.relname as name,
             pn.nspname as parent_schema,
             pc.relname as parent_name,
-            pg_get_expr(c.relpartbound, c.oid) as partition_bound
+            pg_get_expr(c.relpartbound, c.oid) as partition_bound,
+            r.rolname as owner
         FROM pg_class c
         JOIN pg_namespace n ON c.relnamespace = n.oid
+        JOIN pg_roles r ON c.relowner = r.oid
         JOIN pg_inherits i ON c.oid = i.inhrelid
         JOIN pg_class pc ON pc.oid = i.inhparent
         JOIN pg_namespace pn ON pc.relnamespace = pn.oid
@@ -477,6 +479,7 @@ async fn introspect_partitions(
         let parent_schema: String = row.get("parent_schema");
         let parent_name: String = row.get("parent_name");
         let bound_expr: String = row.get("partition_bound");
+        let owner: String = row.get("owner");
 
         let bound = parse_partition_bound(&bound_expr);
 
@@ -488,7 +491,7 @@ async fn introspect_partitions(
             bound,
             indexes: Vec::new(),
             check_constraints: Vec::new(),
-            owner: None,
+            owner: Some(owner),
         };
 
         let qualified_name = format!("{schema}.{name}");

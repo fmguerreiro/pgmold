@@ -2462,3 +2462,49 @@ async fn introspects_domain_owner() {
 
     assert_eq!(domain.owner, Some("domain_owner".to_string()));
 }
+
+#[tokio::test]
+async fn introspects_partition_owner() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE ROLE partition_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE measurement (
+            city_id INT NOT NULL,
+            logdate DATE NOT NULL,
+            peaktemp INT
+        ) PARTITION BY RANGE (logdate)
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE measurement_2024 PARTITION OF measurement
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query("ALTER TABLE measurement_2024 OWNER TO partition_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let partition = schema.partitions.get("public.measurement_2024").unwrap();
+
+    assert_eq!(partition.owner, Some("partition_owner".to_string()));
+}
