@@ -151,6 +151,9 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(add_indexes);
     result.extend(alter_columns);
     result.extend(set_column_not_nulls);
+    // Drop check constraints before adding new ones - needed when modifying a constraint
+    // (same name, different expression) since PostgreSQL doesn't allow duplicate names
+    result.extend(drop_check_constraints);
     result.extend(add_foreign_keys);
     result.extend(add_check_constraints);
     result.extend(set_sequence_owners);
@@ -172,7 +175,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(drop_views);
     result.extend(drop_policies);
     result.extend(disable_rls);
-    result.extend(drop_check_constraints);
+    // Note: drop_check_constraints is handled earlier (before add_check_constraints)
+    // to support constraint modifications
     result.extend(drop_foreign_keys);
     result.extend(drop_indexes);
     result.extend(drop_primary_keys);
@@ -251,14 +255,12 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result
 }
 
-
 /// Extract table/view references from a SQL query string.
 /// Returns qualified names (schema.name) of all referenced relations.
 fn extract_relation_references(query: &str) -> HashSet<String> {
     use sqlparser::ast::{
-        TableFactor, TableWithJoins, Query, SetExpr, Select, SelectItem, Expr, 
-        Statement, FunctionArguments, FunctionArgumentList, FunctionArg,
-        FunctionArgExpr
+        Expr, FunctionArg, FunctionArgExpr, FunctionArgumentList, FunctionArguments, Query, Select,
+        SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
     };
     use sqlparser::dialect::PostgreSqlDialect;
     use sqlparser::parser::Parser;
@@ -288,7 +290,12 @@ fn extract_relation_references(query: &str) -> HashSet<String> {
             }
             Expr::UnaryOp { expr, .. } => extract_from_expr(expr, refs),
             Expr::Nested(e) => extract_from_expr(e, refs),
-            Expr::Case { operand, conditions, else_result, .. } => {
+            Expr::Case {
+                operand,
+                conditions,
+                else_result,
+                ..
+            } => {
                 if let Some(op) = operand {
                     extract_from_expr(op, refs);
                 }
@@ -343,7 +350,11 @@ fn extract_relation_references(query: &str) -> HashSet<String> {
     fn extract_from_table_factor(factor: &TableFactor, refs: &mut HashSet<String>) {
         match factor {
             TableFactor::Table { name, .. } => {
-                let parts: Vec<String> = name.0.iter().map(|p| p.to_string().trim_matches('"').to_string()).collect();
+                let parts: Vec<String> = name
+                    .0
+                    .iter()
+                    .map(|p| p.to_string().trim_matches('"').to_string())
+                    .collect();
                 let qualified = if parts.len() == 1 {
                     format!("public.{}", parts[0])
                 } else {
@@ -354,7 +365,9 @@ fn extract_relation_references(query: &str) -> HashSet<String> {
             TableFactor::Derived { subquery, .. } => {
                 extract_from_query(subquery, refs);
             }
-            TableFactor::NestedJoin { table_with_joins, .. } => {
+            TableFactor::NestedJoin {
+                table_with_joins, ..
+            } => {
                 extract_from_table_with_joins(table_with_joins, refs);
             }
             _ => {}
@@ -432,8 +445,6 @@ fn order_view_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     topological_sort(&view_ops, &dependencies)
 }
-
-
 
 /// Topologically sort CreateTable operations by FK dependencies.
 /// Tables that are referenced by other tables must be created first.
@@ -777,7 +788,7 @@ mod tests {
                 values: vec!["admin".to_string(), "user".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             }),
         ];
 
@@ -820,7 +831,7 @@ mod tests {
                 values: vec!["admin".to_string(), "user".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             }),
         ];
 
@@ -848,7 +859,6 @@ mod tests {
             "AddEnumValue must come before CreateTable"
         );
     }
-
 
     #[test]
     fn create_views_ordered_by_view_dependencies() {
@@ -918,17 +928,20 @@ mod tests {
         );
     }
 
-
     #[test]
     fn extract_relation_references_from_view_query() {
-        let refs = extract_relation_references("SELECT * FROM users JOIN orders ON users.id = orders.user_id");
+        let refs = extract_relation_references(
+            "SELECT * FROM users JOIN orders ON users.id = orders.user_id",
+        );
         assert!(refs.contains("public.users"));
         assert!(refs.contains("public.orders"));
     }
 
     #[test]
     fn extract_relation_references_with_schema() {
-        let refs = extract_relation_references("SELECT * FROM auth.users JOIN public.orders ON auth.users.id = public.orders.user_id");
+        let refs = extract_relation_references(
+            "SELECT * FROM auth.users JOIN public.orders ON auth.users.id = public.orders.user_id",
+        );
         assert!(refs.contains("auth.users"));
         assert!(refs.contains("public.orders"));
     }

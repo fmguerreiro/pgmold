@@ -29,8 +29,9 @@ pub fn canonicalize_expression(expr: &str) -> String {
     let result = match Parser::new(&dialect).try_with_sql(expr) {
         Ok(mut parser) => match parser.parse_expr() {
             Ok(ast) => {
-                // Recursively strip outer Nested nodes (parentheses) and convert to string
-                let unwrapped = strip_outer_nested(ast);
+                // Recursively strip ALL Nested nodes (parentheses) throughout the AST
+                // and strip numeric literal casts, then convert to string
+                let unwrapped = strip_all_nested(ast);
                 unwrapped.to_string()
             }
             Err(_) => normalize_expression_regex(expr),
@@ -38,22 +39,166 @@ pub fn canonicalize_expression(expr: &str) -> String {
         Err(_) => normalize_expression_regex(expr),
     };
 
-    // Post-process: remove casts on numeric literals like (0)::numeric -> 0
+    // Post-process: remove any remaining casts on numeric literals that weren't caught by AST
+    // (e.g., if regex fallback was used or parser produced different format)
     strip_numeric_literal_casts(&result)
 }
 
-/// Recursively unwraps outer Nested (parenthesized) expressions from the AST.
-fn strip_outer_nested(expr: Expr) -> Expr {
+/// Recursively strips ALL Nested (parenthesized) expressions throughout the AST,
+/// not just the outermost ones. This is needed for normalizing CHECK constraint
+/// expressions where PostgreSQL may add extra parentheses around subexpressions.
+fn strip_all_nested(expr: Expr) -> Expr {
     match expr {
-        Expr::Nested(inner) => strip_outer_nested(*inner),
-        _ => expr,
+        // Unwrap nested expressions recursively
+        Expr::Nested(inner) => strip_all_nested(*inner),
+
+        // Binary operations - recurse into both sides
+        Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
+            left: Box::new(strip_all_nested(*left)),
+            op,
+            right: Box::new(strip_all_nested(*right)),
+        },
+
+        // Unary operations
+        Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
+            op,
+            expr: Box::new(strip_all_nested(*inner)),
+        },
+
+        // IS NULL / IS NOT NULL
+        Expr::IsNull(inner) => Expr::IsNull(Box::new(strip_all_nested(*inner))),
+        Expr::IsNotNull(inner) => Expr::IsNotNull(Box::new(strip_all_nested(*inner))),
+
+        // Cast expressions - strip nested inside AND strip numeric literal casts
+        Expr::Cast {
+            kind,
+            expr: inner,
+            data_type,
+            format,
+        } => {
+            let stripped_inner = strip_all_nested(*inner);
+            // Check if this is a numeric literal cast that should be stripped
+            if is_numeric_type(&data_type) {
+                if let Expr::Value(ref v) = stripped_inner {
+                    if is_numeric_value(v) {
+                        return stripped_inner;
+                    }
+                }
+            }
+            Expr::Cast {
+                kind,
+                expr: Box::new(stripped_inner),
+                data_type,
+                format,
+            }
+        }
+
+        // Between expressions
+        Expr::Between {
+            expr: inner,
+            negated,
+            low,
+            high,
+        } => Expr::Between {
+            expr: Box::new(strip_all_nested(*inner)),
+            negated,
+            low: Box::new(strip_all_nested(*low)),
+            high: Box::new(strip_all_nested(*high)),
+        },
+
+        // In list
+        Expr::InList {
+            expr: inner,
+            list,
+            negated,
+        } => Expr::InList {
+            expr: Box::new(strip_all_nested(*inner)),
+            list: list.into_iter().map(strip_all_nested).collect(),
+            negated,
+        },
+
+        // Function calls
+        Expr::Function(mut f) => {
+            f.args = match f.args {
+                sqlparser::ast::FunctionArguments::List(args) => {
+                    sqlparser::ast::FunctionArguments::List(sqlparser::ast::FunctionArgumentList {
+                        duplicate_treatment: args.duplicate_treatment,
+                        args: args
+                            .args
+                            .into_iter()
+                            .map(|arg| match arg {
+                                sqlparser::ast::FunctionArg::Unnamed(
+                                    sqlparser::ast::FunctionArgExpr::Expr(e),
+                                ) => sqlparser::ast::FunctionArg::Unnamed(
+                                    sqlparser::ast::FunctionArgExpr::Expr(strip_all_nested(e)),
+                                ),
+                                other => other,
+                            })
+                            .collect(),
+                        clauses: args.clauses,
+                    })
+                }
+                other => other,
+            };
+            Expr::Function(f)
+        }
+
+        // Case expressions
+        Expr::Case {
+            case_token,
+            end_token,
+            operand,
+            conditions,
+            else_result,
+        } => Expr::Case {
+            case_token,
+            end_token,
+            operand: operand.map(|e| Box::new(strip_all_nested(*e))),
+            conditions: conditions
+                .into_iter()
+                .map(|cw| sqlparser::ast::CaseWhen {
+                    condition: strip_all_nested(cw.condition),
+                    result: strip_all_nested(cw.result),
+                })
+                .collect(),
+            else_result: else_result.map(|e| Box::new(strip_all_nested(*e))),
+        },
+
+        // Everything else passes through unchanged
+        other => other,
     }
+}
+
+/// Check if a DataType is a numeric type
+fn is_numeric_type(dt: &DataType) -> bool {
+    matches!(
+        dt,
+        DataType::Int(_)
+            | DataType::Integer(_)
+            | DataType::BigInt(_)
+            | DataType::SmallInt(_)
+            | DataType::TinyInt(_)
+            | DataType::Numeric(_)
+            | DataType::Decimal(_)
+            | DataType::Float(_)
+            | DataType::Real
+            | DataType::Double(_)
+            | DataType::DoublePrecision
+    )
+}
+
+/// Check if a ValueWithSpan contains a numeric literal
+fn is_numeric_value(v: &sqlparser::ast::ValueWithSpan) -> bool {
+    matches!(v.value, sqlparser::ast::Value::Number(_, _))
 }
 
 /// Strips casts on numeric literals, e.g., (0)::numeric -> 0, (123)::integer -> 123
 fn strip_numeric_literal_casts(expr: &str) -> String {
     // Pattern: (number)::type where type is numeric, integer, bigint, etc. (case-insensitive)
-    let re = Regex::new(r"(?i)\((\d+(?:\.\d+)?)\)::(numeric|integer|bigint|smallint|real|double precision)").unwrap();
+    let re = Regex::new(
+        r"(?i)\((\d+(?:\.\d+)?)\)::(numeric|integer|bigint|smallint|real|double precision)",
+    )
+    .unwrap();
     re.replace_all(expr, "$1").to_string()
 }
 
@@ -973,6 +1118,24 @@ mod tests {
         let input = "name !~~ 'test%'";
         let result = normalize_expression_regex(input);
         assert_eq!(result, "name NOT LIKE 'test%'");
+    }
+
+    #[test]
+    fn canonicalize_expression_handles_check_constraint_with_numeric_cast() {
+        // Bug: PostgreSQL returns expressions with extra parens and type casts
+        // These should normalize to the same canonical form
+        let db_expr =
+            r#"(("liveTreeAreaHa" IS NULL) OR ("liveTreeAreaHa" >= (0)::double precision))"#;
+        let parsed_expr = r#""liveTreeAreaHa" IS NULL OR "liveTreeAreaHa" >= 0"#;
+
+        let canon_db = canonicalize_expression(db_expr);
+        let canon_parsed = canonicalize_expression(parsed_expr);
+
+        assert_eq!(
+            canon_db, canon_parsed,
+            "DB: {} vs Parsed: {}",
+            canon_db, canon_parsed
+        );
     }
 }
 

@@ -2192,7 +2192,8 @@ async fn function_owner_round_trip() {
         "Owner should match after round-trip"
     );
 
-    let diff_ops = pgmold::diff::compute_diff_with_flags(&introspected, &parsed_schema, true, false);
+    let diff_ops =
+        pgmold::diff::compute_diff_with_flags(&introspected, &parsed_schema, true, false);
     let func_ops: Vec<_> = diff_ops
         .iter()
         .filter(|op| {
@@ -2682,8 +2683,9 @@ async fn ownership_management_end_to_end() {
     let sql = generate_sql(&planned);
 
     assert!(
-        sql.iter()
-            .any(|s| s.contains("ALTER TYPE") && s.contains("user_status") && s.contains("OWNER TO")),
+        sql.iter().any(|s| s.contains("ALTER TYPE")
+            && s.contains("user_status")
+            && s.contains("OWNER TO")),
         "Should generate ALTER TYPE ... OWNER TO SQL"
     );
 
@@ -2694,20 +2696,23 @@ async fn ownership_management_end_to_end() {
     );
 
     assert!(
-        sql.iter()
-            .any(|s| s.contains("ALTER VIEW") && s.contains("active_users") && s.contains("OWNER TO")),
+        sql.iter().any(|s| s.contains("ALTER VIEW")
+            && s.contains("active_users")
+            && s.contains("OWNER TO")),
         "Should generate ALTER VIEW ... OWNER TO SQL"
     );
 
     assert!(
-        sql.iter()
-            .any(|s| s.contains("ALTER SEQUENCE") && s.contains("user_id_seq") && s.contains("OWNER TO")),
+        sql.iter().any(|s| s.contains("ALTER SEQUENCE")
+            && s.contains("user_id_seq")
+            && s.contains("OWNER TO")),
         "Should generate ALTER SEQUENCE ... OWNER TO SQL"
     );
 
     assert!(
-        sql.iter()
-            .any(|s| s.contains("ALTER FUNCTION") && s.contains("get_user_count") && s.contains("OWNER TO")),
+        sql.iter().any(|s| s.contains("ALTER FUNCTION")
+            && s.contains("get_user_count")
+            && s.contains("OWNER TO")),
         "Should generate ALTER FUNCTION ... OWNER TO SQL"
     );
 
@@ -2760,7 +2765,8 @@ async fn ownership_management_end_to_end() {
         "Function owner should be app_owner after migration"
     );
 
-    let final_ops = pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema, true, false);
+    let final_ops =
+        pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema, true, false);
     let final_alter_ops: Vec<_> = final_ops
         .iter()
         .filter(|op| matches!(op, MigrationOp::AlterOwner { .. }))
@@ -2796,16 +2802,27 @@ async fn introspects_function_grants() {
         .unwrap();
 
     let func = schema.functions.get("public.add_numbers(integer, integer)");
-    assert!(func.is_some(), "Function public.add_numbers(integer, integer) should exist. Available functions: {:?}", schema.functions.keys().collect::<Vec<_>>());
+    assert!(
+        func.is_some(),
+        "Function public.add_numbers(integer, integer) should exist. Available functions: {:?}",
+        schema.functions.keys().collect::<Vec<_>>()
+    );
 
     let func = func.unwrap();
-    assert!(!func.grants.is_empty(), "Function should have grants. Function: {:?}", func);
     assert!(
-        func.grants.iter().any(|g| g.grantee == "test_user"),
-        "Should have grant for test_user. Grants: {:?}", func.grants
+        !func.grants.is_empty(),
+        "Function should have grants. Function: {:?}",
+        func
     );
     assert!(
-        func.grants.iter().any(|g| g.privileges.contains(&pgmold::model::Privilege::Execute)),
+        func.grants.iter().any(|g| g.grantee == "test_user"),
+        "Should have grant for test_user. Grants: {:?}",
+        func.grants
+    );
+    assert!(
+        func.grants
+            .iter()
+            .any(|g| g.privileges.contains(&pgmold::model::Privilege::Execute)),
         "Should have EXECUTE privilege"
     );
 }
@@ -2903,7 +2920,11 @@ async fn function_text_uuid_round_trip_no_diff() {
 
     // Verify both schemas have the function
     assert_eq!(db_schema.functions.len(), 1, "DB should have one function");
-    assert_eq!(parsed_schema.functions.len(), 1, "Parsed should have one function");
+    assert_eq!(
+        parsed_schema.functions.len(),
+        1,
+        "Parsed should have one function"
+    );
 
     // Debug: verify keys match
     let db_key = db_schema.functions.keys().next().unwrap();
@@ -3027,9 +3048,17 @@ async fn grants_management_end_to_end() {
         .unwrap();
 
     let products_table = initial_schema.tables.get("public.products").unwrap();
-    let test_user_grant = products_table.grants.iter().find(|g| g.grantee == "test_user").expect("Should have grant for test_user");
-    assert!(test_user_grant.privileges.contains(&pgmold::model::Privilege::Select));
-    assert!(!test_user_grant.privileges.contains(&pgmold::model::Privilege::Insert));
+    let test_user_grant = products_table
+        .grants
+        .iter()
+        .find(|g| g.grantee == "test_user")
+        .expect("Should have grant for test_user");
+    assert!(test_user_grant
+        .privileges
+        .contains(&pgmold::model::Privilege::Select));
+    assert!(!test_user_grant
+        .privileges
+        .contains(&pgmold::model::Privilege::Insert));
 
     let schema_sql = r#"
         CREATE TABLE products (id BIGINT PRIMARY KEY, name TEXT NOT NULL, price NUMERIC);
@@ -3039,10 +3068,20 @@ async fn grants_management_end_to_end() {
     let target_schema = parse_sql_string(schema_sql).unwrap();
 
     let target_table = target_schema.tables.get("public.products").unwrap();
-    let target_test_user_grant = target_table.grants.iter().find(|g| g.grantee == "test_user").expect("Parsed table should have grant for test_user");
-    assert!(target_test_user_grant.privileges.contains(&pgmold::model::Privilege::Select));
-    assert!(target_test_user_grant.privileges.contains(&pgmold::model::Privilege::Insert));
-    assert!(target_test_user_grant.privileges.contains(&pgmold::model::Privilege::Update));
+    let target_test_user_grant = target_table
+        .grants
+        .iter()
+        .find(|g| g.grantee == "test_user")
+        .expect("Parsed table should have grant for test_user");
+    assert!(target_test_user_grant
+        .privileges
+        .contains(&pgmold::model::Privilege::Select));
+    assert!(target_test_user_grant
+        .privileges
+        .contains(&pgmold::model::Privilege::Insert));
+    assert!(target_test_user_grant
+        .privileges
+        .contains(&pgmold::model::Privilege::Update));
 
     let ops = pgmold::diff::compute_diff_with_flags(&initial_schema, &target_schema, false, true);
 
@@ -3073,7 +3112,10 @@ async fn grants_management_end_to_end() {
     let sql = generate_sql(&planned);
 
     assert!(
-        sql.iter().any(|s| s.contains("GRANT") && s.contains("products") && s.contains("INSERT") && s.contains("UPDATE")),
+        sql.iter().any(|s| s.contains("GRANT")
+            && s.contains("products")
+            && s.contains("INSERT")
+            && s.contains("UPDATE")),
         "Should generate GRANT SQL with INSERT and UPDATE. Generated SQL: {:?}",
         sql
     );
@@ -3090,24 +3132,38 @@ async fn grants_management_end_to_end() {
         .unwrap();
 
     let after_table = after_migration.tables.get("public.products").unwrap();
-    let after_test_user_grant = after_table.grants.iter().find(|g| g.grantee == "test_user").expect("Should have grant for test_user after migration");
+    let after_test_user_grant = after_table
+        .grants
+        .iter()
+        .find(|g| g.grantee == "test_user")
+        .expect("Should have grant for test_user after migration");
     assert!(
-        after_test_user_grant.privileges.contains(&pgmold::model::Privilege::Select),
+        after_test_user_grant
+            .privileges
+            .contains(&pgmold::model::Privilege::Select),
         "Should have SELECT privilege after migration"
     );
     assert!(
-        after_test_user_grant.privileges.contains(&pgmold::model::Privilege::Insert),
+        after_test_user_grant
+            .privileges
+            .contains(&pgmold::model::Privilege::Insert),
         "Should have INSERT privilege after migration"
     );
     assert!(
-        after_test_user_grant.privileges.contains(&pgmold::model::Privilege::Update),
+        after_test_user_grant
+            .privileges
+            .contains(&pgmold::model::Privilege::Update),
         "Should have UPDATE privilege after migration"
     );
 
-    let final_ops = pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema, false, true);
+    let final_ops =
+        pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema, false, true);
     let final_grant_ops: Vec<_> = final_ops
         .iter()
-        .filter(|op| matches!(op, MigrationOp::GrantPrivileges { .. }) || matches!(op, MigrationOp::RevokePrivileges { .. }))
+        .filter(|op| {
+            matches!(op, MigrationOp::GrantPrivileges { .. })
+                || matches!(op, MigrationOp::RevokePrivileges { .. })
+        })
         .collect();
     assert!(
         final_grant_ops.is_empty(),
@@ -3120,7 +3176,8 @@ async fn grants_management_end_to_end() {
     "#;
 
     let target_schema_revoke = parse_sql_string(schema_sql_revoke).unwrap();
-    let ops_revoke = pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema_revoke, false, true);
+    let ops_revoke =
+        pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema_revoke, false, true);
 
     let revoke_ops: Vec<_> = ops_revoke
         .iter()
@@ -3160,17 +3217,27 @@ async fn grants_management_end_to_end() {
         .unwrap();
 
     let final_table = final_schema.tables.get("public.products").unwrap();
-    let final_test_user_grant = final_table.grants.iter().find(|g| g.grantee == "test_user").expect("Should have grant for test_user in final state");
+    let final_test_user_grant = final_table
+        .grants
+        .iter()
+        .find(|g| g.grantee == "test_user")
+        .expect("Should have grant for test_user in final state");
     assert!(
-        final_test_user_grant.privileges.contains(&pgmold::model::Privilege::Select),
+        final_test_user_grant
+            .privileges
+            .contains(&pgmold::model::Privilege::Select),
         "Should still have SELECT privilege"
     );
     assert!(
-        !final_test_user_grant.privileges.contains(&pgmold::model::Privilege::Insert),
+        !final_test_user_grant
+            .privileges
+            .contains(&pgmold::model::Privilege::Insert),
         "Should not have INSERT privilege after revoke"
     );
     assert!(
-        !final_test_user_grant.privileges.contains(&pgmold::model::Privilege::Update),
+        !final_test_user_grant
+            .privileges
+            .contains(&pgmold::model::Privilege::Update),
         "Should not have UPDATE privilege after revoke"
     );
 }
@@ -3295,6 +3362,91 @@ async fn check_constraint_round_trip_no_drop() {
         "Should have no CHECK constraint diff after apply. Got: {:?}",
         check_ops
     );
+}
+
+#[tokio::test]
+async fn check_constraint_modification_drop_before_add() {
+    // Regression test: When modifying a CHECK constraint (same name, different expression),
+    // the DROP must come before ADD, otherwise we get "constraint already exists" error
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let initial_schema = r#"
+        CREATE TABLE "public"."test_table" (
+            "id" BIGINT PRIMARY KEY,
+            "value" NUMERIC NOT NULL,
+            CONSTRAINT "test_table_value_check" CHECK ("value" >= 0)
+        );
+    "#;
+
+    let parsed = parse_sql_string(initial_schema).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    let modified_schema = r#"
+        CREATE TABLE "public"."test_table" (
+            "id" BIGINT PRIMARY KEY,
+            "value" NUMERIC NOT NULL,
+            CONSTRAINT "test_table_value_check" CHECK ("value" >= 10)
+        );
+    "#;
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let modified = parse_sql_string(modified_schema).unwrap();
+    let diff_ops = compute_diff(&db_schema, &modified);
+    let planned = plan_migration(diff_ops);
+
+    let mut drop_index = None;
+    let mut add_index = None;
+    for (i, op) in planned.iter().enumerate() {
+        match op {
+            MigrationOp::DropCheckConstraint {
+                constraint_name, ..
+            } if constraint_name == "test_table_value_check" => {
+                drop_index = Some(i);
+            }
+            MigrationOp::AddCheckConstraint {
+                check_constraint, ..
+            } if check_constraint.name == "test_table_value_check" => {
+                add_index = Some(i);
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        drop_index.is_some() && add_index.is_some(),
+        "Should have both DROP and ADD operations for modified constraint"
+    );
+    assert!(
+        drop_index.unwrap() < add_index.unwrap(),
+        "DROP must come before ADD. DROP at {}, ADD at {}",
+        drop_index.unwrap(),
+        add_index.unwrap()
+    );
+
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .expect("Migration should succeed - DROP before ADD");
+    }
+
+    let result: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM pg_constraint WHERE conname = 'test_table_value_check'",
+    )
+    .fetch_one(connection.pool())
+    .await
+    .unwrap();
+    assert_eq!(result.0, 1, "Constraint should exist after modification");
 }
 
 #[tokio::test]
