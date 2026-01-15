@@ -2872,3 +2872,305 @@ async fn introspects_schema_grants() {
         "Should have CREATE privilege"
     );
 }
+
+#[tokio::test]
+async fn function_text_uuid_round_trip_no_diff() {
+    // Regression test for: function recreation fails with "already exists" error
+    // When function exists in DB with same signature, diff should be empty
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create function in DB first (simulating existing function)
+    sqlx::query(r#"
+        CREATE FUNCTION "public"."api_complete_entity_onboarding"("p_entity_type" text, "p_entity_id" uuid)
+        RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN true; END $$
+    "#)
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    // Introspect the database
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    // Parse the same function from SQL
+    let schema_sql = r#"
+        CREATE FUNCTION "public"."api_complete_entity_onboarding"("p_entity_type" text, "p_entity_id" uuid)
+        RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN true; END $$;
+    "#;
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+
+    // Verify both schemas have the function
+    assert_eq!(db_schema.functions.len(), 1, "DB should have one function");
+    assert_eq!(parsed_schema.functions.len(), 1, "Parsed should have one function");
+
+    // Debug: verify keys match
+    let db_key = db_schema.functions.keys().next().unwrap();
+    let parsed_key = parsed_schema.functions.keys().next().unwrap();
+    assert_eq!(
+        db_key, parsed_key,
+        "Function keys should match: DB='{}' vs Parsed='{}'",
+        db_key, parsed_key
+    );
+
+    // Compute diff - should be empty since function is identical
+    let diff_ops = compute_diff(&db_schema, &parsed_schema);
+    let func_ops: Vec<_> = diff_ops
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateFunction(_)
+                    | MigrationOp::AlterFunction { .. }
+                    | MigrationOp::DropFunction { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        func_ops.is_empty(),
+        "Should have no function diff when function already exists with same signature, got: {:?}",
+        func_ops
+    );
+}
+
+#[tokio::test]
+async fn function_body_change_uses_alter_not_create() {
+    // When function body changes, should use CREATE OR REPLACE (AlterFunction), not plain CREATE
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create initial function in DB
+    sqlx::query(r#"
+        CREATE FUNCTION "public"."api_complete_entity_onboarding"("p_entity_type" text, "p_entity_id" uuid)
+        RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN true; END $$
+    "#)
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    // Introspect the database
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    // Parse modified function from SQL (different body)
+    let schema_sql = r#"
+        CREATE FUNCTION "public"."api_complete_entity_onboarding"("p_entity_type" text, "p_entity_id" uuid)
+        RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN false; END $$;
+    "#;
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+
+    // Compute diff
+    let diff_ops = compute_diff(&db_schema, &parsed_schema);
+    let func_ops: Vec<_> = diff_ops
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateFunction(_)
+                    | MigrationOp::AlterFunction { .. }
+                    | MigrationOp::DropFunction { .. }
+            )
+        })
+        .collect();
+
+    // Should have exactly one AlterFunction operation (not CreateFunction)
+    assert_eq!(func_ops.len(), 1, "Should have exactly one function op");
+    assert!(
+        matches!(func_ops[0], MigrationOp::AlterFunction { .. }),
+        "Should use AlterFunction for body change, not CreateFunction. Got: {:?}",
+        func_ops[0]
+    );
+
+    // Apply the migration and verify it works
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Verify the change was applied
+    let result: (bool,) = sqlx::query_as(
+        "SELECT public.api_complete_entity_onboarding('test'::text, '00000000-0000-0000-0000-000000000000'::uuid)"
+    )
+    .fetch_one(connection.pool())
+    .await
+    .unwrap();
+
+    assert_eq!(result.0, false, "Function should return false after update");
+}
+
+#[tokio::test]
+async fn grants_management_end_to_end() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE ROLE test_user")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE TABLE products (id BIGINT PRIMARY KEY, name TEXT NOT NULL, price NUMERIC)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("GRANT SELECT ON TABLE products TO test_user")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let initial_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let products_table = initial_schema.tables.get("public.products").unwrap();
+    let test_user_grant = products_table.grants.iter().find(|g| g.grantee == "test_user").expect("Should have grant for test_user");
+    assert!(test_user_grant.privileges.contains(&pgmold::model::Privilege::Select));
+    assert!(!test_user_grant.privileges.contains(&pgmold::model::Privilege::Insert));
+
+    let schema_sql = r#"
+        CREATE TABLE products (id BIGINT PRIMARY KEY, name TEXT NOT NULL, price NUMERIC);
+        GRANT SELECT, INSERT, UPDATE ON TABLE products TO test_user;
+    "#;
+
+    let target_schema = parse_sql_string(schema_sql).unwrap();
+
+    let target_table = target_schema.tables.get("public.products").unwrap();
+    let target_test_user_grant = target_table.grants.iter().find(|g| g.grantee == "test_user").expect("Parsed table should have grant for test_user");
+    assert!(target_test_user_grant.privileges.contains(&pgmold::model::Privilege::Select));
+    assert!(target_test_user_grant.privileges.contains(&pgmold::model::Privilege::Insert));
+    assert!(target_test_user_grant.privileges.contains(&pgmold::model::Privilege::Update));
+
+    let ops = pgmold::diff::compute_diff_with_flags(&initial_schema, &target_schema, false, true);
+
+    let grant_ops: Vec<_> = ops
+        .iter()
+        .filter(|op| matches!(op, MigrationOp::GrantPrivileges { .. }))
+        .collect();
+    assert_eq!(
+        grant_ops.len(),
+        1,
+        "Should generate one GrantPrivileges op for INSERT and UPDATE privileges"
+    );
+
+    assert!(
+        ops.iter().any(|op| matches!(
+            op,
+            MigrationOp::GrantPrivileges { object_kind, schema, name, grantee, privileges, .. }
+            if matches!(object_kind, pgmold::diff::GrantObjectKind::Table)
+                && schema == "public" && name == "products" && grantee == "test_user"
+                && privileges.contains(&pgmold::model::Privilege::Insert)
+                && privileges.contains(&pgmold::model::Privilege::Update)
+                && !privileges.contains(&pgmold::model::Privilege::Select)
+        )),
+        "Should have GrantPrivileges for INSERT and UPDATE (not SELECT since it already exists)"
+    );
+
+    let planned = plan_migration(ops);
+    let sql = generate_sql(&planned);
+
+    assert!(
+        sql.iter().any(|s| s.contains("GRANT") && s.contains("products") && s.contains("INSERT") && s.contains("UPDATE")),
+        "Should generate GRANT SQL with INSERT and UPDATE. Generated SQL: {:?}",
+        sql
+    );
+
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Failed to execute: {stmt}\nError: {e}"));
+    }
+
+    let after_migration = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let after_table = after_migration.tables.get("public.products").unwrap();
+    let after_test_user_grant = after_table.grants.iter().find(|g| g.grantee == "test_user").expect("Should have grant for test_user after migration");
+    assert!(
+        after_test_user_grant.privileges.contains(&pgmold::model::Privilege::Select),
+        "Should have SELECT privilege after migration"
+    );
+    assert!(
+        after_test_user_grant.privileges.contains(&pgmold::model::Privilege::Insert),
+        "Should have INSERT privilege after migration"
+    );
+    assert!(
+        after_test_user_grant.privileges.contains(&pgmold::model::Privilege::Update),
+        "Should have UPDATE privilege after migration"
+    );
+
+    let final_ops = pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema, false, true);
+    let final_grant_ops: Vec<_> = final_ops
+        .iter()
+        .filter(|op| matches!(op, MigrationOp::GrantPrivileges { .. }) || matches!(op, MigrationOp::RevokePrivileges { .. }))
+        .collect();
+    assert!(
+        final_grant_ops.is_empty(),
+        "Should have no grant/revoke ops after migration, got: {final_grant_ops:?}"
+    );
+
+    let schema_sql_revoke = r#"
+        CREATE TABLE products (id BIGINT PRIMARY KEY, name TEXT NOT NULL, price NUMERIC);
+        GRANT SELECT ON TABLE products TO test_user;
+    "#;
+
+    let target_schema_revoke = parse_sql_string(schema_sql_revoke).unwrap();
+    let ops_revoke = pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema_revoke, false, true);
+
+    let revoke_ops: Vec<_> = ops_revoke
+        .iter()
+        .filter(|op| matches!(op, MigrationOp::RevokePrivileges { .. }))
+        .collect();
+    assert_eq!(
+        revoke_ops.len(),
+        1,
+        "Should generate one RevokePrivileges op for INSERT and UPDATE privileges"
+    );
+
+    assert!(
+        ops_revoke.iter().any(|op| matches!(
+            op,
+            MigrationOp::RevokePrivileges { object_kind, schema, name, grantee, privileges, .. }
+            if matches!(object_kind, pgmold::diff::GrantObjectKind::Table)
+                && schema == "public" && name == "products" && grantee == "test_user"
+                && privileges.contains(&pgmold::model::Privilege::Insert)
+                && privileges.contains(&pgmold::model::Privilege::Update)
+                && !privileges.contains(&pgmold::model::Privilege::Select)
+        )),
+        "Should have RevokePrivileges for INSERT and UPDATE (not SELECT since it should remain)"
+    );
+
+    let planned_revoke = plan_migration(ops_revoke);
+    let sql_revoke = generate_sql(&planned_revoke);
+
+    for stmt in &sql_revoke {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Failed to execute: {stmt}\nError: {e}"));
+    }
+
+    let final_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let final_table = final_schema.tables.get("public.products").unwrap();
+    let final_test_user_grant = final_table.grants.iter().find(|g| g.grantee == "test_user").expect("Should have grant for test_user in final state");
+    assert!(
+        final_test_user_grant.privileges.contains(&pgmold::model::Privilege::Select),
+        "Should still have SELECT privilege"
+    );
+    assert!(
+        !final_test_user_grant.privileges.contains(&pgmold::model::Privilege::Insert),
+        "Should not have INSERT privilege after revoke"
+    );
+    assert!(
+        !final_test_user_grant.privileges.contains(&pgmold::model::Privilege::Update),
+        "Should not have UPDATE privilege after revoke"
+    );
+}
