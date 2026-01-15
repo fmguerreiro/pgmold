@@ -53,6 +53,14 @@ pub async fn introspect_schema(
         }
     }
 
+    // Introspect grants for schemas
+    let schema_grants = introspect_schema_grants(connection, target_schemas).await?;
+    for (schema_name, grants) in schema_grants {
+        if let Some(pg_schema) = schema.schemas.get_mut(&schema_name) {
+            pg_schema.grants = grants;
+        }
+    }
+
     // Introspect partition keys and merge into tables
     let partition_keys = introspect_partition_keys(connection, target_schemas).await?;
     for (qualified_name, partition_key) in partition_keys {
@@ -129,7 +137,13 @@ async fn introspect_schemas(
         }
         // Only include schemas that match target_schemas filter (or all if empty)
         if target_schemas.is_empty() || target_schemas.contains(&name) {
-            schemas.insert(name.clone(), PgSchema { name });
+            schemas.insert(
+                name.clone(),
+                PgSchema {
+                    name,
+                    grants: Vec::new(),
+                },
+            );
         }
     }
 
@@ -1706,6 +1720,67 @@ async fn introspect_function_grants(
         }
         grants_vec.sort();
         result.insert(qualified_name, grants_vec);
+    }
+
+    Ok(result)
+}
+
+async fn introspect_schema_grants(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<Grant>>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS schema_name,
+            CASE
+                WHEN acl.grantee = 0 THEN 'PUBLIC'
+                ELSE pg_get_userbyid(acl.grantee)
+            END AS grantee,
+            acl.privilege_type AS privilege_type,
+            acl.is_grantable AS is_grantable
+        FROM pg_namespace n
+        CROSS JOIN LATERAL aclexplode(n.nspacl) AS acl
+        WHERE n.nspname = ANY($1::text[])
+          AND n.nspacl IS NOT NULL
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch schema grants: {e}")))?;
+
+    let mut grants_by_schema: BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>> =
+        BTreeMap::new();
+
+    for row in rows {
+        let schema_name: String = row.get("schema_name");
+        let grantee: String = row.get("grantee");
+        let privilege_type: String = row.get("privilege_type");
+        let is_grantable: bool = row.get("is_grantable");
+
+        if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
+            grants_by_schema
+                .entry(schema_name)
+                .or_insert_with(BTreeMap::new)
+                .entry((grantee, is_grantable))
+                .or_insert_with(BTreeSet::new)
+                .insert(privilege);
+        }
+    }
+
+    let mut result = BTreeMap::new();
+    for (schema_name, grants_map) in grants_by_schema {
+        let mut grants_vec = Vec::new();
+        for ((grantee, with_grant_option), privileges) in grants_map {
+            grants_vec.push(Grant {
+                grantee,
+                privileges,
+                with_grant_option,
+            });
+        }
+        grants_vec.sort();
+        result.insert(schema_name, grants_vec);
     }
 
     Ok(result)

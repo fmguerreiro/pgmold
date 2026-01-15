@@ -1609,6 +1609,7 @@ mod tests {
     fn create_schema_generates_valid_sql() {
         let ops = vec![MigrationOp::CreateSchema(crate::model::PgSchema {
             name: "auth".to_string(),
+            grants: Vec::new(),
         })];
 
         let sql = generate_sql(&ops);

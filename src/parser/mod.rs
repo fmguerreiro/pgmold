@@ -401,7 +401,13 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         obj.to_string().trim_matches('"').to_string()
                     }
                 };
-                schema.schemas.insert(name.clone(), PgSchema { name });
+                schema.schemas.insert(
+                    name.clone(),
+                    PgSchema {
+                        name,
+                        grants: Vec::new(),
+                    },
+                );
             }
             Statement::CreateDomain(sqlparser::ast::CreateDomain {
                 name,

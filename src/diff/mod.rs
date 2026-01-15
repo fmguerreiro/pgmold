@@ -2140,6 +2140,7 @@ mod tests {
             "auth".to_string(),
             crate::model::PgSchema {
                 name: "auth".to_string(),
+                grants: Vec::new(),
             },
         );
 
@@ -2155,6 +2156,7 @@ mod tests {
             "old_schema".to_string(),
             crate::model::PgSchema {
                 name: "old_schema".to_string(),
+                grants: Vec::new(),
             },
         );
         let to = empty_schema();

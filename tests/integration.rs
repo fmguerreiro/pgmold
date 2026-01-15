@@ -2809,3 +2809,66 @@ async fn introspects_function_grants() {
         "Should have EXECUTE privilege"
     );
 }
+
+#[tokio::test]
+async fn introspects_schema_grants() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE ROLE test_user")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE SCHEMA test_schema")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("GRANT USAGE ON SCHEMA test_schema TO test_user")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("GRANT CREATE ON SCHEMA test_schema TO test_user")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["test_schema".to_string()], false)
+        .await
+        .unwrap();
+
+    let pg_schema = schema.schemas.get("test_schema");
+    assert!(
+        pg_schema.is_some(),
+        "Schema test_schema should exist. Available schemas: {:?}",
+        schema.schemas.keys().collect::<Vec<_>>()
+    );
+
+    let pg_schema = pg_schema.unwrap();
+    assert!(
+        !pg_schema.grants.is_empty(),
+        "Schema should have grants. Schema: {:?}",
+        pg_schema
+    );
+    assert!(
+        pg_schema.grants.iter().any(|g| g.grantee == "test_user"),
+        "Should have grant for test_user. Grants: {:?}",
+        pg_schema.grants
+    );
+    assert!(
+        pg_schema
+            .grants
+            .iter()
+            .any(|g| g.privileges.contains(&pgmold::model::Privilege::Usage)),
+        "Should have USAGE privilege"
+    );
+    assert!(
+        pg_schema
+            .grants
+            .iter()
+            .any(|g| g.privileges.contains(&pgmold::model::Privilege::Create)),
+        "Should have CREATE privilege"
+    );
+}
