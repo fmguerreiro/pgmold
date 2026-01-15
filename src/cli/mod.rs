@@ -98,6 +98,9 @@ enum Commands {
         /// Include ownership management (ALTER ... OWNER TO) in schema comparison
         #[arg(long)]
         manage_ownership: bool,
+        /// Manage grants (GRANT/REVOKE) on objects
+        #[arg(long)]
+        manage_grants: bool,
     },
 
     /// Apply migrations
@@ -130,6 +133,9 @@ enum Commands {
         /// Include ownership management (ALTER ... OWNER TO) in schema comparison
         #[arg(long)]
         manage_ownership: bool,
+        /// Manage grants (GRANT/REVOKE) on objects
+        #[arg(long)]
+        manage_grants: bool,
     },
 
     /// Lint schema or migration plan
@@ -225,6 +231,9 @@ enum MigrateAction {
         /// Include ownership management (ALTER ... OWNER TO) in schema comparison
         #[arg(long)]
         manage_ownership: bool,
+        /// Manage grants (GRANT/REVOKE) on objects
+        #[arg(long)]
+        manage_grants: bool,
     },
 }
 
@@ -280,6 +289,7 @@ pub async fn run() -> Result<()> {
             json,
             zero_downtime,
             manage_ownership,
+            manage_grants,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -440,6 +450,7 @@ pub async fn run() -> Result<()> {
             exclude_types,
             include_extension_objects,
             manage_ownership,
+            manage_grants,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -737,6 +748,7 @@ pub async fn run() -> Result<()> {
                 name,
                 target_schemas,
                 manage_ownership,
+                manage_grants,
             } => {
                 let target = load_sql_schema(&schema)?;
                 let db_url = parse_db_source(&database)?;
@@ -1083,6 +1095,100 @@ mod tests {
         } = args.command
         {
             assert!(manage_ownership);
+        } else {
+            panic!("Expected Migrate Generate command");
+        }
+    }
+
+    #[test]
+    fn cli_parses_manage_grants_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--manage-grants",
+        ]);
+
+        if let Commands::Plan {
+            manage_grants, ..
+        } = args.command
+        {
+            assert!(manage_grants);
+        } else {
+            panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn cli_manage_grants_flag_defaults_false() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+        ]);
+
+        if let Commands::Plan {
+            manage_grants, ..
+        } = args.command
+        {
+            assert!(!manage_grants);
+        } else {
+            panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn cli_apply_parses_manage_grants_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "apply",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--manage-grants",
+        ]);
+
+        if let Commands::Apply {
+            manage_grants, ..
+        } = args.command
+        {
+            assert!(manage_grants);
+        } else {
+            panic!("Expected Apply command");
+        }
+    }
+
+    #[test]
+    fn cli_migrate_generate_parses_manage_grants_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "migrate",
+            "generate",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "postgres://localhost/db",
+            "--migrations",
+            "migrations",
+            "--name",
+            "test_migration",
+            "--manage-grants",
+        ]);
+
+        if let Commands::Migrate {
+            action: MigrateAction::Generate {
+                manage_grants, ..
+            },
+        } = args.command
+        {
+            assert!(manage_grants);
         } else {
             panic!("Expected Migrate Generate command");
         }
