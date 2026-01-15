@@ -312,12 +312,14 @@ pub async fn run() -> Result<()> {
                     &filtered_target,
                     &filtered_db_schema,
                     manage_ownership,
+                    manage_grants,
                 ))
             } else {
                 plan_migration(pgmold::diff::compute_diff_with_flags(
                     &filtered_db_schema,
                     &filtered_target,
                     manage_ownership,
+                    manage_grants,
                 ))
             };
 
@@ -473,6 +475,7 @@ pub async fn run() -> Result<()> {
                 &filtered_db_schema,
                 &filtered_target,
                 manage_ownership,
+                manage_grants,
             ));
             let lint_options = LintOptions {
                 allow_destructive,
@@ -763,6 +766,7 @@ pub async fn run() -> Result<()> {
                     &current,
                     &target,
                     manage_ownership,
+                    manage_grants,
                 ));
                 let sql = generate_sql(&ops);
 

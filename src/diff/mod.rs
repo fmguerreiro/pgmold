@@ -195,13 +195,14 @@ pub enum EnumValuePosition {
 use crate::model::{parse_qualified_name, Schema};
 
 pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
-    compute_diff_with_flags(from, to, false)
+    compute_diff_with_flags(from, to, false, false)
 }
 
 pub fn compute_diff_with_flags(
     from: &Schema,
     to: &Schema,
     manage_ownership: bool,
+    _manage_grants: bool,
 ) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
@@ -3134,7 +3135,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         to_table.owner = Some("newowner".to_string());
         to.tables.insert("users".to_string(), to_table);
 
-        let ops = compute_diff_with_flags(&from, &to, true);
+        let ops = compute_diff_with_flags(&from, &to, true, false);
         assert_eq!(ops.len(), 1);
         assert!(matches!(
             &ops[0],
@@ -3160,7 +3161,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         to_table.owner = Some("newowner".to_string());
         to.tables.insert("users".to_string(), to_table);
 
-        let ops = compute_diff_with_flags(&from, &to, false);
+        let ops = compute_diff_with_flags(&from, &to, false, false);
         assert_eq!(ops.len(), 0);
     }
 
@@ -3190,7 +3191,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             },
         );
 
-        let ops = compute_diff_with_flags(&from, &to, true);
+        let ops = compute_diff_with_flags(&from, &to, true, false);
         assert_eq!(ops.len(), 1);
         assert!(matches!(
             &ops[0],
@@ -3242,7 +3243,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             },
         );
 
-        let ops = compute_diff_with_flags(&from, &to, true);
+        let ops = compute_diff_with_flags(&from, &to, true, false);
         assert_eq!(ops.len(), 1);
         assert!(matches!(
             &ops[0],
@@ -3280,7 +3281,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             },
         );
 
-        let ops = compute_diff_with_flags(&from, &to, true);
+        let ops = compute_diff_with_flags(&from, &to, true, false);
         assert_eq!(ops.len(), 1);
         assert!(matches!(
             &ops[0],
@@ -3326,7 +3327,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             },
         );
 
-        let ops = compute_diff_with_flags(&from, &to, true);
+        let ops = compute_diff_with_flags(&from, &to, true, false);
         assert_eq!(ops.len(), 1);
         assert!(matches!(
             &ops[0],
@@ -3387,7 +3388,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             },
         );
 
-        let ops = compute_diff_with_flags(&from, &to, true);
+        let ops = compute_diff_with_flags(&from, &to, true, false);
         assert_eq!(ops.len(), 1);
         assert!(matches!(
             &ops[0],

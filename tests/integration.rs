@@ -2174,7 +2174,7 @@ async fn function_owner_round_trip() {
         .await
         .unwrap();
 
-    let ops = pgmold::diff::compute_diff_with_flags(&current, &parsed_schema, true);
+    let ops = pgmold::diff::compute_diff_with_flags(&current, &parsed_schema, true, false);
     let planned = plan_migration(ops);
     let sql = generate_sql(&planned);
 
@@ -2192,7 +2192,7 @@ async fn function_owner_round_trip() {
         "Owner should match after round-trip"
     );
 
-    let diff_ops = pgmold::diff::compute_diff_with_flags(&introspected, &parsed_schema, true);
+    let diff_ops = pgmold::diff::compute_diff_with_flags(&introspected, &parsed_schema, true, false);
     let func_ops: Vec<_> = diff_ops
         .iter()
         .filter(|op| {
@@ -2616,7 +2616,7 @@ async fn ownership_management_end_to_end() {
         "Parsed function should have app_owner"
     );
 
-    let ops = pgmold::diff::compute_diff_with_flags(&initial_schema, &target_schema, true);
+    let ops = pgmold::diff::compute_diff_with_flags(&initial_schema, &target_schema, true, false);
 
     let alter_owner_ops: Vec<_> = ops
         .iter()
@@ -2760,7 +2760,7 @@ async fn ownership_management_end_to_end() {
         "Function owner should be app_owner after migration"
     );
 
-    let final_ops = pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema, true);
+    let final_ops = pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema, true, false);
     let final_alter_ops: Vec<_> = final_ops
         .iter()
         .filter(|op| matches!(op, MigrationOp::AlterOwner { .. }))
