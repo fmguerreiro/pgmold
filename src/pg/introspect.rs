@@ -1678,11 +1678,10 @@ async fn introspect_function_grants(
         let is_grantable: bool = row.get("is_grantable");
 
         if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            // Parse arguments and extract just the types to match signature() format
             let parsed_args = parse_function_arguments(&args_str);
             let type_signature = parsed_args
                 .iter()
-                .map(|arg| arg.data_type.as_str())
+                .map(|arg| crate::model::normalize_pg_type(&arg.data_type))
                 .collect::<Vec<_>>()
                 .join(", ");
             let qualified_name = format!("{schema_name}.{function_name}({type_signature})");
