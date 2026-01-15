@@ -1,5 +1,5 @@
 use regex::Regex;
-use sqlparser::ast::{BinaryOperator, DataType, Expr, Query, Select, SetExpr, Statement, Value};
+use sqlparser::ast::{BinaryOperator, DataType, Expr, Query, Select, SetExpr, Statement};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use thiserror::Error;
@@ -545,7 +545,8 @@ fn normalize_expr(expr: &Expr) -> Expr {
             }
         }
 
-        // Strip ::text cast from string literals
+        // Strip ::text cast from any expression
+        // PostgreSQL normalizes redundant casts away when storing trigger WHEN clauses
         Expr::Cast {
             kind,
             expr: inner,
@@ -553,16 +554,10 @@ fn normalize_expr(expr: &Expr) -> Expr {
             format,
         } => {
             let norm_inner = normalize_expr(inner);
-            // If casting a string literal to text, just return the string
+            // If casting to text, strip the cast entirely
+            // PostgreSQL does this normalization for trigger WHEN clauses
             if matches!(data_type, DataType::Text) {
-                if let Expr::Value(v) = &norm_inner {
-                    if matches!(
-                        v.value,
-                        Value::SingleQuotedString(_) | Value::DoubleQuotedString(_)
-                    ) {
-                        return norm_inner;
-                    }
-                }
+                return norm_inner;
             }
             Expr::Cast {
                 kind: kind.clone(),
@@ -697,6 +692,35 @@ fn normalize_expr(expr: &Expr) -> Expr {
         // Normalize IS NULL / IS NOT NULL
         Expr::IsNull(inner) => Expr::IsNull(Box::new(normalize_expr(inner))),
         Expr::IsNotNull(inner) => Expr::IsNotNull(Box::new(normalize_expr(inner))),
+
+        // Normalize IS DISTINCT FROM / IS NOT DISTINCT FROM
+        Expr::IsDistinctFrom(left, right) => Expr::IsDistinctFrom(
+            Box::new(normalize_expr(left)),
+            Box::new(normalize_expr(right)),
+        ),
+        Expr::IsNotDistinctFrom(left, right) => Expr::IsNotDistinctFrom(
+            Box::new(normalize_expr(left)),
+            Box::new(normalize_expr(right)),
+        ),
+
+        // Normalize CompoundIdentifier (lowercase for case-insensitive comparison)
+        Expr::CompoundIdentifier(idents) => Expr::CompoundIdentifier(
+            idents
+                .iter()
+                .map(|ident| sqlparser::ast::Ident {
+                    value: ident.value.to_lowercase(),
+                    quote_style: ident.quote_style,
+                    span: ident.span.clone(),
+                })
+                .collect(),
+        ),
+
+        // Normalize Identifier (lowercase for case-insensitive comparison)
+        Expr::Identifier(ident) => Expr::Identifier(sqlparser::ast::Ident {
+            value: ident.value.to_lowercase(),
+            quote_style: ident.quote_style,
+            span: ident.span.clone(),
+        }),
 
         // Pass through other expressions unchanged
         other => other.clone(),
