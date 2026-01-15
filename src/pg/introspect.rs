@@ -3,7 +3,7 @@ use crate::pg::connection::PgConnection;
 use crate::pg::sqlgen::strip_ident_quotes;
 use crate::util::{normalize_sql_whitespace, Result, SchemaError};
 use sqlx::Row;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub async fn introspect_schema(
     connection: &PgConnection,
@@ -26,6 +26,16 @@ pub async fn introspect_schema(
         introspect_triggers(connection, target_schemas, include_extension_objects).await?;
     schema.sequences =
         introspect_sequences(connection, target_schemas, include_extension_objects).await?;
+
+    // Introspect grants for tables and views
+    let table_view_grants = introspect_table_view_grants(connection, target_schemas).await?;
+    for (qualified_name, grants) in table_view_grants {
+        if let Some(table) = schema.tables.get_mut(&qualified_name) {
+            table.grants = grants;
+        } else if let Some(view) = schema.views.get_mut(&qualified_name) {
+            view.grants = grants;
+        }
+    }
 
     // Introspect partition keys and merge into tables
     let partition_keys = introspect_partition_keys(connection, target_schemas).await?;
@@ -1464,6 +1474,88 @@ async fn introspect_sequences(
     Ok(sequences)
 }
 
+fn privilege_from_pg_string(s: &str) -> Option<Privilege> {
+    match s {
+        "SELECT" => Some(Privilege::Select),
+        "INSERT" => Some(Privilege::Insert),
+        "UPDATE" => Some(Privilege::Update),
+        "DELETE" => Some(Privilege::Delete),
+        "TRUNCATE" => Some(Privilege::Truncate),
+        "REFERENCES" => Some(Privilege::References),
+        "TRIGGER" => Some(Privilege::Trigger),
+        "USAGE" => Some(Privilege::Usage),
+        "EXECUTE" => Some(Privilege::Execute),
+        "CREATE" => Some(Privilege::Create),
+        _ => None,
+    }
+}
+
+async fn introspect_table_view_grants(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<Grant>>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS schema_name,
+            c.relname AS object_name,
+            CASE
+                WHEN acl.grantee = 0 THEN 'PUBLIC'
+                ELSE pg_get_userbyid(acl.grantee)
+            END AS grantee,
+            acl.privilege_type AS privilege_type,
+            acl.is_grantable AS is_grantable
+        FROM pg_class c
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        CROSS JOIN LATERAL aclexplode(c.relacl) acl
+        WHERE c.relkind IN ('r', 'v', 'm')
+          AND n.nspname = ANY($1::text[])
+          AND c.relacl IS NOT NULL
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch grants: {e}")))?;
+
+    let mut grants_by_object: BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>> =
+        BTreeMap::new();
+
+    for row in rows {
+        let schema_name: String = row.get("schema_name");
+        let object_name: String = row.get("object_name");
+        let grantee: String = row.get("grantee");
+        let privilege_type: String = row.get("privilege_type");
+        let is_grantable: bool = row.get("is_grantable");
+
+        if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
+            let qualified_name = format!("{schema_name}.{object_name}");
+            grants_by_object
+                .entry(qualified_name)
+                .or_insert_with(BTreeMap::new)
+                .entry((grantee, is_grantable))
+                .or_insert_with(BTreeSet::new)
+                .insert(privilege);
+        }
+    }
+
+    let mut result = BTreeMap::new();
+    for (qualified_name, grants_map) in grants_by_object {
+        let mut grants_vec = Vec::new();
+        for ((grantee, with_grant_option), privileges) in grants_map {
+            grants_vec.push(Grant {
+                grantee,
+                privileges,
+                with_grant_option,
+            });
+        }
+        grants_vec.sort();
+        result.insert(qualified_name, grants_vec);
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1484,5 +1576,47 @@ mod tests {
         assert_eq!(args.len(), 2);
         assert_eq!(args[0].name, Some("role_name".to_string()));
         assert_eq!(args[1].name, Some("enterprise_id".to_string()));
+    }
+
+    #[test]
+    fn privilege_from_pg_string_maps_all_privileges() {
+        assert_eq!(
+            privilege_from_pg_string("SELECT"),
+            Some(Privilege::Select)
+        );
+        assert_eq!(
+            privilege_from_pg_string("INSERT"),
+            Some(Privilege::Insert)
+        );
+        assert_eq!(
+            privilege_from_pg_string("UPDATE"),
+            Some(Privilege::Update)
+        );
+        assert_eq!(
+            privilege_from_pg_string("DELETE"),
+            Some(Privilege::Delete)
+        );
+        assert_eq!(
+            privilege_from_pg_string("TRUNCATE"),
+            Some(Privilege::Truncate)
+        );
+        assert_eq!(
+            privilege_from_pg_string("REFERENCES"),
+            Some(Privilege::References)
+        );
+        assert_eq!(
+            privilege_from_pg_string("TRIGGER"),
+            Some(Privilege::Trigger)
+        );
+        assert_eq!(privilege_from_pg_string("USAGE"), Some(Privilege::Usage));
+        assert_eq!(
+            privilege_from_pg_string("EXECUTE"),
+            Some(Privilege::Execute)
+        );
+        assert_eq!(
+            privilege_from_pg_string("CREATE"),
+            Some(Privilege::Create)
+        );
+        assert_eq!(privilege_from_pg_string("UNKNOWN"), None);
     }
 }
