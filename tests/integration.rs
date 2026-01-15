@@ -1,7 +1,7 @@
 use pgmold::diff::{compute_diff, planner::plan_migration, MigrationOp};
 use pgmold::drift::detect_drift;
 use pgmold::lint::{has_errors, lint_migration_plan, LintOptions};
-use pgmold::model::{PartitionBound, PartitionStrategy};
+use pgmold::model::{PartitionBound, PartitionStrategy, Schema};
 use pgmold::parser::{load_schema_sources, parse_sql_string};
 use pgmold::pg::connection::PgConnection;
 use pgmold::pg::introspect::introspect_schema;
@@ -3172,5 +3172,71 @@ async fn grants_management_end_to_end() {
     assert!(
         !final_test_user_grant.privileges.contains(&pgmold::model::Privilege::Update),
         "Should not have UPDATE privilege after revoke"
+    );
+}
+
+#[tokio::test]
+async fn unique_constraint_round_trip_no_orphan_index() {
+    // Regression test: UNIQUE constraint backing index should not appear as orphan
+    // When we apply a UNIQUE constraint, PostgreSQL creates a backing index.
+    // On next plan, we should NOT see a DROP INDEX for that backing index.
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Schema with UNIQUE constraint via ALTER TABLE
+    let schema_sql = r#"
+        CREATE TABLE "auth"."mfa_amr_claims" (
+            "id" uuid NOT NULL PRIMARY KEY,
+            "session_id" uuid NOT NULL,
+            "authentication_method" TEXT NOT NULL
+        );
+        ALTER TABLE "auth"."mfa_amr_claims" ADD CONSTRAINT
+            "mfa_amr_claims_session_id_authentication_method_pkey"
+            UNIQUE ("session_id", "authentication_method");
+    "#;
+
+    // Create the auth schema first
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS auth")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    // Apply the schema to the database
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Now introspect and compute diff again - should be empty
+    let db_schema = introspect_schema(&connection, &["auth".to_string()], false)
+        .await
+        .unwrap();
+
+    // Debug: check what indexes exist
+    let db_table = db_schema.tables.get("auth.mfa_amr_claims").unwrap();
+    let parsed_table = parsed_schema.tables.get("auth.mfa_amr_claims").unwrap();
+
+    println!("DB indexes: {:?}", db_table.indexes);
+    println!("Parsed indexes: {:?}", parsed_table.indexes);
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let index_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::AddIndex { .. } | MigrationOp::DropIndex { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        index_ops.is_empty(),
+        "Should have no index diff after applying UNIQUE constraint. Got: {:?}",
+        index_ops
     );
 }
