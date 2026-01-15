@@ -97,6 +97,8 @@ fn preprocess_sql(sql: &str) -> String {
     let alter_type_re = Regex::new(r"(?i)ALTER\s+TYPE\s+[^;]+;").unwrap();
     // Remove ALTER DOMAIN statements (sqlparser doesn't support them)
     let alter_domain_re = Regex::new(r"(?i)ALTER\s+DOMAIN\s+[^;]+;").unwrap();
+    // Remove GRANT statements (sqlparser doesn't support them, but we'll parse them separately)
+    let grant_re = Regex::new(r"(?i)GRANT\s+[^;]+;").unwrap();
 
     let processed = set_search_path_re.replace_all(sql, "");
     let processed = alter_function_re.replace_all(&processed, "");
@@ -105,6 +107,7 @@ fn preprocess_sql(sql: &str) -> String {
     let processed = alter_sequence_re.replace_all(&processed, "");
     let processed = alter_type_re.replace_all(&processed, "");
     let processed = alter_domain_re.replace_all(&processed, "");
+    let processed = grant_re.replace_all(&processed, "");
 
     processed.to_string()
 }
@@ -729,12 +732,150 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
         });
     }
 
+    // Parse GRANT statements
+    parse_grant_statements(sql, &mut schema)?;
+
     // Associate pending policies with their tables.
     // Orphaned policies (referencing non-existent tables) remain in pending_policies
     // for potential resolution after schema merging in load_schema_sources.
     schema.pending_policies = schema.finalize_partial();
 
     Ok(schema)
+}
+
+fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
+    use regex::Regex;
+    use std::collections::BTreeSet;
+
+    // Pattern: GRANT privileges ON [object_type] qualified_name TO grantee [WITH GRANT OPTION]
+    // Handle TABLE, VIEW, SEQUENCE, FUNCTION, SCHEMA, TYPE objects
+    let grant_re = Regex::new(
+        r"(?i)GRANT\s+(.+?)\s+ON\s+(?:(TABLE|VIEW|SEQUENCE|FUNCTION|SCHEMA|TYPE)\s+)?(.+?)\s+TO\s+(\w+|PUBLIC)\s*(WITH\s+GRANT\s+OPTION)?"
+    ).unwrap();
+
+    for cap in grant_re.captures_iter(sql) {
+        let privileges_str = cap.get(1).unwrap().as_str();
+        let object_type = cap.get(2).map(|m| m.as_str().to_uppercase());
+        let object_name_raw = cap.get(3).unwrap().as_str();
+        let grantee = cap.get(4).unwrap().as_str();
+        let with_grant_option = cap.get(5).is_some();
+
+        // Parse privileges (comma-separated)
+        let mut privileges = BTreeSet::new();
+        for priv_str in privileges_str.split(',') {
+            let priv_trimmed = priv_str.trim().to_uppercase();
+            match priv_trimmed.as_str() {
+                "SELECT" => privileges.insert(Privilege::Select),
+                "INSERT" => privileges.insert(Privilege::Insert),
+                "UPDATE" => privileges.insert(Privilege::Update),
+                "DELETE" => privileges.insert(Privilege::Delete),
+                "TRUNCATE" => privileges.insert(Privilege::Truncate),
+                "REFERENCES" => privileges.insert(Privilege::References),
+                "TRIGGER" => privileges.insert(Privilege::Trigger),
+                "USAGE" => privileges.insert(Privilege::Usage),
+                "EXECUTE" => privileges.insert(Privilege::Execute),
+                "CREATE" => privileges.insert(Privilege::Create),
+                _ => continue,
+            };
+        }
+
+        if privileges.is_empty() {
+            continue;
+        }
+
+        let grant = Grant {
+            grantee: grantee.to_string(),
+            privileges,
+            with_grant_option,
+        };
+
+        // Determine object type and apply grant
+        let inferred_type = object_type.as_deref().unwrap_or("TABLE");
+        match inferred_type {
+            "TABLE" | "VIEW" => {
+                // Parse qualified name (handle schema.table or just table)
+                let (obj_schema, obj_name) = parse_object_name(object_name_raw);
+                let key = qualified_name(&obj_schema, &obj_name);
+
+                // Try tables first, then views
+                if let Some(table) = schema.tables.get_mut(&key) {
+                    table.grants.push(grant.clone());
+                } else if let Some(view) = schema.views.get_mut(&key) {
+                    view.grants.push(grant);
+                }
+            }
+            "SEQUENCE" => {
+                let (obj_schema, obj_name) = parse_object_name(object_name_raw);
+                let key = qualified_name(&obj_schema, &obj_name);
+                if let Some(sequence) = schema.sequences.get_mut(&key) {
+                    sequence.grants.push(grant);
+                }
+            }
+            "FUNCTION" => {
+                // Functions include signature: func_name(type1, type2)
+                let function_key = parse_function_signature(object_name_raw);
+                if let Some(func) = schema.functions.get_mut(&function_key) {
+                    func.grants.push(grant);
+                }
+            }
+            "SCHEMA" => {
+                // Schema name is just the name (no schema prefix)
+                let schema_name = object_name_raw.trim().trim_matches('"');
+                if let Some(pg_schema) = schema.schemas.get_mut(schema_name) {
+                    pg_schema.grants.push(grant);
+                }
+            }
+            "TYPE" => {
+                // TYPEs can be enums or domains
+                let (obj_schema, obj_name) = parse_object_name(object_name_raw);
+                let key = qualified_name(&obj_schema, &obj_name);
+
+                // Try enums first, then domains
+                if let Some(enum_type) = schema.enums.get_mut(&key) {
+                    enum_type.grants.push(grant.clone());
+                } else if let Some(domain) = schema.domains.get_mut(&key) {
+                    domain.grants.push(grant);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_object_name(name: &str) -> (String, String) {
+    let trimmed = name.trim().trim_matches('"');
+    match trimmed.split_once('.') {
+        Some((schema, obj)) => (schema.trim_matches('"').to_string(), obj.trim_matches('"').to_string()),
+        None => ("public".to_string(), trimmed.to_string()),
+    }
+}
+
+fn parse_function_signature(sig: &str) -> String {
+    // sig can be: schema.func_name(arg1, arg2) or func_name(arg1, arg2)
+    let trimmed = sig.trim();
+
+    // Extract schema and function name with args
+    if let Some(paren_pos) = trimmed.find('(') {
+        let before_paren = &trimmed[..paren_pos];
+        let args_part = &trimmed[paren_pos..];
+
+        if let Some(dot_pos) = before_paren.rfind('.') {
+            let schema_part = &before_paren[..dot_pos].trim_matches('"');
+            let func_name = &before_paren[dot_pos+1..].trim_matches('"');
+            format!("{}.{}{}", schema_part, func_name, args_part)
+        } else {
+            format!("public.{}{}", before_paren.trim_matches('"'), args_part)
+        }
+    } else {
+        // No parentheses, just return as-is with public schema if no schema specified
+        if trimmed.contains('.') {
+            trimmed.to_string()
+        } else {
+            format!("public.{}", trimmed.trim_matches('"'))
+        }
+    }
 }
 
 struct ParsedTable {
@@ -3066,5 +3207,169 @@ CREATE TABLE "mrv"."Cultivation" (
             PgType::Timestamp,
             "TIMESTAMP without time zone should parse to PgType::Timestamp"
         );
+    }
+
+    #[test]
+    fn parses_grant_on_table() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT, INSERT ON users TO app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        let grant = &table.grants[0];
+        assert_eq!(grant.grantee, "app_user");
+        assert!(grant.privileges.contains(&Privilege::Select));
+        assert!(grant.privileges.contains(&Privilege::Insert));
+        assert!(!grant.with_grant_option);
+    }
+
+    #[test]
+    fn parses_grant_with_table_keyword() {
+        let sql = r#"
+            CREATE TABLE products (id INTEGER PRIMARY KEY);
+            GRANT SELECT ON TABLE products TO readonly_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.products").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        assert_eq!(table.grants[0].grantee, "readonly_user");
+        assert!(table.grants[0].privileges.contains(&Privilege::Select));
+    }
+
+    #[test]
+    fn parses_grant_with_schema_qualified_name() {
+        let sql = r#"
+            CREATE SCHEMA auth;
+            CREATE TABLE auth.accounts (id INTEGER PRIMARY KEY);
+            GRANT SELECT, UPDATE ON TABLE auth.accounts TO app_admin;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("auth.accounts").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        assert_eq!(table.grants[0].grantee, "app_admin");
+        assert!(table.grants[0].privileges.contains(&Privilege::Select));
+        assert!(table.grants[0].privileges.contains(&Privilege::Update));
+    }
+
+    #[test]
+    fn parses_grant_on_view() {
+        let sql = r#"
+            CREATE TABLE base (id INTEGER);
+            CREATE VIEW user_view AS SELECT id FROM base;
+            GRANT SELECT ON VIEW user_view TO readonly;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let view = schema.views.get("public.user_view").unwrap();
+        assert_eq!(view.grants.len(), 1);
+        assert_eq!(view.grants[0].grantee, "readonly");
+        assert!(view.grants[0].privileges.contains(&Privilege::Select));
+    }
+
+    #[test]
+    fn parses_grant_on_sequence() {
+        let sql = r#"
+            CREATE SEQUENCE user_id_seq;
+            GRANT USAGE ON SEQUENCE user_id_seq TO app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let sequence = schema.sequences.get("public.user_id_seq").unwrap();
+        assert_eq!(sequence.grants.len(), 1);
+        assert_eq!(sequence.grants[0].grantee, "app_user");
+        assert!(sequence.grants[0].privileges.contains(&Privilege::Usage));
+    }
+
+    #[test]
+    fn parses_grant_on_function() {
+        let sql = r#"
+            CREATE FUNCTION add_numbers(a integer, b integer) RETURNS integer
+            LANGUAGE sql AS $$ SELECT a + b $$;
+            GRANT EXECUTE ON FUNCTION add_numbers(integer, integer) TO app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let func = schema.functions.get("public.add_numbers(integer, integer)").unwrap();
+        assert_eq!(func.grants.len(), 1);
+        assert_eq!(func.grants[0].grantee, "app_user");
+        assert!(func.grants[0].privileges.contains(&Privilege::Execute));
+    }
+
+    #[test]
+    fn parses_grant_on_schema() {
+        let sql = r#"
+            CREATE SCHEMA test_schema;
+            GRANT USAGE ON SCHEMA test_schema TO app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let pg_schema = schema.schemas.get("test_schema").unwrap();
+        assert_eq!(pg_schema.grants.len(), 1);
+        assert_eq!(pg_schema.grants[0].grantee, "app_user");
+        assert!(pg_schema.grants[0].privileges.contains(&Privilege::Usage));
+    }
+
+    #[test]
+    fn parses_grant_on_enum_type() {
+        let sql = r#"
+            CREATE TYPE user_role AS ENUM ('admin', 'user');
+            GRANT USAGE ON TYPE user_role TO app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let enum_type = schema.enums.get("public.user_role").unwrap();
+        assert_eq!(enum_type.grants.len(), 1);
+        assert_eq!(enum_type.grants[0].grantee, "app_user");
+        assert!(enum_type.grants[0].privileges.contains(&Privilege::Usage));
+    }
+
+    #[test]
+    fn parses_grant_with_grant_option() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT ON users TO app_user WITH GRANT OPTION;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        let grant = &table.grants[0];
+        assert_eq!(grant.grantee, "app_user");
+        assert!(grant.with_grant_option);
+    }
+
+    #[test]
+    fn parses_grant_to_public() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT ON users TO PUBLIC;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        assert_eq!(table.grants[0].grantee, "PUBLIC");
+    }
+
+    #[test]
+    fn parses_multiple_grants_on_same_object() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT ON users TO user1;
+            GRANT INSERT, UPDATE ON users TO user2;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 2);
+        assert_eq!(table.grants[0].grantee, "user1");
+        assert_eq!(table.grants[1].grantee, "user2");
+    }
+
+    #[test]
+    fn parses_grant_on_domain() {
+        let sql = r#"
+            CREATE DOMAIN email AS TEXT;
+            GRANT USAGE ON TYPE email TO app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let domain = schema.domains.get("public.email").unwrap();
+        assert_eq!(domain.grants.len(), 1);
+        assert_eq!(domain.grants[0].grantee, "app_user");
+        assert!(domain.grants[0].privileges.contains(&Privilege::Usage));
     }
 }
