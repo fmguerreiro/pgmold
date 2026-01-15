@@ -9,7 +9,7 @@ use sqlparser::ast::{
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
 use crate::util::{normalize_sql_whitespace, normalize_type_casts};
@@ -97,6 +97,8 @@ fn preprocess_sql(sql: &str) -> String {
     let alter_type_re = Regex::new(r"(?i)ALTER\s+TYPE\s+[^;]+;").unwrap();
     // Remove ALTER DOMAIN statements (sqlparser doesn't support them)
     let alter_domain_re = Regex::new(r"(?i)ALTER\s+DOMAIN\s+[^;]+;").unwrap();
+    // Remove REVOKE statements (must be before GRANT since REVOKE contains GRANT keyword)
+    let revoke_re = Regex::new(r"(?i)REVOKE\s+[^;]+;").unwrap();
     // Remove GRANT statements (sqlparser doesn't support them, but we'll parse them separately)
     let grant_re = Regex::new(r"(?i)GRANT\s+[^;]+;").unwrap();
 
@@ -107,6 +109,7 @@ fn preprocess_sql(sql: &str) -> String {
     let processed = alter_sequence_re.replace_all(&processed, "");
     let processed = alter_type_re.replace_all(&processed, "");
     let processed = alter_domain_re.replace_all(&processed, "");
+    let processed = revoke_re.replace_all(&processed, "");
     let processed = grant_re.replace_all(&processed, "");
 
     processed.to_string()
@@ -735,6 +738,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
     // Parse GRANT statements
     parse_grant_statements(sql, &mut schema)?;
 
+    // Parse REVOKE statements
+    parse_revoke_statements(sql, &mut schema)?;
+
     // Associate pending policies with their tables.
     // Orphaned policies (referencing non-existent tables) remain in pending_policies
     // for potential resolution after schema merging in load_schema_sources.
@@ -842,6 +848,115 @@ fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
+    use regex::Regex;
+    use std::collections::BTreeSet;
+
+    // Pattern: REVOKE [GRANT OPTION FOR] privileges ON [object_type] qualified_name FROM grantee;
+    let revoke_re = Regex::new(
+        r"(?i)REVOKE\s+(GRANT\s+OPTION\s+FOR\s+)?(.+?)\s+ON\s+(?:(TABLE|VIEW|SEQUENCE|FUNCTION|SCHEMA|TYPE)\s+)?(.+?)\s+FROM\s+(\w+|PUBLIC)\s*;"
+    ).unwrap();
+
+    for cap in revoke_re.captures_iter(sql) {
+        let grant_option_for = cap.get(1).is_some();
+        let privileges_str = cap.get(2).unwrap().as_str();
+        let object_type = cap.get(3).map(|m| m.as_str().to_uppercase());
+        let object_name_raw = cap.get(4).unwrap().as_str();
+        let grantee = cap.get(5).unwrap().as_str();
+
+        // Parse privileges (comma-separated)
+        let mut privileges = BTreeSet::new();
+        for priv_str in privileges_str.split(',') {
+            let priv_trimmed = priv_str.trim().to_uppercase();
+            match priv_trimmed.as_str() {
+                "SELECT" => privileges.insert(Privilege::Select),
+                "INSERT" => privileges.insert(Privilege::Insert),
+                "UPDATE" => privileges.insert(Privilege::Update),
+                "DELETE" => privileges.insert(Privilege::Delete),
+                "TRUNCATE" => privileges.insert(Privilege::Truncate),
+                "REFERENCES" => privileges.insert(Privilege::References),
+                "TRIGGER" => privileges.insert(Privilege::Trigger),
+                "USAGE" => privileges.insert(Privilege::Usage),
+                "EXECUTE" => privileges.insert(Privilege::Execute),
+                "CREATE" => privileges.insert(Privilege::Create),
+                _ => continue,
+            };
+        }
+
+        if privileges.is_empty() {
+            continue;
+        }
+
+        // Determine object type and apply revoke
+        let inferred_type = object_type.as_deref().unwrap_or("TABLE");
+        match inferred_type {
+            "TABLE" | "VIEW" => {
+                let (obj_schema, obj_name) = parse_object_name(object_name_raw);
+                let key = qualified_name(&obj_schema, &obj_name);
+
+                if let Some(table) = schema.tables.get_mut(&key) {
+                    revoke_from_grants(&mut table.grants, grantee, &privileges, grant_option_for);
+                } else if let Some(view) = schema.views.get_mut(&key) {
+                    revoke_from_grants(&mut view.grants, grantee, &privileges, grant_option_for);
+                }
+            }
+            "SEQUENCE" => {
+                let (obj_schema, obj_name) = parse_object_name(object_name_raw);
+                let key = qualified_name(&obj_schema, &obj_name);
+                if let Some(sequence) = schema.sequences.get_mut(&key) {
+                    revoke_from_grants(&mut sequence.grants, grantee, &privileges, grant_option_for);
+                }
+            }
+            "FUNCTION" => {
+                let function_key = parse_function_signature(object_name_raw);
+                if let Some(func) = schema.functions.get_mut(&function_key) {
+                    revoke_from_grants(&mut func.grants, grantee, &privileges, grant_option_for);
+                }
+            }
+            "SCHEMA" => {
+                let schema_name = object_name_raw.trim().trim_matches('"');
+                if let Some(pg_schema) = schema.schemas.get_mut(schema_name) {
+                    revoke_from_grants(&mut pg_schema.grants, grantee, &privileges, grant_option_for);
+                }
+            }
+            "TYPE" => {
+                let (obj_schema, obj_name) = parse_object_name(object_name_raw);
+                let key = qualified_name(&obj_schema, &obj_name);
+
+                if let Some(enum_type) = schema.enums.get_mut(&key) {
+                    revoke_from_grants(&mut enum_type.grants, grantee, &privileges, grant_option_for);
+                } else if let Some(domain) = schema.domains.get_mut(&key) {
+                    revoke_from_grants(&mut domain.grants, grantee, &privileges, grant_option_for);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn revoke_from_grants(
+    grants: &mut Vec<Grant>,
+    grantee: &str,
+    privileges_to_revoke: &BTreeSet<Privilege>,
+    grant_option_for: bool,
+) {
+    grants.retain_mut(|grant| {
+        if grant.grantee == grantee {
+            if grant_option_for {
+                grant.with_grant_option = false;
+                true
+            } else {
+                grant.privileges.retain(|p| !privileges_to_revoke.contains(p));
+                !grant.privileges.is_empty()
+            }
+        } else {
+            true
+        }
+    });
 }
 
 fn parse_object_name(name: &str) -> (String, String) {
@@ -3371,5 +3486,136 @@ CREATE TABLE "mrv"."Cultivation" (
         assert_eq!(domain.grants.len(), 1);
         assert_eq!(domain.grants[0].grantee, "app_user");
         assert!(domain.grants[0].privileges.contains(&Privilege::Usage));
+    }
+
+    #[test]
+    fn parses_revoke_all_privileges() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT, INSERT ON users TO app_user;
+            REVOKE SELECT, INSERT ON users FROM app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 0);
+    }
+
+    #[test]
+    fn parses_revoke_partial_privileges() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT, INSERT, UPDATE ON users TO app_user;
+            REVOKE INSERT ON users FROM app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        let grant = &table.grants[0];
+        assert_eq!(grant.grantee, "app_user");
+        assert!(grant.privileges.contains(&Privilege::Select));
+        assert!(!grant.privileges.contains(&Privilege::Insert));
+        assert!(grant.privileges.contains(&Privilege::Update));
+    }
+
+    #[test]
+    fn parses_revoke_grant_option_for() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT ON users TO app_user WITH GRANT OPTION;
+            REVOKE GRANT OPTION FOR SELECT ON users FROM app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        let grant = &table.grants[0];
+        assert_eq!(grant.grantee, "app_user");
+        assert!(grant.privileges.contains(&Privilege::Select));
+        assert!(!grant.with_grant_option);
+    }
+
+    #[test]
+    fn parses_revoke_from_public() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT ON users TO PUBLIC;
+            REVOKE SELECT ON users FROM PUBLIC;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 0);
+    }
+
+    #[test]
+    fn parses_revoke_on_table_keyword() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT ON TABLE users TO app_user;
+            REVOKE SELECT ON TABLE users FROM app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 0);
+    }
+
+    #[test]
+    fn parses_revoke_on_function() {
+        let sql = r#"
+            CREATE FUNCTION get_user(user_id integer) RETURNS text AS $$ SELECT 'user'; $$ LANGUAGE sql;
+            GRANT EXECUTE ON FUNCTION get_user(integer) TO app_user;
+            REVOKE EXECUTE ON FUNCTION get_user(integer) FROM app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let func = schema.functions.get("public.get_user(integer)").unwrap();
+        assert_eq!(func.grants.len(), 0);
+    }
+
+    #[test]
+    fn parses_revoke_on_sequence() {
+        let sql = r#"
+            CREATE SEQUENCE user_id_seq;
+            GRANT USAGE ON SEQUENCE user_id_seq TO app_user;
+            REVOKE USAGE ON SEQUENCE user_id_seq FROM app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let seq = schema.sequences.get("public.user_id_seq").unwrap();
+        assert_eq!(seq.grants.len(), 0);
+    }
+
+    #[test]
+    fn parses_revoke_on_schema() {
+        let sql = r#"
+            CREATE SCHEMA app;
+            GRANT USAGE ON SCHEMA app TO app_user;
+            REVOKE USAGE ON SCHEMA app FROM app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let pg_schema = schema.schemas.get("app").unwrap();
+        assert_eq!(pg_schema.grants.len(), 0);
+    }
+
+    #[test]
+    fn parses_revoke_on_type() {
+        let sql = r#"
+            CREATE TYPE status AS ENUM ('active', 'inactive');
+            GRANT USAGE ON TYPE status TO app_user;
+            REVOKE USAGE ON TYPE status FROM app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let enum_type = schema.enums.get("public.status").unwrap();
+        assert_eq!(enum_type.grants.len(), 0);
+    }
+
+    #[test]
+    fn parses_revoke_preserves_other_grantees() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT ON users TO user1;
+            GRANT SELECT ON users TO user2;
+            REVOKE SELECT ON users FROM user1;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        assert_eq!(table.grants[0].grantee, "user2");
     }
 }
