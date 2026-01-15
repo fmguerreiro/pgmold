@@ -1259,6 +1259,7 @@ fn parse_data_type(dt: &DataType) -> Result<PgType> {
         DataType::SmallInt(_) => Ok(PgType::SmallInt),
         DataType::Real | DataType::Float4 => Ok(PgType::Real),
         DataType::DoublePrecision | DataType::Float8 => Ok(PgType::DoublePrecision),
+        DataType::Numeric(_) | DataType::Decimal(_) => Ok(PgType::Named("numeric".to_string())),
         DataType::Varchar(len) => {
             let size = len.as_ref().and_then(|l| match l {
                 sqlparser::ast::CharacterLength::IntegerLength { length, .. } => {

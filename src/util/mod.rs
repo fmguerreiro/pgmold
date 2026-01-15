@@ -26,13 +26,35 @@ pub fn canonicalize_expression(expr: &str) -> String {
     let dialect = PostgreSqlDialect {};
 
     // Try to parse as a standalone expression
-    match Parser::new(&dialect).try_with_sql(expr) {
+    let result = match Parser::new(&dialect).try_with_sql(expr) {
         Ok(mut parser) => match parser.parse_expr() {
-            Ok(ast) => ast.to_string(),
+            Ok(ast) => {
+                // Recursively strip outer Nested nodes (parentheses) and convert to string
+                let unwrapped = strip_outer_nested(ast);
+                unwrapped.to_string()
+            }
             Err(_) => normalize_expression_regex(expr),
         },
         Err(_) => normalize_expression_regex(expr),
+    };
+
+    // Post-process: remove casts on numeric literals like (0)::numeric -> 0
+    strip_numeric_literal_casts(&result)
+}
+
+/// Recursively unwraps outer Nested (parenthesized) expressions from the AST.
+fn strip_outer_nested(expr: Expr) -> Expr {
+    match expr {
+        Expr::Nested(inner) => strip_outer_nested(*inner),
+        _ => expr,
     }
+}
+
+/// Strips casts on numeric literals, e.g., (0)::numeric -> 0, (123)::integer -> 123
+fn strip_numeric_literal_casts(expr: &str) -> String {
+    // Pattern: (number)::type where type is numeric, integer, bigint, etc. (case-insensitive)
+    let re = Regex::new(r"(?i)\((\d+(?:\.\d+)?)\)::(numeric|integer|bigint|smallint|real|double precision)").unwrap();
+    re.replace_all(expr, "$1").to_string()
 }
 
 /// Regex-based normalization fallback for expressions that sqlparser can't parse.

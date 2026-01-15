@@ -647,8 +647,12 @@ fn format_pg_type(pg_type: &PgType) -> String {
             quote_qualified(&schema, &enum_name)
         }
         PgType::Named(name) => {
-            let (schema, type_name) = parse_qualified_name(name);
-            quote_qualified(&schema, &type_name)
+            if name.contains('.') {
+                let (schema, type_name) = parse_qualified_name(name);
+                quote_qualified(&schema, &type_name)
+            } else {
+                name.to_uppercase()
+            }
         }
     }
 }

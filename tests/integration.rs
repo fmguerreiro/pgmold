@@ -3240,3 +3240,59 @@ async fn unique_constraint_round_trip_no_orphan_index() {
         index_ops
     );
 }
+
+#[tokio::test]
+async fn check_constraint_round_trip_no_drop() {
+    // Regression test: CHECK constraint expression normalization
+    // PostgreSQL stores CHECK expressions in normalized form (extra parens, explicit casts)
+    // After apply, plan should NOT show DROP CONSTRAINT for the same constraint
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Schema with CHECK constraint - simple numeric comparison
+    let schema_sql = r#"
+        CREATE TABLE "mrv"."TreeSpeciesInventory" (
+            "id" BIGINT PRIMARY KEY,
+            "averageDbhCm" NUMERIC NOT NULL,
+            CONSTRAINT "TreeSpeciesInventory_averageDbhCm_check" CHECK ("averageDbhCm" >= 0)
+        );
+    "#;
+
+    // Create the mrv schema first
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS mrv")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    // Apply the schema to the database
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Now introspect and compute diff again - should be empty
+    let db_schema = introspect_schema(&connection, &["mrv".to_string()], false)
+        .await
+        .unwrap();
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let check_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::AddCheckConstraint { .. } | MigrationOp::DropCheckConstraint { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        check_ops.is_empty(),
+        "Should have no CHECK constraint diff after apply. Got: {:?}",
+        check_ops
+    );
+}
