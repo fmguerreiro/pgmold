@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "pgmold"
-version = "0.18.0"
+version = "0.19.0"
 edition = "2021"
 description = "PostgreSQL schema-as-code management tool"
 license = "MIT"
