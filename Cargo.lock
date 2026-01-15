@@ -1544,7 +1544,7 @@ dependencies = [
 
 [[package]]
 name = "pgmold"
-version = "0.16.6"
+version = "0.17.0"
 dependencies = [
  "anyhow",
  "clap",
