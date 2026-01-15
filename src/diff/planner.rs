@@ -52,6 +52,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut alter_owners = Vec::new();
     let mut backfill_hints = Vec::new();
     let mut set_column_not_nulls = Vec::new();
+    let mut grant_privileges = Vec::new();
+    let mut revoke_privileges = Vec::new();
 
     for op in ops {
         match op {
@@ -100,6 +102,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::AlterOwner { .. } => alter_owners.push(op),
             MigrationOp::BackfillHint { .. } => backfill_hints.push(op),
             MigrationOp::SetColumnNotNull { .. } => set_column_not_nulls.push(op),
+            MigrationOp::GrantPrivileges { .. } => grant_privileges.push(op),
+            MigrationOp::RevokePrivileges { .. } => revoke_privileges.push(op),
         }
     }
 
@@ -161,7 +165,9 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(create_triggers);
     result.extend(alter_triggers);
     result.extend(alter_owners);
+    result.extend(grant_privileges);
 
+    result.extend(revoke_privileges);
     result.extend(drop_triggers);
     result.extend(drop_views);
     result.extend(drop_policies);
@@ -200,6 +206,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut enable_rls = Vec::new();
     let mut create_policies = Vec::new();
     let mut alter_owners = Vec::new();
+    let mut grant_privileges = Vec::new();
 
     for op in ops {
         match op {
@@ -216,6 +223,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::EnableRls { .. } => enable_rls.push(op),
             MigrationOp::CreatePolicy(_) => create_policies.push(op),
             MigrationOp::AlterOwner { .. } => alter_owners.push(op),
+            MigrationOp::GrantPrivileges { .. } => grant_privileges.push(op),
             _ => {}
         }
     }
@@ -238,6 +246,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(create_views);
     result.extend(create_triggers);
     result.extend(alter_owners);
+    result.extend(grant_privileges);
 
     result
 }

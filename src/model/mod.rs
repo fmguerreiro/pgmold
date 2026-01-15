@@ -539,6 +539,7 @@ impl Schema {
 
     /// Associates pending policies with their respective tables.
     /// Policies referencing non-existent tables are returned.
+    /// Also applies pending ownership (keeping unapplied ones for cross-file resolution).
     pub fn finalize_partial(&mut self) -> Vec<Policy> {
         let pending = std::mem::take(&mut self.pending_policies);
         let mut orphaned = Vec::new();
@@ -552,47 +553,84 @@ impl Schema {
             }
         }
 
-        self.apply_pending_owners();
+        self.apply_pending_owners_partial();
         orphaned
     }
 
     /// Applies pending ownership assignments to their respective objects.
-    /// Ownership for non-existent objects is silently ignored.
+    /// Ownership for non-existent objects is silently ignored and pending_owners is cleared.
     fn apply_pending_owners(&mut self) {
         let pending = std::mem::take(&mut self.pending_owners);
         for po in pending {
-            match po.object_type {
-                PendingOwnerObjectType::Table => {
-                    if let Some(table) = self.tables.get_mut(&po.object_key) {
-                        table.owner = Some(po.owner);
-                    } else if let Some(partition) = self.partitions.get_mut(&po.object_key) {
-                        partition.owner = Some(po.owner);
-                    }
+            self.apply_single_owner(&po);
+        }
+    }
+
+    /// Applies pending ownership assignments, keeping unapplied ones for cross-file resolution.
+    /// Used by finalize_partial() to handle same-file ownership while preserving cross-file ones.
+    fn apply_pending_owners_partial(&mut self) {
+        let pending = std::mem::take(&mut self.pending_owners);
+        let mut unapplied = Vec::new();
+        for po in pending {
+            if !self.apply_single_owner(&po) {
+                unapplied.push(po);
+            }
+        }
+        self.pending_owners = unapplied;
+    }
+
+    /// Applies a single ownership assignment. Returns true if the object was found.
+    fn apply_single_owner(&mut self, po: &PendingOwner) -> bool {
+        match po.object_type {
+            PendingOwnerObjectType::Table => {
+                if let Some(table) = self.tables.get_mut(&po.object_key) {
+                    table.owner = Some(po.owner.clone());
+                    true
+                } else if let Some(partition) = self.partitions.get_mut(&po.object_key) {
+                    partition.owner = Some(po.owner.clone());
+                    true
+                } else {
+                    false
                 }
-                PendingOwnerObjectType::View => {
-                    if let Some(view) = self.views.get_mut(&po.object_key) {
-                        view.owner = Some(po.owner);
-                    }
+            }
+            PendingOwnerObjectType::View => {
+                if let Some(view) = self.views.get_mut(&po.object_key) {
+                    view.owner = Some(po.owner.clone());
+                    true
+                } else {
+                    false
                 }
-                PendingOwnerObjectType::Sequence => {
-                    if let Some(seq) = self.sequences.get_mut(&po.object_key) {
-                        seq.owner = Some(po.owner);
-                    }
+            }
+            PendingOwnerObjectType::Sequence => {
+                if let Some(seq) = self.sequences.get_mut(&po.object_key) {
+                    seq.owner = Some(po.owner.clone());
+                    true
+                } else {
+                    false
                 }
-                PendingOwnerObjectType::Function => {
-                    if let Some(func) = self.functions.get_mut(&po.object_key) {
-                        func.owner = Some(po.owner);
-                    }
+            }
+            PendingOwnerObjectType::Function => {
+                if let Some(func) = self.functions.get_mut(&po.object_key) {
+                    func.owner = Some(po.owner.clone());
+                    true
+                } else {
+                    false
                 }
-                PendingOwnerObjectType::Enum => {
-                    if let Some(enum_type) = self.enums.get_mut(&po.object_key) {
-                        enum_type.owner = Some(po.owner);
-                    }
+            }
+            PendingOwnerObjectType::Enum => {
+                if let Some(enum_type) = self.enums.get_mut(&po.object_key) {
+                    enum_type.owner = Some(po.owner.clone());
+                    true
+                } else {
+                    false
                 }
-                PendingOwnerObjectType::Domain => {
-                    if let Some(domain) = self.domains.get_mut(&po.object_key) {
-                        domain.owner = Some(po.owner);
-                    }
+            }
+            PendingOwnerObjectType::Domain => {
+                if let Some(domain) = self.domains.get_mut(&po.object_key) {
+                    domain.owner = Some(po.owner.clone());
+                    true
+                } else {
+                    false
                 }
             }
         }

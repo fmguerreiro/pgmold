@@ -17,6 +17,17 @@ pub enum OwnerObjectKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GrantObjectKind {
+    Table,
+    View,
+    Sequence,
+    Function,
+    Schema,
+    Type,
+    Domain,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOp {
     CreateSchema(PgSchema),
     DropSchema(String),
@@ -151,6 +162,24 @@ pub enum MigrationOp {
     SetColumnNotNull {
         table: String,
         column: String,
+    },
+    GrantPrivileges {
+        object_kind: GrantObjectKind,
+        schema: String,
+        name: String,
+        args: Option<String>,
+        grantee: String,
+        privileges: Vec<crate::model::Privilege>,
+        with_grant_option: bool,
+    },
+    RevokePrivileges {
+        object_kind: GrantObjectKind,
+        schema: String,
+        name: String,
+        args: Option<String>,
+        grantee: String,
+        privileges: Vec<crate::model::Privilege>,
+        revoke_grant_option: bool,
     },
 }
 

@@ -1,12 +1,12 @@
 use crate::diff::{
-    ColumnChanges, DomainChanges, EnumValuePosition, MigrationOp, OwnerObjectKind, PolicyChanges,
-    SequenceChanges,
+    ColumnChanges, DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp,
+    OwnerObjectKind, PolicyChanges, SequenceChanges,
 };
 use crate::model::{
     parse_qualified_name, CheckConstraint, Column, Domain, ForeignKey, Function, Index, IndexType,
-    Partition, PartitionBound, PartitionStrategy, PgType, Policy, PolicyCommand, ReferentialAction,
-    SecurityType, Sequence, SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent,
-    TriggerTiming, View, Volatility,
+    Partition, PartitionBound, PartitionStrategy, PgType, Policy, PolicyCommand, Privilege,
+    ReferentialAction, SecurityType, Sequence, SequenceDataType, Table, Trigger, TriggerEnabled,
+    TriggerEvent, TriggerTiming, View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -360,6 +360,74 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                 "ALTER TABLE {} ALTER COLUMN {} SET NOT NULL;",
                 quote_qualified(&schema, &table_name),
                 quote_ident(column)
+            )]
+        }
+
+        MigrationOp::GrantPrivileges {
+            object_kind,
+            schema,
+            name,
+            args,
+            grantee,
+            privileges,
+            with_grant_option,
+        } => {
+            vec![format!(
+                "GRANT {} ON {} {}{} TO {}{};",
+                privileges
+                    .iter()
+                    .map(privilege_to_sql)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                grant_object_kind_to_sql(object_kind),
+                quote_qualified(schema, name),
+                args.as_ref()
+                    .map(|a| format!("({})", a))
+                    .unwrap_or_default(),
+                if grantee == "PUBLIC" {
+                    "PUBLIC".to_string()
+                } else {
+                    quote_ident(grantee)
+                },
+                if *with_grant_option {
+                    " WITH GRANT OPTION"
+                } else {
+                    ""
+                }
+            )]
+        }
+
+        MigrationOp::RevokePrivileges {
+            object_kind,
+            schema,
+            name,
+            args,
+            grantee,
+            privileges,
+            revoke_grant_option,
+        } => {
+            vec![format!(
+                "REVOKE {}{} ON {} {}{} FROM {};",
+                if *revoke_grant_option {
+                    "GRANT OPTION FOR "
+                } else {
+                    ""
+                },
+                privileges
+                    .iter()
+                    .map(privilege_to_sql)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                grant_object_kind_to_sql(object_kind),
+                quote_qualified(schema, name),
+                args.as_ref()
+                    .map(|a| format!("({})", a))
+                    .unwrap_or_default(),
+                if grantee == "PUBLIC" {
+                    "PUBLIC".to_string()
+                } else {
+                    quote_ident(grantee)
+                }
             )]
         }
     }
@@ -1117,6 +1185,33 @@ fn generate_alter_trigger_enabled(
         action,
         quote_ident(trigger_name)
     )
+}
+
+fn privilege_to_sql(privilege: &Privilege) -> &'static str {
+    match privilege {
+        Privilege::Select => "SELECT",
+        Privilege::Insert => "INSERT",
+        Privilege::Update => "UPDATE",
+        Privilege::Delete => "DELETE",
+        Privilege::Truncate => "TRUNCATE",
+        Privilege::References => "REFERENCES",
+        Privilege::Trigger => "TRIGGER",
+        Privilege::Usage => "USAGE",
+        Privilege::Execute => "EXECUTE",
+        Privilege::Create => "CREATE",
+    }
+}
+
+fn grant_object_kind_to_sql(kind: &GrantObjectKind) -> &'static str {
+    match kind {
+        GrantObjectKind::Table => "TABLE",
+        GrantObjectKind::View => "VIEW",
+        GrantObjectKind::Sequence => "SEQUENCE",
+        GrantObjectKind::Function => "FUNCTION",
+        GrantObjectKind::Schema => "SCHEMA",
+        GrantObjectKind::Type => "TYPE",
+        GrantObjectKind::Domain => "DOMAIN",
+    }
 }
 
 #[cfg(test)]
@@ -2515,5 +2610,164 @@ mod tests {
             sql[0],
             "ALTER DOMAIN \"public\".\"email\" OWNER TO \"domain_owner\";"
         );
+    }
+
+    #[test]
+    fn grant_privileges_table_generates_valid_sql() {
+        use crate::model::Privilege;
+
+        let ops = vec![MigrationOp::GrantPrivileges {
+            object_kind: GrantObjectKind::Table,
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            args: None,
+            grantee: "app_user".to_string(),
+            privileges: vec![Privilege::Select, Privilege::Insert],
+            with_grant_option: false,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "GRANT SELECT, INSERT ON TABLE \"public\".\"users\" TO \"app_user\";"
+        );
+    }
+
+    #[test]
+    fn grant_privileges_with_grant_option() {
+        use crate::model::Privilege;
+
+        let ops = vec![MigrationOp::GrantPrivileges {
+            object_kind: GrantObjectKind::Table,
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            args: None,
+            grantee: "admin_user".to_string(),
+            privileges: vec![Privilege::Select],
+            with_grant_option: true,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "GRANT SELECT ON TABLE \"public\".\"users\" TO \"admin_user\" WITH GRANT OPTION;"
+        );
+    }
+
+    #[test]
+    fn grant_privileges_to_public() {
+        use crate::model::Privilege;
+
+        let ops = vec![MigrationOp::GrantPrivileges {
+            object_kind: GrantObjectKind::Sequence,
+            schema: "public".to_string(),
+            name: "user_id_seq".to_string(),
+            args: None,
+            grantee: "PUBLIC".to_string(),
+            privileges: vec![Privilege::Usage],
+            with_grant_option: false,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "GRANT USAGE ON SEQUENCE \"public\".\"user_id_seq\" TO PUBLIC;"
+        );
+    }
+
+    #[test]
+    fn grant_privileges_function_generates_valid_sql() {
+        use crate::model::Privilege;
+
+        let ops = vec![MigrationOp::GrantPrivileges {
+            object_kind: GrantObjectKind::Function,
+            schema: "public".to_string(),
+            name: "calculate".to_string(),
+            args: Some("integer, text".to_string()),
+            grantee: "app_user".to_string(),
+            privileges: vec![Privilege::Execute],
+            with_grant_option: false,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "GRANT EXECUTE ON FUNCTION \"public\".\"calculate\"(integer, text) TO \"app_user\";"
+        );
+    }
+
+    #[test]
+    fn revoke_privileges_generates_valid_sql() {
+        use crate::model::Privilege;
+
+        let ops = vec![MigrationOp::RevokePrivileges {
+            object_kind: GrantObjectKind::Table,
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            args: None,
+            grantee: "old_user".to_string(),
+            privileges: vec![Privilege::Delete],
+            revoke_grant_option: false,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "REVOKE DELETE ON TABLE \"public\".\"users\" FROM \"old_user\";"
+        );
+    }
+
+    #[test]
+    fn revoke_grant_option_generates_valid_sql() {
+        use crate::model::Privilege;
+
+        let ops = vec![MigrationOp::RevokePrivileges {
+            object_kind: GrantObjectKind::View,
+            schema: "public".to_string(),
+            name: "user_view".to_string(),
+            args: None,
+            grantee: "viewer".to_string(),
+            privileges: vec![Privilege::Select],
+            revoke_grant_option: true,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "REVOKE GRANT OPTION FOR SELECT ON VIEW \"public\".\"user_view\" FROM \"viewer\";"
+        );
+    }
+
+    #[test]
+    fn grant_all_privilege_types() {
+        use crate::model::Privilege;
+
+        let ops = vec![MigrationOp::GrantPrivileges {
+            object_kind: GrantObjectKind::Table,
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            args: None,
+            grantee: "power_user".to_string(),
+            privileges: vec![
+                Privilege::Select,
+                Privilege::Insert,
+                Privilege::Update,
+                Privilege::Delete,
+                Privilege::Truncate,
+                Privilege::References,
+                Privilege::Trigger,
+            ],
+            with_grant_option: false,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER"));
     }
 }
