@@ -2,8 +2,8 @@ pub mod planner;
 
 use crate::model::{
     qualified_name, CheckConstraint, Column, Domain, EnumType, Extension, ForeignKey, Function,
-    Index, Partition, PgSchema, PgType, Policy, PrimaryKey, Sequence, SequenceDataType,
-    SequenceOwner, Table, Trigger, TriggerEnabled, View,
+    Grant, Index, Partition, PgSchema, PgType, Policy, Privilege, PrimaryKey, Sequence,
+    SequenceDataType, SequenceOwner, Table, Trigger, TriggerEnabled, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -222,6 +222,136 @@ pub enum EnumValuePosition {
 }
 
 use crate::model::{parse_qualified_name, Schema};
+use std::collections::BTreeMap;
+
+fn diff_grants_for_object(
+    from_grants: &[Grant],
+    to_grants: &[Grant],
+    object_kind: GrantObjectKind,
+    schema: &str,
+    name: &str,
+    args: Option<String>,
+) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    let from_by_grantee: BTreeMap<&str, &Grant> = from_grants
+        .iter()
+        .map(|g| (g.grantee.as_str(), g))
+        .collect();
+    let to_by_grantee: BTreeMap<&str, &Grant> = to_grants
+        .iter()
+        .map(|g| (g.grantee.as_str(), g))
+        .collect();
+
+    for (grantee, from_grant) in &from_by_grantee {
+        match to_by_grantee.get(grantee) {
+            Some(to_grant) => {
+                let privs_to_revoke: Vec<Privilege> = from_grant
+                    .privileges
+                    .difference(&to_grant.privileges)
+                    .cloned()
+                    .collect();
+                if !privs_to_revoke.is_empty() {
+                    ops.push(MigrationOp::RevokePrivileges {
+                        object_kind: object_kind.clone(),
+                        schema: schema.to_string(),
+                        name: name.to_string(),
+                        args: args.clone(),
+                        grantee: grantee.to_string(),
+                        privileges: privs_to_revoke,
+                        revoke_grant_option: false,
+                    });
+                }
+
+                let privs_to_grant: Vec<Privilege> = to_grant
+                    .privileges
+                    .difference(&from_grant.privileges)
+                    .cloned()
+                    .collect();
+                if !privs_to_grant.is_empty() {
+                    ops.push(MigrationOp::GrantPrivileges {
+                        object_kind: object_kind.clone(),
+                        schema: schema.to_string(),
+                        name: name.to_string(),
+                        args: args.clone(),
+                        grantee: grantee.to_string(),
+                        privileges: privs_to_grant,
+                        with_grant_option: to_grant.with_grant_option,
+                    });
+                }
+
+                if from_grant.with_grant_option && !to_grant.with_grant_option {
+                    let common_privs: Vec<Privilege> = from_grant
+                        .privileges
+                        .intersection(&to_grant.privileges)
+                        .cloned()
+                        .collect();
+                    if !common_privs.is_empty() {
+                        ops.push(MigrationOp::RevokePrivileges {
+                            object_kind: object_kind.clone(),
+                            schema: schema.to_string(),
+                            name: name.to_string(),
+                            args: args.clone(),
+                            grantee: grantee.to_string(),
+                            privileges: common_privs,
+                            revoke_grant_option: true,
+                        });
+                    }
+                } else if !from_grant.with_grant_option && to_grant.with_grant_option {
+                    let common_privs: Vec<Privilege> = from_grant
+                        .privileges
+                        .intersection(&to_grant.privileges)
+                        .cloned()
+                        .collect();
+                    if !common_privs.is_empty() {
+                        ops.push(MigrationOp::GrantPrivileges {
+                            object_kind: object_kind.clone(),
+                            schema: schema.to_string(),
+                            name: name.to_string(),
+                            args: args.clone(),
+                            grantee: grantee.to_string(),
+                            privileges: common_privs,
+                            with_grant_option: true,
+                        });
+                    }
+                }
+            }
+            None => {
+                let privs: Vec<Privilege> = from_grant.privileges.iter().cloned().collect();
+                if !privs.is_empty() {
+                    ops.push(MigrationOp::RevokePrivileges {
+                        object_kind: object_kind.clone(),
+                        schema: schema.to_string(),
+                        name: name.to_string(),
+                        args: args.clone(),
+                        grantee: grantee.to_string(),
+                        privileges: privs,
+                        revoke_grant_option: false,
+                    });
+                }
+            }
+        }
+    }
+
+    for (grantee, to_grant) in &to_by_grantee {
+        if !from_by_grantee.contains_key(grantee) {
+            let privs: Vec<Privilege> = to_grant.privileges.iter().cloned().collect();
+            if !privs.is_empty() {
+                ops.push(MigrationOp::GrantPrivileges {
+                    object_kind: object_kind.clone(),
+                    schema: schema.to_string(),
+                    name: name.to_string(),
+                    args: args.clone(),
+                    grantee: grantee.to_string(),
+                    privileges: privs,
+                    with_grant_option: to_grant.with_grant_option,
+                });
+            }
+        }
+    }
+
+    ops
+}
 
 pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     compute_diff_with_flags(from, to, false, false)
@@ -231,20 +361,20 @@ pub fn compute_diff_with_flags(
     from: &Schema,
     to: &Schema,
     manage_ownership: bool,
-    _manage_grants: bool,
+    manage_grants: bool,
 ) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
-    ops.extend(diff_schemas(from, to));
+    ops.extend(diff_schemas(from, to, manage_grants));
     ops.extend(diff_extensions(from, to));
-    ops.extend(diff_enums(from, to, manage_ownership));
-    ops.extend(diff_domains(from, to, manage_ownership));
-    ops.extend(diff_tables(from, to, manage_ownership));
+    ops.extend(diff_enums(from, to, manage_ownership, manage_grants));
+    ops.extend(diff_domains(from, to, manage_ownership, manage_grants));
+    ops.extend(diff_tables(from, to, manage_ownership, manage_grants));
     ops.extend(diff_partitions(from, to));
-    ops.extend(diff_functions(from, to, manage_ownership));
-    ops.extend(diff_views(from, to, manage_ownership));
+    ops.extend(diff_functions(from, to, manage_ownership, manage_grants));
+    ops.extend(diff_views(from, to, manage_ownership, manage_grants));
     ops.extend(diff_triggers(from, to));
-    ops.extend(diff_sequences(from, to, manage_ownership));
+    ops.extend(diff_sequences(from, to, manage_ownership, manage_grants));
 
     for (name, to_table) in &to.tables {
         if let Some(from_table) = from.tables.get(name) {
@@ -271,12 +401,39 @@ pub fn compute_diff_with_flags(
     ops
 }
 
-fn diff_schemas(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+fn diff_schemas(from: &Schema, to: &Schema, manage_grants: bool) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, pg_schema) in &to.schemas {
-        if !from.schemas.contains_key(name) {
+        if let Some(from_schema) = from.schemas.get(name) {
+            if manage_grants {
+                ops.extend(diff_grants_for_object(
+                    &from_schema.grants,
+                    &pg_schema.grants,
+                    GrantObjectKind::Schema,
+                    name,
+                    name,
+                    None,
+                ));
+            }
+        } else {
             ops.push(MigrationOp::CreateSchema(pg_schema.clone()));
+            if manage_grants {
+                for grant in &pg_schema.grants {
+                    let privs: Vec<Privilege> = grant.privileges.iter().cloned().collect();
+                    if !privs.is_empty() {
+                        ops.push(MigrationOp::GrantPrivileges {
+                            object_kind: GrantObjectKind::Schema,
+                            schema: name.clone(),
+                            name: name.clone(),
+                            args: None,
+                            grantee: grant.grantee.clone(),
+                            privileges: privs,
+                            with_grant_option: grant.with_grant_option,
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -307,7 +464,7 @@ fn diff_extensions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops
 }
 
-fn diff_enums(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<MigrationOp> {
+fn diff_enums(from: &Schema, to: &Schema, manage_ownership: bool, manage_grants: bool) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, to_enum) in &to.enums {
@@ -325,6 +482,17 @@ fn diff_enums(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<Migrati
                     });
                 }
             }
+            if manage_grants {
+                let (schema, enum_name) = parse_qualified_name(name);
+                ops.extend(diff_grants_for_object(
+                    &from_enum.grants,
+                    &to_enum.grants,
+                    GrantObjectKind::Type,
+                    &schema,
+                    &enum_name,
+                    None,
+                ));
+            }
         } else {
             ops.push(MigrationOp::CreateEnum(to_enum.clone()));
             if manage_ownership {
@@ -337,6 +505,23 @@ fn diff_enums(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<Migrati
                         args: None,
                         new_owner: owner.clone(),
                     });
+                }
+            }
+            if manage_grants {
+                let (schema, enum_name) = parse_qualified_name(name);
+                for grant in &to_enum.grants {
+                    let privs: Vec<Privilege> = grant.privileges.iter().cloned().collect();
+                    if !privs.is_empty() {
+                        ops.push(MigrationOp::GrantPrivileges {
+                            object_kind: GrantObjectKind::Type,
+                            schema: schema.clone(),
+                            name: enum_name.clone(),
+                            args: None,
+                            grantee: grant.grantee.clone(),
+                            privileges: privs,
+                            with_grant_option: grant.with_grant_option,
+                        });
+                    }
                 }
             }
         }
@@ -375,7 +560,7 @@ fn diff_enum_values(name: &str, from: &EnumType, to: &EnumType) -> Vec<Migration
     ops
 }
 
-fn diff_domains(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<MigrationOp> {
+fn diff_domains(from: &Schema, to: &Schema, manage_ownership: bool, manage_grants: bool) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, to_domain) in &to.domains {
@@ -405,6 +590,17 @@ fn diff_domains(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<Migra
                     });
                 }
             }
+            if manage_grants {
+                let (schema, domain_name) = parse_qualified_name(name);
+                ops.extend(diff_grants_for_object(
+                    &from_domain.grants,
+                    &to_domain.grants,
+                    GrantObjectKind::Domain,
+                    &schema,
+                    &domain_name,
+                    None,
+                ));
+            }
         } else {
             ops.push(MigrationOp::CreateDomain(to_domain.clone()));
             if manage_ownership {
@@ -419,6 +615,23 @@ fn diff_domains(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<Migra
                     });
                 }
             }
+            if manage_grants {
+                let (schema, domain_name) = parse_qualified_name(name);
+                for grant in &to_domain.grants {
+                    let privs: Vec<Privilege> = grant.privileges.iter().cloned().collect();
+                    if !privs.is_empty() {
+                        ops.push(MigrationOp::GrantPrivileges {
+                            object_kind: GrantObjectKind::Domain,
+                            schema: schema.clone(),
+                            name: domain_name.clone(),
+                            args: None,
+                            grantee: grant.grantee.clone(),
+                            privileges: privs,
+                            with_grant_option: grant.with_grant_option,
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -431,7 +644,7 @@ fn diff_domains(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<Migra
     ops
 }
 
-fn diff_tables(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<MigrationOp> {
+fn diff_tables(from: &Schema, to: &Schema, manage_ownership: bool, manage_grants: bool) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, table) in &to.tables {
@@ -448,6 +661,17 @@ fn diff_tables(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<Migrat
                     });
                 }
             }
+            if manage_grants {
+                let (schema, table_name) = parse_qualified_name(name);
+                ops.extend(diff_grants_for_object(
+                    &from_table.grants,
+                    &table.grants,
+                    GrantObjectKind::Table,
+                    &schema,
+                    &table_name,
+                    None,
+                ));
+            }
         } else {
             ops.push(MigrationOp::CreateTable(table.clone()));
             if manage_ownership {
@@ -460,6 +684,23 @@ fn diff_tables(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<Migrat
                         args: None,
                         new_owner: owner.clone(),
                     });
+                }
+            }
+            if manage_grants {
+                let (schema, table_name) = parse_qualified_name(name);
+                for grant in &table.grants {
+                    let privs: Vec<Privilege> = grant.privileges.iter().cloned().collect();
+                    if !privs.is_empty() {
+                        ops.push(MigrationOp::GrantPrivileges {
+                            object_kind: GrantObjectKind::Table,
+                            schema: schema.clone(),
+                            name: table_name.clone(),
+                            args: None,
+                            grantee: grant.grantee.clone(),
+                            privileges: privs,
+                            with_grant_option: grant.with_grant_option,
+                        });
+                    }
                 }
             }
         }
@@ -492,14 +733,19 @@ fn diff_partitions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops
 }
 
-fn diff_functions(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<MigrationOp> {
+fn diff_functions(from: &Schema, to: &Schema, manage_ownership: bool, manage_grants: bool) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (sig, func) in &to.functions {
+        let args_str = func
+            .arguments
+            .iter()
+            .map(|a| a.data_type.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+
         if let Some(from_func) = from.functions.get(sig) {
             if !from_func.semantically_equals(func) {
-                // PostgreSQL doesn't allow changing parameter names or defaults via
-                // CREATE OR REPLACE FUNCTION. We must DROP + CREATE in these cases.
                 if from_func.requires_drop_recreate(func) {
                     ops.push(MigrationOp::DropFunction {
                         name: qualified_name(&from_func.schema, &from_func.name),
@@ -514,50 +760,59 @@ fn diff_functions(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<Mig
                 } else {
                     ops.push(MigrationOp::AlterFunction {
                         name: qualified_name(&func.schema, &func.name),
-                        args: func
-                            .arguments
-                            .iter()
-                            .map(|a| a.data_type.clone())
-                            .collect::<Vec<_>>()
-                            .join(", "),
+                        args: args_str.clone(),
                         new_function: func.clone(),
                     });
                 }
             }
             if manage_ownership && from_func.owner != func.owner {
                 if let Some(ref new_owner) = func.owner {
-                    let args_str = func
-                        .arguments
-                        .iter()
-                        .map(|a| a.data_type.clone())
-                        .collect::<Vec<_>>()
-                        .join(", ");
                     ops.push(MigrationOp::AlterOwner {
                         object_kind: OwnerObjectKind::Function,
                         schema: func.schema.clone(),
                         name: func.name.clone(),
-                        args: Some(args_str),
+                        args: Some(args_str.clone()),
                         new_owner: new_owner.clone(),
                     });
                 }
+            }
+            if manage_grants {
+                ops.extend(diff_grants_for_object(
+                    &from_func.grants,
+                    &func.grants,
+                    GrantObjectKind::Function,
+                    &func.schema,
+                    &func.name,
+                    Some(args_str.clone()),
+                ));
             }
         } else {
             ops.push(MigrationOp::CreateFunction(func.clone()));
             if manage_ownership {
                 if let Some(ref owner) = func.owner {
-                    let args_str = func
-                        .arguments
-                        .iter()
-                        .map(|a| a.data_type.clone())
-                        .collect::<Vec<_>>()
-                        .join(", ");
                     ops.push(MigrationOp::AlterOwner {
                         object_kind: OwnerObjectKind::Function,
                         schema: func.schema.clone(),
                         name: func.name.clone(),
-                        args: Some(args_str),
+                        args: Some(args_str.clone()),
                         new_owner: owner.clone(),
                     });
+                }
+            }
+            if manage_grants {
+                for grant in &func.grants {
+                    let privs: Vec<Privilege> = grant.privileges.iter().cloned().collect();
+                    if !privs.is_empty() {
+                        ops.push(MigrationOp::GrantPrivileges {
+                            object_kind: GrantObjectKind::Function,
+                            schema: func.schema.clone(),
+                            name: func.name.clone(),
+                            args: Some(args_str.clone()),
+                            grantee: grant.grantee.clone(),
+                            privileges: privs,
+                            with_grant_option: grant.with_grant_option,
+                        });
+                    }
                 }
             }
         }
@@ -580,7 +835,7 @@ fn diff_functions(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<Mig
     ops
 }
 
-fn diff_views(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<MigrationOp> {
+fn diff_views(from: &Schema, to: &Schema, manage_ownership: bool, manage_grants: bool) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, view) in &to.views {
@@ -603,6 +858,17 @@ fn diff_views(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<Migrati
                     });
                 }
             }
+            if manage_grants {
+                let (schema, view_name) = parse_qualified_name(name);
+                ops.extend(diff_grants_for_object(
+                    &from_view.grants,
+                    &view.grants,
+                    GrantObjectKind::View,
+                    &schema,
+                    &view_name,
+                    None,
+                ));
+            }
         } else {
             ops.push(MigrationOp::CreateView(view.clone()));
             if manage_ownership {
@@ -615,6 +881,23 @@ fn diff_views(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<Migrati
                         args: None,
                         new_owner: owner.clone(),
                     });
+                }
+            }
+            if manage_grants {
+                let (schema, view_name) = parse_qualified_name(name);
+                for grant in &view.grants {
+                    let privs: Vec<Privilege> = grant.privileges.iter().cloned().collect();
+                    if !privs.is_empty() {
+                        ops.push(MigrationOp::GrantPrivileges {
+                            object_kind: GrantObjectKind::View,
+                            schema: schema.clone(),
+                            name: view_name.clone(),
+                            args: None,
+                            grantee: grant.grantee.clone(),
+                            privileges: privs,
+                            with_grant_option: grant.with_grant_option,
+                        });
+                    }
                 }
             }
         }
@@ -711,7 +994,7 @@ fn only_enabled_differs(from: &Trigger, to: &Trigger) -> bool {
         && from.new_table_name == to.new_table_name
 }
 
-fn diff_sequences(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<MigrationOp> {
+fn diff_sequences(from: &Schema, to: &Schema, manage_ownership: bool, manage_grants: bool) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, to_seq) in &to.sequences {
@@ -728,6 +1011,23 @@ fn diff_sequences(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<Mig
                             args: None,
                             new_owner: owner.clone(),
                         });
+                    }
+                }
+                if manage_grants {
+                    let (schema, seq_name) = parse_qualified_name(name);
+                    for grant in &to_seq.grants {
+                        let privs: Vec<Privilege> = grant.privileges.iter().cloned().collect();
+                        if !privs.is_empty() {
+                            ops.push(MigrationOp::GrantPrivileges {
+                                object_kind: GrantObjectKind::Sequence,
+                                schema: schema.clone(),
+                                name: seq_name.clone(),
+                                args: None,
+                                grantee: grant.grantee.clone(),
+                                privileges: privs,
+                                with_grant_option: grant.with_grant_option,
+                            });
+                        }
                     }
                 }
             }
@@ -749,6 +1049,17 @@ fn diff_sequences(from: &Schema, to: &Schema, manage_ownership: bool) -> Vec<Mig
                             new_owner: new_owner.clone(),
                         });
                     }
+                }
+                if manage_grants {
+                    let (schema, seq_name) = parse_qualified_name(name);
+                    ops.extend(diff_grants_for_object(
+                        &from_seq.grants,
+                        &to_seq.grants,
+                        GrantObjectKind::Sequence,
+                        &schema,
+                        &seq_name,
+                        None,
+                    ));
                 }
             }
         }
@@ -3483,5 +3794,123 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 new_owner,
             } if schema == "public" && name == "get_user" && args.as_deref() == Some("integer") && new_owner == "newowner"
         ));
+    }
+
+        #[test]
+    fn diff_grants_adds_new_grant() {
+        use std::collections::BTreeSet;
+
+        let mut from = empty_schema();
+        let mut table = simple_table("users");
+        from.tables.insert("public.users".to_string(), table.clone());
+
+        let mut to = empty_schema();
+        table.grants = vec![crate::model::Grant {
+            grantee: "app_user".to_string(),
+            privileges: BTreeSet::from([crate::model::Privilege::Select]),
+            with_grant_option: false,
+        }];
+        to.tables.insert("public.users".to_string(), table);
+
+        let ops = compute_diff_with_flags(&from, &to, false, true);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::GrantPrivileges {
+                object_kind: GrantObjectKind::Table,
+                grantee,
+                privileges,
+                ..
+            } if grantee == "app_user" && privileges.contains(&crate::model::Privilege::Select)
+        ));
+    }
+
+    #[test]
+    fn diff_grants_revokes_removed_grant() {
+        use std::collections::BTreeSet;
+
+        let mut from = empty_schema();
+        let mut table = simple_table("users");
+        table.grants = vec![crate::model::Grant {
+            grantee: "app_user".to_string(),
+            privileges: BTreeSet::from([crate::model::Privilege::Select]),
+            with_grant_option: false,
+        }];
+        from.tables.insert("public.users".to_string(), table.clone());
+
+        let mut to = empty_schema();
+        let table_no_grants = simple_table("users");
+        to.tables.insert("public.users".to_string(), table_no_grants);
+
+        let ops = compute_diff_with_flags(&from, &to, false, true);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::RevokePrivileges {
+                object_kind: GrantObjectKind::Table,
+                grantee,
+                privileges,
+                ..
+            } if grantee == "app_user" && privileges.contains(&crate::model::Privilege::Select)
+        ));
+    }
+
+    #[test]
+    fn diff_grants_adds_new_privileges_to_existing_grantee() {
+        use std::collections::BTreeSet;
+
+        let mut from = empty_schema();
+        let mut table = simple_table("users");
+        table.grants = vec![crate::model::Grant {
+            grantee: "app_user".to_string(),
+            privileges: BTreeSet::from([crate::model::Privilege::Select]),
+            with_grant_option: false,
+        }];
+        from.tables.insert("public.users".to_string(), table.clone());
+
+        let mut to = empty_schema();
+        let mut table_more_privs = simple_table("users");
+        table_more_privs.grants = vec![crate::model::Grant {
+            grantee: "app_user".to_string(),
+            privileges: BTreeSet::from([
+                crate::model::Privilege::Select,
+                crate::model::Privilege::Insert,
+            ]),
+            with_grant_option: false,
+        }];
+        to.tables.insert("public.users".to_string(), table_more_privs);
+
+        let ops = compute_diff_with_flags(&from, &to, false, true);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::GrantPrivileges {
+                object_kind: GrantObjectKind::Table,
+                grantee,
+                privileges,
+                ..
+            } if grantee == "app_user" && privileges.contains(&crate::model::Privilege::Insert) && !privileges.contains(&crate::model::Privilege::Select)
+        ));
+    }
+
+    #[test]
+    fn diff_grants_skipped_when_flag_is_false() {
+        use std::collections::BTreeSet;
+
+        let mut from = empty_schema();
+        let table = simple_table("users");
+        from.tables.insert("public.users".to_string(), table.clone());
+
+        let mut to = empty_schema();
+        let mut table_with_grants = simple_table("users");
+        table_with_grants.grants = vec![crate::model::Grant {
+            grantee: "app_user".to_string(),
+            privileges: BTreeSet::from([crate::model::Privilege::Select]),
+            with_grant_option: false,
+        }];
+        to.tables.insert("public.users".to_string(), table_with_grants);
+
+        let ops = compute_diff_with_flags(&from, &to, false, false);
+        assert_eq!(ops.len(), 0);
     }
 }
