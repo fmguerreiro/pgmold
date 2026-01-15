@@ -1000,6 +1000,13 @@ async fn introspect_policies(
         let using_expr: Option<String> = row.get("using_expr");
         let check_expr: Option<String> = row.get("check_expr");
 
+        // PostgreSQL stores empty polroles array when policy applies to PUBLIC
+        let roles = if roles.is_empty() {
+            vec!["public".to_string()]
+        } else {
+            roles
+        };
+
         policies.push(Policy {
             name,
             table: table_name.to_string(),

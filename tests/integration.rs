@@ -3296,3 +3296,203 @@ async fn check_constraint_round_trip_no_drop() {
         check_ops
     );
 }
+
+#[tokio::test]
+async fn function_round_trip_no_diff() {
+    // Regression test: Function normalization
+    // After apply, plan should NOT show changes for the same function
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Schema with function using type aliases that PostgreSQL normalizes
+    let schema_sql = r#"
+        CREATE FUNCTION process_user(user_id INT, is_active BOOL DEFAULT TRUE)
+        RETURNS VARCHAR
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            IF is_active THEN
+                RETURN 'active';
+            ELSE
+                RETURN 'inactive';
+            END IF;
+        END;
+        $$;
+    "#;
+
+    // Apply the schema to the database
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Now introspect and compute diff again - should be empty
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let func_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateFunction { .. }
+                    | MigrationOp::DropFunction { .. }
+                    | MigrationOp::AlterFunction { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        func_ops.is_empty(),
+        "Should have no function diff after apply. Got: {:?}",
+        func_ops
+    );
+}
+
+#[tokio::test]
+async fn trigger_round_trip_no_diff() {
+    // Regression test: Trigger round-trip
+    // After apply, plan should NOT show changes for the same trigger
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create mrv schema
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS mrv")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    // Schema with trigger (similar to bug report)
+    let schema_sql = r#"
+        CREATE TABLE "mrv"."Farm" (
+            "id" BIGINT PRIMARY KEY,
+            "name" VARCHAR(255) NOT NULL
+        );
+
+        CREATE TABLE "mrv"."Polygon" (
+            "id" BIGINT PRIMARY KEY,
+            "farm_id" BIGINT REFERENCES "mrv"."Farm"("id")
+        );
+
+        CREATE FUNCTION "mrv"."farm_polygon_sync"()
+        RETURNS TRIGGER
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RETURN NEW;
+        END;
+        $$;
+
+        CREATE TRIGGER "farm_polygon_sync_trigger"
+        AFTER INSERT OR UPDATE ON "mrv"."Farm"
+        FOR EACH ROW
+        EXECUTE FUNCTION "mrv"."farm_polygon_sync"();
+    "#;
+
+    // Apply the schema to the database
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Now introspect and compute diff again - should be empty
+    let db_schema = introspect_schema(&connection, &["mrv".to_string()], false)
+        .await
+        .unwrap();
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let trigger_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateTrigger { .. } | MigrationOp::DropTrigger { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        trigger_ops.is_empty(),
+        "Should have no trigger diff after apply. Got: {:?}",
+        trigger_ops
+    );
+}
+
+#[tokio::test]
+async fn policy_round_trip_no_diff() {
+    // Regression test: RLS Policy round-trip
+    // After apply, plan should NOT show changes for the same policies
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create mrv schema
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS mrv")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    // Schema with RLS policies (similar to bug report)
+    let schema_sql = r#"
+        CREATE TABLE "mrv"."Farm" (
+            "id" BIGINT PRIMARY KEY,
+            "name" VARCHAR(255) NOT NULL,
+            "owner_id" BIGINT NOT NULL
+        );
+
+        ALTER TABLE "mrv"."Farm" ENABLE ROW LEVEL SECURITY;
+
+        CREATE POLICY "farm_select_policy" ON "mrv"."Farm"
+        FOR SELECT
+        TO public
+        USING (owner_id IS NOT NULL);
+
+        CREATE POLICY "farm_insert_policy" ON "mrv"."Farm"
+        FOR INSERT
+        TO public
+        WITH CHECK (owner_id IS NOT NULL);
+    "#;
+
+    // Apply the schema to the database
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Now introspect and compute diff again - should be empty
+    let db_schema = introspect_schema(&connection, &["mrv".to_string()], false)
+        .await
+        .unwrap();
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let policy_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreatePolicy { .. }
+                    | MigrationOp::DropPolicy { .. }
+                    | MigrationOp::AlterPolicy { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        policy_ops.is_empty(),
+        "Should have no policy diff after apply. Got: {:?}",
+        policy_ops
+    );
+}
