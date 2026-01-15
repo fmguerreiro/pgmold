@@ -374,6 +374,7 @@ mod tests {
                 cache: Some(1),
                 cycle: false,
             owner: None,
+            grants: Vec::new(),
                 owned_by: Some(SequenceOwner {
                     table_schema: "public".to_string(),
                     table_name: "users".to_string(),

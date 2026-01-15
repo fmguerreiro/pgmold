@@ -699,6 +699,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
+            grants: Vec::new(),
             },
         }];
         let warnings = detect_lock_hazards(&ops);

@@ -183,6 +183,7 @@ async fn introspect_enums(
             schema: schema.clone(),
             values: labels,
             owner: Some(owner),
+            grants: Vec::new(),
         };
         let qualified_name = format!("{schema}.{name}");
         enums.insert(qualified_name, enum_type);
@@ -271,6 +272,7 @@ async fn introspect_domains(
             collation: None,
             check_constraints,
             owner: Some(owner),
+            grants: Vec::new(),
         };
         let qualified_name = format!("{schema}.{name}");
         domains.insert(qualified_name, domain);
@@ -379,6 +381,7 @@ async fn introspect_tables(
             policies: Vec::new(),
             partition_by: None,
             owner: Some(owner),
+            grants: Vec::new(),
         };
         let qualified_name = format!("{schema}.{name}");
         tables.insert(qualified_name, table);
@@ -1062,6 +1065,7 @@ async fn introspect_functions(
             security,
             config_params,
             owner: Some(owner),
+            grants: Vec::new(),
         };
 
         let key = qualified_name(&schema, &func.signature());
@@ -1162,6 +1166,7 @@ async fn introspect_views(
             query: normalize_sql_whitespace(definition.trim_end_matches(';')),
             materialized: false,
             owner: Some(owner),
+            grants: Vec::new(),
         };
         let qualified_name = format!("{schema}.{name}");
         views.insert(qualified_name, view);
@@ -1200,6 +1205,7 @@ async fn introspect_views(
             query: normalize_sql_whitespace(definition.trim_end_matches(';')),
             materialized: true,
             owner: Some(owner),
+            grants: Vec::new(),
         };
         let qualified_name = format!("{schema}.{name}");
         views.insert(qualified_name, view);
@@ -1450,6 +1456,7 @@ async fn introspect_sequences(
                 cache: cache_size,
                 owned_by,
                 owner,
+                grants: Vec::new(),
             },
         );
     }

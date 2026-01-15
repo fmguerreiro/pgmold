@@ -1,6 +1,26 @@
 use crate::util::{canonicalize_expression, views_semantically_equal};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Represents a pending ownership assignment parsed from ALTER ... OWNER TO statements.
+/// Used for cross-file resolution when object definitions and ownership are in separate files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingOwner {
+    pub object_type: PendingOwnerObjectType,
+    /// Qualified name for most objects (schema.name), or function signature for functions
+    pub object_key: String,
+    pub owner: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingOwnerObjectType {
+    Table,
+    View,
+    Sequence,
+    Function,
+    Enum,
+    Domain,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Schema {
@@ -18,6 +38,10 @@ pub struct Schema {
     /// Cleared after finalize() is called.
     #[serde(skip)]
     pub pending_policies: Vec<Policy>,
+    /// Ownership assignments collected during parsing, awaiting application to objects.
+    /// Cleared after finalize() is called.
+    #[serde(skip)]
+    pub pending_owners: Vec<PendingOwner>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -30,6 +54,8 @@ pub struct Domain {
     pub collation: Option<String>,
     pub check_constraints: Vec<DomainConstraint>,
     pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<Grant>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -52,6 +78,8 @@ pub struct Table {
     pub policies: Vec<Policy>,
     pub partition_by: Option<PartitionKey>,
     pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<Grant>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -180,6 +208,8 @@ pub struct EnumType {
     pub name: String,
     pub values: Vec<String>,
     pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<Grant>,
 }
 
 /// Represents a PostgreSQL schema (namespace).
@@ -193,6 +223,27 @@ pub struct Extension {
     pub name: String,
     pub version: Option<String>,
     pub schema: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum Privilege {
+    Select,
+    Insert,
+    Update,
+    Delete,
+    Truncate,
+    References,
+    Trigger,
+    Usage,
+    Execute,
+    Create,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Grant {
+    pub grantee: String,
+    pub privileges: BTreeSet<Privilege>,
+    pub with_grant_option: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -227,6 +278,8 @@ pub struct Function {
     pub security: SecurityType,
     pub config_params: Vec<(String, String)>,
     pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<Grant>,
 }
 
 impl Function {
@@ -330,6 +383,8 @@ pub struct View {
     pub query: String,
     pub materialized: bool,
     pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<Grant>,
 }
 
 impl View {
@@ -410,6 +465,8 @@ pub struct Sequence {
     pub cache: Option<i64>,
     pub owned_by: Option<SequenceOwner>,
     pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<Grant>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -448,6 +505,7 @@ impl Schema {
             sequences: BTreeMap::new(),
             partitions: BTreeMap::new(),
             pending_policies: Vec::new(),
+            pending_owners: Vec::new(),
         }
     }
 
@@ -458,7 +516,7 @@ impl Schema {
         hex::encode(hash)
     }
 
-    /// Associates pending policies with their respective tables.
+    /// Associates pending policies with their respective tables and applies pending ownership.
     /// Returns an error if a policy references a table that doesn't exist.
     pub fn finalize(&mut self) -> Result<(), String> {
         let pending = std::mem::take(&mut self.pending_policies);
@@ -474,6 +532,8 @@ impl Schema {
                 ));
             }
         }
+
+        self.apply_pending_owners();
         Ok(())
     }
 
@@ -491,7 +551,51 @@ impl Schema {
                 orphaned.push(policy);
             }
         }
+
+        self.apply_pending_owners();
         orphaned
+    }
+
+    /// Applies pending ownership assignments to their respective objects.
+    /// Ownership for non-existent objects is silently ignored.
+    fn apply_pending_owners(&mut self) {
+        let pending = std::mem::take(&mut self.pending_owners);
+        for po in pending {
+            match po.object_type {
+                PendingOwnerObjectType::Table => {
+                    if let Some(table) = self.tables.get_mut(&po.object_key) {
+                        table.owner = Some(po.owner);
+                    } else if let Some(partition) = self.partitions.get_mut(&po.object_key) {
+                        partition.owner = Some(po.owner);
+                    }
+                }
+                PendingOwnerObjectType::View => {
+                    if let Some(view) = self.views.get_mut(&po.object_key) {
+                        view.owner = Some(po.owner);
+                    }
+                }
+                PendingOwnerObjectType::Sequence => {
+                    if let Some(seq) = self.sequences.get_mut(&po.object_key) {
+                        seq.owner = Some(po.owner);
+                    }
+                }
+                PendingOwnerObjectType::Function => {
+                    if let Some(func) = self.functions.get_mut(&po.object_key) {
+                        func.owner = Some(po.owner);
+                    }
+                }
+                PendingOwnerObjectType::Enum => {
+                    if let Some(enum_type) = self.enums.get_mut(&po.object_key) {
+                        enum_type.owner = Some(po.owner);
+                    }
+                }
+                PendingOwnerObjectType::Domain => {
+                    if let Some(domain) = self.domains.get_mut(&po.object_key) {
+                        domain.owner = Some(po.owner);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -557,6 +661,7 @@ mod tests {
                 policies: Vec::new(),
                 partition_by: None,
             owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -576,6 +681,7 @@ mod tests {
                 policies: Vec::new(),
                 partition_by: None,
             owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -619,6 +725,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
 
         let func2 = Function {
@@ -632,6 +739,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
 
         assert!(func1.semantically_equals(&func2));
@@ -650,6 +758,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
 
         let introspected_body = Function {
@@ -663,6 +772,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
 
         assert!(parsed_body.semantically_equals(&introspected_body));
@@ -709,6 +819,7 @@ mod tests {
             policies: Vec::new(),
             partition_by: None,
         owner: None,
+            grants: Vec::new(),
         };
         assert_eq!(table.schema, "auth");
     }
@@ -721,6 +832,7 @@ mod tests {
             values: vec!["admin".to_string(), "user".to_string()],
 
             owner: None,
+            grants: Vec::new(),
         };
         assert_eq!(enum_type.schema, "auth");
     }
@@ -823,6 +935,7 @@ mod tests {
                 policies: Vec::new(),
                 partition_by: None,
             owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -842,6 +955,7 @@ mod tests {
                 policies: Vec::new(),
                 partition_by: None,
             owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -866,6 +980,7 @@ mod tests {
                 column_name: "id".to_string(),
             }),
             owner: None,
+            grants: Vec::new(),
         };
 
         let json = serde_json::to_string(&sequence).expect("Failed to serialize");
@@ -919,6 +1034,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
 
         let func_lowercase = Function {
@@ -937,6 +1053,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
 
         assert_eq!(
@@ -976,6 +1093,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
 
         let func_integer = Function {
@@ -1002,6 +1120,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
 
         assert_eq!(
@@ -1040,6 +1159,7 @@ mod tests {
             query: "SELECT 'supplier' AS type FROM users".to_string(),
             materialized: false,
         owner: None,
+            grants: Vec::new(),
         };
 
         let introspected_view = View {
@@ -1048,6 +1168,7 @@ mod tests {
             query: "SELECT 'supplier'::text AS type FROM users".to_string(),
             materialized: false,
         owner: None,
+            grants: Vec::new(),
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1061,6 +1182,7 @@ mod tests {
             query: "SELECT * FROM users WHERE name LIKE 'test%'".to_string(),
             materialized: false,
         owner: None,
+            grants: Vec::new(),
         };
 
         let introspected_view = View {
@@ -1069,6 +1191,7 @@ mod tests {
             query: "SELECT * FROM users WHERE name ~~ 'test%'::text".to_string(),
             materialized: false,
         owner: None,
+            grants: Vec::new(),
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1082,6 +1205,7 @@ mod tests {
             query: "SELECT id::TEXT FROM users".to_string(),
             materialized: false,
         owner: None,
+            grants: Vec::new(),
         };
 
         let introspected_view = View {
@@ -1090,6 +1214,7 @@ mod tests {
             query: "SELECT id::text FROM users".to_string(),
             materialized: false,
         owner: None,
+            grants: Vec::new(),
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1103,6 +1228,7 @@ mod tests {
             query: "SELECT id, name FROM users WHERE active = true".to_string(),
             materialized: false,
         owner: None,
+            grants: Vec::new(),
         };
 
         let introspected_view = View {
@@ -1111,6 +1237,7 @@ mod tests {
             query: "SELECT  id,  name  FROM  users  WHERE  active  =  true".to_string(),
             materialized: false,
         owner: None,
+            grants: Vec::new(),
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1124,6 +1251,7 @@ mod tests {
             query: "SELECT * FROM (SELECT id FROM users)".to_string(),
             materialized: false,
         owner: None,
+            grants: Vec::new(),
         };
 
         let introspected_view = View {
@@ -1132,6 +1260,7 @@ mod tests {
             query: "SELECT * FROM ( SELECT id FROM users )".to_string(),
             materialized: false,
         owner: None,
+            grants: Vec::new(),
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1145,6 +1274,7 @@ mod tests {
             query: "SELECT id FROM users".to_string(),
             materialized: false,
         owner: None,
+            grants: Vec::new(),
         };
 
         let view2 = View {
@@ -1153,6 +1283,7 @@ mod tests {
             query: "SELECT id FROM accounts".to_string(),
             materialized: false,
         owner: None,
+            grants: Vec::new(),
         };
 
         assert!(!view1.semantically_equals(&view2));
@@ -1189,6 +1320,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![("search_path".to_string(), "public".to_string())],
             owner: None,
+            grants: Vec::new(),
         };
         assert_eq!(func.config_params.len(), 1);
         assert_eq!(func.config_params[0].0, "search_path");
@@ -1209,6 +1341,7 @@ mod tests {
             policies: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
+            grants: Vec::new(),
         };
         assert_eq!(table.owner, Some("postgres".to_string()));
     }
@@ -1221,6 +1354,7 @@ mod tests {
             query: "SELECT * FROM users".to_string(),
             materialized: false,
             owner: Some("postgres".to_string()),
+            grants: Vec::new(),
         };
         assert_eq!(view.owner, Some("postgres".to_string()));
     }
@@ -1239,6 +1373,7 @@ mod tests {
             cache: Some(1),
             owned_by: None,
             owner: Some("postgres".to_string()),
+            grants: Vec::new(),
         };
         assert_eq!(sequence.owner, Some("postgres".to_string()));
     }
@@ -1250,6 +1385,7 @@ mod tests {
             name: "role".to_string(),
             values: vec!["admin".to_string(), "user".to_string()],
             owner: Some("postgres".to_string()),
+        grants: Vec::new(),
         };
         assert_eq!(enum_type.owner, Some("postgres".to_string()));
     }
@@ -1265,6 +1401,7 @@ mod tests {
             collation: None,
             check_constraints: Vec::new(),
             owner: Some("postgres".to_string()),
+        grants: Vec::new(),
         };
         assert_eq!(domain.owner, Some("postgres".to_string()));
     }
@@ -1299,6 +1436,7 @@ mod tests {
             policies: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
+        grants: Vec::new(),
         };
 
         let table2 = Table {
@@ -1314,6 +1452,7 @@ mod tests {
             policies: Vec::new(),
             partition_by: None,
             owner: Some("admin".to_string()),
+        grants: Vec::new(),
         };
 
         assert_ne!(table1, table2);
@@ -1334,6 +1473,7 @@ mod tests {
             policies: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
+            grants: Vec::new(),
         };
 
         let json = serde_json::to_string(&table).expect("Failed to serialize");
@@ -1360,6 +1500,7 @@ mod tests {
                 policies: Vec::new(),
                 partition_by: None,
                 owner: Some("postgres".to_string()),
+                grants: Vec::new(),
             },
         );
 
@@ -1379,9 +1520,173 @@ mod tests {
                 policies: Vec::new(),
                 partition_by: None,
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
         assert_ne!(schema1.fingerprint(), schema2.fingerprint());
+    }
+
+    #[test]
+    fn table_with_grants_serialization() {
+        use std::collections::BTreeSet;
+
+        let mut privileges = BTreeSet::new();
+        privileges.insert(Privilege::Select);
+        privileges.insert(Privilege::Insert);
+
+        let grant = Grant {
+            grantee: "app_user".to_string(),
+            privileges,
+            with_grant_option: false,
+        };
+
+        let table = Table {
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+            partition_by: None,
+            owner: Some("postgres".to_string()),
+            grants: vec![grant],
+        };
+
+        let json = serde_json::to_string(&table).expect("Failed to serialize");
+        let deserialized: Table = serde_json::from_str(&json).expect("Failed to deserialize");
+        assert_eq!(table, deserialized);
+        assert_eq!(deserialized.grants.len(), 1);
+        assert_eq!(deserialized.grants[0].grantee, "app_user");
+    }
+
+    #[test]
+    fn empty_grants_serialization_omitted() {
+        let table = Table {
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+            partition_by: None,
+            owner: Some("postgres".to_string()),
+            grants: Vec::new(),
+        };
+
+        let json = serde_json::to_string(&table).expect("Failed to serialize");
+        assert!(!json.contains("grants"), "Empty grants should not be serialized");
+    }
+
+    #[test]
+    fn grant_privilege_ordering() {
+        use std::collections::BTreeSet;
+
+        let mut privileges = BTreeSet::new();
+        privileges.insert(Privilege::Delete);
+        privileges.insert(Privilege::Select);
+        privileges.insert(Privilege::Insert);
+        privileges.insert(Privilege::Update);
+
+        let items: Vec<_> = privileges.iter().collect();
+        // BTreeSet should maintain sorted order
+        assert!(items.windows(2).all(|w| w[0] <= w[1]));
+    }
+
+    #[test]
+    fn view_with_grants() {
+        use std::collections::BTreeSet;
+
+        let mut privileges = BTreeSet::new();
+        privileges.insert(Privilege::Select);
+
+        let grant = Grant {
+            grantee: "PUBLIC".to_string(),
+            privileges,
+            with_grant_option: false,
+        };
+
+        let view = View {
+            name: "user_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT id, name FROM users".to_string(),
+            materialized: false,
+            owner: Some("postgres".to_string()),
+            grants: vec![grant],
+        };
+
+        assert_eq!(view.grants.len(), 1);
+        assert_eq!(view.grants[0].grantee, "PUBLIC");
+    }
+
+    #[test]
+    fn function_with_execute_grant() {
+        use std::collections::BTreeSet;
+
+        let mut privileges = BTreeSet::new();
+        privileges.insert(Privilege::Execute);
+
+        let grant = Grant {
+            grantee: "app_user".to_string(),
+            privileges,
+            with_grant_option: true,
+        };
+
+        let func = Function {
+            name: "calculate".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "integer".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT 42".to_string(),
+            volatility: Volatility::Immutable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: Some("postgres".to_string()),
+            grants: vec![grant],
+        };
+
+        assert_eq!(func.grants.len(), 1);
+        assert_eq!(func.grants[0].with_grant_option, true);
+    }
+
+    #[test]
+    fn sequence_with_usage_grant() {
+        use std::collections::BTreeSet;
+
+        let mut privileges = BTreeSet::new();
+        privileges.insert(Privilege::Usage);
+
+        let grant = Grant {
+            grantee: "app_user".to_string(),
+            privileges,
+            with_grant_option: false,
+        };
+
+        let sequence = Sequence {
+            name: "user_id_seq".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            cache: Some(1),
+            owned_by: None,
+            owner: Some("postgres".to_string()),
+            grants: vec![grant],
+        };
+
+        assert_eq!(sequence.grants.len(), 1);
+        assert!(sequence.grants[0].privileges.contains(&Privilege::Usage));
     }
 }

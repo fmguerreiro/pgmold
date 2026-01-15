@@ -241,6 +241,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         sequences: filter_field(&schema.sequences, filter, ObjectType::Sequences),
         partitions: filter_field(&schema.partitions, filter, ObjectType::Partitions),
         pending_policies: Vec::new(),
+        pending_owners: Vec::new(),
     }
 }
 
@@ -343,6 +344,7 @@ mod tests {
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
+            grants: Vec::new(),
             },
         );
         schema.functions.insert(
@@ -358,6 +360,7 @@ mod tests {
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -383,6 +386,7 @@ mod tests {
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
+            grants: Vec::new(),
             },
         );
         schema.functions.insert(
@@ -398,6 +402,7 @@ mod tests {
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -428,6 +433,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         schema.tables.insert(
@@ -446,6 +452,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         schema.tables.insert(
@@ -464,6 +471,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -512,6 +520,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         schema.tables.insert(
@@ -530,6 +539,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -542,6 +552,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         schema.views.insert(
@@ -553,6 +564,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -603,6 +615,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         schema.enums.insert(
@@ -613,6 +626,7 @@ mod tests {
                 values: vec!["a".to_string(), "b".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -628,6 +642,7 @@ mod tests {
                 check_constraints: vec![],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         schema.domains.insert(
@@ -642,6 +657,7 @@ mod tests {
                 check_constraints: vec![],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -660,6 +676,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         schema.sequences.insert(
@@ -677,6 +694,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -690,7 +708,6 @@ mod tests {
                 bound: PartitionBound::Default,
                 indexes: vec![],
                 check_constraints: vec![],
-
                 owner: None,
             },
         );
@@ -704,7 +721,6 @@ mod tests {
                 bound: PartitionBound::Default,
                 indexes: vec![],
                 check_constraints: vec![],
-
                 owner: None,
             },
         );
@@ -926,6 +942,7 @@ mod tests {
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
+            grants: Vec::new(),
             },
         );
         schema.tables.insert(
@@ -944,6 +961,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -970,6 +988,7 @@ mod tests {
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
+            grants: Vec::new(),
             },
         );
         schema.tables.insert(
@@ -988,6 +1007,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         schema.views.insert(
@@ -999,6 +1019,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -1037,6 +1058,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -1195,6 +1217,7 @@ mod tests {
             partition_by: None,
 
             owner: None,
+            grants: Vec::new(),
         };
 
         let filter = Filter::new(&[], &[], &[], &[ObjectType::Policies]).unwrap();
@@ -1244,6 +1267,7 @@ mod tests {
             partition_by: None,
 
             owner: None,
+            grants: Vec::new(),
         };
 
         let filter = Filter::new(
@@ -1299,6 +1323,7 @@ mod tests {
             partition_by: None,
 
             owner: None,
+            grants: Vec::new(),
         };
 
         let filter = Filter::new(&[], &[], &[], &[]).unwrap();
@@ -1349,6 +1374,7 @@ mod tests {
             partition_by: None,
 
             owner: None,
+            grants: Vec::new(),
         };
 
         let filter = Filter::new(&[], &[], &[ObjectType::Tables], &[]).unwrap();
@@ -1370,6 +1396,7 @@ mod tests {
                         security: SecurityType::Invoker,
                         config_params: vec![],
                         owner: None,
+            grants: Vec::new(),
                     },
                 )]
                 .into_iter()
@@ -1413,6 +1440,7 @@ mod tests {
             partition_by: None,
 
             owner: None,
+            grants: Vec::new(),
         };
 
         let filter = Filter::new(&[], &[], &[ObjectType::Policies], &[]).unwrap();
@@ -1439,6 +1467,7 @@ mod tests {
                         security: SecurityType::Invoker,
                         config_params: vec![],
                         owner: None,
+            grants: Vec::new(),
                     },
                 )]
                 .into_iter()
@@ -1479,6 +1508,7 @@ mod tests {
             partition_by: None,
 
             owner: None,
+            grants: Vec::new(),
         };
 
         let filter = Filter::new(&[], &[], &[ObjectType::Indexes], &[]).unwrap();

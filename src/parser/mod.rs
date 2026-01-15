@@ -192,6 +192,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         .map(|l| l.to_string().trim_matches('\'').to_string())
                         .collect(),
                     owner: None,
+            grants: Vec::new(),
                 };
                 let key = qualified_name(&enum_schema, &enum_name);
                 schema.enums.insert(key, enum_type);
@@ -366,6 +367,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     query: normalize_sql_whitespace(&query.to_string()),
                     materialized,
                     owner: None,
+            grants: Vec::new(),
                 };
                 let key = qualified_name(&view_schema, &view_name);
                 schema.views.insert(key, view);
@@ -440,6 +442,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     collation: collation.as_ref().map(|c| c.to_string()),
                     check_constraints,
                     owner: None,
+            grants: Vec::new(),
                 };
                 let key = qualified_name(&domain_schema, &domain_name);
                 schema.domains.insert(key, domain);
@@ -605,34 +608,27 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
         }
     }
 
-    // Extract ALTER FUNCTION OWNER TO statements and apply to functions
-    let alter_owner_re = Regex::new(
+    // Collect ALTER FUNCTION OWNER TO statements into pending_owners for cross-file resolution
+    let alter_function_owner_re = Regex::new(
         r#"(?i)ALTER\s+FUNCTION\s+(?:["']?([^"'\s(]+)["']?\.)?["']?([^"'\s(]+)["']?\s*\(([^)]*)\)\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
     ).unwrap();
 
-    for cap in alter_owner_re.captures_iter(sql) {
+    for cap in alter_function_owner_re.captures_iter(sql) {
         let schema_part = cap.get(1).map(|m| m.as_str().trim_matches('"'));
         let func_name = cap.get(2).unwrap().as_str().trim_matches('"');
         let args_str = cap.get(3).unwrap().as_str();
         let owner = cap.get(4).unwrap().as_str().trim_matches('"');
 
-        // Find matching function and set owner
-        for (key, func) in schema.functions.iter_mut() {
-            let qualified = format!("{}.{}", func.schema, func.name);
-            let matches = if let Some(schema_name) = schema_part {
-                qualified == format!("{}.{}", schema_name, func_name) && key.contains(args_str)
-            } else {
-                (func.name == func_name || qualified.ends_with(&format!(".{}", func_name)))
-                    && key.contains(args_str)
-            };
-            if matches {
-                func.owner = Some(owner.to_string());
-                break;
-            }
-        }
+        let func_schema = schema_part.unwrap_or("public");
+        let object_key = format!("{}.{}({})", func_schema, func_name, args_str);
+        schema.pending_owners.push(PendingOwner {
+            object_type: PendingOwnerObjectType::Function,
+            object_key,
+            owner: owner.to_string(),
+        });
     }
 
-    // Extract ALTER TYPE OWNER TO statements and apply to enums
+    // Collect ALTER TYPE OWNER TO statements into pending_owners
     let alter_type_owner_re = Regex::new(
         r#"(?i)ALTER\s+TYPE\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
     ).unwrap();
@@ -642,21 +638,16 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
         let type_name = cap.get(2).unwrap().as_str().trim_matches('"');
         let owner = cap.get(3).unwrap().as_str().trim_matches('"');
 
-        // Try to match enum
-        for (_key, enum_type) in schema.enums.iter_mut() {
-            let matches = if let Some(schema_name) = schema_part {
-                enum_type.schema == schema_name && enum_type.name == type_name
-            } else {
-                enum_type.name == type_name
-            };
-            if matches {
-                enum_type.owner = Some(owner.to_string());
-                break;
-            }
-        }
+        let type_schema = schema_part.unwrap_or("public");
+        let object_key = qualified_name(type_schema, type_name);
+        schema.pending_owners.push(PendingOwner {
+            object_type: PendingOwnerObjectType::Enum,
+            object_key,
+            owner: owner.to_string(),
+        });
     }
 
-    // Extract ALTER DOMAIN OWNER TO statements and apply to domains
+    // Collect ALTER DOMAIN OWNER TO statements into pending_owners
     let alter_domain_owner_re = Regex::new(
         r#"(?i)ALTER\s+DOMAIN\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
     ).unwrap();
@@ -666,21 +657,16 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
         let domain_name = cap.get(2).unwrap().as_str().trim_matches('"');
         let owner = cap.get(3).unwrap().as_str().trim_matches('"');
 
-        // Match domain
-        for (_key, domain) in schema.domains.iter_mut() {
-            let matches = if let Some(schema_name) = schema_part {
-                domain.schema == schema_name && domain.name == domain_name
-            } else {
-                domain.name == domain_name
-            };
-            if matches {
-                domain.owner = Some(owner.to_string());
-                break;
-            }
-        }
+        let domain_schema = schema_part.unwrap_or("public");
+        let object_key = qualified_name(domain_schema, domain_name);
+        schema.pending_owners.push(PendingOwner {
+            object_type: PendingOwnerObjectType::Domain,
+            object_key,
+            owner: owner.to_string(),
+        });
     }
 
-    // Extract ALTER TABLE OWNER TO statements and apply to tables
+    // Collect ALTER TABLE OWNER TO statements into pending_owners (handles tables and partitions)
     let alter_table_owner_re = Regex::new(
         r#"(?i)ALTER\s+TABLE\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
     ).unwrap();
@@ -690,20 +676,16 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
         let table_name = cap.get(2).unwrap().as_str().trim_matches('"');
         let owner = cap.get(3).unwrap().as_str().trim_matches('"');
 
-        for (_key, table) in schema.tables.iter_mut() {
-            let matches = if let Some(schema_name) = schema_part {
-                table.schema == schema_name && table.name == table_name
-            } else {
-                table.name == table_name
-            };
-            if matches {
-                table.owner = Some(owner.to_string());
-                break;
-            }
-        }
+        let table_schema = schema_part.unwrap_or("public");
+        let object_key = qualified_name(table_schema, table_name);
+        schema.pending_owners.push(PendingOwner {
+            object_type: PendingOwnerObjectType::Table,
+            object_key,
+            owner: owner.to_string(),
+        });
     }
 
-    // Extract ALTER VIEW OWNER TO statements and apply to views
+    // Collect ALTER VIEW OWNER TO statements into pending_owners
     let alter_view_owner_re = Regex::new(
         r#"(?i)ALTER\s+VIEW\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
     ).unwrap();
@@ -713,20 +695,16 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
         let view_name = cap.get(2).unwrap().as_str().trim_matches('"');
         let owner = cap.get(3).unwrap().as_str().trim_matches('"');
 
-        for (_key, view) in schema.views.iter_mut() {
-            let matches = if let Some(schema_name) = schema_part {
-                view.schema == schema_name && view.name == view_name
-            } else {
-                view.name == view_name
-            };
-            if matches {
-                view.owner = Some(owner.to_string());
-                break;
-            }
-        }
+        let view_schema = schema_part.unwrap_or("public");
+        let object_key = qualified_name(view_schema, view_name);
+        schema.pending_owners.push(PendingOwner {
+            object_type: PendingOwnerObjectType::View,
+            object_key,
+            owner: owner.to_string(),
+        });
     }
 
-    // Extract ALTER SEQUENCE OWNER TO statements and apply to sequences
+    // Collect ALTER SEQUENCE OWNER TO statements into pending_owners
     let alter_sequence_owner_re = Regex::new(
         r#"(?i)ALTER\s+SEQUENCE\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
     ).unwrap();
@@ -736,17 +714,13 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
         let sequence_name = cap.get(2).unwrap().as_str().trim_matches('"');
         let owner = cap.get(3).unwrap().as_str().trim_matches('"');
 
-        for (_key, sequence) in schema.sequences.iter_mut() {
-            let matches = if let Some(schema_name) = schema_part {
-                sequence.schema == schema_name && sequence.name == sequence_name
-            } else {
-                sequence.name == sequence_name
-            };
-            if matches {
-                sequence.owner = Some(owner.to_string());
-                break;
-            }
-        }
+        let seq_schema = schema_part.unwrap_or("public");
+        let object_key = qualified_name(seq_schema, sequence_name);
+        schema.pending_owners.push(PendingOwner {
+            object_type: PendingOwnerObjectType::Sequence,
+            object_key,
+            owner: owner.to_string(),
+        });
     }
 
     // Associate pending policies with their tables.
@@ -782,6 +756,7 @@ fn parse_create_table(
         policies: Vec::new(),
         partition_by: partition_by.and_then(parse_partition_by),
         owner: None,
+            grants: Vec::new(),
     };
 
     let mut sequences = Vec::new();
@@ -946,6 +921,7 @@ fn parse_column_with_serial(
                 column_name: col_name,
             }),
             owner: None,
+            grants: Vec::new(),
         };
 
         Ok((column, Some(sequence)))
@@ -1214,6 +1190,7 @@ fn parse_create_function(
         security: security_type,
         config_params,
         owner: None,
+            grants: Vec::new(),
     })
 }
 
@@ -1335,6 +1312,7 @@ fn parse_create_sequence(
         cache: final_cache,
         owned_by: owned_by_parsed,
         owner: None,
+            grants: Vec::new(),
     })
 }
 
@@ -2686,6 +2664,7 @@ CREATE DOMAIN us_postal_code AS TEXT
                 default: None,
                 not_null: false,
             owner: None,
+            grants: Vec::new(),
                 collation: None,
                 check_constraints: vec![DomainConstraint {
                     name: None,
@@ -2723,6 +2702,7 @@ CREATE DOMAIN us_postal_code AS TEXT
                 default: None,
                 not_null: false,
             owner: None,
+            grants: Vec::new(),
                 collation: None,
                 check_constraints: vec![DomainConstraint {
                     name: None,
@@ -2771,6 +2751,7 @@ CREATE DOMAIN us_postal_code AS TEXT
                 partition_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 

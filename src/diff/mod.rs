@@ -1076,6 +1076,7 @@ mod tests {
             partition_by: None,
 
             owner: None,
+            grants: Vec::new(),
         }
     }
 
@@ -1101,6 +1102,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -1120,6 +1122,7 @@ mod tests {
                 values: vec!["active".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         let to = empty_schema();
@@ -1327,6 +1330,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
         to.functions.insert(func.signature(), func);
 
@@ -1349,6 +1353,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
         from.functions.insert(func.signature(), func);
         let to = empty_schema();
@@ -1374,6 +1379,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
         from.functions
             .insert(qualified_name(&func.schema, &func.signature()), func);
@@ -1409,6 +1415,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
         from.functions.insert(
             qualified_name(&func_old.schema, &func_old.signature()),
@@ -1432,6 +1439,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
         to.functions.insert(
             qualified_name(&func_new.schema, &func_new.signature()),
@@ -1474,6 +1482,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
         from.functions.insert(
             qualified_name(&func_old.schema, &func_old.signature()),
@@ -1497,6 +1506,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
         to.functions.insert(
             qualified_name(&func_new.schema, &func_new.signature()),
@@ -1534,6 +1544,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
         from.functions.insert(
             qualified_name(&func_old.schema, &func_old.signature()),
@@ -1557,6 +1568,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
         to.functions.insert(
             qualified_name(&func_new.schema, &func_new.signature()),
@@ -1589,6 +1601,7 @@ mod tests {
             materialized: false,
 
             owner: None,
+            grants: Vec::new(),
         };
         from.views
             .insert(qualified_name(&view.schema, &view.name), view);
@@ -1616,6 +1629,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -1636,6 +1650,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         let to = empty_schema();
@@ -1659,6 +1674,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -1672,6 +1688,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -1695,6 +1712,7 @@ mod tests {
                 materialized: true,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -1719,6 +1737,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
         from.functions.insert(func1.signature(), func1);
 
@@ -1734,6 +1753,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
         to.functions.insert(func2.signature(), func2);
 
@@ -1868,6 +1888,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -1878,6 +1899,7 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
             owner: None,
+            grants: Vec::new(),
                 values: vec![
                     "active".to_string(),
                     "pending".to_string(),
@@ -1907,6 +1929,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -1917,6 +1940,7 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
             owner: None,
+            grants: Vec::new(),
                 values: vec![
                     "pending".to_string(),
                     "active".to_string(),
@@ -1946,6 +1970,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -1956,6 +1981,7 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
             owner: None,
+            grants: Vec::new(),
                 values: vec![
                     "active".to_string(),
                     "inactive".to_string(),
@@ -1985,6 +2011,7 @@ mod tests {
                 values: vec!["active".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -1995,6 +2022,7 @@ mod tests {
                 name: "status".to_string(),
                 schema: "public".to_string(),
             owner: None,
+            grants: Vec::new(),
                 values: vec![
                     "pending".to_string(),
                     "active".to_string(),
@@ -2018,6 +2046,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -2030,6 +2059,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -2195,6 +2225,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -2248,6 +2279,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -2275,6 +2307,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         let to = empty_schema();
@@ -2303,6 +2336,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         let mut to = empty_schema();
@@ -2321,6 +2355,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -2348,6 +2383,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         let mut to = empty_schema();
@@ -2366,6 +2402,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -2396,6 +2433,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
         let mut to = empty_schema();
@@ -2414,6 +2452,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -3032,6 +3071,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 security: crate::model::SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
+            grants: Vec::new(),
             },
         );
         db_schema.functions.insert(
@@ -3047,6 +3087,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 security: crate::model::SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
+            grants: Vec::new(),
             },
         );
         db_schema.functions.insert(
@@ -3062,6 +3103,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 security: crate::model::SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -3176,6 +3218,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 query: "SELECT * FROM users".to_string(),
                 materialized: false,
                 owner: Some("oldowner".to_string()),
+            grants: Vec::new(),
             },
         );
 
@@ -3188,6 +3231,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 query: "SELECT * FROM users".to_string(),
                 materialized: false,
                 owner: Some("newowner".to_string()),
+            grants: Vec::new(),
             },
         );
 
@@ -3222,6 +3266,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 cycle: false,
                 owned_by: None,
                 owner: Some("oldowner".to_string()),
+            grants: Vec::new(),
             },
         );
 
@@ -3240,6 +3285,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 cycle: false,
                 owned_by: None,
                 owner: Some("newowner".to_string()),
+            grants: Vec::new(),
             },
         );
 
@@ -3267,6 +3313,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 schema: "public".to_string(),
                 values: vec!["active".to_string()],
                 owner: Some("oldowner".to_string()),
+            grants: Vec::new(),
             },
         );
 
@@ -3278,6 +3325,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 schema: "public".to_string(),
                 values: vec!["active".to_string()],
                 owner: Some("newowner".to_string()),
+            grants: Vec::new(),
             },
         );
 
@@ -3309,6 +3357,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 collation: None,
                 check_constraints: Vec::new(),
                 owner: Some("oldowner".to_string()),
+            grants: Vec::new(),
             },
         );
 
@@ -3324,6 +3373,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 collation: None,
                 check_constraints: Vec::new(),
                 owner: Some("newowner".to_string()),
+            grants: Vec::new(),
             },
         );
 
@@ -3363,6 +3413,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: Some("oldowner".to_string()),
+            grants: Vec::new(),
             },
         );
 
@@ -3385,6 +3436,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: Some("newowner".to_string()),
+            grants: Vec::new(),
             },
         );
 

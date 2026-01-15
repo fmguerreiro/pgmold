@@ -77,6 +77,7 @@ mod tests {
             partition_by: None,
 
             owner: None,
+            grants: Vec::new(),
         };
         table.columns.insert(
             "email".to_string(),

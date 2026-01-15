@@ -579,6 +579,7 @@ mod tests {
             partition_by: None,
 
             owner: None,
+            grants: Vec::new(),
         }
     }
 
@@ -767,6 +768,7 @@ mod tests {
                 values: vec!["admin".to_string(), "user".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             }),
         ];
 
@@ -809,6 +811,7 @@ mod tests {
                 values: vec!["admin".to_string(), "user".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             }),
         ];
 
@@ -848,6 +851,7 @@ mod tests {
             materialized: false,
 
             owner: None,
+            grants: Vec::new(),
         };
         let view_b = View {
             name: "view_b".to_string(),
@@ -856,6 +860,7 @@ mod tests {
             materialized: false,
 
             owner: None,
+            grants: Vec::new(),
         };
         let view_c = View {
             name: "view_c".to_string(),
@@ -864,6 +869,7 @@ mod tests {
             materialized: false,
 
             owner: None,
+            grants: Vec::new(),
         };
 
         let ops = vec![
@@ -936,6 +942,7 @@ mod tests {
             max_value: Some(9223372036854775807),
             cycle: false,
             owner: None,
+            grants: Vec::new(),
             cache: Some(1),
             owned_by: Some(SequenceOwner {
                 table_schema: "public".to_string(),

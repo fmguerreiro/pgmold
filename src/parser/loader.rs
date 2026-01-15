@@ -166,12 +166,13 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
             merged.partitions.insert(name, partition);
         }
 
-        // Collect pending policies for cross-file resolution
+        // Collect pending policies and owners for cross-file resolution
         merged.pending_policies.extend(schema.pending_policies);
+        merged.pending_owners.extend(schema.pending_owners);
     }
 
-    // Finalize: associate all pending policies with their tables.
-    // This handles policies defined in separate files from their tables.
+    // Finalize: associate all pending policies with their tables and apply pending ownership.
+    // This handles policies and ownership defined in separate files from their objects.
     merged.finalize().map_err(SchemaError::ParseError)?;
 
     Ok(merged)
@@ -354,6 +355,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -374,6 +376,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -404,6 +407,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -424,6 +428,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -446,6 +451,7 @@ mod tests {
                 values: vec!["active".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -458,6 +464,7 @@ mod tests {
                 values: vec!["inactive".to_string()],
 
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -482,6 +489,7 @@ mod tests {
                 security: crate::model::SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -499,6 +507,7 @@ mod tests {
                 security: crate::model::SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
+            grants: Vec::new(),
             },
         );
 
@@ -784,6 +793,85 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
         assert!(
             err.contains("nonexistent_table"),
             "Error should mention the missing table: {err}"
+        );
+    }
+
+    #[test]
+    fn cross_file_ownership_resolution() {
+        let temp = TempDir::new().unwrap();
+
+        // Table defined in one file
+        fs::write(
+            temp.path().join("01_tables.sql"),
+            r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT);
+            CREATE VIEW user_emails AS SELECT email FROM users;
+            CREATE SEQUENCE user_id_seq;
+            CREATE TYPE user_status AS ENUM ('active', 'inactive');
+            CREATE DOMAIN email_address AS TEXT;
+            CREATE FUNCTION get_user() RETURNS void LANGUAGE sql AS $$ SELECT 1; $$;
+        "#,
+        )
+        .unwrap();
+
+        // Ownership defined in separate file
+        fs::write(
+            temp.path().join("02_ownership.sql"),
+            r#"
+            ALTER TABLE users OWNER TO app_owner;
+            ALTER VIEW user_emails OWNER TO view_owner;
+            ALTER SEQUENCE user_id_seq OWNER TO seq_owner;
+            ALTER TYPE user_status OWNER TO type_owner;
+            ALTER DOMAIN email_address OWNER TO domain_owner;
+            ALTER FUNCTION get_user() OWNER TO func_owner;
+        "#,
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", temp.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        // Verify cross-file ownership was applied
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(
+            table.owner,
+            Some("app_owner".to_string()),
+            "Table owner should be applied from separate file"
+        );
+
+        let view = schema.views.get("public.user_emails").unwrap();
+        assert_eq!(
+            view.owner,
+            Some("view_owner".to_string()),
+            "View owner should be applied from separate file"
+        );
+
+        let seq = schema.sequences.get("public.user_id_seq").unwrap();
+        assert_eq!(
+            seq.owner,
+            Some("seq_owner".to_string()),
+            "Sequence owner should be applied from separate file"
+        );
+
+        let enum_type = schema.enums.get("public.user_status").unwrap();
+        assert_eq!(
+            enum_type.owner,
+            Some("type_owner".to_string()),
+            "Enum owner should be applied from separate file"
+        );
+
+        let domain = schema.domains.get("public.email_address").unwrap();
+        assert_eq!(
+            domain.owner,
+            Some("domain_owner".to_string()),
+            "Domain owner should be applied from separate file"
+        );
+
+        let func = schema.functions.get("public.get_user()").unwrap();
+        assert_eq!(
+            func.owner,
+            Some("func_owner".to_string()),
+            "Function owner should be applied from separate file"
         );
     }
 }

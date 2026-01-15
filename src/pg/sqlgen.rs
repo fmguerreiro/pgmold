@@ -1133,6 +1133,7 @@ mod tests {
             values: vec!["admin".to_string(), "user".to_string(), "guest".to_string()],
 
             owner: None,
+            grants: Vec::new(),
         })];
 
         let sql = generate_sql(&ops);
@@ -1228,6 +1229,7 @@ mod tests {
             partition_by: None,
 
             owner: None,
+            grants: Vec::new(),
         })];
 
         let sql = generate_sql(&ops);
@@ -1293,6 +1295,7 @@ mod tests {
             materialized: false,
 
             owner: None,
+            grants: Vec::new(),
         })];
 
         let sql = generate_sql(&ops);
@@ -1312,6 +1315,7 @@ mod tests {
             materialized: true,
 
             owner: None,
+            grants: Vec::new(),
         })];
 
         let sql = generate_sql(&ops);
@@ -1556,6 +1560,7 @@ mod tests {
             partition_by: None,
 
             owner: None,
+            grants: Vec::new(),
         };
 
         let op = MigrationOp::CreateTable(table);
@@ -1824,6 +1829,7 @@ mod tests {
             owned_by: None,
 
             owner: None,
+            grants: Vec::new(),
         };
         let op = MigrationOp::CreateSequence(seq);
         let sql = generate_sql(&vec![op]);
@@ -1848,6 +1854,7 @@ mod tests {
             max_value: Some(1000),
             cycle: true,
             owner: None,
+            grants: Vec::new(),
             cache: Some(10),
             owned_by: Some(SequenceOwner {
                 table_schema: "auth".to_string(),
@@ -2058,6 +2065,7 @@ mod tests {
             check_constraints: vec![],
 
             owner: None,
+            grants: Vec::new(),
         };
 
         let ops = vec![MigrationOp::CreateDomain(domain)];
@@ -2083,6 +2091,7 @@ mod tests {
             check_constraints: vec![],
 
             owner: None,
+            grants: Vec::new(),
         };
 
         let ops = vec![MigrationOp::CreateDomain(domain)];
@@ -2110,6 +2119,7 @@ mod tests {
                 expression: "VALUE > 0".to_string(),
             }],
             owner: None,
+            grants: Vec::new(),
         };
 
         let ops = vec![MigrationOp::CreateDomain(domain)];
@@ -2228,6 +2238,7 @@ mod tests {
             security: SecurityType::Definer,
             config_params: vec![],
             owner: None,
+            grants: Vec::new(),
         };
 
         let ddl = generate_create_function(&func);
@@ -2304,6 +2315,7 @@ mod tests {
             security: SecurityType::Definer,
             config_params: vec![("search_path".to_string(), "public".to_string())],
             owner: None,
+            grants: Vec::new(),
         };
 
         let ddl = generate_create_function(&func);
@@ -2332,6 +2344,7 @@ mod tests {
                 ("work_mem".to_string(), "'64MB'".to_string()),
             ],
             owner: None,
+            grants: Vec::new(),
         };
 
         let ddl = generate_create_function(&func);
@@ -2358,6 +2371,7 @@ mod tests {
             security: SecurityType::Invoker,
             config_params: vec![],
             owner: Some("supabase_auth_admin".to_string()),
+            grants: Vec::new(),
         };
 
         let ops = vec![MigrationOp::CreateFunction(func)];
