@@ -327,6 +327,26 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                         expression: normalize_expr(&chk.expr.to_string()),
                                     });
                                     table.check_constraints.sort();
+                                } else if let TableConstraint::Unique(uniq) = constraint {
+                                    let constraint_name = uniq
+                                        .name
+                                        .as_ref()
+                                        .map(|n| n.to_string().trim_matches('"').to_string())
+                                        .unwrap_or_else(|| format!("{tbl_name}_unique"));
+
+                                    table.indexes.push(Index {
+                                        name: constraint_name,
+                                        columns: uniq
+                                            .columns
+                                            .iter()
+                                            .map(|c| {
+                                                c.column.expr.to_string().trim_matches('"').to_string()
+                                            })
+                                            .collect(),
+                                        unique: true,
+                                        index_type: IndexType::BTree,
+                                    });
+                                    table.indexes.sort();
                                 }
                             }
                         }
@@ -1112,12 +1132,31 @@ fn parse_create_table(
                     expression: normalize_expr(&chk.expr.to_string()),
                 });
             }
+            TableConstraint::Unique(uniq) => {
+                let constraint_name = uniq
+                    .name
+                    .as_ref()
+                    .map(|n| n.to_string().trim_matches('"').to_string())
+                    .unwrap_or_else(|| format!("{}_unique", table.name));
+
+                table.indexes.push(Index {
+                    name: constraint_name,
+                    columns: uniq
+                        .columns
+                        .iter()
+                        .map(|c| c.column.expr.to_string().trim_matches('"').to_string())
+                        .collect(),
+                    unique: true,
+                    index_type: IndexType::BTree,
+                });
+            }
             _ => {}
         }
     }
 
     table.foreign_keys.sort();
     table.check_constraints.sort();
+    table.indexes.sort();
 
     Ok(ParsedTable { table, sequences })
 }
@@ -3617,5 +3656,55 @@ CREATE TABLE "mrv"."Cultivation" (
         let table = schema.tables.get("public.users").unwrap();
         assert_eq!(table.grants.len(), 1);
         assert_eq!(table.grants[0].grantee, "user2");
+    }
+
+    #[test]
+    fn parses_unique_constraint_in_create_table() {
+        let sql = r#"
+            CREATE TABLE users (
+                id BIGINT PRIMARY KEY,
+                email TEXT NOT NULL,
+                CONSTRAINT users_email_unique UNIQUE (email)
+            );
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+
+        let unique_idx = table
+            .indexes
+            .iter()
+            .find(|idx| idx.name == "users_email_unique")
+            .expect("UNIQUE constraint should be parsed as an index");
+
+        assert!(unique_idx.unique, "Index should be marked as unique");
+        assert_eq!(unique_idx.columns, vec!["email"]);
+    }
+
+    #[test]
+    fn parses_unique_constraint_from_alter_table() {
+        let sql = r#"
+            CREATE TABLE "auth"."mfa_amr_claims" (
+                "id" uuid NOT NULL PRIMARY KEY,
+                "session_id" uuid NOT NULL,
+                "authentication_method" TEXT NOT NULL
+            );
+            ALTER TABLE "auth"."mfa_amr_claims" ADD CONSTRAINT
+                "mfa_amr_claims_session_id_authentication_method_pkey"
+                UNIQUE ("session_id", "authentication_method");
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("auth.mfa_amr_claims").unwrap();
+
+        let unique_idx = table
+            .indexes
+            .iter()
+            .find(|idx| idx.name == "mfa_amr_claims_session_id_authentication_method_pkey")
+            .expect("UNIQUE constraint from ALTER TABLE should be parsed as an index");
+
+        assert!(unique_idx.unique, "Index should be marked as unique");
+        assert_eq!(
+            unique_idx.columns,
+            vec!["session_id", "authentication_method"]
+        );
     }
 }
