@@ -45,6 +45,14 @@ pub async fn introspect_schema(
         }
     }
 
+    // Introspect grants for functions
+    let function_grants = introspect_function_grants(connection, target_schemas).await?;
+    for (qualified_name, grants) in function_grants {
+        if let Some(function) = schema.functions.get_mut(&qualified_name) {
+            function.grants = grants;
+        }
+    }
+
     // Introspect partition keys and merge into tables
     let partition_keys = introspect_partition_keys(connection, target_schemas).await?;
     for (qualified_name, partition_key) in partition_keys {
@@ -1604,6 +1612,80 @@ async fn introspect_sequence_grants(
 
         if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
             let qualified_name = format!("{schema_name}.{object_name}");
+            grants_by_object
+                .entry(qualified_name)
+                .or_insert_with(BTreeMap::new)
+                .entry((grantee, is_grantable))
+                .or_insert_with(BTreeSet::new)
+                .insert(privilege);
+        }
+    }
+
+    let mut result = BTreeMap::new();
+    for (qualified_name, grants_map) in grants_by_object {
+        let mut grants_vec = Vec::new();
+        for ((grantee, with_grant_option), privileges) in grants_map {
+            grants_vec.push(Grant {
+                grantee,
+                privileges,
+                with_grant_option,
+            });
+        }
+        grants_vec.sort();
+        result.insert(qualified_name, grants_vec);
+    }
+
+    Ok(result)
+}
+
+async fn introspect_function_grants(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<Grant>>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS schema_name,
+            p.proname AS function_name,
+            pg_get_function_identity_arguments(p.oid) AS args,
+            CASE
+                WHEN acl.grantee = 0 THEN 'PUBLIC'
+                ELSE pg_get_userbyid(acl.grantee)
+            END AS grantee,
+            acl.privilege_type AS privilege_type,
+            acl.is_grantable AS is_grantable
+        FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        CROSS JOIN LATERAL aclexplode(p.proacl) AS acl
+        WHERE n.nspname = ANY($1::text[])
+          AND p.proacl IS NOT NULL
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch function grants: {e}")))?;
+
+    let mut grants_by_object: BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>> =
+        BTreeMap::new();
+
+    for row in rows {
+        let schema_name: String = row.get("schema_name");
+        let function_name: String = row.get("function_name");
+        let args_str: String = row.get("args");
+        let grantee: String = row.get("grantee");
+        let privilege_type: String = row.get("privilege_type");
+        let is_grantable: bool = row.get("is_grantable");
+
+        if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
+            // Parse arguments and extract just the types to match signature() format
+            let parsed_args = parse_function_arguments(&args_str);
+            let type_signature = parsed_args
+                .iter()
+                .map(|arg| arg.data_type.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let qualified_name = format!("{schema_name}.{function_name}({type_signature})");
             grants_by_object
                 .entry(qualified_name)
                 .or_insert_with(BTreeMap::new)

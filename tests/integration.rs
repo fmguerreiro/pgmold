@@ -2770,3 +2770,42 @@ async fn ownership_management_end_to_end() {
         "Should have no AlterOwner ops after migration, got: {final_alter_ops:?}"
     );
 }
+
+#[tokio::test]
+async fn introspects_function_grants() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE ROLE test_user")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE FUNCTION add_numbers(a integer, b integer) RETURNS integer LANGUAGE sql AS $$ SELECT a + b $$")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("GRANT EXECUTE ON FUNCTION add_numbers(integer, integer) TO test_user")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let func = schema.functions.get("public.add_numbers(integer, integer)");
+    assert!(func.is_some(), "Function public.add_numbers(integer, integer) should exist. Available functions: {:?}", schema.functions.keys().collect::<Vec<_>>());
+
+    let func = func.unwrap();
+    assert!(!func.grants.is_empty(), "Function should have grants. Function: {:?}", func);
+    assert!(
+        func.grants.iter().any(|g| g.grantee == "test_user"),
+        "Should have grant for test_user. Grants: {:?}", func.grants
+    );
+    assert!(
+        func.grants.iter().any(|g| g.privileges.contains(&pgmold::model::Privilege::Execute)),
+        "Should have EXECUTE privilege"
+    );
+}
