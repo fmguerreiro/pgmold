@@ -219,3 +219,216 @@ async fn function_body_whitespace_roundtrip() {
         "Function with different body whitespace should be equal. Got: {ops:?}"
     );
 }
+
+/// Test partial index with enum cast in predicate converges after apply
+/// PostgreSQL normalizes WHERE clauses to include explicit type casts like 'GROWING'::status_enum
+/// The schema file just has 'GROWING'. These should be semantically equal.
+#[tokio::test]
+async fn partial_index_enum_cast_convergence() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create enum and table with partial index using the enum
+    sqlx::raw_sql(
+        r#"
+        CREATE TYPE status_enum AS ENUM ('ACTIVE', 'INACTIVE', 'GROWING');
+
+        CREATE TABLE items (
+            id BIGINT PRIMARY KEY,
+            status status_enum NOT NULL
+        );
+
+        CREATE UNIQUE INDEX unique_active_items ON items (id) WHERE (status = 'ACTIVE');
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    // Parse the same SQL - without explicit enum cast in predicate
+    let sql_schema = parse_sql_string(
+        r#"
+        CREATE TYPE status_enum AS ENUM ('ACTIVE', 'INACTIVE', 'GROWING');
+
+        CREATE TABLE items (
+            id BIGINT PRIMARY KEY,
+            status status_enum NOT NULL
+        );
+
+        CREATE UNIQUE INDEX unique_active_items ON items (id) WHERE (status = 'ACTIVE');
+        "#,
+    )
+    .unwrap();
+
+    let ops = compute_diff(&db_schema, &sql_schema);
+    assert!(
+        ops.is_empty(),
+        "Partial index with enum cast in predicate should converge. Got: {ops:?}"
+    );
+}
+
+/// Test column default with enum cast converges after apply
+/// PostgreSQL normalizes defaults to include explicit type casts like 'GROWING'::status_enum
+/// The schema file just has 'GROWING'. These should be semantically equal.
+#[tokio::test]
+async fn column_default_enum_cast_convergence() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create enum and table with default value
+    sqlx::raw_sql(
+        r#"
+        CREATE TYPE status_enum AS ENUM ('ACTIVE', 'INACTIVE', 'GROWING');
+
+        CREATE TABLE items (
+            id BIGINT PRIMARY KEY,
+            status status_enum NOT NULL DEFAULT 'GROWING'
+        );
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    // Parse the same SQL
+    let sql_schema = parse_sql_string(
+        r#"
+        CREATE TYPE status_enum AS ENUM ('ACTIVE', 'INACTIVE', 'GROWING');
+
+        CREATE TABLE items (
+            id BIGINT PRIMARY KEY,
+            status status_enum NOT NULL DEFAULT 'GROWING'
+        );
+        "#,
+    )
+    .unwrap();
+
+    let ops = compute_diff(&db_schema, &sql_schema);
+    assert!(
+        ops.is_empty(),
+        "Column default with enum cast should converge. Got: {ops:?}"
+    );
+}
+
+/// Test view with enum cast in WHERE clause converges after apply
+/// PostgreSQL normalizes view queries to include explicit type casts
+/// Note: Uses explicit columns because PostgreSQL expands SELECT * to column names
+#[tokio::test]
+async fn view_enum_cast_convergence() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create enum, table, and view using enum comparison
+    // Use explicit columns instead of SELECT * since PostgreSQL expands SELECT * to column names
+    sqlx::raw_sql(
+        r#"
+        CREATE TYPE status_enum AS ENUM ('ACTIVE', 'INACTIVE', 'GROWING');
+
+        CREATE TABLE items (
+            id BIGINT PRIMARY KEY,
+            status status_enum NOT NULL
+        );
+
+        CREATE VIEW active_items AS SELECT items.id, items.status FROM items WHERE items.status = 'ACTIVE';
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    // Parse the same SQL - without explicit enum cast
+    let sql_schema = parse_sql_string(
+        r#"
+        CREATE TYPE status_enum AS ENUM ('ACTIVE', 'INACTIVE', 'GROWING');
+
+        CREATE TABLE items (
+            id BIGINT PRIMARY KEY,
+            status status_enum NOT NULL
+        );
+
+        CREATE VIEW active_items AS SELECT items.id, items.status FROM items WHERE items.status = 'ACTIVE';
+        "#,
+    )
+    .unwrap();
+
+    let ops = compute_diff(&db_schema, &sql_schema);
+    assert!(
+        ops.is_empty(),
+        "View with enum cast should converge. Got: {ops:?}"
+    );
+}
+
+/// Test policy expression with enum cast converges after apply
+/// PostgreSQL normalizes policy expressions to include explicit type casts
+/// Note: This test uses a specific role to avoid the PUBLIC vs public case sensitivity issue
+#[tokio::test]
+async fn policy_enum_cast_convergence() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create a role first to avoid PUBLIC vs public case sensitivity issues
+    sqlx::raw_sql(
+        r#"
+        CREATE ROLE test_role;
+
+        CREATE TYPE status_enum AS ENUM ('ACTIVE', 'INACTIVE', 'GROWING');
+
+        CREATE TABLE items (
+            id BIGINT PRIMARY KEY,
+            status status_enum NOT NULL
+        );
+
+        ALTER TABLE items ENABLE ROW LEVEL SECURITY;
+
+        CREATE POLICY active_only ON items
+            FOR SELECT
+            TO test_role
+            USING (status = 'ACTIVE');
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    // Parse the same SQL
+    let sql_schema = parse_sql_string(
+        r#"
+        CREATE TYPE status_enum AS ENUM ('ACTIVE', 'INACTIVE', 'GROWING');
+
+        CREATE TABLE items (
+            id BIGINT PRIMARY KEY,
+            status status_enum NOT NULL
+        );
+
+        ALTER TABLE items ENABLE ROW LEVEL SECURITY;
+
+        CREATE POLICY active_only ON items
+            FOR SELECT
+            TO test_role
+            USING (status = 'ACTIVE');
+        "#,
+    )
+    .unwrap();
+
+    let ops = compute_diff(&db_schema, &sql_schema);
+    assert!(
+        ops.is_empty(),
+        "Policy with enum cast should converge. Got: {ops:?}"
+    );
+}

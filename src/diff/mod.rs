@@ -2,7 +2,7 @@ pub mod planner;
 
 use crate::model::{
     qualified_name, CheckConstraint, Column, Domain, EnumType, Extension, ForeignKey, Function,
-    Grant, Index, Partition, PgSchema, PgType, Policy, Privilege, PrimaryKey, Sequence,
+    Grant, Index, Partition, PgSchema, PgType, Policy, PrimaryKey, Privilege, Sequence,
     SequenceDataType, SequenceOwner, Table, Trigger, TriggerEnabled, View,
 };
 
@@ -238,10 +238,8 @@ fn diff_grants_for_object(
         .iter()
         .map(|g| (g.grantee.as_str(), g))
         .collect();
-    let to_by_grantee: BTreeMap<&str, &Grant> = to_grants
-        .iter()
-        .map(|g| (g.grantee.as_str(), g))
-        .collect();
+    let to_by_grantee: BTreeMap<&str, &Grant> =
+        to_grants.iter().map(|g| (g.grantee.as_str(), g)).collect();
 
     for (grantee, from_grant) in &from_by_grantee {
         match to_by_grantee.get(grantee) {
@@ -464,7 +462,12 @@ fn diff_extensions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops
 }
 
-fn diff_enums(from: &Schema, to: &Schema, manage_ownership: bool, manage_grants: bool) -> Vec<MigrationOp> {
+fn diff_enums(
+    from: &Schema,
+    to: &Schema,
+    manage_ownership: bool,
+    manage_grants: bool,
+) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, to_enum) in &to.enums {
@@ -560,7 +563,12 @@ fn diff_enum_values(name: &str, from: &EnumType, to: &EnumType) -> Vec<Migration
     ops
 }
 
-fn diff_domains(from: &Schema, to: &Schema, manage_ownership: bool, manage_grants: bool) -> Vec<MigrationOp> {
+fn diff_domains(
+    from: &Schema,
+    to: &Schema,
+    manage_ownership: bool,
+    manage_grants: bool,
+) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, to_domain) in &to.domains {
@@ -644,7 +652,12 @@ fn diff_domains(from: &Schema, to: &Schema, manage_ownership: bool, manage_grant
     ops
 }
 
-fn diff_tables(from: &Schema, to: &Schema, manage_ownership: bool, manage_grants: bool) -> Vec<MigrationOp> {
+fn diff_tables(
+    from: &Schema,
+    to: &Schema,
+    manage_ownership: bool,
+    manage_grants: bool,
+) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, table) in &to.tables {
@@ -733,7 +746,12 @@ fn diff_partitions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops
 }
 
-fn diff_functions(from: &Schema, to: &Schema, manage_ownership: bool, manage_grants: bool) -> Vec<MigrationOp> {
+fn diff_functions(
+    from: &Schema,
+    to: &Schema,
+    manage_ownership: bool,
+    manage_grants: bool,
+) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (sig, func) in &to.functions {
@@ -835,7 +853,12 @@ fn diff_functions(from: &Schema, to: &Schema, manage_ownership: bool, manage_gra
     ops
 }
 
-fn diff_views(from: &Schema, to: &Schema, manage_ownership: bool, manage_grants: bool) -> Vec<MigrationOp> {
+fn diff_views(
+    from: &Schema,
+    to: &Schema,
+    manage_ownership: bool,
+    manage_grants: bool,
+) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, view) in &to.views {
@@ -994,7 +1017,12 @@ fn only_enabled_differs(from: &Trigger, to: &Trigger) -> bool {
         && from.new_table_name == to.new_table_name
 }
 
-fn diff_sequences(from: &Schema, to: &Schema, manage_ownership: bool, manage_grants: bool) -> Vec<MigrationOp> {
+fn diff_sequences(
+    from: &Schema,
+    to: &Schema,
+    manage_ownership: bool,
+    manage_grants: bool,
+) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, to_seq) in &to.sequences {
@@ -1206,6 +1234,16 @@ fn diff_primary_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     ops
 }
 
+/// Compares two indexes semantically, using AST-based comparison for predicates.
+/// This handles PostgreSQL's normalization of WHERE clauses (e.g., adding explicit enum casts).
+fn indexes_semantically_equal(from: &Index, to: &Index) -> bool {
+    from.name == to.name
+        && from.columns == to.columns
+        && from.unique == to.unique
+        && from.index_type == to.index_type
+        && exprs_equal(&from.predicate, &to.predicate)
+}
+
 fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
     let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
@@ -1220,7 +1258,7 @@ fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
                     index: index.clone(),
                 });
             }
-            Some(from_index) if from_index != index => {
+            Some(from_index) if !indexes_semantically_equal(from_index, index) => {
                 ops.push(MigrationOp::DropIndex {
                     table: from_qualified_table_name.clone(),
                     index_name: index.name.clone(),
@@ -1457,7 +1495,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -1477,7 +1515,7 @@ mod tests {
                 values: vec!["active".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         let to = empty_schema();
@@ -1986,7 +2024,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2007,7 +2045,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         let to = empty_schema();
@@ -2031,7 +2069,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2045,7 +2083,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2069,7 +2107,7 @@ mod tests {
                 materialized: true,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2245,7 +2283,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2255,8 +2293,8 @@ mod tests {
             EnumType {
                 name: "status".to_string(),
                 schema: "public".to_string(),
-            owner: None,
-            grants: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
                 values: vec![
                     "active".to_string(),
                     "pending".to_string(),
@@ -2286,7 +2324,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2296,8 +2334,8 @@ mod tests {
             EnumType {
                 name: "status".to_string(),
                 schema: "public".to_string(),
-            owner: None,
-            grants: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
                 values: vec![
                     "pending".to_string(),
                     "active".to_string(),
@@ -2327,7 +2365,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2337,8 +2375,8 @@ mod tests {
             EnumType {
                 name: "status".to_string(),
                 schema: "public".to_string(),
-            owner: None,
-            grants: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
                 values: vec![
                     "active".to_string(),
                     "inactive".to_string(),
@@ -2368,7 +2406,7 @@ mod tests {
                 values: vec!["active".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2378,8 +2416,8 @@ mod tests {
             EnumType {
                 name: "status".to_string(),
                 schema: "public".to_string(),
-            owner: None,
-            grants: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
                 values: vec![
                     "pending".to_string(),
                     "active".to_string(),
@@ -2403,7 +2441,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2416,7 +2454,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2584,7 +2622,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2638,7 +2676,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2666,7 +2704,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         let to = empty_schema();
@@ -2695,7 +2733,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         let mut to = empty_schema();
@@ -2714,7 +2752,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2742,7 +2780,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         let mut to = empty_schema();
@@ -2761,7 +2799,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -2792,7 +2830,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         let mut to = empty_schema();
@@ -2811,7 +2849,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -3430,7 +3468,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 security: crate::model::SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         db_schema.functions.insert(
@@ -3446,7 +3484,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 security: crate::model::SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         db_schema.functions.insert(
@@ -3462,7 +3500,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 security: crate::model::SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -3517,7 +3555,10 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             .any(|op| matches!(op, MigrationOp::CreatePolicy(p) if p.name == "users_select"));
 
         assert!(has_create_table, "Should emit CreateTable");
-        assert!(has_enable_rls, "Should emit EnableRls for new table with RLS");
+        assert!(
+            has_enable_rls,
+            "Should emit EnableRls for new table with RLS"
+        );
         assert!(
             has_create_policy,
             "Should emit CreatePolicy for new table with policies"
@@ -3577,7 +3618,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 query: "SELECT * FROM users".to_string(),
                 materialized: false,
                 owner: Some("oldowner".to_string()),
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -3590,7 +3631,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 query: "SELECT * FROM users".to_string(),
                 materialized: false,
                 owner: Some("newowner".to_string()),
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -3625,7 +3666,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 cycle: false,
                 owned_by: None,
                 owner: Some("oldowner".to_string()),
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -3644,7 +3685,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 cycle: false,
                 owned_by: None,
                 owner: Some("newowner".to_string()),
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -3672,7 +3713,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 schema: "public".to_string(),
                 values: vec!["active".to_string()],
                 owner: Some("oldowner".to_string()),
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -3684,7 +3725,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 schema: "public".to_string(),
                 values: vec!["active".to_string()],
                 owner: Some("newowner".to_string()),
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -3716,7 +3757,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 collation: None,
                 check_constraints: Vec::new(),
                 owner: Some("oldowner".to_string()),
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -3732,7 +3773,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 collation: None,
                 check_constraints: Vec::new(),
                 owner: Some("newowner".to_string()),
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -3772,7 +3813,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: Some("oldowner".to_string()),
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -3795,7 +3836,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: Some("newowner".to_string()),
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -3813,13 +3854,14 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         ));
     }
 
-        #[test]
+    #[test]
     fn diff_grants_adds_new_grant() {
         use std::collections::BTreeSet;
 
         let mut from = empty_schema();
         let mut table = simple_table("users");
-        from.tables.insert("public.users".to_string(), table.clone());
+        from.tables
+            .insert("public.users".to_string(), table.clone());
 
         let mut to = empty_schema();
         table.grants = vec![crate::model::Grant {
@@ -3853,11 +3895,13 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             privileges: BTreeSet::from([crate::model::Privilege::Select]),
             with_grant_option: false,
         }];
-        from.tables.insert("public.users".to_string(), table.clone());
+        from.tables
+            .insert("public.users".to_string(), table.clone());
 
         let mut to = empty_schema();
         let table_no_grants = simple_table("users");
-        to.tables.insert("public.users".to_string(), table_no_grants);
+        to.tables
+            .insert("public.users".to_string(), table_no_grants);
 
         let ops = compute_diff_with_flags(&from, &to, false, true);
         assert_eq!(ops.len(), 1);
@@ -3883,7 +3927,8 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             privileges: BTreeSet::from([crate::model::Privilege::Select]),
             with_grant_option: false,
         }];
-        from.tables.insert("public.users".to_string(), table.clone());
+        from.tables
+            .insert("public.users".to_string(), table.clone());
 
         let mut to = empty_schema();
         let mut table_more_privs = simple_table("users");
@@ -3895,7 +3940,8 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             ]),
             with_grant_option: false,
         }];
-        to.tables.insert("public.users".to_string(), table_more_privs);
+        to.tables
+            .insert("public.users".to_string(), table_more_privs);
 
         let ops = compute_diff_with_flags(&from, &to, false, true);
         assert_eq!(ops.len(), 1);
@@ -3916,7 +3962,8 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
 
         let mut from = empty_schema();
         let table = simple_table("users");
-        from.tables.insert("public.users".to_string(), table.clone());
+        from.tables
+            .insert("public.users".to_string(), table.clone());
 
         let mut to = empty_schema();
         let mut table_with_grants = simple_table("users");
@@ -3925,7 +3972,8 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             privileges: BTreeSet::from([crate::model::Privilege::Select]),
             with_grant_option: false,
         }];
-        to.tables.insert("public.users".to_string(), table_with_grants);
+        to.tables
+            .insert("public.users".to_string(), table_with_grants);
 
         let ops = compute_diff_with_flags(&from, &to, false, false);
         assert_eq!(ops.len(), 0);

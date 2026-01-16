@@ -204,8 +204,15 @@ fn strip_numeric_literal_casts(expr: &str) -> String {
 
 /// Regex-based normalization fallback for expressions that sqlparser can't parse.
 fn normalize_expression_regex(expr: &str) -> String {
+    // Strip casts from string literals to schema-qualified types (enum casts)
+    // Matches: 'value'::schema."EnumName", 'value'::schema.enumname, 'value'::"EnumName"
+    // PostgreSQL adds these explicit casts that aren't in the original DDL
+    let re_string_custom_cast =
+        Regex::new(r#"'([^']*)'::(?:[a-z_][a-z0-9_]*\.)?"?[A-Za-z_][A-Za-z0-9_]*"?"#).unwrap();
+    let result = re_string_custom_cast.replace_all(expr, "'$1'");
+
     let re_string_text_cast = Regex::new(r"'([^']*)'::text").unwrap();
-    let result = re_string_text_cast.replace_all(expr, "'$1'");
+    let result = re_string_text_cast.replace_all(&result, "'$1'");
 
     // ILIKE variants must come before LIKE variants
     let re_not_ilike = Regex::new(r"\s*!~~\*\s*").unwrap();
@@ -712,8 +719,7 @@ fn normalize_expr(expr: &Expr) -> Expr {
             }
         }
 
-        // Strip ::text cast from any expression
-        // PostgreSQL normalizes redundant casts away when storing trigger WHEN clauses
+        // Strip casts that PostgreSQL adds but aren't in the original DDL
         Expr::Cast {
             kind,
             expr: inner,
@@ -721,10 +727,19 @@ fn normalize_expr(expr: &Expr) -> Expr {
             format,
         } => {
             let norm_inner = normalize_expr(inner);
-            // If casting to text, strip the cast entirely
-            // PostgreSQL does this normalization for trigger WHEN clauses
+            // Strip ::text casts - PostgreSQL normalizes these away
             if matches!(data_type, DataType::Text) {
                 return norm_inner;
+            }
+            // Strip casts from string literals to custom types (enum casts)
+            // PostgreSQL adds explicit enum casts like 'GROWING'::mrv."CultivationStatus"
+            // when the original DDL just had 'GROWING'
+            if let Expr::Value(v) = &norm_inner {
+                if matches!(v.value, sqlparser::ast::Value::SingleQuotedString(_))
+                    && matches!(data_type, DataType::Custom(_, _))
+                {
+                    return norm_inner;
+                }
             }
             Expr::Cast {
                 kind: kind.clone(),
@@ -1189,6 +1204,23 @@ fn ast_comparison_handles_text_cast_on_strings() {
     // String literal with and without ::text should be equivalent
     let without_cast = "SELECT 'value' FROM t";
     let with_cast = "SELECT 'value'::text FROM t";
+    assert!(views_semantically_equal(without_cast, with_cast));
+}
+
+#[test]
+fn ast_comparison_handles_enum_cast_on_strings() {
+    // String literal with and without enum cast should be equivalent
+    // PostgreSQL adds explicit enum casts like 'ACTIVE'::status_enum
+    let without_cast = "SELECT * FROM items WHERE status = 'ACTIVE'";
+    let with_cast = "SELECT * FROM items WHERE status = 'ACTIVE'::status_enum";
+    assert!(views_semantically_equal(without_cast, with_cast));
+}
+
+#[test]
+fn ast_comparison_handles_schema_qualified_enum_cast() {
+    // Schema-qualified enum cast should also be stripped
+    let without_cast = "SELECT * FROM items WHERE status = 'ACTIVE'";
+    let with_cast = "SELECT * FROM items WHERE status = 'ACTIVE'::public.status_enum";
     assert!(views_semantically_equal(without_cast, with_cast));
 }
 
