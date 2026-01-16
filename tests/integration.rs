@@ -3331,7 +3331,6 @@ async fn check_constraint_round_trip_no_drop() {
         .await
         .unwrap();
 
-    // Apply the schema to the database
     let parsed_schema = parse_sql_string(schema_sql).unwrap();
     let empty_schema = Schema::new();
     let diff_ops = compute_diff(&empty_schema, &parsed_schema);
@@ -3341,7 +3340,6 @@ async fn check_constraint_round_trip_no_drop() {
         sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
-    // Now introspect and compute diff again - should be empty
     let db_schema = introspect_schema(&connection, &["mrv".to_string()], false)
         .await
         .unwrap();
@@ -3798,6 +3796,81 @@ async fn policy_round_trip_no_diff() {
     );
 }
 
+#[tokio::test]
+async fn policy_with_exists_round_trip_no_diff() {
+    // Regression test: RLS Policy with EXISTS subquery round-trip
+    // Tests that complex USING expressions with EXISTS converge after apply
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS mrv")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE ROLE authenticated")
+        .execute(connection.pool())
+        .await
+        .ok(); // Ignore if already exists
+
+    let schema_sql = r#"
+        CREATE TABLE "mrv"."OrganizationUser" (
+            "id" BIGINT PRIMARY KEY,
+            "organizationId" BIGINT NOT NULL,
+            "userId" BIGINT NOT NULL
+        );
+
+        CREATE TABLE "mrv"."Farm" (
+            "id" BIGINT PRIMARY KEY,
+            "name" VARCHAR(255) NOT NULL,
+            "organizationId" BIGINT NOT NULL
+        );
+
+        ALTER TABLE "mrv"."Farm" ENABLE ROW LEVEL SECURITY;
+
+        CREATE POLICY "farm_organization_select" ON "mrv"."Farm"
+        FOR SELECT
+        TO authenticated
+        USING (
+            EXISTS (
+                SELECT 1 FROM "mrv"."OrganizationUser" ou
+                WHERE ou."organizationId" = "Farm"."organizationId"
+            )
+        );
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    let db_schema = introspect_schema(&connection, &["mrv".to_string()], false)
+        .await
+        .unwrap();
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let policy_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreatePolicy { .. }
+                    | MigrationOp::DropPolicy { .. }
+                    | MigrationOp::AlterPolicy { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        policy_ops.is_empty(),
+        "Should have no policy diff after apply. Got: {:?}",
+        policy_ops
+    );
+}
 
 #[tokio::test]
 async fn partial_index_round_trip() {
@@ -3851,11 +3924,7 @@ async fn partial_index_round_trip() {
         .iter()
         .filter(|op| matches!(op, MigrationOp::AddIndex { .. }))
         .collect();
-    assert_eq!(
-        add_index_ops.len(),
-        1,
-        "Should have one AddIndex operation"
-    );
+    assert_eq!(add_index_ops.len(), 1, "Should have one AddIndex operation");
 
     let planned = plan_migration(diff_ops);
     let sql = generate_sql(&planned);
@@ -3882,7 +3951,9 @@ async fn partial_index_round_trip() {
         .await
         .unwrap();
 
-    let table = db_schema_after.tables.get("mrv.Cultivation")
+    let table = db_schema_after
+        .tables
+        .get("mrv.Cultivation")
         .expect("Table mrv.Cultivation should exist in db_schema_after");
     let index = table
         .indexes
@@ -3894,7 +3965,7 @@ async fn partial_index_round_trip() {
         "Index should have a predicate. Got: {:?}",
         index
     );
-    
+
     // Note: PostgreSQL normalizes expressions when storing them.
     // The DB returns `((status)::text = 'GROWING'::text)` instead of `(status = 'GROWING')`.
     // This is a semantic equivalence issue that would require expression normalization to solve.

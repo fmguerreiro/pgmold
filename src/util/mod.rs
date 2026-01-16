@@ -622,6 +622,124 @@ fn normalize_set_expr(body: &SetExpr) -> SetExpr {
     }
 }
 
+/// Normalizes an identifier to lowercase without quote style.
+fn normalize_ident(ident: &sqlparser::ast::Ident) -> sqlparser::ast::Ident {
+    sqlparser::ast::Ident {
+        value: ident.value.to_lowercase(),
+        quote_style: None,
+        span: ident.span,
+    }
+}
+
+/// Normalizes an ObjectName (table/schema name) to lowercase without quote style.
+fn normalize_object_name(name: &sqlparser::ast::ObjectName) -> sqlparser::ast::ObjectName {
+    sqlparser::ast::ObjectName(
+        name.0
+            .iter()
+            .map(|part| match part {
+                sqlparser::ast::ObjectNamePart::Identifier(ident) => {
+                    sqlparser::ast::ObjectNamePart::Identifier(normalize_ident(ident))
+                }
+                other => other.clone(),
+            })
+            .collect(),
+    )
+}
+
+/// Normalizes a TableFactor (the source in a FROM clause).
+fn normalize_table_factor(factor: &sqlparser::ast::TableFactor) -> sqlparser::ast::TableFactor {
+    use sqlparser::ast::TableFactor;
+    match factor {
+        TableFactor::Table {
+            name,
+            alias,
+            args,
+            with_hints,
+            version,
+            with_ordinality,
+            partitions,
+            json_path,
+            sample,
+            index_hints,
+        } => TableFactor::Table {
+            name: normalize_object_name(name),
+            alias: alias.as_ref().map(|a| sqlparser::ast::TableAlias {
+                name: normalize_ident(&a.name),
+                explicit: a.explicit,
+                columns: a.columns.clone(),
+            }),
+            args: args.clone(),
+            with_hints: with_hints.clone(),
+            version: version.clone(),
+            with_ordinality: *with_ordinality,
+            partitions: partitions.clone(),
+            json_path: json_path.clone(),
+            sample: sample.clone(),
+            index_hints: index_hints.clone(),
+        },
+        TableFactor::Derived {
+            lateral,
+            subquery,
+            alias,
+        } => TableFactor::Derived {
+            lateral: *lateral,
+            subquery: Box::new(normalize_query(subquery)),
+            alias: alias.as_ref().map(|a| sqlparser::ast::TableAlias {
+                name: normalize_ident(&a.name),
+                explicit: a.explicit,
+                columns: a.columns.clone(),
+            }),
+        },
+        other => other.clone(),
+    }
+}
+
+/// Normalizes a TableWithJoins (table with optional joins).
+fn normalize_table_with_joins(
+    twj: &sqlparser::ast::TableWithJoins,
+) -> sqlparser::ast::TableWithJoins {
+    sqlparser::ast::TableWithJoins {
+        relation: normalize_table_factor(&twj.relation),
+        joins: twj
+            .joins
+            .iter()
+            .map(|j| sqlparser::ast::Join {
+                relation: normalize_table_factor(&j.relation),
+                global: j.global,
+                join_operator: match &j.join_operator {
+                    sqlparser::ast::JoinOperator::Inner(c) => {
+                        sqlparser::ast::JoinOperator::Inner(normalize_join_constraint(c))
+                    }
+                    sqlparser::ast::JoinOperator::LeftOuter(c) => {
+                        sqlparser::ast::JoinOperator::LeftOuter(normalize_join_constraint(c))
+                    }
+                    sqlparser::ast::JoinOperator::RightOuter(c) => {
+                        sqlparser::ast::JoinOperator::RightOuter(normalize_join_constraint(c))
+                    }
+                    sqlparser::ast::JoinOperator::FullOuter(c) => {
+                        sqlparser::ast::JoinOperator::FullOuter(normalize_join_constraint(c))
+                    }
+                    other => other.clone(),
+                },
+            })
+            .collect(),
+    }
+}
+
+/// Normalizes a JoinConstraint.
+fn normalize_join_constraint(
+    constraint: &sqlparser::ast::JoinConstraint,
+) -> sqlparser::ast::JoinConstraint {
+    use sqlparser::ast::JoinConstraint;
+    match constraint {
+        JoinConstraint::On(expr) => JoinConstraint::On(normalize_expr(expr)),
+        JoinConstraint::Using(names) => {
+            JoinConstraint::Using(names.iter().map(normalize_object_name).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 /// Normalizes a SELECT statement.
 fn normalize_select(select: &Select) -> Select {
     Select {
@@ -636,7 +754,7 @@ fn normalize_select(select: &Select) -> Select {
             .collect(),
         exclude: select.exclude.clone(),
         into: select.into.clone(),
-        from: select.from.clone(),
+        from: select.from.iter().map(normalize_table_with_joins).collect(),
         lateral_views: select.lateral_views.clone(),
         prewhere: select.prewhere.as_ref().map(normalize_expr),
         selection: select.selection.as_ref().map(normalize_expr),
@@ -765,7 +883,6 @@ fn normalize_expr(expr: &Expr) -> Expr {
             negated: *negated,
         },
 
-        // Normalize Like/ILike patterns
         Expr::Like {
             negated,
             any,
@@ -793,7 +910,6 @@ fn normalize_expr(expr: &Expr) -> Expr {
             escape_char: escape_char.clone(),
         },
 
-        // Normalize CASE expressions
         Expr::Case {
             case_token,
             end_token,
@@ -814,7 +930,6 @@ fn normalize_expr(expr: &Expr) -> Expr {
             else_result: else_result.as_ref().map(|e| Box::new(normalize_expr(e))),
         },
 
-        // Normalize function calls
         Expr::Function(f) => {
             let mut func = f.clone();
             func.args = match &f.args {
@@ -841,13 +956,11 @@ fn normalize_expr(expr: &Expr) -> Expr {
             Expr::Function(func)
         }
 
-        // Normalize unary operations
         Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
             op: *op,
             expr: Box::new(normalize_expr(inner)),
         },
 
-        // Normalize IN lists
         Expr::InList {
             expr: inner,
             list,
@@ -858,7 +971,6 @@ fn normalize_expr(expr: &Expr) -> Expr {
             negated: *negated,
         },
 
-        // Normalize BETWEEN
         Expr::Between {
             expr: inner,
             negated,
@@ -871,11 +983,9 @@ fn normalize_expr(expr: &Expr) -> Expr {
             high: Box::new(normalize_expr(high)),
         },
 
-        // Normalize IS NULL / IS NOT NULL
         Expr::IsNull(inner) => Expr::IsNull(Box::new(normalize_expr(inner))),
         Expr::IsNotNull(inner) => Expr::IsNotNull(Box::new(normalize_expr(inner))),
 
-        // Normalize IS DISTINCT FROM / IS NOT DISTINCT FROM
         Expr::IsDistinctFrom(left, right) => Expr::IsDistinctFrom(
             Box::new(normalize_expr(left)),
             Box::new(normalize_expr(right)),
@@ -886,25 +996,26 @@ fn normalize_expr(expr: &Expr) -> Expr {
         ),
 
         // Normalize CompoundIdentifier (lowercase for case-insensitive comparison)
+        // Also remove quote_style since after lowercasing, "mrv" and mrv are equivalent
         Expr::CompoundIdentifier(idents) => Expr::CompoundIdentifier(
             idents
                 .iter()
                 .map(|ident| sqlparser::ast::Ident {
                     value: ident.value.to_lowercase(),
-                    quote_style: ident.quote_style,
-                    span: ident.span.clone(),
+                    quote_style: None,
+                    span: ident.span,
                 })
                 .collect(),
         ),
 
         // Normalize Identifier (lowercase for case-insensitive comparison)
+        // Also remove quote_style since after lowercasing, "name" and name are equivalent
         Expr::Identifier(ident) => Expr::Identifier(sqlparser::ast::Ident {
             value: ident.value.to_lowercase(),
-            quote_style: ident.quote_style,
-            span: ident.span.clone(),
+            quote_style: None,
+            span: ident.span,
         }),
 
-        // Pass through other expressions unchanged
         other => other.clone(),
     }
 }
@@ -1256,4 +1367,19 @@ fn ast_comparison_detects_real_differences() {
     let query5 = "SELECT * FROM t WHERE a = 1";
     let query6 = "SELECT * FROM t WHERE a = 2";
     assert!(!views_semantically_equal(query5, query6));
+}
+
+#[test]
+fn expression_comparison_handles_exists_subquery() {
+    // Policy USING expressions with EXISTS subqueries
+    // PostgreSQL wraps in extra parens and changes schema quoting
+    let parsed = r#"EXISTS (SELECT 1 FROM "mrv"."OrganizationUser" ou WHERE ou."organizationId" = "Farm"."organizationId")"#;
+    let db = r#"(EXISTS ( SELECT 1
+   FROM mrv."OrganizationUser" ou
+  WHERE (ou."organizationId" = "Farm"."organizationId")))"#;
+
+    assert!(
+        expressions_semantically_equal(parsed, db),
+        "EXISTS expressions should be semantically equal"
+    );
 }

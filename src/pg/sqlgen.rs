@@ -847,7 +847,7 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
             " {}",
             func.config_params
                 .iter()
-                .map(|(k, v)| format!("SET {} = {}", k, v))
+                .map(|(k, v)| format!("SET {k} = {v}"))
                 .collect::<Vec<_>>()
                 .join(" ")
         )
@@ -1036,7 +1036,7 @@ fn generate_alter_owner(
     let qualified_name = quote_qualified(schema, name);
 
     let full_name = if let Some(function_args) = args {
-        format!("{}({})", qualified_name, function_args)
+        format!("{qualified_name}({function_args})")
     } else {
         qualified_name
     };
