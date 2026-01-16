@@ -859,6 +859,15 @@ fn normalize_expr(expr: &Expr) -> Expr {
                     return norm_inner;
                 }
             }
+            // Strip casts from numeric literals
+            // PostgreSQL adds explicit casts like 1::integer, (1)::integer, 0::numeric
+            if let Expr::Value(v) = &norm_inner {
+                if matches!(v.value, sqlparser::ast::Value::Number(_, _))
+                    && is_numeric_type(data_type)
+                {
+                    return norm_inner;
+                }
+            }
             Expr::Cast {
                 kind: kind.clone(),
                 expr: Box::new(norm_inner),
@@ -1381,5 +1390,60 @@ fn expression_comparison_handles_exists_subquery() {
     assert!(
         expressions_semantically_equal(parsed, db),
         "EXISTS expressions should be semantically equal"
+    );
+}
+
+#[test]
+fn expression_comparison_handles_nested_exists_with_function_calls() {
+    // Nested EXISTS with function calls (auth.uid()) and IS NOT NULL
+    // Similar to user-reported policies like farm_organization_select
+    let parsed = r#"EXISTS (SELECT 1 FROM public.user_roles ur1 WHERE ur1.user_id = auth.uid() AND ur1.farmer_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.user_roles ur2 WHERE ur2.user_id = "entityId" AND ur2.farmer_id = ur1.farmer_id))"#;
+
+    // PostgreSQL normalizes: adds parens around subqueries, changes spacing
+    let db = r#"(EXISTS ( SELECT 1
+   FROM public.user_roles ur1
+  WHERE ((ur1.user_id = auth.uid()) AND (ur1.farmer_id IS NOT NULL) AND (EXISTS ( SELECT 1
+   FROM public.user_roles ur2
+  WHERE ((ur2.user_id = "entityId") AND (ur2.farmer_id = ur1.farmer_id)))))))"#;
+
+    assert!(
+        expressions_semantically_equal(parsed, db),
+        "Nested EXISTS expressions with function calls should be semantically equal"
+    );
+}
+
+#[test]
+fn expression_comparison_handles_numeric_literal_cast() {
+    // PostgreSQL may add explicit casts to numeric literals like SELECT 1::integer
+    let parsed = r#"EXISTS (SELECT 1 FROM users WHERE id = user_id)"#;
+    let db = r#"(EXISTS (SELECT (1)::integer FROM users WHERE id = user_id))"#;
+
+    assert!(
+        expressions_semantically_equal(parsed, db),
+        "Expressions with numeric literal casts should be semantically equal"
+    );
+}
+
+#[test]
+fn view_comparison_handles_numeric_literal_cast() {
+    // PostgreSQL may add explicit casts to numeric literals
+    let schema = "SELECT 1 FROM users";
+    let db = "SELECT (1)::integer FROM users";
+
+    assert!(
+        views_semantically_equal(schema, db),
+        "Views with numeric literal casts should be semantically equal"
+    );
+}
+
+#[test]
+fn expression_comparison_handles_numeric_cast_without_parens() {
+    // PostgreSQL may add explicit casts without parentheses: 1::integer (not (1)::integer)
+    let parsed = r#"EXISTS (SELECT 1 FROM users WHERE id = user_id)"#;
+    let db = r#"(EXISTS (SELECT 1::integer FROM users WHERE id = user_id))"#;
+
+    assert!(
+        expressions_semantically_equal(parsed, db),
+        "Expressions with numeric casts (no parens) should be semantically equal"
     );
 }
