@@ -3450,6 +3450,61 @@ async fn check_constraint_modification_drop_before_add() {
 }
 
 #[tokio::test]
+async fn check_constraint_double_precision_cast_round_trip() {
+    // Regression test: CHECK constraint with OR and double precision cast
+    // PostgreSQL normalizes: "x" >= 0 to ("x" >= (0)::double precision) for DOUBLE PRECISION columns
+    // This should NOT cause spurious diff after apply
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS mrv")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    // Schema matching the real mrv bug case - nullable double precision with CHECK
+    let schema_sql = r#"
+        CREATE TABLE "mrv"."DOMSurveyResponse" (
+            "id" BIGINT PRIMARY KEY,
+            "liveTreeAreaHa" DOUBLE PRECISION,
+            CONSTRAINT "DOMSurveyResponse_liveTreeAreaHa_check"
+                CHECK ("liveTreeAreaHa" IS NULL OR "liveTreeAreaHa" >= 0)
+        );
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Now introspect and compute diff again - should be empty
+    let db_schema = introspect_schema(&connection, &["mrv".to_string()], false)
+        .await
+        .unwrap();
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let check_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::AddCheckConstraint { .. } | MigrationOp::DropCheckConstraint { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        check_ops.is_empty(),
+        "Should have no CHECK constraint diff after apply (double precision case). Got: {:?}",
+        check_ops
+    );
+}
+
+#[tokio::test]
 async fn function_round_trip_no_diff() {
     // Regression test: Function normalization
     // After apply, plan should NOT show changes for the same function
@@ -3505,6 +3560,100 @@ async fn function_round_trip_no_diff() {
         "Should have no function diff after apply. Got: {:?}",
         func_ops
     );
+}
+
+#[tokio::test]
+async fn function_modification_drop_before_create() {
+    // Regression test: When modifying a function that requires DROP + CREATE
+    // (e.g., parameter name change), DROP must execute before CREATE
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Initial function with parameter named "user_id"
+    let initial_schema = r#"
+        CREATE FUNCTION process_data(user_id TEXT)
+        RETURNS TEXT
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RETURN user_id;
+        END;
+        $$;
+    "#;
+
+    let parsed = parse_sql_string(initial_schema).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Modified function with parameter renamed to "entity_id"
+    // This requires DROP + CREATE (not CREATE OR REPLACE)
+    let modified_schema = r#"
+        CREATE FUNCTION process_data(entity_id TEXT)
+        RETURNS TEXT
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RETURN entity_id;
+        END;
+        $$;
+    "#;
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let modified = parse_sql_string(modified_schema).unwrap();
+    let diff_ops = compute_diff(&db_schema, &modified);
+    let planned = plan_migration(diff_ops);
+
+    // Verify DROP comes before CREATE in planned operations
+    let mut drop_index = None;
+    let mut create_index = None;
+    for (i, op) in planned.iter().enumerate() {
+        match op {
+            MigrationOp::DropFunction { name, .. } if name.contains("process_data") => {
+                drop_index = Some(i);
+            }
+            MigrationOp::CreateFunction(f) if f.name == "process_data" => {
+                create_index = Some(i);
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        drop_index.is_some() && create_index.is_some(),
+        "Should have both DROP and CREATE operations for modified function"
+    );
+    assert!(
+        drop_index.unwrap() < create_index.unwrap(),
+        "DROP must come before CREATE. DROP at {}, CREATE at {}",
+        drop_index.unwrap(),
+        create_index.unwrap()
+    );
+
+    // Actually execute the migration - this should succeed without "already exists" error
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .expect("Migration should succeed - DROP before CREATE");
+    }
+
+    // Verify function exists with new parameter name
+    let result: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+         WHERE n.nspname = 'public' AND p.proname = 'process_data'",
+    )
+    .fetch_one(connection.pool())
+    .await
+    .unwrap();
+    assert_eq!(result.0, 1, "Function should exist after modification");
 }
 
 #[tokio::test]

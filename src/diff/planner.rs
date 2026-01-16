@@ -143,6 +143,9 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(add_enum_values);
     result.extend(create_domains);
     result.extend(create_sequences_without_owner);
+    // Drop functions before creating new ones - needed when modifying a function
+    // that requires DROP + CREATE (e.g., parameter name changes, return type changes)
+    result.extend(drop_functions);
     result.extend(create_functions);
     result.extend(create_tables);
     result.extend(create_partitions);
@@ -183,7 +186,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(drop_columns);
     result.extend(drop_partitions);
     result.extend(drop_tables);
-    result.extend(drop_functions);
+    // Note: drop_functions is handled earlier (before create_functions)
+    // to support function modifications that require DROP + CREATE
     result.extend(drop_sequences);
     result.extend(drop_domains);
     result.extend(drop_enums);
@@ -1004,6 +1008,51 @@ mod tests {
         assert!(
             create_table_pos < alter_seq_pos,
             "AlterSequence (setting OWNED BY) must come after CreateTable"
+        );
+    }
+
+    #[test]
+    fn drop_function_before_create_function() {
+        // When a function requires DROP + CREATE (e.g., parameter name change),
+        // DROP must come before CREATE to avoid "already exists" error
+        let func = Function {
+            name: "my_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "void".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN END;".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+
+        let ops = vec![
+            MigrationOp::DropFunction {
+                name: "public.my_func".to_string(),
+                args: "".to_string(),
+            },
+            MigrationOp::CreateFunction(func),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let drop_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropFunction { .. }))
+            .unwrap();
+        let create_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .unwrap();
+
+        assert!(
+            drop_pos < create_pos,
+            "DropFunction must come before CreateFunction. DROP at {}, CREATE at {}",
+            drop_pos,
+            create_pos
         );
     }
 }
