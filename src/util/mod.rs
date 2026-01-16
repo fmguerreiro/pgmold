@@ -632,18 +632,31 @@ fn normalize_ident(ident: &sqlparser::ast::Ident) -> sqlparser::ast::Ident {
 }
 
 /// Normalizes an ObjectName (table/schema name) to lowercase without quote style.
+/// Also strips the `public` schema prefix since PostgreSQL removes it from expressions
+/// when the table is in the default search_path.
 fn normalize_object_name(name: &sqlparser::ast::ObjectName) -> sqlparser::ast::ObjectName {
-    sqlparser::ast::ObjectName(
-        name.0
-            .iter()
-            .map(|part| match part {
-                sqlparser::ast::ObjectNamePart::Identifier(ident) => {
-                    sqlparser::ast::ObjectNamePart::Identifier(normalize_ident(ident))
-                }
-                other => other.clone(),
-            })
-            .collect(),
-    )
+    let normalized_parts: Vec<_> = name
+        .0
+        .iter()
+        .map(|part| match part {
+            sqlparser::ast::ObjectNamePart::Identifier(ident) => {
+                sqlparser::ast::ObjectNamePart::Identifier(normalize_ident(ident))
+            }
+            other => other.clone(),
+        })
+        .collect();
+
+    // If the object name starts with "public", strip it
+    // PostgreSQL removes the public schema prefix in expressions when it's in search_path
+    if normalized_parts.len() == 2 {
+        if let sqlparser::ast::ObjectNamePart::Identifier(first_ident) = &normalized_parts[0] {
+            if first_ident.value == "public" {
+                return sqlparser::ast::ObjectName(vec![normalized_parts[1].clone()]);
+            }
+        }
+    }
+
+    sqlparser::ast::ObjectName(normalized_parts)
 }
 
 /// Normalizes a TableFactor (the source in a FROM clause).
@@ -690,16 +703,76 @@ fn normalize_table_factor(factor: &sqlparser::ast::TableFactor) -> sqlparser::as
                 columns: a.columns.clone(),
             }),
         },
+        // Handle nested/parenthesized JOINs - PostgreSQL often wraps JOINs in parens
+        // We unwrap by normalizing the inner TableWithJoins and returning the relation directly
+        // if there are no joins (single table wrapped in parens)
+        TableFactor::NestedJoin {
+            table_with_joins,
+            alias,
+        } => {
+            let normalized_twj = normalize_table_with_joins(table_with_joins);
+            // If there are no joins, just return the relation (unwrap parens)
+            if normalized_twj.joins.is_empty() {
+                let mut inner = normalized_twj.relation;
+                // Apply alias if present
+                if let Some(a) = alias {
+                    match &mut inner {
+                        TableFactor::Table {
+                            alias: ref mut table_alias,
+                            ..
+                        } => {
+                            *table_alias = Some(sqlparser::ast::TableAlias {
+                                name: normalize_ident(&a.name),
+                                explicit: a.explicit,
+                                columns: a.columns.clone(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                inner
+            } else {
+                // If there are joins, keep the nested structure but normalize
+                TableFactor::NestedJoin {
+                    table_with_joins: Box::new(normalized_twj),
+                    alias: alias.as_ref().map(|a| sqlparser::ast::TableAlias {
+                        name: normalize_ident(&a.name),
+                        explicit: a.explicit,
+                        columns: a.columns.clone(),
+                    }),
+                }
+            }
+        }
         other => other.clone(),
     }
 }
 
 /// Normalizes a TableWithJoins (table with optional joins).
+/// Also unwraps NestedJoin when PostgreSQL wraps entire JOINs in parentheses.
 fn normalize_table_with_joins(
     twj: &sqlparser::ast::TableWithJoins,
 ) -> sqlparser::ast::TableWithJoins {
+    // First normalize the relation
+    let normalized_relation = normalize_table_factor(&twj.relation);
+
+    // If the relation is a NestedJoin with joins inside, and we have no outer joins,
+    // unwrap the nested join to flatten the structure
+    // PostgreSQL often does: FROM (table1 JOIN table2 ON ...) instead of FROM table1 JOIN table2 ON ...
+    if twj.joins.is_empty() {
+        if let sqlparser::ast::TableFactor::NestedJoin {
+            table_with_joins,
+            alias,
+        } = &twj.relation
+        {
+            if alias.is_none() && !table_with_joins.joins.is_empty() {
+                // Unwrap: return the normalized inner TableWithJoins
+                return normalize_table_with_joins(table_with_joins);
+            }
+        }
+    }
+
     sqlparser::ast::TableWithJoins {
-        relation: normalize_table_factor(&twj.relation),
+        relation: normalized_relation,
         joins: twj
             .joins
             .iter()
@@ -707,6 +780,9 @@ fn normalize_table_with_joins(
                 relation: normalize_table_factor(&j.relation),
                 global: j.global,
                 join_operator: match &j.join_operator {
+                    sqlparser::ast::JoinOperator::Join(c) => {
+                        sqlparser::ast::JoinOperator::Join(normalize_join_constraint(c))
+                    }
                     sqlparser::ast::JoinOperator::Inner(c) => {
                         sqlparser::ast::JoinOperator::Inner(normalize_join_constraint(c))
                     }
@@ -941,6 +1017,8 @@ fn normalize_expr(expr: &Expr) -> Expr {
 
         Expr::Function(f) => {
             let mut func = f.clone();
+            // Normalize function name (schema.function_name) to handle quoting differences
+            func.name = normalize_object_name(&f.name);
             func.args = match &f.args {
                 sqlparser::ast::FunctionArguments::List(args) => {
                     sqlparser::ast::FunctionArguments::List(sqlparser::ast::FunctionArgumentList {
@@ -1006,16 +1084,26 @@ fn normalize_expr(expr: &Expr) -> Expr {
 
         // Normalize CompoundIdentifier (lowercase for case-insensitive comparison)
         // Also remove quote_style since after lowercasing, "mrv" and mrv are equivalent
-        Expr::CompoundIdentifier(idents) => Expr::CompoundIdentifier(
-            idents
+        // For 2-part identifiers (table.column or schema.table), normalize to just the last part
+        // because PostgreSQL may add or remove these qualifications in stored expressions
+        Expr::CompoundIdentifier(idents) => {
+            let normalized: Vec<_> = idents
                 .iter()
                 .map(|ident| sqlparser::ast::Ident {
                     value: ident.value.to_lowercase(),
                     quote_style: None,
                     span: ident.span,
                 })
-                .collect(),
-        ),
+                .collect();
+
+            // For 2-part identifiers, normalize to just the last part (column name)
+            // This handles both public.table -> table and table.column -> column
+            if normalized.len() == 2 {
+                Expr::Identifier(normalized[1].clone())
+            } else {
+                Expr::CompoundIdentifier(normalized)
+            }
+        }
 
         // Normalize Identifier (lowercase for case-insensitive comparison)
         // Also remove quote_style since after lowercasing, "name" and name are equivalent
@@ -1445,5 +1533,115 @@ fn expression_comparison_handles_numeric_cast_without_parens() {
     assert!(
         expressions_semantically_equal(parsed, db),
         "Expressions with numeric casts (no parens) should be semantically equal"
+    );
+}
+
+#[test]
+fn expression_comparison_handles_function_name_quoting() {
+    // Function names may have different quoting between schema file and database
+    // Schema file: auth.uid()
+    // DB might return: "auth".uid() or auth."uid"()
+    let parsed = r#"auth.uid() = user_id"#;
+    let db_quoted_schema = r#""auth".uid() = user_id"#;
+    let db_quoted_func = r#"auth."uid"() = user_id"#;
+    let db_both_quoted = r#""auth"."uid"() = user_id"#;
+
+    assert!(
+        expressions_semantically_equal(parsed, db_quoted_schema),
+        "Function with quoted schema should be semantically equal: {} vs {}",
+        parsed,
+        db_quoted_schema
+    );
+    assert!(
+        expressions_semantically_equal(parsed, db_quoted_func),
+        "Function with quoted name should be semantically equal: {} vs {}",
+        parsed,
+        db_quoted_func
+    );
+    assert!(
+        expressions_semantically_equal(parsed, db_both_quoted),
+        "Function with both quoted should be semantically equal: {} vs {}",
+        parsed,
+        db_both_quoted
+    );
+}
+
+#[test]
+fn view_comparison_handles_alias_case_and_join() {
+    // Bug report: Views with JOINs have 'as' vs 'AS' and quoting differences
+    let schema = r#"SELECT
+    ff."facilityId" as facility_id,
+    ff."farmerId" as user_id
+FROM mrv."FacilityFarmer" ff
+JOIN public.farmer_users_view fu ON fu.user_id = ff."farmerId""#;
+
+    let db = r#"SELECT ff."facilityId" AS facility_id, ff."farmerId" AS user_id FROM mrv."FacilityFarmer" ff JOIN public.farmer_users_view fu ON fu.user_id = ff."farmerId""#;
+
+    assert!(
+        views_semantically_equal(schema, db),
+        "Views with alias case differences should be semantically equal"
+    );
+}
+
+#[test]
+fn view_comparison_handles_postgresql_from_clause_normalization() {
+    // PostgreSQL normalizes FROM clauses in several ways:
+    // 1. Wraps JOINs in parentheses
+    // 2. Removes public schema prefix
+    // 3. Adds extra parentheses around ON conditions
+
+    let schema = r#"SELECT ff.id FROM mrv."FacilityFarmer" ff JOIN public.farmer_users fu ON fu.user_id = ff."farmerId""#;
+    let db = r#"SELECT ff.id FROM (mrv."FacilityFarmer" ff JOIN farmer_users fu ON ((fu.user_id = ff."farmerId")))"#;
+
+    let dialect = PostgreSqlDialect {};
+    let ast1 = Parser::parse_sql(&dialect, schema).unwrap();
+    let ast2 = Parser::parse_sql(&dialect, db).unwrap();
+
+    let norm1 = ast1
+        .iter()
+        .map(|s| normalize_statement(s))
+        .collect::<Vec<_>>();
+    let norm2 = ast2
+        .iter()
+        .map(|s| normalize_statement(s))
+        .collect::<Vec<_>>();
+
+    assert!(
+        views_semantically_equal(schema, db),
+        "Views should be semantically equal despite PostgreSQL normalization:\nSchema: {}\nDB: {}",
+        schema,
+        db
+    );
+}
+
+#[test]
+fn expression_comparison_handles_postgresql_identifier_normalization() {
+    // PostgreSQL normalizes expressions in several ways:
+    // 1. Removes schema prefixes from tables in search_path
+    // 2. Adds table qualification to bare column references
+    // 3. Adds parentheses around conditions
+
+    // Case 1: bare column vs table-qualified column
+    // PostgreSQL qualifies bare column references with the table name
+    let parsed_column = r#""entityId" = user_id"#;
+    let db_qualified = r#"farms."entityId" = user_id"#;
+
+    assert!(
+        expressions_semantically_equal(parsed_column, db_qualified),
+        "Bare column should equal table-qualified column: {} vs {}",
+        parsed_column,
+        db_qualified
+    );
+
+    // Case 2: schema prefix removal
+    // PostgreSQL removes public schema prefix when table is in search_path
+    let parsed_schema = r#"public.user_roles"#;
+    let db_no_schema = r#"user_roles"#;
+
+    assert!(
+        expressions_semantically_equal(parsed_schema, db_no_schema),
+        "Table with schema should equal table without schema: {} vs {}",
+        parsed_schema,
+        db_no_schema
     );
 }
