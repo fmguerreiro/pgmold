@@ -151,6 +151,9 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(create_partitions);
     result.extend(add_columns);
     result.extend(add_primary_keys);
+    // Drop indexes before adding new ones - needed when modifying an index
+    // that requires DROP + CREATE (e.g., predicate changes, column changes)
+    result.extend(drop_indexes);
     result.extend(add_indexes);
     result.extend(alter_columns);
     result.extend(set_column_not_nulls);
@@ -181,7 +184,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     // Note: drop_check_constraints is handled earlier (before add_check_constraints)
     // to support constraint modifications
     result.extend(drop_foreign_keys);
-    result.extend(drop_indexes);
+    // Note: drop_indexes is handled earlier (before add_indexes)
+    // to support index modifications that require DROP + CREATE
     result.extend(drop_primary_keys);
     result.extend(drop_columns);
     result.extend(drop_partitions);
@@ -1051,9 +1055,47 @@ mod tests {
 
         assert!(
             drop_pos < create_pos,
-            "DropFunction must come before CreateFunction. DROP at {}, CREATE at {}",
-            drop_pos,
-            create_pos
+            "DropFunction must come before CreateFunction. DROP at {drop_pos}, CREATE at {create_pos}"
+        );
+    }
+
+    #[test]
+    fn drop_index_before_add_index() {
+        // When an index requires DROP + CREATE (e.g., predicate or column changes),
+        // DROP must come before CREATE to avoid "already exists" error
+        let index = Index {
+            name: "users_email_idx".to_string(),
+            columns: vec!["email".to_string()],
+            unique: true,
+            index_type: IndexType::BTree,
+            predicate: Some("active = true".to_string()),
+        };
+
+        let ops = vec![
+            MigrationOp::AddIndex {
+                table: "public.users".to_string(),
+                index: index.clone(),
+            },
+            MigrationOp::DropIndex {
+                table: "public.users".to_string(),
+                index_name: "users_email_idx".to_string(),
+            },
+        ];
+
+        let planned = plan_migration(ops);
+
+        let drop_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropIndex { .. }))
+            .unwrap();
+        let add_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddIndex { .. }))
+            .unwrap();
+
+        assert!(
+            drop_pos < add_pos,
+            "DropIndex must come before AddIndex. DROP at {drop_pos}, ADD at {add_pos}"
         );
     }
 }
