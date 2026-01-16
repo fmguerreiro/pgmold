@@ -1,6 +1,6 @@
 use crate::diff::{
-    ColumnChanges, DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp,
-    OwnerObjectKind, PolicyChanges, SequenceChanges,
+    ColumnChanges, DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp, OwnerObjectKind,
+    PolicyChanges, SequenceChanges,
 };
 use crate::model::{
     parse_qualified_name, CheckConstraint, Column, Domain, ForeignKey, Function, Index, IndexType,
@@ -159,8 +159,12 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             vec![generate_create_index(&schema, &table_name, index)]
         }
 
-        MigrationOp::DropIndex { index_name, .. } => {
-            vec![format!("DROP INDEX {};", quote_ident(index_name))]
+        MigrationOp::DropIndex { table, index_name } => {
+            let (schema, _) = parse_qualified_name(table);
+            vec![format!(
+                "DROP INDEX {};",
+                quote_qualified(&schema, index_name)
+            )]
         }
 
         MigrationOp::AddForeignKey { table, foreign_key } => {
@@ -334,7 +338,13 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             name,
             args,
             new_owner,
-        } => vec![generate_alter_owner(object_kind, schema, name, args, new_owner)],
+        } => vec![generate_alter_owner(
+            object_kind,
+            schema,
+            name,
+            args,
+            new_owner,
+        )],
 
         MigrationOp::CreateDomain(domain) => {
             vec![generate_create_domain(domain)]
@@ -1370,6 +1380,21 @@ mod tests {
         assert_eq!(
             sql[0],
             "CREATE UNIQUE INDEX \"users_email_idx\" ON \"public\".\"users\" (\"email\");"
+        );
+    }
+
+    #[test]
+    fn drop_index_generates_schema_qualified_sql() {
+        let ops = vec![MigrationOp::DropIndex {
+            table: "auth.mfa_factors".to_string(),
+            index_name: "mfa_factors_user_friendly_name_unique".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "DROP INDEX \"auth\".\"mfa_factors_user_friendly_name_unique\";"
         );
     }
 
@@ -2781,6 +2806,8 @@ mod tests {
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
-        assert!(sql[0].contains("GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER"));
+        assert!(
+            sql[0].contains("GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER")
+        );
     }
 }
