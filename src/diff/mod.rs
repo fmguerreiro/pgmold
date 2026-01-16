@@ -1209,20 +1209,35 @@ fn diff_primary_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
 fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
     let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
+    let from_qualified_table_name = qualified_name(&from_table.schema, &from_table.name);
 
     for index in &to_table.indexes {
-        if !from_table.indexes.iter().any(|i| i.name == index.name) {
-            ops.push(MigrationOp::AddIndex {
-                table: qualified_table_name.clone(),
-                index: index.clone(),
-            });
+        let existing = from_table.indexes.iter().find(|i| i.name == index.name);
+        match existing {
+            None => {
+                ops.push(MigrationOp::AddIndex {
+                    table: qualified_table_name.clone(),
+                    index: index.clone(),
+                });
+            }
+            Some(from_index) if from_index != index => {
+                ops.push(MigrationOp::DropIndex {
+                    table: from_qualified_table_name.clone(),
+                    index_name: index.name.clone(),
+                });
+                ops.push(MigrationOp::AddIndex {
+                    table: qualified_table_name.clone(),
+                    index: index.clone(),
+                });
+            }
+            _ => {}
         }
     }
 
     for index in &from_table.indexes {
         if !to_table.indexes.iter().any(|i| i.name == index.name) {
             ops.push(MigrationOp::DropIndex {
-                table: qualified_name(&from_table.schema, &from_table.name),
+                table: from_qualified_table_name.clone(),
                 index_name: index.name.clone(),
             });
         }
@@ -1572,6 +1587,7 @@ mod tests {
             columns: vec!["email".to_string()],
             unique: true,
             index_type: IndexType::BTree,
+            predicate: None,
         });
         to.tables.insert("users".to_string(), table);
 
@@ -1591,6 +1607,7 @@ mod tests {
             columns: vec!["email".to_string()],
             unique: true,
             index_type: IndexType::BTree,
+            predicate: None,
         });
         from.tables.insert("users".to_string(), from_table);
 

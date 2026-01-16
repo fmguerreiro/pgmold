@@ -118,6 +118,7 @@ pub struct Index {
     pub columns: Vec<String>,
     pub unique: bool,
     pub index_type: IndexType,
+    pub predicate: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]

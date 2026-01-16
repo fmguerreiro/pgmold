@@ -357,6 +357,7 @@ mod tests {
                 columns: vec!["email".to_string()],
                 unique: false,
                 index_type: IndexType::BTree,
+                predicate: None,
             },
         }];
         let warnings = detect_lock_hazards(&ops);
@@ -505,6 +506,7 @@ mod tests {
                     columns: vec!["title".to_string()],
                     unique: false,
                     index_type: IndexType::BTree,
+                    predicate: None,
                 },
             },
         ];

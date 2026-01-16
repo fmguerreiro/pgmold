@@ -520,13 +520,20 @@ fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {
         IndexType::Gist => " USING gist",
     };
 
+    let where_clause = index
+        .predicate
+        .as_ref()
+        .map(|p| format!(" WHERE ({})", p))
+        .unwrap_or_default();
+
     format!(
-        "CREATE {}INDEX {}{} ON {} ({});",
+        "CREATE {}INDEX {}{} ON {} ({}){};",
         unique,
         quote_ident(&index.name),
         index_type,
         quote_qualified(schema, table),
-        format_column_list(&index.columns)
+        format_column_list(&index.columns),
+        where_clause
     )
 }
 
@@ -1354,6 +1361,7 @@ mod tests {
                 columns: vec!["email".to_string()],
                 unique: true,
                 index_type: IndexType::BTree,
+                predicate: None,
             },
         }];
 

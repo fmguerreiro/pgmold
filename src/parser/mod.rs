@@ -180,6 +180,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                             .collect(),
                         unique: ci.unique,
                         index_type: IndexType::BTree,
+                        predicate: ci.predicate.as_ref().map(|p| p.to_string()),
                     });
                     table.indexes.sort();
                 }
@@ -345,6 +346,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                             .collect(),
                                         unique: true,
                                         index_type: IndexType::BTree,
+                                        predicate: None,
                                     });
                                     table.indexes.sort();
                                 }
@@ -1148,6 +1150,7 @@ fn parse_create_table(
                         .collect(),
                     unique: true,
                     index_type: IndexType::BTree,
+                    predicate: None,
                 });
             }
             _ => {}

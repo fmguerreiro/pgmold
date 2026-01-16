@@ -785,7 +785,8 @@ async fn introspect_indexes(
     let rows = sqlx::query(
         r#"
         SELECT i.relname as index_name, ix.indisunique, am.amname,
-               array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns
+               array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
+               pg_get_expr(ix.indpred, ix.indrelid) as predicate
         FROM pg_index ix
         JOIN pg_class t ON t.oid = ix.indrelid
         JOIN pg_class i ON i.oid = ix.indexrelid
@@ -793,7 +794,7 @@ async fn introspect_indexes(
         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
         JOIN pg_namespace n ON n.oid = t.relnamespace
         WHERE t.relname = $1 AND n.nspname = $2 AND NOT ix.indisprimary
-        GROUP BY i.relname, ix.indisunique, am.amname
+        GROUP BY i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid
         "#,
     )
     .bind(table_name)
@@ -808,6 +809,7 @@ async fn introspect_indexes(
         let unique: bool = row.get("indisunique");
         let am_name: String = row.get("amname");
         let columns: Vec<String> = row.get("columns");
+        let predicate: Option<String> = row.get("predicate");
 
         let index_type = match am_name.as_str() {
             "btree" => IndexType::BTree,
@@ -822,6 +824,7 @@ async fn introspect_indexes(
             columns,
             unique,
             index_type,
+            predicate,
         });
     }
 

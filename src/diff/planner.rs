@@ -751,6 +751,7 @@ mod tests {
                     columns: vec!["email".to_string()],
                     unique: true,
                     index_type: IndexType::BTree,
+                    predicate: None,
                 },
             },
             MigrationOp::AddColumn {
