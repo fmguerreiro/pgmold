@@ -14,6 +14,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut add_enum_values = Vec::new();
     let mut create_tables = Vec::new();
     let mut create_partitions = Vec::new();
+    let mut attach_partitions = Vec::new();
+    let mut detach_partitions = Vec::new();
     let mut add_columns = Vec::new();
     let mut add_primary_keys = Vec::new();
     let mut add_indexes = Vec::new();
@@ -65,6 +67,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::AddEnumValue { .. } => add_enum_values.push(op),
             MigrationOp::CreateTable(_) => create_tables.push(op),
             MigrationOp::CreatePartition(_) => create_partitions.push(op),
+            MigrationOp::AttachPartition { .. } => attach_partitions.push(op),
+            MigrationOp::DetachPartition { .. } => detach_partitions.push(op),
             MigrationOp::AddColumn { .. } => add_columns.push(op),
             MigrationOp::AddPrimaryKey { .. } => add_primary_keys.push(op),
             MigrationOp::AddIndex { .. } => add_indexes.push(op),
@@ -148,7 +152,9 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(drop_functions);
     result.extend(create_functions);
     result.extend(create_tables);
+    result.extend(detach_partitions);
     result.extend(create_partitions);
+    result.extend(attach_partitions);
     result.extend(add_columns);
     result.extend(add_primary_keys);
     // Drop indexes before adding new ones - needed when modifying an index

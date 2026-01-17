@@ -259,6 +259,41 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     ),
                 });
             }
+            MigrationOp::AttachPartition {
+                parent_schema,
+                parent_name,
+                partition_schema,
+                partition_name,
+                ..
+            } => {
+                let parent = format!("{parent_schema}.{parent_name}");
+                let partition = format!("{partition_schema}.{partition_name}");
+                warnings.push(LockWarning {
+                    operation: "AttachPartition".to_string(),
+                    table: parent.clone(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "ATTACH PARTITION acquires ACCESS EXCLUSIVE lock on {parent} and {partition}"
+                    ),
+                });
+            }
+            MigrationOp::DetachPartition {
+                parent_schema,
+                parent_name,
+                partition_schema,
+                partition_name,
+            } => {
+                let parent = format!("{parent_schema}.{parent_name}");
+                let partition = format!("{partition_schema}.{partition_name}");
+                warnings.push(LockWarning {
+                    operation: "DetachPartition".to_string(),
+                    table: parent.clone(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "DETACH PARTITION acquires ACCESS EXCLUSIVE lock on {parent} and {partition}"
+                    ),
+                });
+            }
             MigrationOp::AlterSequence { name, .. } => {
                 warnings.push(LockWarning {
                     operation: "AlterSequence".to_string(),
@@ -701,7 +736,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         }];
         let warnings = detect_lock_hazards(&ops);
@@ -740,5 +775,45 @@ mod tests {
         assert_eq!(warnings[0].operation, "AlterSequence");
         assert_eq!(warnings[0].table, "users_id_seq");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
+    }
+
+    #[test]
+    fn detects_attach_partition_lock() {
+        use crate::model::PartitionBound;
+
+        let ops = vec![MigrationOp::AttachPartition {
+            parent_schema: "public".to_string(),
+            parent_name: "events".to_string(),
+            partition_schema: "public".to_string(),
+            partition_name: "events_2024".to_string(),
+            bound: PartitionBound::Range {
+                from: vec!["'2024-01-01'".to_string()],
+                to: vec!["'2025-01-01'".to_string()],
+            },
+        }];
+        let warnings = detect_lock_hazards(&ops);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].operation, "AttachPartition");
+        assert_eq!(warnings[0].table, "public.events");
+        assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
+        assert!(warnings[0].message.contains("ACCESS EXCLUSIVE"));
+    }
+
+    #[test]
+    fn detects_detach_partition_lock() {
+        let ops = vec![MigrationOp::DetachPartition {
+            parent_schema: "public".to_string(),
+            parent_name: "events".to_string(),
+            partition_schema: "public".to_string(),
+            partition_name: "events_2024".to_string(),
+        }];
+        let warnings = detect_lock_hazards(&ops);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].operation, "DetachPartition");
+        assert_eq!(warnings[0].table, "public.events");
+        assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
+        assert!(warnings[0].message.contains("ACCESS EXCLUSIVE"));
     }
 }

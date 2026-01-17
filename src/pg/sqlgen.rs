@@ -112,6 +112,34 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             )]
         }
 
+        MigrationOp::AttachPartition {
+            parent_schema,
+            parent_name,
+            partition_schema,
+            partition_name,
+            bound,
+        } => {
+            let parent = quote_qualified(parent_schema, parent_name);
+            let partition = quote_qualified(partition_schema, partition_name);
+            let bound_clause = format_partition_bound(bound);
+            vec![format!(
+                "ALTER TABLE {parent} ATTACH PARTITION {partition} {bound_clause};"
+            )]
+        }
+
+        MigrationOp::DetachPartition {
+            parent_schema,
+            parent_name,
+            partition_schema,
+            partition_name,
+        } => {
+            let parent = quote_qualified(parent_schema, parent_name);
+            let partition = quote_qualified(partition_schema, partition_name);
+            vec![format!(
+                "ALTER TABLE {parent} DETACH PARTITION {partition};"
+            )]
+        }
+
         MigrationOp::AddColumn { table, column } => {
             let (schema, table_name) = parse_qualified_name(table);
             vec![format!(
@@ -391,9 +419,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                     .join(", "),
                 grant_object_kind_to_sql(object_kind),
                 quote_qualified(schema, name),
-                args.as_ref()
-                    .map(|a| format!("({})", a))
-                    .unwrap_or_default(),
+                args.as_ref().map(|a| format!("({a})")).unwrap_or_default(),
                 if grantee == "PUBLIC" {
                     "PUBLIC".to_string()
                 } else {
@@ -430,9 +456,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                     .join(", "),
                 grant_object_kind_to_sql(object_kind),
                 quote_qualified(schema, name),
-                args.as_ref()
-                    .map(|a| format!("({})", a))
-                    .unwrap_or_default(),
+                args.as_ref().map(|a| format!("({a})")).unwrap_or_default(),
                 if grantee == "PUBLIC" {
                     "PUBLIC".to_string()
                 } else {
@@ -497,11 +521,8 @@ fn generate_create_table(table: &Table) -> Vec<String> {
     statements
 }
 
-fn generate_create_partition(partition: &Partition) -> String {
-    let partition_name = quote_qualified(&partition.schema, &partition.name);
-    let parent_name = quote_qualified(&partition.parent_schema, &partition.parent_name);
-
-    let bound_clause = match &partition.bound {
+fn format_partition_bound(bound: &PartitionBound) -> String {
+    match bound {
         PartitionBound::Range { from, to } => {
             format!(
                 "FOR VALUES FROM ({}) TO ({})",
@@ -516,7 +537,13 @@ fn generate_create_partition(partition: &Partition) -> String {
             format!("FOR VALUES WITH (MODULUS {modulus}, REMAINDER {remainder})")
         }
         PartitionBound::Default => "DEFAULT".to_string(),
-    };
+    }
+}
+
+fn generate_create_partition(partition: &Partition) -> String {
+    let partition_name = quote_qualified(&partition.schema, &partition.name);
+    let parent_name = quote_qualified(&partition.parent_schema, &partition.parent_name);
+    let bound_clause = format_partition_bound(&partition.bound);
 
     format!("CREATE TABLE {partition_name} PARTITION OF {parent_name} {bound_clause};")
 }
@@ -533,7 +560,7 @@ fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {
     let where_clause = index
         .predicate
         .as_ref()
-        .map(|p| format!(" WHERE ({})", p))
+        .map(|p| format!(" WHERE ({p})"))
         .unwrap_or_default();
 
     format!(

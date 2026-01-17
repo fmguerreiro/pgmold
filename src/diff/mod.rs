@@ -2,8 +2,8 @@ pub mod planner;
 
 use crate::model::{
     qualified_name, CheckConstraint, Column, Domain, EnumType, Extension, ForeignKey, Function,
-    Grant, Index, Partition, PgSchema, PgType, Policy, PrimaryKey, Privilege, Sequence,
-    SequenceDataType, SequenceOwner, Table, Trigger, TriggerEnabled, View,
+    Grant, Index, Partition, PartitionBound, PgSchema, PgType, Policy, PrimaryKey, Privilege,
+    Sequence, SequenceDataType, SequenceOwner, Table, Trigger, TriggerEnabled, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +50,19 @@ pub enum MigrationOp {
     DropTable(String),
     CreatePartition(Partition),
     DropPartition(String),
+    AttachPartition {
+        parent_schema: String,
+        parent_name: String,
+        partition_schema: String,
+        partition_name: String,
+        bound: PartitionBound,
+    },
+    DetachPartition {
+        parent_schema: String,
+        parent_name: String,
+        partition_schema: String,
+        partition_name: String,
+    },
     AddColumn {
         table: String,
         column: Column,
@@ -732,8 +745,30 @@ fn diff_partitions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, partition) in &to.partitions {
-        if !from.partitions.contains_key(name) {
-            ops.push(MigrationOp::CreatePartition(partition.clone()));
+        match from.partitions.get(name) {
+            None => {
+                ops.push(MigrationOp::CreatePartition(partition.clone()));
+            }
+            Some(from_partition) => {
+                if from_partition.bound != partition.bound
+                    || from_partition.parent_schema != partition.parent_schema
+                    || from_partition.parent_name != partition.parent_name
+                {
+                    ops.push(MigrationOp::DetachPartition {
+                        parent_schema: from_partition.parent_schema.clone(),
+                        parent_name: from_partition.parent_name.clone(),
+                        partition_schema: from_partition.schema.clone(),
+                        partition_name: from_partition.name.clone(),
+                    });
+                    ops.push(MigrationOp::AttachPartition {
+                        parent_schema: partition.parent_schema.clone(),
+                        parent_name: partition.parent_name.clone(),
+                        partition_schema: partition.schema.clone(),
+                        partition_name: partition.name.clone(),
+                        bound: partition.bound.clone(),
+                    });
+                }
+            }
         }
     }
 
