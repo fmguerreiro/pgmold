@@ -1,30 +1,47 @@
 # Shared Task Notes
 
-## Last Completed: pgmold-59 - Temp DB Validation
+## Last Completed: pgmold-56 - Terraform Provider (WIP)
 
-Added `--validate <db-url>` flag to `plan` and `apply` commands. Users can now validate migrations against a temporary database before applying to production.
+Created initial Terraform provider in `terraform-provider-pgmold/` directory.
 
-**Files created/modified:**
-- `src/validate/mod.rs` - New module with `validate_migration_on_temp_db()` function
-- `src/cli/mod.rs` - Added `--validate` flag to Plan and Apply commands
-- `src/lib.rs` - Added validate module export
+**What's done:**
+- Provider scaffolding with Terraform Plugin Framework
+- `pgmold_schema` resource that wraps `pgmold apply`
+- Example configs in `examples/resources/pgmold_schema/`
+- Documentation in `docs/resources/schema.md`
+- GoReleaser config for release automation
 
-**Usage:**
+**What's NOT done (for next iteration):**
+- Move to separate repo (`github.com/pgmold/terraform-provider-pgmold`)
+- Add acceptance tests (require Docker for real Postgres)
+- Publish to Terraform Registry
+- Add `pgmold_migration` resource for versioned migrations
+- Add data sources for schema introspection
+
+**Usage (local dev):**
 ```bash
-pgmold plan --schema schema.sql --database db:postgres://prod:5432/mydb --validate db:postgres://localhost:5433/tempdb
-pgmold apply --schema schema.sql --database db:postgres://prod:5432/mydb --validate db:postgres://localhost:5433/tempdb
+cd terraform-provider-pgmold
+go build -o terraform-provider-pgmold
+
+# Add to ~/.terraformrc:
+provider_installation {
+  dev_overrides {
+    "pgmold/pgmold" = "/path/to/terraform-provider-pgmold"
+  }
+  direct {}
+}
 ```
 
 ## Next Priority Tasks
 
-Check `bd ready --json` for current ready tasks. As of last check, remaining priority 3 features are:
-- pgmold-60: Add ORM schema loading support (Drizzle, Prisma, etc.)
-- pgmold-58: Create Kubernetes operator
-- pgmold-56: Create Terraform provider
+Check `bd ready --json`. Remaining priority 3 features:
+- pgmold-56: Terraform provider (IN PROGRESS - needs tests, registry publishing)
+- pgmold-60: ORM schema loading (Drizzle, Prisma)
+- pgmold-58: Kubernetes operator
 
 ## Notes for Next Iteration
 
-The temp DB validation is a basic implementation. Future enhancements could include:
-1. Auto-provisioning temp DB via Docker/testcontainers (like pg-schema-diff does)
-2. Adding hazard classification/risk levels to validation results
-3. Integration with the lint system for unified hazard reporting
+The Terraform provider is functional but minimal. Priority next steps:
+1. Add acceptance tests - see `github.com/hashicorp/terraform-plugin-testing`
+2. Consider separating to its own repo for Terraform Registry requirements
+3. Add `pgmold_plan` data source to show planned changes without applying
