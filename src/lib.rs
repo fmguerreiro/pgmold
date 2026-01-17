@@ -11,3 +11,4 @@ pub mod model;
 pub mod parser;
 pub mod pg;
 pub mod util;
+pub mod validate;
