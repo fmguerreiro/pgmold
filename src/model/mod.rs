@@ -310,10 +310,11 @@ impl Function {
 
         for (self_arg, other_arg) in self.arguments.iter().zip(other.arguments.iter()) {
             // Check if types/modes match but names or defaults differ
-            if self_arg.data_type == other_arg.data_type && self_arg.mode == other_arg.mode {
-                if self_arg.name != other_arg.name || self_arg.default != other_arg.default {
-                    return true;
-                }
+            if self_arg.data_type == other_arg.data_type
+                && self_arg.mode == other_arg.mode
+                && (self_arg.name != other_arg.name || self_arg.default != other_arg.default)
+            {
+                return true;
             }
         }
 
@@ -701,8 +702,8 @@ mod tests {
                 row_level_security: false,
                 policies: Vec::new(),
                 partition_by: None,
-            owner: None,
-            grants: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
             },
         );
 
@@ -721,8 +722,8 @@ mod tests {
                 row_level_security: false,
                 policies: Vec::new(),
                 partition_by: None,
-            owner: None,
-            grants: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
             },
         );
 
@@ -859,7 +860,7 @@ mod tests {
             row_level_security: false,
             policies: Vec::new(),
             partition_by: None,
-        owner: None,
+            owner: None,
             grants: Vec::new(),
         };
         assert_eq!(table.schema, "auth");
@@ -975,8 +976,8 @@ mod tests {
                 row_level_security: false,
                 policies: Vec::new(),
                 partition_by: None,
-            owner: None,
-            grants: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
             },
         );
 
@@ -995,8 +996,8 @@ mod tests {
                 row_level_security: false,
                 policies: Vec::new(),
                 partition_by: None,
-            owner: None,
-            grants: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
             },
         );
 
@@ -1199,7 +1200,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT 'supplier' AS type FROM users".to_string(),
             materialized: false,
-        owner: None,
+            owner: None,
             grants: Vec::new(),
         };
 
@@ -1208,7 +1209,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT 'supplier'::text AS type FROM users".to_string(),
             materialized: false,
-        owner: None,
+            owner: None,
             grants: Vec::new(),
         };
 
@@ -1222,7 +1223,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT * FROM users WHERE name LIKE 'test%'".to_string(),
             materialized: false,
-        owner: None,
+            owner: None,
             grants: Vec::new(),
         };
 
@@ -1231,7 +1232,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT * FROM users WHERE name ~~ 'test%'::text".to_string(),
             materialized: false,
-        owner: None,
+            owner: None,
             grants: Vec::new(),
         };
 
@@ -1245,7 +1246,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT id::TEXT FROM users".to_string(),
             materialized: false,
-        owner: None,
+            owner: None,
             grants: Vec::new(),
         };
 
@@ -1254,7 +1255,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT id::text FROM users".to_string(),
             materialized: false,
-        owner: None,
+            owner: None,
             grants: Vec::new(),
         };
 
@@ -1268,7 +1269,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT id, name FROM users WHERE active = true".to_string(),
             materialized: false,
-        owner: None,
+            owner: None,
             grants: Vec::new(),
         };
 
@@ -1277,7 +1278,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT  id,  name  FROM  users  WHERE  active  =  true".to_string(),
             materialized: false,
-        owner: None,
+            owner: None,
             grants: Vec::new(),
         };
 
@@ -1291,7 +1292,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT * FROM (SELECT id FROM users)".to_string(),
             materialized: false,
-        owner: None,
+            owner: None,
             grants: Vec::new(),
         };
 
@@ -1300,7 +1301,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT * FROM ( SELECT id FROM users )".to_string(),
             materialized: false,
-        owner: None,
+            owner: None,
             grants: Vec::new(),
         };
 
@@ -1314,7 +1315,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT id FROM users".to_string(),
             materialized: false,
-        owner: None,
+            owner: None,
             grants: Vec::new(),
         };
 
@@ -1323,7 +1324,7 @@ mod tests {
             schema: "public".to_string(),
             query: "SELECT id FROM accounts".to_string(),
             materialized: false,
-        owner: None,
+            owner: None,
             grants: Vec::new(),
         };
 
@@ -1426,7 +1427,7 @@ mod tests {
             name: "role".to_string(),
             values: vec!["admin".to_string(), "user".to_string()],
             owner: Some("postgres".to_string()),
-        grants: Vec::new(),
+            grants: Vec::new(),
         };
         assert_eq!(enum_type.owner, Some("postgres".to_string()));
     }
@@ -1442,7 +1443,7 @@ mod tests {
             collation: None,
             check_constraints: Vec::new(),
             owner: Some("postgres".to_string()),
-        grants: Vec::new(),
+            grants: Vec::new(),
         };
         assert_eq!(domain.owner, Some("postgres".to_string()));
     }
@@ -1477,7 +1478,7 @@ mod tests {
             policies: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
-        grants: Vec::new(),
+            grants: Vec::new(),
         };
 
         let table2 = Table {
@@ -1493,7 +1494,7 @@ mod tests {
             policies: Vec::new(),
             partition_by: None,
             owner: Some("admin".to_string()),
-        grants: Vec::new(),
+            grants: Vec::new(),
         };
 
         assert_ne!(table1, table2);
@@ -1561,7 +1562,7 @@ mod tests {
                 policies: Vec::new(),
                 partition_by: None,
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -1624,7 +1625,10 @@ mod tests {
         };
 
         let json = serde_json::to_string(&table).expect("Failed to serialize");
-        assert!(!json.contains("grants"), "Empty grants should not be serialized");
+        assert!(
+            !json.contains("grants"),
+            "Empty grants should not be serialized"
+        );
     }
 
     #[test]
@@ -1696,7 +1700,7 @@ mod tests {
         };
 
         assert_eq!(func.grants.len(), 1);
-        assert_eq!(func.grants[0].with_grant_option, true);
+        assert!(func.grants[0].with_grant_option);
     }
 
     #[test]

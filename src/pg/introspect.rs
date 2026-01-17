@@ -1107,8 +1107,7 @@ async fn introspect_functions(
                     Ok((parts[0].to_string(), parts[1].to_string()))
                 } else {
                     Err(SchemaError::DatabaseError(format!(
-                        "Malformed config parameter in function {}.{}: '{}'",
-                        schema, name, param
+                        "Malformed config parameter in function {schema}.{name}: '{param}'"
                     )))
                 }
             })
@@ -1584,9 +1583,9 @@ async fn introspect_table_view_grants(
             let qualified_name = format!("{schema_name}.{object_name}");
             grants_by_object
                 .entry(qualified_name)
-                .or_insert_with(BTreeMap::new)
+                .or_default()
                 .entry((grantee, is_grantable))
-                .or_insert_with(BTreeSet::new)
+                .or_default()
                 .insert(privilege);
         }
     }
@@ -1650,9 +1649,9 @@ async fn introspect_sequence_grants(
             let qualified_name = format!("{schema_name}.{object_name}");
             grants_by_object
                 .entry(qualified_name)
-                .or_insert_with(BTreeMap::new)
+                .or_default()
                 .entry((grantee, is_grantable))
-                .or_insert_with(BTreeSet::new)
+                .or_default()
                 .insert(privilege);
         }
     }
@@ -1723,9 +1722,9 @@ async fn introspect_function_grants(
             let qualified_name = format!("{schema_name}.{function_name}({type_signature})");
             grants_by_object
                 .entry(qualified_name)
-                .or_insert_with(BTreeMap::new)
+                .or_default()
                 .entry((grantee, is_grantable))
-                .or_insert_with(BTreeSet::new)
+                .or_default()
                 .insert(privilege);
         }
     }
@@ -1784,9 +1783,9 @@ async fn introspect_schema_grants(
         if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
             grants_by_schema
                 .entry(schema_name)
-                .or_insert_with(BTreeMap::new)
+                .or_default()
                 .entry((grantee, is_grantable))
-                .or_insert_with(BTreeSet::new)
+                .or_default()
                 .insert(privilege);
         }
     }
@@ -1850,9 +1849,9 @@ async fn introspect_type_grants(
             let qualified_name = format!("{schema_name}.{type_name}");
             grants_by_type
                 .entry(qualified_name)
-                .or_insert_with(BTreeMap::new)
+                .or_default()
                 .entry((grantee, is_grantable))
-                .or_insert_with(BTreeSet::new)
+                .or_default()
                 .insert(privilege);
         }
     }
@@ -1898,22 +1897,10 @@ mod tests {
 
     #[test]
     fn privilege_from_pg_string_maps_all_privileges() {
-        assert_eq!(
-            privilege_from_pg_string("SELECT"),
-            Some(Privilege::Select)
-        );
-        assert_eq!(
-            privilege_from_pg_string("INSERT"),
-            Some(Privilege::Insert)
-        );
-        assert_eq!(
-            privilege_from_pg_string("UPDATE"),
-            Some(Privilege::Update)
-        );
-        assert_eq!(
-            privilege_from_pg_string("DELETE"),
-            Some(Privilege::Delete)
-        );
+        assert_eq!(privilege_from_pg_string("SELECT"), Some(Privilege::Select));
+        assert_eq!(privilege_from_pg_string("INSERT"), Some(Privilege::Insert));
+        assert_eq!(privilege_from_pg_string("UPDATE"), Some(Privilege::Update));
+        assert_eq!(privilege_from_pg_string("DELETE"), Some(Privilege::Delete));
         assert_eq!(
             privilege_from_pg_string("TRUNCATE"),
             Some(Privilege::Truncate)
@@ -1931,10 +1918,7 @@ mod tests {
             privilege_from_pg_string("EXECUTE"),
             Some(Privilege::Execute)
         );
-        assert_eq!(
-            privilege_from_pg_string("CREATE"),
-            Some(Privilege::Create)
-        );
+        assert_eq!(privilege_from_pg_string("CREATE"), Some(Privilege::Create));
         assert_eq!(privilege_from_pg_string("UNKNOWN"), None);
     }
 }

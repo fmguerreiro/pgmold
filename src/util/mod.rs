@@ -716,18 +716,16 @@ fn normalize_table_factor(factor: &sqlparser::ast::TableFactor) -> sqlparser::as
                 let mut inner = normalized_twj.relation;
                 // Apply alias if present
                 if let Some(a) = alias {
-                    match &mut inner {
-                        TableFactor::Table {
-                            alias: ref mut table_alias,
-                            ..
-                        } => {
-                            *table_alias = Some(sqlparser::ast::TableAlias {
-                                name: normalize_ident(&a.name),
-                                explicit: a.explicit,
-                                columns: a.columns.clone(),
-                            });
-                        }
-                        _ => {}
+                    if let TableFactor::Table {
+                        alias: ref mut table_alias,
+                        ..
+                    } = &mut inner
+                    {
+                        *table_alias = Some(sqlparser::ast::TableAlias {
+                            name: normalize_ident(&a.name),
+                            explicit: a.explicit,
+                            columns: a.columns.clone(),
+                        });
                     }
                 }
                 inner
@@ -1356,8 +1354,7 @@ mod tests {
 
         assert_eq!(
             canon_db, canon_parsed,
-            "DB: {} vs Parsed: {}",
-            canon_db, canon_parsed
+            "DB: {canon_db} vs Parsed: {canon_parsed}"
         );
     }
 }
@@ -1548,21 +1545,15 @@ fn expression_comparison_handles_function_name_quoting() {
 
     assert!(
         expressions_semantically_equal(parsed, db_quoted_schema),
-        "Function with quoted schema should be semantically equal: {} vs {}",
-        parsed,
-        db_quoted_schema
+        "Function with quoted schema should be semantically equal: {parsed} vs {db_quoted_schema}"
     );
     assert!(
         expressions_semantically_equal(parsed, db_quoted_func),
-        "Function with quoted name should be semantically equal: {} vs {}",
-        parsed,
-        db_quoted_func
+        "Function with quoted name should be semantically equal: {parsed} vs {db_quoted_func}"
     );
     assert!(
         expressions_semantically_equal(parsed, db_both_quoted),
-        "Function with both quoted should be semantically equal: {} vs {}",
-        parsed,
-        db_both_quoted
+        "Function with both quoted should be semantically equal: {parsed} vs {db_both_quoted}"
     );
 }
 
@@ -1597,20 +1588,12 @@ fn view_comparison_handles_postgresql_from_clause_normalization() {
     let ast1 = Parser::parse_sql(&dialect, schema).unwrap();
     let ast2 = Parser::parse_sql(&dialect, db).unwrap();
 
-    let norm1 = ast1
-        .iter()
-        .map(|s| normalize_statement(s))
-        .collect::<Vec<_>>();
-    let norm2 = ast2
-        .iter()
-        .map(|s| normalize_statement(s))
-        .collect::<Vec<_>>();
+    let _norm1 = ast1.iter().map(normalize_statement).collect::<Vec<_>>();
+    let _norm2 = ast2.iter().map(normalize_statement).collect::<Vec<_>>();
 
     assert!(
         views_semantically_equal(schema, db),
-        "Views should be semantically equal despite PostgreSQL normalization:\nSchema: {}\nDB: {}",
-        schema,
-        db
+        "Views should be semantically equal despite PostgreSQL normalization:\nSchema: {schema}\nDB: {db}"
     );
 }
 
@@ -1628,9 +1611,7 @@ fn expression_comparison_handles_postgresql_identifier_normalization() {
 
     assert!(
         expressions_semantically_equal(parsed_column, db_qualified),
-        "Bare column should equal table-qualified column: {} vs {}",
-        parsed_column,
-        db_qualified
+        "Bare column should equal table-qualified column: {parsed_column} vs {db_qualified}"
     );
 
     // Case 2: schema prefix removal
@@ -1640,8 +1621,6 @@ fn expression_comparison_handles_postgresql_identifier_normalization() {
 
     assert!(
         expressions_semantically_equal(parsed_schema, db_no_schema),
-        "Table with schema should equal table without schema: {} vs {}",
-        parsed_schema,
-        db_no_schema
+        "Table with schema should equal table without schema: {parsed_schema} vs {db_no_schema}"
     );
 }

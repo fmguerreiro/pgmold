@@ -88,7 +88,8 @@ fn preprocess_sql(sql: &str) -> String {
     // Remove ALTER FUNCTION statements (sqlparser doesn't support them, but we'll parse OWNER TO separately)
     let alter_function_re = Regex::new(r"(?i)ALTER\s+FUNCTION\s+[^;]+;").unwrap();
     // Remove ALTER TABLE ... OWNER TO statements (sqlparser doesn't support OWNER TO for tables)
-    let alter_table_owner_re = Regex::new(r"(?i)ALTER\s+TABLE\s+[^;]+\s+OWNER\s+TO\s+[^;]+;").unwrap();
+    let alter_table_owner_re =
+        Regex::new(r"(?i)ALTER\s+TABLE\s+[^;]+\s+OWNER\s+TO\s+[^;]+;").unwrap();
     // Remove ALTER VIEW statements (sqlparser doesn't support them)
     let alter_view_re = Regex::new(r"(?i)ALTER\s+VIEW\s+[^;]+;").unwrap();
     // Remove ALTER SEQUENCE statements (sqlparser doesn't support them)
@@ -199,7 +200,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         .map(|l| l.to_string().trim_matches('\'').to_string())
                         .collect(),
                     owner: None,
-            grants: Vec::new(),
+                    grants: Vec::new(),
                 };
                 let key = qualified_name(&enum_schema, &enum_name);
                 schema.enums.insert(key, enum_type);
@@ -341,7 +342,11 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                             .columns
                                             .iter()
                                             .map(|c| {
-                                                c.column.expr.to_string().trim_matches('"').to_string()
+                                                c.column
+                                                    .expr
+                                                    .to_string()
+                                                    .trim_matches('"')
+                                                    .to_string()
                                             })
                                             .collect(),
                                         unique: true,
@@ -395,7 +400,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     query: normalize_sql_whitespace(&query.to_string()),
                     materialized,
                     owner: None,
-            grants: Vec::new(),
+                    grants: Vec::new(),
                 };
                 let key = qualified_name(&view_schema, &view_name);
                 schema.views.insert(key, view);
@@ -476,7 +481,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     collation: collation.as_ref().map(|c| c.to_string()),
                     check_constraints,
                     owner: None,
-            grants: Vec::new(),
+                    grants: Vec::new(),
                 };
                 let key = qualified_name(&domain_schema, &domain_name);
                 schema.domains.insert(key, domain);
@@ -654,7 +659,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
         let owner = cap.get(4).unwrap().as_str().trim_matches('"');
 
         let func_schema = schema_part.unwrap_or("public");
-        let object_key = format!("{}.{}({})", func_schema, func_name, args_str);
+        let object_key = format!("{func_schema}.{func_name}({args_str})");
         schema.pending_owners.push(PendingOwner {
             object_type: PendingOwnerObjectType::Function,
             object_key,
@@ -928,7 +933,12 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
                 let (obj_schema, obj_name) = parse_object_name(object_name_raw);
                 let key = qualified_name(&obj_schema, &obj_name);
                 if let Some(sequence) = schema.sequences.get_mut(&key) {
-                    revoke_from_grants(&mut sequence.grants, grantee, &privileges, grant_option_for);
+                    revoke_from_grants(
+                        &mut sequence.grants,
+                        grantee,
+                        &privileges,
+                        grant_option_for,
+                    );
                 }
             }
             "FUNCTION" => {
@@ -940,7 +950,12 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
             "SCHEMA" => {
                 let schema_name = object_name_raw.trim().trim_matches('"');
                 if let Some(pg_schema) = schema.schemas.get_mut(schema_name) {
-                    revoke_from_grants(&mut pg_schema.grants, grantee, &privileges, grant_option_for);
+                    revoke_from_grants(
+                        &mut pg_schema.grants,
+                        grantee,
+                        &privileges,
+                        grant_option_for,
+                    );
                 }
             }
             "TYPE" => {
@@ -948,7 +963,12 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
                 let key = qualified_name(&obj_schema, &obj_name);
 
                 if let Some(enum_type) = schema.enums.get_mut(&key) {
-                    revoke_from_grants(&mut enum_type.grants, grantee, &privileges, grant_option_for);
+                    revoke_from_grants(
+                        &mut enum_type.grants,
+                        grantee,
+                        &privileges,
+                        grant_option_for,
+                    );
                 } else if let Some(domain) = schema.domains.get_mut(&key) {
                     revoke_from_grants(&mut domain.grants, grantee, &privileges, grant_option_for);
                 }
@@ -972,7 +992,9 @@ fn revoke_from_grants(
                 grant.with_grant_option = false;
                 true
             } else {
-                grant.privileges.retain(|p| !privileges_to_revoke.contains(p));
+                grant
+                    .privileges
+                    .retain(|p| !privileges_to_revoke.contains(p));
                 !grant.privileges.is_empty()
             }
         } else {
@@ -984,7 +1006,10 @@ fn revoke_from_grants(
 fn parse_object_name(name: &str) -> (String, String) {
     let trimmed = name.trim().trim_matches('"');
     match trimmed.split_once('.') {
-        Some((schema, obj)) => (schema.trim_matches('"').to_string(), obj.trim_matches('"').to_string()),
+        Some((schema, obj)) => (
+            schema.trim_matches('"').to_string(),
+            obj.trim_matches('"').to_string(),
+        ),
         None => ("public".to_string(), trimmed.to_string()),
     }
 }
@@ -1000,10 +1025,10 @@ fn parse_function_signature(sig: &str) -> String {
 
         if let Some(dot_pos) = before_paren.rfind('.') {
             let schema_part = &before_paren[..dot_pos].trim_matches('"');
-            let func_name = &before_paren[dot_pos+1..].trim_matches('"');
-            format!("{}.{}{}", schema_part, func_name, args_part)
+            let func_name = &before_paren[dot_pos + 1..].trim_matches('"');
+            format!("{schema_part}.{func_name}{args_part}")
         } else {
-            format!("public.{}{}", before_paren.trim_matches('"'), args_part)
+            format!("public.{}{args_part}", before_paren.trim_matches('"'))
         }
     } else {
         // No parentheses, just return as-is with public schema if no schema specified
@@ -1040,7 +1065,7 @@ fn parse_create_table(
         policies: Vec::new(),
         partition_by: partition_by.and_then(parse_partition_by),
         owner: None,
-            grants: Vec::new(),
+        grants: Vec::new(),
     };
 
     let mut sequences = Vec::new();
@@ -1495,7 +1520,7 @@ fn parse_create_function(
         security: security_type,
         config_params,
         owner: None,
-            grants: Vec::new(),
+        grants: Vec::new(),
     })
 }
 
@@ -1617,7 +1642,7 @@ fn parse_create_sequence(
         cache: final_cache,
         owned_by: owned_by_parsed,
         owner: None,
-            grants: Vec::new(),
+        grants: Vec::new(),
     })
 }
 
@@ -2968,8 +2993,8 @@ CREATE DOMAIN us_postal_code AS TEXT
                 data_type: PgType::Text,
                 default: None,
                 not_null: false,
-            owner: None,
-            grants: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
                 collation: None,
                 check_constraints: vec![DomainConstraint {
                     name: None,
@@ -3006,8 +3031,8 @@ CREATE DOMAIN us_postal_code AS TEXT
                 data_type: PgType::Text,
                 default: None,
                 not_null: false,
-            owner: None,
-            grants: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
                 collation: None,
                 check_constraints: vec![DomainConstraint {
                     name: None,
@@ -3056,7 +3081,7 @@ CREATE DOMAIN us_postal_code AS TEXT
                 partition_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -3270,7 +3295,6 @@ CREATE TABLE embeddings (
         assert_eq!(embedding_qualified.data_type, PgType::Vector(Some(768)));
     }
 
-
     #[test]
     fn real_parses_correctly() {
         let sql = r#"
@@ -3446,7 +3470,10 @@ CREATE TABLE "mrv"."Cultivation" (
             GRANT EXECUTE ON FUNCTION add_numbers(integer, integer) TO app_user;
         "#;
         let schema = parse_sql_string(sql).unwrap();
-        let func = schema.functions.get("public.add_numbers(integer, integer)").unwrap();
+        let func = schema
+            .functions
+            .get("public.add_numbers(integer, integer)")
+            .unwrap();
         assert_eq!(func.grants.len(), 1);
         assert_eq!(func.grants[0].grantee, "app_user");
         assert!(func.grants[0].privileges.contains(&Privilege::Execute));

@@ -1116,10 +1116,7 @@ mod tests {
             "--manage-grants",
         ]);
 
-        if let Commands::Plan {
-            manage_grants, ..
-        } = args.command
-        {
+        if let Commands::Plan { manage_grants, .. } = args.command {
             assert!(manage_grants);
         } else {
             panic!("Expected Plan command");
@@ -1137,10 +1134,7 @@ mod tests {
             "db:postgres://localhost/db",
         ]);
 
-        if let Commands::Plan {
-            manage_grants, ..
-        } = args.command
-        {
+        if let Commands::Plan { manage_grants, .. } = args.command {
             assert!(!manage_grants);
         } else {
             panic!("Expected Plan command");
@@ -1159,10 +1153,7 @@ mod tests {
             "--manage-grants",
         ]);
 
-        if let Commands::Apply {
-            manage_grants, ..
-        } = args.command
-        {
+        if let Commands::Apply { manage_grants, .. } = args.command {
             assert!(manage_grants);
         } else {
             panic!("Expected Apply command");
@@ -1187,9 +1178,7 @@ mod tests {
         ]);
 
         if let Commands::Migrate {
-            action: MigrateAction::Generate {
-                manage_grants, ..
-            },
+            action: MigrateAction::Generate { manage_grants, .. },
         } = args.command
         {
             assert!(manage_grants);
