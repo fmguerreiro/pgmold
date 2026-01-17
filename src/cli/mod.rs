@@ -16,6 +16,7 @@ use pgmold::parser::load_schema_sources;
 use pgmold::pg::connection::PgConnection;
 use pgmold::pg::introspect::introspect_schema;
 use pgmold::pg::sqlgen::generate_sql;
+use pgmold::validate::validate_migration_on_temp_db;
 
 #[derive(Serialize)]
 struct PlanOutput {
@@ -101,6 +102,9 @@ enum Commands {
         /// Manage grants (GRANT/REVOKE) on objects
         #[arg(long)]
         manage_grants: bool,
+        /// Validate migration against a temporary database before applying. Provide a database URL for the temp DB (e.g., postgres://user:pass@localhost:5433/tempdb)
+        #[arg(long)]
+        validate: Option<String>,
     },
 
     /// Apply migrations
@@ -136,6 +140,9 @@ enum Commands {
         /// Manage grants (GRANT/REVOKE) on objects
         #[arg(long)]
         manage_grants: bool,
+        /// Validate migration against a temporary database before applying. Provide a database URL for the temp DB (e.g., postgres://user:pass@localhost:5433/tempdb)
+        #[arg(long)]
+        validate: Option<String>,
     },
 
     /// Lint schema or migration plan
@@ -290,6 +297,7 @@ pub async fn run() -> Result<()> {
             zero_downtime,
             manage_ownership,
             manage_grants,
+            validate,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -322,6 +330,33 @@ pub async fn run() -> Result<()> {
                     manage_grants,
                 ))
             };
+
+            if let Some(validate_db_url) = &validate {
+                let validate_url = parse_db_source(validate_db_url)?;
+                let current_schema = if reverse {
+                    &filtered_target
+                } else {
+                    &filtered_db_schema
+                };
+                let validation_result =
+                    validate_migration_on_temp_db(&ops, &validate_url, current_schema)
+                        .await
+                        .map_err(|e| anyhow!("Validation failed: {e}"))?;
+
+                if !validation_result.success {
+                    eprintln!("\n\u{274C} Validation failed on temp database:");
+                    for error in &validation_result.errors {
+                        eprintln!("  Statement {}: {}", error.statement_index + 1, error.sql);
+                        eprintln!("    Error: {}", error.error_message);
+                    }
+                    return Err(anyhow!(
+                        "Migration validation failed with {} error(s)",
+                        validation_result.errors.len()
+                    ));
+                } else if !ops.is_empty() {
+                    println!("\u{2705} Migration validated successfully on temp database");
+                }
+            }
 
             if zero_downtime {
                 let phased_plan = expand_operations(ops);
@@ -453,6 +488,7 @@ pub async fn run() -> Result<()> {
             include_extension_objects,
             manage_ownership,
             manage_grants,
+            validate,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -497,6 +533,28 @@ pub async fn run() -> Result<()> {
             if has_errors(&lint_results) {
                 println!("\nMigration blocked due to lint errors.");
                 return Ok(());
+            }
+
+            if let Some(validate_db_url) = &validate {
+                let validate_url = parse_db_source(validate_db_url)?;
+                let validation_result =
+                    validate_migration_on_temp_db(&ops, &validate_url, &filtered_db_schema)
+                        .await
+                        .map_err(|e| anyhow!("Validation failed: {e}"))?;
+
+                if !validation_result.success {
+                    eprintln!("\n\u{274C} Validation failed on temp database:");
+                    for error in &validation_result.errors {
+                        eprintln!("  Statement {}: {}", error.statement_index + 1, error.sql);
+                        eprintln!("    Error: {}", error.error_message);
+                    }
+                    return Err(anyhow!(
+                        "Migration validation failed with {} error(s). Apply aborted.",
+                        validation_result.errors.len()
+                    ));
+                } else if !ops.is_empty() {
+                    println!("\u{2705} Migration validated successfully on temp database");
+                }
             }
 
             let lock_warnings = detect_lock_hazards(&ops);
@@ -1195,6 +1253,70 @@ mod tests {
             assert!(manage_grants);
         } else {
             panic!("Expected Migrate Generate command");
+        }
+    }
+
+    #[test]
+    fn cli_plan_parses_validate_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--validate",
+            "db:postgres://localhost:5433/tempdb",
+        ]);
+
+        if let Commands::Plan { validate, .. } = args.command {
+            assert_eq!(
+                validate,
+                Some("db:postgres://localhost:5433/tempdb".to_string())
+            );
+        } else {
+            panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn cli_plan_validate_flag_defaults_none() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+        ]);
+
+        if let Commands::Plan { validate, .. } = args.command {
+            assert!(validate.is_none());
+        } else {
+            panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn cli_apply_parses_validate_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "apply",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--validate",
+            "db:postgres://localhost:5433/tempdb",
+        ]);
+
+        if let Commands::Apply { validate, .. } = args.command {
+            assert_eq!(
+                validate,
+                Some("db:postgres://localhost:5433/tempdb".to_string())
+            );
+        } else {
+            panic!("Expected Apply command");
         }
     }
 }
