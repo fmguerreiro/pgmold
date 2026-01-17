@@ -456,6 +456,34 @@ Traditional tools where you write numbered migration files manually.
 - **Enterprise compliance/audit** → [Liquibase](https://www.liquibase.org/), [Bytebase](https://www.bytebase.com/)
 - **Managed cloud service** → [Atlas Cloud](https://atlasgo.io/cloud/getting-started)
 
+## PostgreSQL Requirements
+
+### Supported Versions
+
+pgmold is tested with PostgreSQL 14-17 and should work with PostgreSQL 13+. PostgreSQL 13 reaches end-of-life on November 13, 2025.
+
+| PostgreSQL | Status | EOL Date |
+|------------|--------|----------|
+| 17 | ✅ Current | Nov 2029 |
+| 16 | ✅ Supported | Nov 2028 |
+| 15 | ✅ Supported | Nov 2027 |
+| 14 | ✅ Supported | Nov 2026 |
+| 13 | ⚠️ EOL Soon | Nov 2025 |
+
+### Security Recommendations
+
+Keep PostgreSQL updated to the latest minor version. Recent critical vulnerabilities:
+
+- **CVE-2025-1094** (CVSS 8.1): SQL injection in libpq escaping functions. Fixed in 17.4+, 16.8+, 15.12+, 14.17+, 13.20+.
+
+Minimum recommended versions:
+- PostgreSQL 17.4+
+- PostgreSQL 16.8+
+- PostgreSQL 15.12+
+- PostgreSQL 14.17+
+
+Running EOL PostgreSQL versions may affect compliance with PCI-DSS, GDPR, and HIPAA requirements.
+
 ## Development
 
 ```bash
