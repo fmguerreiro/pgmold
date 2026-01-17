@@ -127,6 +127,35 @@ pgmold drift --schema sql:schema.sql --database db:postgres://localhost/mydb --j
 
 ## Guides
 
+### CI/CD Integration
+
+pgmold provides first-class CI/CD support for detecting schema drift. See the [CI/CD Integration Guide](docs/CI_CD_GUIDE.md) for comprehensive patterns including:
+
+- GitHub Actions, GitLab CI, CircleCI, and Jenkins examples
+- Pre-deployment gates that block deploys when drift exists
+- Multi-environment matrix checks
+- Slack, PagerDuty, and GitHub Issue integrations
+- Best practices for drift monitoring
+
+Quick start:
+
+```yaml
+# .github/workflows/drift-check.yml
+name: Schema Drift Check
+on:
+  schedule:
+    - cron: '0 8 * * *'
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fmguerreiro/pgmold/.github/actions/drift-check@main
+        with:
+          schema: 'sql:schema/'
+          database: ${{ secrets.DATABASE_URL }}
+```
+
 ### Multi-File Schemas
 
 Organize your schema across multiple files using directories or glob patterns:
