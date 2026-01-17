@@ -57,6 +57,13 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
                     ),
                 });
             }
+            results.push(LintResult {
+                rule: "warn_data_loss_drop_column".to_string(),
+                severity: LintSeverity::Warning,
+                message: format!(
+                    "Dropping column {table}.{column} will permanently delete all data in this column"
+                ),
+            });
         }
 
         MigrationOp::DropTable(name) => {
@@ -75,6 +82,13 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
                     message: format!("Dropping table {name} requires --allow-destructive flag"),
                 });
             }
+            results.push(LintResult {
+                rule: "warn_data_loss_drop_table".to_string(),
+                severity: LintSeverity::Warning,
+                message: format!(
+                    "Dropping table {name} will permanently delete all data in this table"
+                ),
+            });
         }
 
         MigrationOp::AlterColumn {
@@ -224,6 +238,29 @@ mod tests {
 
         let results = lint_migration_plan(&ops, &options);
         assert!(!has_errors(&results));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].rule, "warn_data_loss_drop_column");
+    }
+
+    #[test]
+    fn warns_data_loss_on_drop_column() {
+        let ops = vec![MigrationOp::DropColumn {
+            table: "users".to_string(),
+            column: "email".to_string(),
+        }];
+        let options = LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        let warnings: Vec<_> = results
+            .iter()
+            .filter(|r| r.rule == "warn_data_loss_drop_column")
+            .collect();
+        assert_eq!(warnings.len(), 1);
+        assert!(matches!(warnings[0].severity, LintSeverity::Warning));
+        assert!(warnings[0].message.contains("permanently delete"));
     }
 
     #[test]
@@ -297,6 +334,38 @@ mod tests {
             message: "Just a warning".to_string(),
         }];
         assert!(!has_errors(&results));
+    }
+
+    #[test]
+    fn warns_data_loss_on_drop_table() {
+        let ops = vec![MigrationOp::DropTable("users".to_string())];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!has_errors(&results));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].rule, "warn_data_loss_drop_table");
+        assert!(matches!(results[0].severity, LintSeverity::Warning));
+        assert!(results[0].message.contains("permanently delete"));
+    }
+
+    #[test]
+    fn warns_data_loss_on_drop_table_even_with_destructive_blocked() {
+        let ops = vec![MigrationOp::DropTable("users".to_string())];
+        let options = LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        let warnings: Vec<_> = results
+            .iter()
+            .filter(|r| r.rule == "warn_data_loss_drop_table")
+            .collect();
+        assert_eq!(warnings.len(), 1);
     }
 
     #[test]
