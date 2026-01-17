@@ -6,6 +6,7 @@ use sqlx::Executor;
 use pgmold::diff::{compute_diff, planner::plan_migration};
 use pgmold::drift::detect_drift;
 use pgmold::dump::{generate_dump, generate_split_dump};
+use pgmold::estimate::{estimate_migration, introspect_table_stats, MigrationEstimate};
 use pgmold::expand_contract::expand_operations;
 use pgmold::filter::{filter_schema, Filter, ObjectType};
 use pgmold::lint::locks::detect_lock_hazards;
@@ -23,6 +24,26 @@ struct PlanOutput {
     statements: Vec<String>,
     lock_warnings: Vec<String>,
     statement_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    time_estimate: Option<TimeEstimateOutput>,
+}
+
+#[derive(Serialize)]
+struct TimeEstimateOutput {
+    total_duration: String,
+    total_seconds: f64,
+    confidence: String,
+    operations: Vec<OperationEstimateOutput>,
+}
+
+#[derive(Serialize)]
+struct OperationEstimateOutput {
+    operation: String,
+    table: Option<String>,
+    duration: String,
+    duration_seconds: f64,
+    confidence: String,
+    notes: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -101,6 +122,9 @@ enum Commands {
         /// Manage grants (GRANT/REVOKE) on objects
         #[arg(long)]
         manage_grants: bool,
+        /// Show estimated execution time for each operation
+        #[arg(long)]
+        estimate_time: bool,
     },
 
     /// Apply migrations
@@ -290,6 +314,7 @@ pub async fn run() -> Result<()> {
             zero_downtime,
             manage_ownership,
             manage_grants,
+            estimate_time,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
@@ -409,12 +434,40 @@ pub async fn run() -> Result<()> {
 
                 let sql = generate_sql(&ops);
 
+                let time_estimate = if estimate_time {
+                    let table_stats = introspect_table_stats(&connection, &target_schemas)
+                        .await
+                        .map_err(|e| anyhow!("{e}"))?;
+                    Some(estimate_migration(&ops, &table_stats))
+                } else {
+                    None
+                };
+
                 if json {
+                    let time_estimate_output = time_estimate.as_ref().map(|e| TimeEstimateOutput {
+                        total_duration: MigrationEstimate::format_duration(e.total_estimated_duration),
+                        total_seconds: e.total_estimated_duration.as_secs_f64(),
+                        confidence: e.overall_confidence.to_string(),
+                        operations: e
+                            .operations
+                            .iter()
+                            .map(|op| OperationEstimateOutput {
+                                operation: op.operation.clone(),
+                                table: op.table.clone(),
+                                duration: MigrationEstimate::format_duration(op.estimated_duration),
+                                duration_seconds: op.estimated_duration.as_secs_f64(),
+                                confidence: op.confidence.to_string(),
+                                notes: op.notes.clone(),
+                            })
+                            .collect(),
+                    });
+
                     let output = PlanOutput {
                         operations: ops.iter().map(|op| format!("{op:?}")).collect(),
                         statements: sql.clone(),
                         lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
                         statement_count: sql.len(),
+                        time_estimate: time_estimate_output,
                     };
                     let json_output = serde_json::to_string_pretty(&output)
                         .map_err(|e| anyhow!("Failed to serialize plan output to JSON: {e}"))?;
@@ -434,6 +487,33 @@ pub async fn run() -> Result<()> {
                         for statement in &sql {
                             println!("{statement}");
                             println!();
+                        }
+
+                        if let Some(estimate) = time_estimate {
+                            println!();
+                            println!("⏱️  Estimated execution time: {} (confidence: {})",
+                                MigrationEstimate::format_duration(estimate.total_estimated_duration),
+                                estimate.overall_confidence
+                            );
+                            println!();
+                            for op_estimate in &estimate.operations {
+                                let table_info = op_estimate.table.as_ref()
+                                    .map(|t| format!(" on {}", t))
+                                    .unwrap_or_default();
+                                println!("  {} {}{}: {}",
+                                    match op_estimate.confidence {
+                                        pgmold::estimate::EstimateConfidence::High => "●",
+                                        pgmold::estimate::EstimateConfidence::Medium => "◐",
+                                        pgmold::estimate::EstimateConfidence::Low => "○",
+                                    },
+                                    op_estimate.operation,
+                                    table_info,
+                                    MigrationEstimate::format_duration(op_estimate.estimated_duration)
+                                );
+                                for note in &op_estimate.notes {
+                                    println!("    └─ {}", note);
+                                }
+                            }
                         }
                     }
                 }

@@ -1652,6 +1652,69 @@ async fn plan_json_output_format() {
     assert!(has_add_column, "Should have ADD COLUMN for email");
 }
 
+
+#[tokio::test]
+async fn plan_with_estimate_time_flag() {
+    use pgmold::estimate::{estimate_migration, introspect_table_stats};
+
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE large_table (
+            id SERIAL PRIMARY KEY,
+            data TEXT
+        )
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query("INSERT INTO large_table (data) SELECT 'data' || generate_series(1, 1000)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE TABLE large_table (
+            id SERIAL PRIMARY KEY,
+            data TEXT
+        );
+        CREATE INDEX idx_large_table_data ON large_table (data);
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let ops = plan_migration(compute_diff(&current, &target));
+    assert!(!ops.is_empty(), "Should have operations to add index");
+
+    let table_stats = introspect_table_stats(&connection, &["public".to_string()])
+        .await
+        .unwrap();
+
+    assert!(
+        table_stats.contains_key("public.large_table"),
+        "Should have stats for large_table"
+    );
+
+    let stats = table_stats.get("public.large_table").unwrap();
+    assert!(stats.size_bytes > 0, "Table should have size");
+
+    let estimate = estimate_migration(&ops, &table_stats);
+    assert!(!estimate.operations.is_empty(), "Should have operation estimates");
+    assert!(
+        estimate.total_estimated_duration.as_secs_f64() > 0.0,
+        "Should have non-zero duration"
+    );
+}
+
 #[tokio::test]
 async fn introspect_vector_type() {
     let (_container, url) = setup_postgres().await;
