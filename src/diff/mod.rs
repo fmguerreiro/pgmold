@@ -4049,6 +4049,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 },
             ],
             security_invoker: true,
+            owner: None,
         };
         let op = MigrationOp::CreateVersionView { view: view.clone() };
         match op {

@@ -106,11 +106,25 @@ pub fn expand_operations(ops: Vec<MigrationOp>) -> ExpandContractPlan {
 /// * `table` - The base table to create a view for
 /// * `version` - Version identifier (e.g., "v0001")
 /// * `column_overrides` - Map of virtual_name -> physical_name for columns that differ
+///
+/// # Note
+/// Columns are ordered alphabetically by name (BTreeMap ordering), not by their
+/// original position in the table definition. Always use explicit column lists in
+/// queries rather than SELECT * to avoid order-dependent issues.
+///
+/// # Panics
+/// Panics if the table has no columns (cannot create a view with no columns).
 pub fn generate_version_view(
     table: &Table,
     version: &str,
     column_overrides: &BTreeMap<String, String>,
 ) -> VersionView {
+    assert!(
+        !table.columns.is_empty(),
+        "Cannot create version view for table '{}' with no columns",
+        table.name
+    );
+
     let column_mappings: Vec<ColumnMapping> = table
         .columns
         .values()
@@ -133,6 +147,7 @@ pub fn generate_version_view(
         base_table: table.name.clone(),
         column_mappings,
         security_invoker: true,
+        owner: table.owner.clone(),
     }
 }
 
@@ -325,10 +340,21 @@ mod tests {
 
 
     fn make_table(name: &str, schema: &str) -> Table {
+        let mut columns = BTreeMap::new();
+        columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
         Table {
             name: name.to_string(),
             schema: schema.to_string(),
-            columns: BTreeMap::new(),
+            columns,
             indexes: Vec::new(),
             primary_key: None,
             foreign_keys: Vec::new(),
@@ -398,10 +424,15 @@ mod tests {
 
         let view = generate_version_view(&table, "v0002", &overrides);
 
-        assert_eq!(view.column_mappings.len(), 1);
-        let mapping = &view.column_mappings[0];
-        assert_eq!(mapping.virtual_name, "description");
-        assert_eq!(mapping.physical_name, "_pgroll_new_description");
+        // Table has 2 columns: "id" (from make_table) and "description" (added above)
+        assert_eq!(view.column_mappings.len(), 2);
+        // Find the description mapping (may be in any position due to BTreeMap ordering)
+        let description_mapping = view
+            .column_mappings
+            .iter()
+            .find(|m| m.virtual_name == "description")
+            .expect("description mapping should exist");
+        assert_eq!(description_mapping.physical_name, "_pgroll_new_description");
     }
 
     #[test]

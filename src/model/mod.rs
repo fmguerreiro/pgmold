@@ -432,8 +432,24 @@ pub struct VersionView {
     pub base_table: String,
     /// Column mappings (virtual -> physical)
     pub column_mappings: Vec<ColumnMapping>,
-    /// Use security_invoker for PG 15+ (required for RLS to work through views)
+    /// Use security_invoker for PG 15+ (required for RLS to work through views).
+    ///
+    /// When true, generates `WITH (security_invoker = true)` in CREATE VIEW.
+    ///
+    /// **PostgreSQL Version Compatibility:**
+    /// - PG 15+: Supported, required for RLS through views
+    /// - PG 14 and earlier: PostgreSQL will error on this syntax
+    ///
+    /// **When to set true:**
+    /// - Tables have RLS policies enabled
+    /// - Application needs per-user data filtering through views
+    ///
+    /// **When to set false:**
+    /// - No RLS policies in use
+    /// - Pre-PG15 compatibility required
     pub security_invoker: bool,
+    /// Optional owner for the view (matches base table owner if set)
+    pub owner: Option<String>,
 }
 
 /// Metadata about a version schema used for expand/contract migrations.
@@ -452,8 +468,25 @@ impl VersionSchema {
     }
 }
 
-/// Helper to create a versioned schema name from base schema and version
+/// Helper to create a versioned schema name from base schema and version.
+///
+/// # Panics
+/// Panics if the version identifier is empty, contains underscores, or has invalid characters.
+/// Valid characters are: alphanumeric (a-z, A-Z, 0-9) and hyphens.
 pub fn versioned_schema_name(base_schema: &str, version: &str) -> String {
+    assert!(!version.is_empty(), "Version identifier cannot be empty");
+    assert!(
+        !version.contains('_'),
+        "Version identifier '{}' cannot contain underscores (use hyphens instead)",
+        version
+    );
+    assert!(
+        version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-'),
+        "Version identifier '{}' contains invalid characters (only alphanumeric and hyphens allowed)",
+        version
+    );
     format!("{}_{}", base_schema, version)
 }
 
@@ -1823,6 +1856,7 @@ mod tests {
                 },
             ],
             security_invoker: true,
+            owner: None,
         };
         assert_eq!(view.name, "users");
         assert_eq!(view.version_schema, "public_v0001");
@@ -1868,6 +1902,7 @@ mod tests {
                 },
             ],
             security_invoker: true,
+            owner: None,
         };
 
         let json = serde_json::to_string(&view).expect("Failed to serialize");

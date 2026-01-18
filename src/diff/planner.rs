@@ -146,6 +146,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut result = Vec::new();
 
     result.extend(create_schemas);
+    // Create version schemas early (right after base schemas) since they're empty containers
+    // that version views will be created in later
     result.extend(create_version_schemas);
     result.extend(create_extensions);
     result.extend(create_enums);
@@ -180,6 +182,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(alter_functions);
     result.extend(create_views);
     result.extend(alter_views);
+    // Create version views AFTER base tables and views exist (version views reference them)
     result.extend(create_version_views);
     result.extend(create_triggers);
     result.extend(alter_triggers);
@@ -188,6 +191,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     result.extend(revoke_privileges);
     result.extend(drop_triggers);
+    // Drop version views BEFORE dropping base views (version views depend on base tables)
     result.extend(drop_version_views);
     result.extend(drop_views);
     result.extend(drop_policies);
@@ -207,6 +211,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(drop_domains);
     result.extend(drop_enums);
     result.extend(drop_extensions);
+    // Drop version schemas at the end via CASCADE (drops all version views automatically)
     result.extend(drop_version_schemas);
     result.extend(drop_schemas);
 

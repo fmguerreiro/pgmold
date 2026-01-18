@@ -460,7 +460,15 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         }
 
         MigrationOp::CreateVersionView { view } => {
-            vec![generate_version_view_ddl(view)]
+            let mut stmts = vec![generate_version_view_ddl(view)];
+            if let Some(owner) = &view.owner {
+                stmts.push(format!(
+                    "ALTER VIEW {} OWNER TO {};",
+                    quote_qualified(&view.version_schema, &view.name),
+                    quote_ident(owner)
+                ));
+            }
+            stmts
         }
 
         MigrationOp::DropVersionView {
@@ -961,7 +969,7 @@ fn generate_version_view_ddl(view: &VersionView) -> String {
     };
 
     format!(
-        "CREATE VIEW {}{} AS SELECT {} FROM {};",
+        "CREATE OR REPLACE VIEW {}{} AS SELECT {} FROM {};",
         qualified_name, with_options, column_list, base_table
     )
 }
@@ -2920,13 +2928,14 @@ mod tests {
                 },
             ],
             security_invoker: false,
+            owner: None,
         };
         let ops = vec![MigrationOp::CreateVersionView { view }];
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "CREATE VIEW \"public_v0001\".\"users\" AS SELECT \"id\" AS \"id\", \"name\" AS \"name\" FROM \"public\".\"users\";"
+            "CREATE OR REPLACE VIEW \"public_v0001\".\"users\" AS SELECT \"id\" AS \"id\", \"name\" AS \"name\" FROM \"public\".\"users\";"
         );
     }
 
@@ -2943,13 +2952,14 @@ mod tests {
                 physical_name: "id".to_string(),
             }],
             security_invoker: true,
+            owner: None,
         };
         let ops = vec![MigrationOp::CreateVersionView { view }];
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "CREATE VIEW \"public_v0002\".\"users\" WITH (security_invoker = true) AS SELECT \"id\" AS \"id\" FROM \"public\".\"users\";"
+            "CREATE OR REPLACE VIEW \"public_v0002\".\"users\" WITH (security_invoker = true) AS SELECT \"id\" AS \"id\" FROM \"public\".\"users\";"
         );
     }
 
@@ -2972,13 +2982,14 @@ mod tests {
                 },
             ],
             security_invoker: true,
+            owner: None,
         };
         let ops = vec![MigrationOp::CreateVersionView { view }];
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "CREATE VIEW \"public_v0002\".\"users\" WITH (security_invoker = true) AS SELECT \"id\" AS \"id\", \"_pgroll_new_description\" AS \"description\" FROM \"public\".\"users\";"
+            "CREATE OR REPLACE VIEW \"public_v0002\".\"users\" WITH (security_invoker = true) AS SELECT \"id\" AS \"id\", \"_pgroll_new_description\" AS \"description\" FROM \"public\".\"users\";"
         );
     }
 
