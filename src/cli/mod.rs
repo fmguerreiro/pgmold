@@ -360,19 +360,19 @@ pub async fn run() -> Result<()> {
                 let expand_sql: Vec<String> = phased_plan
                     .expand_ops
                     .iter()
-                    .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+                    .flat_map(|phased_op| generate_sql(std::slice::from_ref(&phased_op.op)))
                     .collect();
 
                 let backfill_sql: Vec<String> = phased_plan
                     .backfill_ops
                     .iter()
-                    .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+                    .flat_map(|phased_op| generate_sql(std::slice::from_ref(&phased_op.op)))
                     .collect();
 
                 let contract_sql: Vec<String> = phased_plan
                     .contract_ops
                     .iter()
-                    .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+                    .flat_map(|phased_op| generate_sql(std::slice::from_ref(&phased_op.op)))
                     .collect();
 
                 if json {
