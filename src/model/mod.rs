@@ -310,10 +310,11 @@ impl Function {
 
         for (self_arg, other_arg) in self.arguments.iter().zip(other.arguments.iter()) {
             // Check if types/modes match but names or defaults differ
-            if self_arg.data_type == other_arg.data_type && self_arg.mode == other_arg.mode {
-                if self_arg.name != other_arg.name || self_arg.default != other_arg.default {
-                    return true;
-                }
+            if self_arg.data_type == other_arg.data_type
+                && self_arg.mode == other_arg.mode
+                && (self_arg.name != other_arg.name || self_arg.default != other_arg.default)
+            {
+                return true;
             }
         }
 
@@ -1699,7 +1700,7 @@ mod tests {
         };
 
         assert_eq!(func.grants.len(), 1);
-        assert_eq!(func.grants[0].with_grant_option, true);
+        assert!(func.grants[0].with_grant_option);
     }
 
     #[test]

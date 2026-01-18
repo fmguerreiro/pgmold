@@ -659,7 +659,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
         let owner = cap.get(4).unwrap().as_str().trim_matches('"');
 
         let func_schema = schema_part.unwrap_or("public");
-        let object_key = format!("{}.{}({})", func_schema, func_name, args_str);
+        let object_key = format!("{func_schema}.{func_name}({args_str})");
         schema.pending_owners.push(PendingOwner {
             object_type: PendingOwnerObjectType::Function,
             object_key,
@@ -1026,9 +1026,10 @@ fn parse_function_signature(sig: &str) -> String {
         if let Some(dot_pos) = before_paren.rfind('.') {
             let schema_part = &before_paren[..dot_pos].trim_matches('"');
             let func_name = &before_paren[dot_pos + 1..].trim_matches('"');
-            format!("{}.{}{}", schema_part, func_name, args_part)
+            format!("{schema_part}.{func_name}{args_part}")
         } else {
-            format!("public.{}{}", before_paren.trim_matches('"'), args_part)
+            let name = before_paren.trim_matches('"');
+            format!("public.{name}{args_part}")
         }
     } else {
         // No parentheses, just return as-is with public schema if no schema specified
