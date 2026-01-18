@@ -3,7 +3,7 @@ pub mod planner;
 use crate::model::{
     qualified_name, CheckConstraint, Column, Domain, EnumType, Extension, ForeignKey, Function,
     Grant, Index, Partition, PgSchema, PgType, Policy, PrimaryKey, Privilege, Sequence,
-    SequenceDataType, SequenceOwner, Table, Trigger, TriggerEnabled, View,
+    SequenceDataType, SequenceOwner, Table, Trigger, TriggerEnabled, VersionView, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +180,26 @@ pub enum MigrationOp {
         grantee: String,
         privileges: Vec<crate::model::Privilege>,
         revoke_grant_option: bool,
+    },
+
+    /// Create a version schema for expand/contract migrations (e.g., public_v0001)
+    CreateVersionSchema {
+        base_schema: String,
+        version: String,
+    },
+    /// Drop a version schema with CASCADE
+    DropVersionSchema {
+        base_schema: String,
+        version: String,
+    },
+    /// Create a version view mapping columns in a version schema
+    CreateVersionView {
+        view: VersionView,
+    },
+    /// Drop a version view
+    DropVersionView {
+        version_schema: String,
+        name: String,
     },
 }
 
@@ -3977,5 +3997,81 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
 
         let ops = compute_diff_with_flags(&from, &to, false, false);
         assert_eq!(ops.len(), 0);
+    }
+
+
+    #[test]
+    fn create_version_schema_op_pattern_matching() {
+        use crate::model::versioned_schema_name;
+
+        let op = MigrationOp::CreateVersionSchema {
+            base_schema: "public".to_string(),
+            version: "v0001".to_string(),
+        };
+        match op {
+            MigrationOp::CreateVersionSchema { base_schema, version } => {
+                assert_eq!(base_schema, "public");
+                assert_eq!(version, "v0001");
+                assert_eq!(versioned_schema_name(&base_schema, &version), "public_v0001");
+            }
+            _ => panic!("Expected CreateVersionSchema"),
+        }
+    }
+
+    #[test]
+    fn drop_version_schema_op_pattern_matching() {
+        let op = MigrationOp::DropVersionSchema {
+            base_schema: "auth".to_string(),
+            version: "v0002".to_string(),
+        };
+        match op {
+            MigrationOp::DropVersionSchema { base_schema, version } => {
+                assert_eq!(base_schema, "auth");
+                assert_eq!(version, "v0002");
+            }
+            _ => panic!("Expected DropVersionSchema"),
+        }
+    }
+
+    #[test]
+    fn create_version_view_op_pattern_matching() {
+        use crate::model::{ColumnMapping, VersionView};
+
+        let view = VersionView {
+            name: "users".to_string(),
+            base_schema: "public".to_string(),
+            version_schema: "public_v0001".to_string(),
+            base_table: "users".to_string(),
+            column_mappings: vec![
+                ColumnMapping {
+                    virtual_name: "id".to_string(),
+                    physical_name: "id".to_string(),
+                },
+            ],
+            security_invoker: true,
+        };
+        let op = MigrationOp::CreateVersionView { view: view.clone() };
+        match op {
+            MigrationOp::CreateVersionView { view: v } => {
+                assert_eq!(v.name, "users");
+                assert_eq!(v.version_schema, "public_v0001");
+            }
+            _ => panic!("Expected CreateVersionView"),
+        }
+    }
+
+    #[test]
+    fn drop_version_view_op_pattern_matching() {
+        let op = MigrationOp::DropVersionView {
+            version_schema: "public_v0001".to_string(),
+            name: "users".to_string(),
+        };
+        match op {
+            MigrationOp::DropVersionView { version_schema, name } => {
+                assert_eq!(version_schema, "public_v0001");
+                assert_eq!(name, "users");
+            }
+            _ => panic!("Expected DropVersionView"),
+        }
     }
 }

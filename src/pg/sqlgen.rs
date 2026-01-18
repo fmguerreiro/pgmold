@@ -3,10 +3,10 @@ use crate::diff::{
     PolicyChanges, SequenceChanges,
 };
 use crate::model::{
-    parse_qualified_name, CheckConstraint, Column, Domain, ForeignKey, Function, Index, IndexType,
-    Partition, PartitionBound, PartitionStrategy, PgType, Policy, PolicyCommand, Privilege,
-    ReferentialAction, SecurityType, Sequence, SequenceDataType, Table, Trigger, TriggerEnabled,
-    TriggerEvent, TriggerTiming, View, Volatility,
+    parse_qualified_name, versioned_schema_name, CheckConstraint, Column, Domain, ForeignKey,
+    Function, Index, IndexType, Partition, PartitionBound, PartitionStrategy, PgType, Policy,
+    PolicyCommand, Privilege, ReferentialAction, SecurityType, Sequence, SequenceDataType, Table,
+    Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, VersionView, View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -434,6 +434,42 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                 } else {
                     quote_ident(grantee)
                 }
+            )]
+        }
+
+        MigrationOp::CreateVersionSchema {
+            base_schema,
+            version,
+        } => {
+            let schema_name = versioned_schema_name(base_schema, version);
+            vec![format!(
+                "CREATE SCHEMA IF NOT EXISTS {};",
+                quote_ident(&schema_name)
+            )]
+        }
+
+        MigrationOp::DropVersionSchema {
+            base_schema,
+            version,
+        } => {
+            let schema_name = versioned_schema_name(base_schema, version);
+            vec![format!(
+                "DROP SCHEMA IF EXISTS {} CASCADE;",
+                quote_ident(&schema_name)
+            )]
+        }
+
+        MigrationOp::CreateVersionView { view } => {
+            vec![generate_version_view_ddl(view)]
+        }
+
+        MigrationOp::DropVersionView {
+            version_schema,
+            name,
+        } => {
+            vec![format!(
+                "DROP VIEW IF EXISTS {};",
+                quote_qualified(version_schema, name)
             )]
         }
     }
@@ -893,6 +929,41 @@ fn generate_view_ddl(view: &View, replace: bool) -> String {
         };
         format!("{} {} AS {};", create_stmt, qualified_name, view.query)
     }
+}
+
+
+/// Generate DDL for a version view with column mappings.
+/// Version views are used in expand/contract migrations to expose multiple schema versions.
+fn generate_version_view_ddl(view: &VersionView) -> String {
+    let qualified_name = quote_qualified(&view.version_schema, &view.name);
+    let base_table = quote_qualified(&view.base_schema, &view.base_table);
+
+    // Build column select list: "physical_col" AS "virtual_col"
+    let columns: Vec<String> = view
+        .column_mappings
+        .iter()
+        .map(|m| {
+            format!(
+                "{} AS {}",
+                quote_ident(&m.physical_name),
+                quote_ident(&m.virtual_name)
+            )
+        })
+        .collect();
+
+    let column_list = columns.join(", ");
+
+    // Security invoker option for PG 15+ (required for RLS to work through views)
+    let with_options = if view.security_invoker {
+        " WITH (security_invoker = true)"
+    } else {
+        ""
+    };
+
+    format!(
+        "CREATE VIEW {}{} AS SELECT {} FROM {};",
+        qualified_name, with_options, column_list, base_table
+    )
 }
 
 fn generate_create_sequence(seq: &Sequence) -> String {
@@ -2805,5 +2876,120 @@ mod tests {
         assert!(
             sql[0].contains("GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER")
         );
+    }
+
+
+    #[test]
+    fn create_version_schema_generates_valid_sql() {
+        let ops = vec![MigrationOp::CreateVersionSchema {
+            base_schema: "public".to_string(),
+            version: "v0001".to_string(),
+        }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "CREATE SCHEMA IF NOT EXISTS \"public_v0001\";");
+    }
+
+    #[test]
+    fn drop_version_schema_generates_valid_sql() {
+        let ops = vec![MigrationOp::DropVersionSchema {
+            base_schema: "public".to_string(),
+            version: "v0001".to_string(),
+        }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "DROP SCHEMA IF EXISTS \"public_v0001\" CASCADE;");
+    }
+
+    #[test]
+    fn create_version_view_basic_generates_valid_sql() {
+        use crate::model::{ColumnMapping, VersionView};
+        let view = VersionView {
+            name: "users".to_string(),
+            base_schema: "public".to_string(),
+            version_schema: "public_v0001".to_string(),
+            base_table: "users".to_string(),
+            column_mappings: vec![
+                ColumnMapping {
+                    virtual_name: "id".to_string(),
+                    physical_name: "id".to_string(),
+                },
+                ColumnMapping {
+                    virtual_name: "name".to_string(),
+                    physical_name: "name".to_string(),
+                },
+            ],
+            security_invoker: false,
+        };
+        let ops = vec![MigrationOp::CreateVersionView { view }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "CREATE VIEW \"public_v0001\".\"users\" AS SELECT \"id\" AS \"id\", \"name\" AS \"name\" FROM \"public\".\"users\";"
+        );
+    }
+
+    #[test]
+    fn create_version_view_with_security_invoker_generates_valid_sql() {
+        use crate::model::{ColumnMapping, VersionView};
+        let view = VersionView {
+            name: "users".to_string(),
+            base_schema: "public".to_string(),
+            version_schema: "public_v0002".to_string(),
+            base_table: "users".to_string(),
+            column_mappings: vec![ColumnMapping {
+                virtual_name: "id".to_string(),
+                physical_name: "id".to_string(),
+            }],
+            security_invoker: true,
+        };
+        let ops = vec![MigrationOp::CreateVersionView { view }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "CREATE VIEW \"public_v0002\".\"users\" WITH (security_invoker = true) AS SELECT \"id\" AS \"id\" FROM \"public\".\"users\";"
+        );
+    }
+
+    #[test]
+    fn create_version_view_with_renamed_column_generates_valid_sql() {
+        use crate::model::{ColumnMapping, VersionView};
+        let view = VersionView {
+            name: "users".to_string(),
+            base_schema: "public".to_string(),
+            version_schema: "public_v0002".to_string(),
+            base_table: "users".to_string(),
+            column_mappings: vec![
+                ColumnMapping {
+                    virtual_name: "id".to_string(),
+                    physical_name: "id".to_string(),
+                },
+                ColumnMapping {
+                    virtual_name: "description".to_string(),
+                    physical_name: "_pgroll_new_description".to_string(),
+                },
+            ],
+            security_invoker: true,
+        };
+        let ops = vec![MigrationOp::CreateVersionView { view }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "CREATE VIEW \"public_v0002\".\"users\" WITH (security_invoker = true) AS SELECT \"id\" AS \"id\", \"_pgroll_new_description\" AS \"description\" FROM \"public\".\"users\";"
+        );
+    }
+
+    #[test]
+    fn drop_version_view_generates_valid_sql() {
+        let ops = vec![MigrationOp::DropVersionView {
+            version_schema: "public_v0001".to_string(),
+            name: "users".to_string(),
+        }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "DROP VIEW IF EXISTS \"public_v0001\".\"users\";");
     }
 }

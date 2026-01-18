@@ -54,6 +54,10 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut set_column_not_nulls = Vec::new();
     let mut grant_privileges = Vec::new();
     let mut revoke_privileges = Vec::new();
+    let mut create_version_schemas = Vec::new();
+    let mut drop_version_schemas = Vec::new();
+    let mut create_version_views = Vec::new();
+    let mut drop_version_views = Vec::new();
 
     for op in ops {
         match op {
@@ -104,6 +108,10 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::SetColumnNotNull { .. } => set_column_not_nulls.push(op),
             MigrationOp::GrantPrivileges { .. } => grant_privileges.push(op),
             MigrationOp::RevokePrivileges { .. } => revoke_privileges.push(op),
+            MigrationOp::CreateVersionSchema { .. } => create_version_schemas.push(op),
+            MigrationOp::DropVersionSchema { .. } => drop_version_schemas.push(op),
+            MigrationOp::CreateVersionView { .. } => create_version_views.push(op),
+            MigrationOp::DropVersionView { .. } => drop_version_views.push(op),
         }
     }
 
@@ -138,6 +146,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut result = Vec::new();
 
     result.extend(create_schemas);
+    result.extend(create_version_schemas);
     result.extend(create_extensions);
     result.extend(create_enums);
     result.extend(add_enum_values);
@@ -171,6 +180,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(alter_functions);
     result.extend(create_views);
     result.extend(alter_views);
+    result.extend(create_version_views);
     result.extend(create_triggers);
     result.extend(alter_triggers);
     result.extend(alter_owners);
@@ -178,6 +188,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     result.extend(revoke_privileges);
     result.extend(drop_triggers);
+    result.extend(drop_version_views);
     result.extend(drop_views);
     result.extend(drop_policies);
     result.extend(disable_rls);
@@ -196,6 +207,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(drop_domains);
     result.extend(drop_enums);
     result.extend(drop_extensions);
+    result.extend(drop_version_schemas);
     result.extend(drop_schemas);
 
     result

@@ -1,4 +1,6 @@
 use crate::diff::MigrationOp;
+use crate::model::{versioned_schema_name, ColumnMapping, Schema, Table, VersionView};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Phase {
@@ -97,10 +99,143 @@ pub fn expand_operations(ops: Vec<MigrationOp>) -> ExpandContractPlan {
     plan
 }
 
+
+/// Generate a VersionView for a single table.
+///
+/// # Arguments
+/// * `table` - The base table to create a view for
+/// * `version` - Version identifier (e.g., "v0001")
+/// * `column_overrides` - Map of virtual_name -> physical_name for columns that differ
+pub fn generate_version_view(
+    table: &Table,
+    version: &str,
+    column_overrides: &BTreeMap<String, String>,
+) -> VersionView {
+    let column_mappings: Vec<ColumnMapping> = table
+        .columns
+        .values()
+        .map(|col| {
+            let physical_name = column_overrides
+                .get(&col.name)
+                .cloned()
+                .unwrap_or_else(|| col.name.clone());
+            ColumnMapping {
+                virtual_name: col.name.clone(),
+                physical_name,
+            }
+        })
+        .collect();
+
+    VersionView {
+        name: table.name.clone(),
+        base_schema: table.schema.clone(),
+        version_schema: versioned_schema_name(&table.schema, version),
+        base_table: table.name.clone(),
+        column_mappings,
+        security_invoker: true,
+    }
+}
+
+/// Generate MigrationOps to create a version schema with views for all tables.
+///
+/// # Arguments
+/// * `schema` - The full schema containing tables
+/// * `base_schema` - The schema to version (e.g., "public")
+/// * `version` - Version identifier
+/// * `column_overrides` - Per-table column overrides: table_name -> (virtual -> physical)
+pub fn generate_version_schema_ops(
+    schema: &Schema,
+    base_schema: &str,
+    version: &str,
+    column_overrides: &BTreeMap<String, BTreeMap<String, String>>,
+) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    ops.push(MigrationOp::CreateVersionSchema {
+        base_schema: base_schema.to_string(),
+        version: version.to_string(),
+    });
+
+    for (_qualified_name, table) in &schema.tables {
+        if table.schema != base_schema {
+            continue;
+        }
+
+        let table_overrides = column_overrides
+            .get(&table.name)
+            .cloned()
+            .unwrap_or_default();
+
+        let view = generate_version_view(table, version, &table_overrides);
+        ops.push(MigrationOp::CreateVersionView { view });
+    }
+
+    ops
+}
+
+/// Generate MigrationOps to drop a version schema (and its views via CASCADE).
+pub fn generate_drop_version_schema_ops(base_schema: &str, version: &str) -> Vec<MigrationOp> {
+    vec![MigrationOp::DropVersionSchema {
+        base_schema: base_schema.to_string(),
+        version: version.to_string(),
+    }]
+}
+
+/// Expand operations with version schema support for zero-downtime migrations.
+///
+/// This creates version views in the expand phase and drops old version schemas
+/// in the contract phase.
+///
+/// # Arguments
+/// * `ops` - Migration operations to expand
+/// * `schema` - The full schema containing tables
+/// * `new_version` - New version identifier to create
+/// * `old_version` - Previous version to drop (if any)
+/// * `base_schema` - The schema to version (e.g., "public")
+pub fn expand_operations_with_versioning(
+    ops: Vec<MigrationOp>,
+    schema: &Schema,
+    new_version: &str,
+    old_version: Option<&str>,
+    base_schema: &str,
+) -> ExpandContractPlan {
+    let mut plan = expand_operations(ops);
+
+    let version_ops = generate_version_schema_ops(schema, base_schema, new_version, &BTreeMap::new());
+
+    let mut version_phased: Vec<PhasedOp> = version_ops
+        .into_iter()
+        .map(|op| PhasedOp {
+            phase: Phase::Expand,
+            op,
+            rationale: format!(
+                "Create version schema {} for zero-downtime migration",
+                new_version
+            ),
+        })
+        .collect();
+
+    version_phased.append(&mut plan.expand_ops);
+    plan.expand_ops = version_phased;
+
+    if let Some(old_ver) = old_version {
+        let drop_ops = generate_drop_version_schema_ops(base_schema, old_ver);
+        for op in drop_ops {
+            plan.contract_ops.push(PhasedOp {
+                phase: Phase::Contract,
+                op,
+                rationale: format!("Drop old version schema {} after migration complete", old_ver),
+            });
+        }
+    }
+
+    plan
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Column, PgType};
+    use crate::model::{Column, PgType, Schema, Table};
 
     #[test]
     fn empty_operations_produce_empty_plan() {
@@ -186,5 +321,204 @@ mod tests {
             }
             _ => panic!("Expected AddColumn in expand phase"),
         }
+    }
+
+
+    fn make_table(name: &str, schema: &str) -> Table {
+        Table {
+            name: name.to_string(),
+            schema: schema.to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+            partition_by: None,
+            owner: None,
+            grants: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn generate_version_view_creates_identity_mappings() {
+        let mut table = make_table("users", "public");
+        table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        table.columns.insert(
+            "name".to_string(),
+            Column {
+                name: "name".to_string(),
+                data_type: PgType::Text,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+
+        let view = generate_version_view(&table, "v0001", &BTreeMap::new());
+
+        assert_eq!(view.name, "users");
+        assert_eq!(view.base_schema, "public");
+        assert_eq!(view.version_schema, "public_v0001");
+        assert_eq!(view.base_table, "users");
+        assert!(view.security_invoker);
+        assert_eq!(view.column_mappings.len(), 2);
+    }
+
+    #[test]
+    fn generate_version_view_uses_column_overrides() {
+        let mut table = make_table("users", "public");
+        table.columns.insert(
+            "description".to_string(),
+            Column {
+                name: "description".to_string(),
+                data_type: PgType::Text,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            "description".to_string(),
+            "_pgroll_new_description".to_string(),
+        );
+
+        let view = generate_version_view(&table, "v0002", &overrides);
+
+        assert_eq!(view.column_mappings.len(), 1);
+        let mapping = &view.column_mappings[0];
+        assert_eq!(mapping.virtual_name, "description");
+        assert_eq!(mapping.physical_name, "_pgroll_new_description");
+    }
+
+    #[test]
+    fn generate_version_schema_ops_creates_schema_and_views() {
+        let mut schema = Schema::default();
+        let mut table = make_table("users", "public");
+        table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        schema.tables.insert("public.users".to_string(), table);
+
+        let ops = generate_version_schema_ops(&schema, "public", "v0001", &BTreeMap::new());
+
+        assert_eq!(ops.len(), 2);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::CreateVersionSchema {
+                base_schema,
+                version
+            } if base_schema == "public" && version == "v0001"
+        ));
+        assert!(matches!(
+            &ops[1],
+            MigrationOp::CreateVersionView { view } if view.name == "users"
+        ));
+    }
+
+    #[test]
+    fn generate_version_schema_ops_filters_by_base_schema() {
+        let mut schema = Schema::default();
+        let public_table = make_table("users", "public");
+        let other_table = make_table("logs", "audit");
+        schema
+            .tables
+            .insert("public.users".to_string(), public_table);
+        schema.tables.insert("audit.logs".to_string(), other_table);
+
+        let ops = generate_version_schema_ops(&schema, "public", "v0001", &BTreeMap::new());
+
+        assert_eq!(ops.len(), 2);
+        assert!(matches!(
+            &ops[1],
+            MigrationOp::CreateVersionView { view } if view.name == "users"
+        ));
+    }
+
+    #[test]
+    fn generate_drop_version_schema_ops_creates_drop_op() {
+        let ops = generate_drop_version_schema_ops("public", "v0001");
+
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::DropVersionSchema {
+                base_schema,
+                version
+            } if base_schema == "public" && version == "v0001"
+        ));
+    }
+
+    #[test]
+    fn expand_with_versioning_prepends_version_ops() {
+        let mut schema = Schema::default();
+        let mut table = make_table("users", "public");
+        table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        schema.tables.insert("public.users".to_string(), table);
+
+        let column = Column {
+            name: "email".to_string(),
+            data_type: PgType::Text,
+            nullable: true,
+            default: None,
+            comment: None,
+        };
+
+        let ops = vec![MigrationOp::AddColumn {
+            table: "public.users".to_string(),
+            column,
+        }];
+
+        let plan = expand_operations_with_versioning(ops, &schema, "v0002", None, "public");
+
+        assert!(plan.expand_ops.iter().any(|p| matches!(
+            &p.op,
+            MigrationOp::CreateVersionSchema { version, .. } if version == "v0002"
+        )));
+        assert!(plan.expand_ops.iter().any(|p| matches!(
+            &p.op,
+            MigrationOp::CreateVersionView { view } if view.name == "users"
+        )));
+    }
+
+    #[test]
+    fn expand_with_versioning_drops_old_version_in_contract() {
+        let schema = Schema::default();
+        let plan =
+            expand_operations_with_versioning(vec![], &schema, "v0002", Some("v0001"), "public");
+
+        assert!(plan.contract_ops.iter().any(|p| matches!(
+            &p.op,
+            MigrationOp::DropVersionSchema { version, .. } if version == "v0001"
+        )));
     }
 }

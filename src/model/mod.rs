@@ -407,6 +407,56 @@ impl View {
     }
 }
 
+
+/// Mapping from virtual column name (what apps see) to physical column name in the base table.
+/// Used during expand/contract migrations where temporary columns (e.g., _pgroll_new_*) are created.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ColumnMapping {
+    /// The column name that applications see through the versioned view
+    pub virtual_name: String,
+    /// The actual column name in the underlying base table
+    pub physical_name: String,
+}
+
+/// A view in a version schema that maps to a base table.
+/// Used for zero-downtime migrations where multiple schema versions coexist.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VersionView {
+    /// Name of the view (typically matches base table name)
+    pub name: String,
+    /// Base schema where the underlying table lives (e.g., "public")
+    pub base_schema: String,
+    /// Version schema where this view lives (e.g., "public_v0001")
+    pub version_schema: String,
+    /// Name of the underlying table in the base schema
+    pub base_table: String,
+    /// Column mappings (virtual -> physical)
+    pub column_mappings: Vec<ColumnMapping>,
+    /// Use security_invoker for PG 15+ (required for RLS to work through views)
+    pub security_invoker: bool,
+}
+
+/// Metadata about a version schema used for expand/contract migrations.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VersionSchema {
+    /// Base schema name (e.g., "public")
+    pub base_schema: String,
+    /// Version identifier (e.g., "v0001" or "add_email_column")
+    pub version: String,
+}
+
+impl VersionSchema {
+    /// Returns the full schema name (e.g., "public_v0001")
+    pub fn full_name(&self) -> String {
+        format!("{}_{}", self.base_schema, self.version)
+    }
+}
+
+/// Helper to create a versioned schema name from base schema and version
+pub fn versioned_schema_name(base_schema: &str, version: &str) -> String {
+    format!("{}_{}", base_schema, version)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TriggerTiming {
     Before,
@@ -1733,5 +1783,95 @@ mod tests {
 
         assert_eq!(sequence.grants.len(), 1);
         assert!(sequence.grants[0].privileges.contains(&Privilege::Usage));
+    }
+
+
+    #[test]
+    fn column_mapping_creation() {
+        let mapping = ColumnMapping {
+            virtual_name: "description".to_string(),
+            physical_name: "_pgroll_new_description".to_string(),
+        };
+        assert_eq!(mapping.virtual_name, "description");
+        assert_eq!(mapping.physical_name, "_pgroll_new_description");
+    }
+
+    #[test]
+    fn column_mapping_identity() {
+        let mapping = ColumnMapping {
+            virtual_name: "id".to_string(),
+            physical_name: "id".to_string(),
+        };
+        assert_eq!(mapping.virtual_name, mapping.physical_name);
+    }
+
+    #[test]
+    fn version_view_with_mappings() {
+        let view = VersionView {
+            name: "users".to_string(),
+            base_schema: "public".to_string(),
+            version_schema: "public_v0001".to_string(),
+            base_table: "users".to_string(),
+            column_mappings: vec![
+                ColumnMapping {
+                    virtual_name: "id".to_string(),
+                    physical_name: "id".to_string(),
+                },
+                ColumnMapping {
+                    virtual_name: "description".to_string(),
+                    physical_name: "_pgroll_new_description".to_string(),
+                },
+            ],
+            security_invoker: true,
+        };
+        assert_eq!(view.name, "users");
+        assert_eq!(view.version_schema, "public_v0001");
+        assert_eq!(view.column_mappings.len(), 2);
+        assert!(view.security_invoker);
+    }
+
+    #[test]
+    fn version_schema_full_name() {
+        let schema = VersionSchema {
+            base_schema: "public".to_string(),
+            version: "v0001".to_string(),
+        };
+        assert_eq!(schema.full_name(), "public_v0001");
+    }
+
+    #[test]
+    fn version_schema_full_name_with_descriptive_version() {
+        let schema = VersionSchema {
+            base_schema: "public".to_string(),
+            version: "add_email_column".to_string(),
+        };
+        assert_eq!(schema.full_name(), "public_add_email_column");
+    }
+
+    #[test]
+    fn versioned_schema_name_helper() {
+        assert_eq!(versioned_schema_name("public", "v0001"), "public_v0001");
+        assert_eq!(versioned_schema_name("auth", "v0002"), "auth_v0002");
+    }
+
+    #[test]
+    fn version_view_serialization_roundtrip() {
+        let view = VersionView {
+            name: "users".to_string(),
+            base_schema: "public".to_string(),
+            version_schema: "public_v0001".to_string(),
+            base_table: "users".to_string(),
+            column_mappings: vec![
+                ColumnMapping {
+                    virtual_name: "id".to_string(),
+                    physical_name: "id".to_string(),
+                },
+            ],
+            security_invoker: true,
+        };
+
+        let json = serde_json::to_string(&view).expect("Failed to serialize");
+        let deserialized: VersionView = serde_json::from_str(&json).expect("Failed to deserialize");
+        assert_eq!(view, deserialized);
     }
 }
