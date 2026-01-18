@@ -391,9 +391,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                     .join(", "),
                 grant_object_kind_to_sql(object_kind),
                 quote_qualified(schema, name),
-                args.as_ref()
-                    .map(|a| format!("({})", a))
-                    .unwrap_or_default(),
+                args.as_ref().map(|a| format!("({a})")).unwrap_or_default(),
                 if grantee == "PUBLIC" {
                     "PUBLIC".to_string()
                 } else {
@@ -430,9 +428,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                     .join(", "),
                 grant_object_kind_to_sql(object_kind),
                 quote_qualified(schema, name),
-                args.as_ref()
-                    .map(|a| format!("({})", a))
-                    .unwrap_or_default(),
+                args.as_ref().map(|a| format!("({a})")).unwrap_or_default(),
                 if grantee == "PUBLIC" {
                     "PUBLIC".to_string()
                 } else {
@@ -533,7 +529,7 @@ fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {
     let where_clause = index
         .predicate
         .as_ref()
-        .map(|p| format!(" WHERE ({})", p))
+        .map(|p| format!(" WHERE ({p})"))
         .unwrap_or_default();
 
     format!(
@@ -1697,7 +1693,7 @@ mod tests {
         };
 
         let op = MigrationOp::CreateTable(table);
-        let sql = generate_sql(&vec![op]);
+        let sql = generate_sql(&[op]);
         assert_eq!(sql.len(), 1);
         assert!(sql[0].contains(r#"CREATE TABLE "auth"."users""#));
     }
@@ -1965,7 +1961,7 @@ mod tests {
             grants: Vec::new(),
         };
         let op = MigrationOp::CreateSequence(seq);
-        let sql = generate_sql(&vec![op]);
+        let sql = generate_sql(&[op]);
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
@@ -1996,7 +1992,7 @@ mod tests {
             }),
         };
         let op = MigrationOp::CreateSequence(seq);
-        let sql = generate_sql(&vec![op]);
+        let sql = generate_sql(&[op]);
         assert_eq!(sql.len(), 1);
         assert!(sql[0].contains("CREATE SEQUENCE \"auth\".\"counter_seq\""));
         assert!(sql[0].contains("AS integer"));
@@ -2013,7 +2009,7 @@ mod tests {
     #[test]
     fn sqlgen_drop_sequence() {
         let op = MigrationOp::DropSequence("public.users_id_seq".to_string());
-        let sql = generate_sql(&vec![op]);
+        let sql = generate_sql(&[op]);
         assert_eq!(sql.len(), 1);
         assert_eq!(sql[0], "DROP SEQUENCE \"public\".\"users_id_seq\";");
     }
@@ -2030,7 +2026,7 @@ mod tests {
             name: "public.counter_seq".to_string(),
             changes,
         };
-        let sql = generate_sql(&vec![op]);
+        let sql = generate_sql(&[op]);
         assert_eq!(sql.len(), 1);
         assert!(sql[0].contains("ALTER SEQUENCE \"public\".\"counter_seq\""));
         assert!(sql[0].contains("INCREMENT BY 10"));
@@ -2055,7 +2051,7 @@ mod tests {
             name: "public.my_seq".to_string(),
             changes,
         };
-        let sql = generate_sql(&vec![op]);
+        let sql = generate_sql(&[op]);
         assert_eq!(sql.len(), 1);
         assert!(sql[0].contains("ALTER SEQUENCE \"public\".\"my_seq\""));
         assert!(sql[0].contains("AS bigint"));
@@ -2079,7 +2075,7 @@ mod tests {
             name: "public.seq".to_string(),
             changes,
         };
-        let sql = generate_sql(&vec![op]);
+        let sql = generate_sql(&[op]);
         assert_eq!(sql.len(), 1);
         assert!(sql[0].contains("NO MINVALUE"));
     }
@@ -2096,7 +2092,7 @@ mod tests {
             name: "public.seq".to_string(),
             changes,
         };
-        let sql = generate_sql(&vec![op]);
+        let sql = generate_sql(&[op]);
         assert_eq!(sql.len(), 1);
         assert!(sql[0].contains("OWNED BY NONE"));
     }
@@ -2397,7 +2393,7 @@ mod tests {
             column: "email".to_string(),
             hint: "UPDATE users SET email = <value> WHERE email IS NULL;".to_string(),
         };
-        let sql = generate_sql(&vec![op]);
+        let sql = generate_sql(&[op]);
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
@@ -2411,7 +2407,7 @@ mod tests {
             table: "users".to_string(),
             column: "email".to_string(),
         };
-        let sql = generate_sql(&vec![op]);
+        let sql = generate_sql(&[op]);
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
@@ -2425,7 +2421,7 @@ mod tests {
             table: "auth.users".to_string(),
             column: "email".to_string(),
         };
-        let sql = generate_sql(&vec![op]);
+        let sql = generate_sql(&[op]);
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],

@@ -1981,19 +1981,19 @@ async fn plan_with_zero_downtime_flag() {
     let expand_sql: Vec<String> = phased_plan
         .expand_ops
         .iter()
-        .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+        .flat_map(|phased_op| generate_sql(std::slice::from_ref(&phased_op.op)))
         .collect();
 
     let backfill_sql: Vec<String> = phased_plan
         .backfill_ops
         .iter()
-        .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+        .flat_map(|phased_op| generate_sql(std::slice::from_ref(&phased_op.op)))
         .collect();
 
     let contract_sql: Vec<String> = phased_plan
         .contract_ops
         .iter()
-        .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+        .flat_map(|phased_op| generate_sql(std::slice::from_ref(&phased_op.op)))
         .collect();
 
     assert!(!expand_sql.is_empty(), "Should have expand SQL");
@@ -2811,8 +2811,7 @@ async fn introspects_function_grants() {
     let func = func.unwrap();
     assert!(
         !func.grants.is_empty(),
-        "Function should have grants. Function: {:?}",
-        func
+        "Function should have grants. Function: {func:?}"
     );
     assert!(
         func.grants.iter().any(|g| g.grantee == "test_user"),
@@ -2866,8 +2865,7 @@ async fn introspects_schema_grants() {
     let pg_schema = pg_schema.unwrap();
     assert!(
         !pg_schema.grants.is_empty(),
-        "Schema should have grants. Schema: {:?}",
-        pg_schema
+        "Schema should have grants. Schema: {pg_schema:?}"
     );
     assert!(
         pg_schema.grants.iter().any(|g| g.grantee == "test_user"),
@@ -2931,8 +2929,7 @@ async fn function_text_uuid_round_trip_no_diff() {
     let parsed_key = parsed_schema.functions.keys().next().unwrap();
     assert_eq!(
         db_key, parsed_key,
-        "Function keys should match: DB='{}' vs Parsed='{}'",
-        db_key, parsed_key
+        "Function keys should match: DB='{db_key}' vs Parsed='{parsed_key}'"
     );
 
     // Compute diff - should be empty since function is identical
@@ -2951,8 +2948,7 @@ async fn function_text_uuid_round_trip_no_diff() {
 
     assert!(
         func_ops.is_empty(),
-        "Should have no function diff when function already exists with same signature, got: {:?}",
-        func_ops
+        "Should have no function diff when function already exists with same signature, got: {func_ops:?}"
     );
 }
 
@@ -3020,7 +3016,7 @@ async fn function_body_change_uses_alter_not_create() {
     .await
     .unwrap();
 
-    assert_eq!(result.0, false, "Function should return false after update");
+    assert!(!result.0, "Function should return false after update");
 }
 
 #[tokio::test]
@@ -3116,8 +3112,7 @@ async fn grants_management_end_to_end() {
             && s.contains("products")
             && s.contains("INSERT")
             && s.contains("UPDATE")),
-        "Should generate GRANT SQL with INSERT and UPDATE. Generated SQL: {:?}",
-        sql
+        "Should generate GRANT SQL with INSERT and UPDATE. Generated SQL: {sql:?}"
     );
 
     for stmt in &sql {
@@ -3303,8 +3298,7 @@ async fn unique_constraint_round_trip_no_orphan_index() {
 
     assert!(
         index_ops.is_empty(),
-        "Should have no index diff after applying UNIQUE constraint. Got: {:?}",
-        index_ops
+        "Should have no index diff after applying UNIQUE constraint. Got: {index_ops:?}"
     );
 }
 
@@ -3357,8 +3351,7 @@ async fn check_constraint_round_trip_no_drop() {
 
     assert!(
         check_ops.is_empty(),
-        "Should have no CHECK constraint diff after apply. Got: {:?}",
-        check_ops
+        "Should have no CHECK constraint diff after apply. Got: {check_ops:?}"
     );
 }
 
@@ -3497,8 +3490,7 @@ async fn check_constraint_double_precision_cast_round_trip() {
 
     assert!(
         check_ops.is_empty(),
-        "Should have no CHECK constraint diff after apply (double precision case). Got: {:?}",
-        check_ops
+        "Should have no CHECK constraint diff after apply (double precision case). Got: {check_ops:?}"
     );
 }
 
@@ -3555,8 +3547,7 @@ async fn function_round_trip_no_diff() {
 
     assert!(
         func_ops.is_empty(),
-        "Should have no function diff after apply. Got: {:?}",
-        func_ops
+        "Should have no function diff after apply. Got: {func_ops:?}"
     );
 }
 
@@ -3722,8 +3713,7 @@ async fn trigger_round_trip_no_diff() {
 
     assert!(
         trigger_ops.is_empty(),
-        "Should have no trigger diff after apply. Got: {:?}",
-        trigger_ops
+        "Should have no trigger diff after apply. Got: {trigger_ops:?}"
     );
 }
 
@@ -3791,8 +3781,7 @@ async fn policy_round_trip_no_diff() {
 
     assert!(
         policy_ops.is_empty(),
-        "Should have no policy diff after apply. Got: {:?}",
-        policy_ops
+        "Should have no policy diff after apply. Got: {policy_ops:?}"
     );
 }
 
@@ -3867,8 +3856,7 @@ async fn policy_with_exists_round_trip_no_diff() {
 
     assert!(
         policy_ops.is_empty(),
-        "Should have no policy diff after apply. Got: {:?}",
-        policy_ops
+        "Should have no policy diff after apply. Got: {policy_ops:?}"
     );
 }
 
@@ -3965,8 +3953,7 @@ async fn policy_with_function_calls_round_trip_no_diff() {
 
     assert!(
         policy_ops.is_empty(),
-        "Should have no policy diff after apply. Got: {:?}",
-        policy_ops
+        "Should have no policy diff after apply. Got: {policy_ops:?}"
     );
 }
 
@@ -4050,8 +4037,7 @@ async fn view_with_cross_schema_join_round_trip_no_diff() {
 
     assert!(
         view_ops.is_empty(),
-        "Should have no view diff after apply. Got: {:?}",
-        view_ops
+        "Should have no view diff after apply. Got: {view_ops:?}"
     );
 }
 
@@ -4114,13 +4100,11 @@ async fn partial_index_round_trip() {
     let index_sql = sql.iter().find(|s| s.contains("CREATE")).unwrap();
     assert!(
         index_sql.contains("WHERE"),
-        "Index SQL should contain WHERE clause. Got: {}",
-        index_sql
+        "Index SQL should contain WHERE clause. Got: {index_sql}"
     );
     assert!(
         index_sql.contains("GROWING") || index_sql.contains("status"),
-        "Index SQL should contain predicate condition. Got: {}",
-        index_sql
+        "Index SQL should contain predicate condition. Got: {index_sql}"
     );
 
     for stmt in &sql {
@@ -4145,8 +4129,7 @@ async fn partial_index_round_trip() {
         .expect("Index should exist");
     assert!(
         index.predicate.is_some(),
-        "Index should have a predicate. Got: {:?}",
-        index
+        "Index should have a predicate. Got: {index:?}"
     );
 
     // Note: PostgreSQL normalizes expressions when storing them.
@@ -4158,7 +4141,6 @@ async fn partial_index_round_trip() {
     let predicate = index.predicate.as_ref().unwrap();
     assert!(
         predicate.contains("status") && predicate.contains("GROWING"),
-        "Predicate should contain status and GROWING. Got: {}",
-        predicate
+        "Predicate should contain status and GROWING. Got: {predicate}"
     );
 }
