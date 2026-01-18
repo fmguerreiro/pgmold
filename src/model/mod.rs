@@ -1889,6 +1889,32 @@ mod tests {
     }
 
     #[test]
+    fn versioned_schema_name_accepts_hyphens() {
+        assert_eq!(
+            versioned_schema_name("public", "add-email-column"),
+            "public_add-email-column"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Version identifier cannot be empty")]
+    fn versioned_schema_name_rejects_empty_version() {
+        versioned_schema_name("public", "");
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot contain underscores")]
+    fn versioned_schema_name_rejects_underscores() {
+        versioned_schema_name("public", "v_001");
+    }
+
+    #[test]
+    #[should_panic(expected = "contains invalid characters")]
+    fn versioned_schema_name_rejects_special_chars() {
+        versioned_schema_name("public", "v001!");
+    }
+
+    #[test]
     fn version_view_serialization_roundtrip() {
         let view = VersionView {
             name: "users".to_string(),

@@ -102,15 +102,24 @@ pub fn expand_operations(ops: Vec<MigrationOp>) -> ExpandContractPlan {
 
 /// Generate a VersionView for a single table.
 ///
+/// # Important: Column Ordering
+///
+/// **Columns are ordered alphabetically by name** (due to BTreeMap), NOT by their
+/// original table definition order. Applications MUST use explicit column lists
+/// in queries (not `SELECT *`) to avoid column order dependencies.
+///
+/// ```sql
+/// -- WRONG: Column order may differ from base table
+/// SELECT * FROM public_v0001.users;
+///
+/// -- CORRECT: Explicit column list
+/// SELECT id, name, email FROM public_v0001.users;
+/// ```
+///
 /// # Arguments
 /// * `table` - The base table to create a view for
-/// * `version` - Version identifier (e.g., "v0001")
+/// * `version` - Version identifier (e.g., "v0001" or "add-email-column")
 /// * `column_overrides` - Map of virtual_name -> physical_name for columns that differ
-///
-/// # Note
-/// Columns are ordered alphabetically by name (BTreeMap ordering), not by their
-/// original position in the table definition. Always use explicit column lists in
-/// queries rather than SELECT * to avoid order-dependent issues.
 ///
 /// # Panics
 /// Panics if the table has no columns (cannot create a view with no columns).
@@ -551,5 +560,26 @@ mod tests {
             &p.op,
             MigrationOp::DropVersionSchema { version, .. } if version == "v0001"
         )));
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot create version view for table")]
+    fn generate_version_view_panics_on_empty_columns() {
+        let empty_table = Table {
+            name: "empty".to_string(),
+            schema: "public".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+            partition_by: None,
+            owner: None,
+            grants: Vec::new(),
+        };
+        generate_version_view(&empty_table, "v0001", &BTreeMap::new());
     }
 }

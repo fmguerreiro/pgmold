@@ -4456,3 +4456,64 @@ async fn version_view_with_security_invoker() {
         "View definition should contain columns"
     );
 }
+
+#[tokio::test]
+async fn version_view_inherits_owner() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create role and table with specific owner
+    sqlx::query("CREATE ROLE test_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("CREATE TABLE owned_table (id INT PRIMARY KEY)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query("ALTER TABLE owned_table OWNER TO test_owner")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let view = VersionView {
+        name: "owned_table".to_string(),
+        base_schema: "public".to_string(),
+        version_schema: "public_v0001".to_string(),
+        base_table: "owned_table".to_string(),
+        column_mappings: vec![ColumnMapping {
+            virtual_name: "id".to_string(),
+            physical_name: "id".to_string(),
+        }],
+        security_invoker: false,
+        owner: Some("test_owner".to_string()),
+    };
+
+    let ops = vec![
+        MigrationOp::CreateVersionSchema {
+            base_schema: "public".to_string(),
+            version: "v0001".to_string(),
+        },
+        MigrationOp::CreateVersionView { view },
+    ];
+
+    let sql = generate_sql(&ops);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Verify owner was set
+    let owner: (String,) = sqlx::query_as(
+        "SELECT pg_catalog.pg_get_userbyid(c.relowner)
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         WHERE c.relname = 'owned_table' AND n.nspname = 'public_v0001'",
+    )
+    .fetch_one(connection.pool())
+    .await
+    .unwrap();
+
+    assert_eq!(owner.0, "test_owner");
+}
