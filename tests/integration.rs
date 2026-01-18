@@ -3,12 +3,12 @@ use pgmold::drift::detect_drift;
 use pgmold::expand_contract::generate_version_schema_ops;
 use pgmold::lint::{has_errors, lint_migration_plan, LintOptions};
 use pgmold::model::{ColumnMapping, PartitionBound, PartitionStrategy, Schema, VersionView};
-use std::collections::BTreeMap;
 use pgmold::parser::{load_schema_sources, parse_sql_string};
 use pgmold::pg::connection::PgConnection;
 use pgmold::pg::introspect::introspect_schema;
 use pgmold::pg::sqlgen::generate_sql;
 use sqlx::Executor;
+use std::collections::BTreeMap;
 use std::io::Write;
 use tempfile::NamedTempFile;
 use testcontainers::runners::AsyncRunner;
@@ -4343,13 +4343,7 @@ async fn version_schema_ops_from_schema() {
         .fetch_one(connection.pool())
         .await
         .unwrap();
-    let major_version: i32 = pg_version
-        .0
-        .split('.')
-        .next()
-        .unwrap()
-        .parse()
-        .unwrap_or(0);
+    let major_version: i32 = pg_version.0.split('.').next().unwrap().parse().unwrap_or(0);
     if major_version < 15 {
         return;
     }
@@ -4395,13 +4389,7 @@ async fn version_view_with_security_invoker() {
         .fetch_one(connection.pool())
         .await
         .unwrap();
-    let major_version: i32 = pg_version
-        .0
-        .split('.')
-        .next()
-        .unwrap()
-        .parse()
-        .unwrap_or(0);
+    let major_version: i32 = pg_version.0.split('.').next().unwrap().parse().unwrap_or(0);
 
     if major_version < 15 {
         return;
@@ -4444,12 +4432,11 @@ async fn version_view_with_security_invoker() {
         sqlx::query(stmt).execute(connection.pool()).await.unwrap();
     }
 
-    let view_def: (String,) = sqlx::query_as(
-        "SELECT pg_get_viewdef('public_v0001.secrets'::regclass, true)",
-    )
-    .fetch_one(connection.pool())
-    .await
-    .unwrap();
+    let view_def: (String,) =
+        sqlx::query_as("SELECT pg_get_viewdef('public_v0001.secrets'::regclass, true)")
+            .fetch_one(connection.pool())
+            .await
+            .unwrap();
 
     assert!(
         view_def.0.contains("id") && view_def.0.contains("data"),

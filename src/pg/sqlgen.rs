@@ -939,7 +939,6 @@ fn generate_view_ddl(view: &View, replace: bool) -> String {
     }
 }
 
-
 /// Generate DDL for a version view with column mappings.
 /// Version views are used in expand/contract migrations to expose multiple schema versions.
 fn generate_version_view_ddl(view: &VersionView) -> String {
@@ -968,10 +967,7 @@ fn generate_version_view_ddl(view: &VersionView) -> String {
         ""
     };
 
-    format!(
-        "CREATE OR REPLACE VIEW {}{} AS SELECT {} FROM {};",
-        qualified_name, with_options, column_list, base_table
-    )
+    format!("CREATE OR REPLACE VIEW {qualified_name}{with_options} AS SELECT {column_list} FROM {base_table};")
 }
 
 fn generate_create_sequence(seq: &Sequence) -> String {
@@ -2885,7 +2881,6 @@ mod tests {
             sql[0].contains("GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER")
         );
     }
-
 
     #[test]
     fn create_version_schema_generates_valid_sql() {

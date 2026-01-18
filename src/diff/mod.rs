@@ -3999,7 +3999,6 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         assert_eq!(ops.len(), 0);
     }
 
-
     #[test]
     fn create_version_schema_op_pattern_matching() {
         use crate::model::versioned_schema_name;
@@ -4009,10 +4008,16 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             version: "v0001".to_string(),
         };
         match op {
-            MigrationOp::CreateVersionSchema { base_schema, version } => {
+            MigrationOp::CreateVersionSchema {
+                base_schema,
+                version,
+            } => {
                 assert_eq!(base_schema, "public");
                 assert_eq!(version, "v0001");
-                assert_eq!(versioned_schema_name(&base_schema, &version), "public_v0001");
+                assert_eq!(
+                    versioned_schema_name(&base_schema, &version),
+                    "public_v0001"
+                );
             }
             _ => panic!("Expected CreateVersionSchema"),
         }
@@ -4025,7 +4030,10 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             version: "v0002".to_string(),
         };
         match op {
-            MigrationOp::DropVersionSchema { base_schema, version } => {
+            MigrationOp::DropVersionSchema {
+                base_schema,
+                version,
+            } => {
                 assert_eq!(base_schema, "auth");
                 assert_eq!(version, "v0002");
             }
@@ -4042,12 +4050,10 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             base_schema: "public".to_string(),
             version_schema: "public_v0001".to_string(),
             base_table: "users".to_string(),
-            column_mappings: vec![
-                ColumnMapping {
-                    virtual_name: "id".to_string(),
-                    physical_name: "id".to_string(),
-                },
-            ],
+            column_mappings: vec![ColumnMapping {
+                virtual_name: "id".to_string(),
+                physical_name: "id".to_string(),
+            }],
             security_invoker: true,
             owner: None,
         };
@@ -4068,7 +4074,10 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             name: "users".to_string(),
         };
         match op {
-            MigrationOp::DropVersionView { version_schema, name } => {
+            MigrationOp::DropVersionView {
+                version_schema,
+                name,
+            } => {
                 assert_eq!(version_schema, "public_v0001");
                 assert_eq!(name, "users");
             }

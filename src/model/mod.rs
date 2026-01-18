@@ -407,7 +407,6 @@ impl View {
     }
 }
 
-
 /// Mapping from virtual column name (what apps see) to physical column name in the base table.
 /// Used during expand/contract migrations where temporary columns (e.g., _pgroll_new_*) are created.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -477,17 +476,15 @@ pub fn versioned_schema_name(base_schema: &str, version: &str) -> String {
     assert!(!version.is_empty(), "Version identifier cannot be empty");
     assert!(
         !version.contains('_'),
-        "Version identifier '{}' cannot contain underscores (use hyphens instead)",
-        version
+        "Version identifier '{version}' cannot contain underscores (use hyphens instead)"
     );
     assert!(
         version
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-'),
-        "Version identifier '{}' contains invalid characters (only alphanumeric and hyphens allowed)",
-        version
+        "Version identifier '{version}' contains invalid characters (only alphanumeric and hyphens allowed)"
     );
-    format!("{}_{}", base_schema, version)
+    format!("{base_schema}_{version}")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -1818,7 +1815,6 @@ mod tests {
         assert!(sequence.grants[0].privileges.contains(&Privilege::Usage));
     }
 
-
     #[test]
     fn column_mapping_creation() {
         let mapping = ColumnMapping {
@@ -1921,12 +1917,10 @@ mod tests {
             base_schema: "public".to_string(),
             version_schema: "public_v0001".to_string(),
             base_table: "users".to_string(),
-            column_mappings: vec![
-                ColumnMapping {
-                    virtual_name: "id".to_string(),
-                    physical_name: "id".to_string(),
-                },
-            ],
+            column_mappings: vec![ColumnMapping {
+                virtual_name: "id".to_string(),
+                physical_name: "id".to_string(),
+            }],
             security_invoker: true,
             owner: None,
         };

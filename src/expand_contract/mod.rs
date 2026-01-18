@@ -99,7 +99,6 @@ pub fn expand_operations(ops: Vec<MigrationOp>) -> ExpandContractPlan {
     plan
 }
 
-
 /// Generate a VersionView for a single table.
 ///
 /// # Important: Column Ordering
@@ -180,7 +179,7 @@ pub fn generate_version_schema_ops(
         version: version.to_string(),
     });
 
-    for (_qualified_name, table) in &schema.tables {
+    for table in schema.tables.values() {
         if table.schema != base_schema {
             continue;
         }
@@ -225,17 +224,15 @@ pub fn expand_operations_with_versioning(
 ) -> ExpandContractPlan {
     let mut plan = expand_operations(ops);
 
-    let version_ops = generate_version_schema_ops(schema, base_schema, new_version, &BTreeMap::new());
+    let version_ops =
+        generate_version_schema_ops(schema, base_schema, new_version, &BTreeMap::new());
 
     let mut version_phased: Vec<PhasedOp> = version_ops
         .into_iter()
         .map(|op| PhasedOp {
             phase: Phase::Expand,
             op,
-            rationale: format!(
-                "Create version schema {} for zero-downtime migration",
-                new_version
-            ),
+            rationale: format!("Create version schema {new_version} for zero-downtime migration"),
         })
         .collect();
 
@@ -248,7 +245,7 @@ pub fn expand_operations_with_versioning(
             plan.contract_ops.push(PhasedOp {
                 phase: Phase::Contract,
                 op,
-                rationale: format!("Drop old version schema {} after migration complete", old_ver),
+                rationale: format!("Drop old version schema {old_ver} after migration complete"),
             });
         }
     }
@@ -346,7 +343,6 @@ mod tests {
             _ => panic!("Expected AddColumn in expand phase"),
         }
     }
-
 
     fn make_table(name: &str, schema: &str) -> Table {
         let mut columns = BTreeMap::new();
