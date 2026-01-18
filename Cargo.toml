@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/terraform-provider"]
+members = ["."]
 resolver = "2"
 
 [package]
