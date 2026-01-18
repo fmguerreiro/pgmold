@@ -391,9 +391,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                     .join(", "),
                 grant_object_kind_to_sql(object_kind),
                 quote_qualified(schema, name),
-                args.as_ref()
-                    .map(|a| format!("({a})"))
-                    .unwrap_or_default(),
+                args.as_ref().map(|a| format!("({a})")).unwrap_or_default(),
                 if grantee == "PUBLIC" {
                     "PUBLIC".to_string()
                 } else {
@@ -430,9 +428,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                     .join(", "),
                 grant_object_kind_to_sql(object_kind),
                 quote_qualified(schema, name),
-                args.as_ref()
-                    .map(|a| format!("({a})"))
-                    .unwrap_or_default(),
+                args.as_ref().map(|a| format!("({a})")).unwrap_or_default(),
                 if grantee == "PUBLIC" {
                     "PUBLIC".to_string()
                 } else {

@@ -1981,19 +1981,19 @@ async fn plan_with_zero_downtime_flag() {
     let expand_sql: Vec<String> = phased_plan
         .expand_ops
         .iter()
-        .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+        .flat_map(|phased_op| generate_sql(&[phased_op.op.clone()]))
         .collect();
 
     let backfill_sql: Vec<String> = phased_plan
         .backfill_ops
         .iter()
-        .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+        .flat_map(|phased_op| generate_sql(&[phased_op.op.clone()]))
         .collect();
 
     let contract_sql: Vec<String> = phased_plan
         .contract_ops
         .iter()
-        .flat_map(|phased_op| generate_sql(&vec![phased_op.op.clone()]))
+        .flat_map(|phased_op| generate_sql(&[phased_op.op.clone()]))
         .collect();
 
     assert!(!expand_sql.is_empty(), "Should have expand SQL");
