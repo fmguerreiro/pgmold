@@ -355,7 +355,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -376,7 +376,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -407,7 +407,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -428,7 +428,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -451,7 +451,7 @@ mod tests {
                 values: vec!["active".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -464,7 +464,7 @@ mod tests {
                 values: vec!["inactive".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -489,7 +489,7 @@ mod tests {
                 security: crate::model::SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -507,7 +507,7 @@ mod tests {
                 security: crate::model::SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 

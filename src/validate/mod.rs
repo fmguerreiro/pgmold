@@ -69,10 +69,7 @@ mod tests {
     use testcontainers::runners::AsyncRunner;
     use testcontainers_modules::postgres::Postgres;
 
-    async fn setup_temp_postgres() -> (
-        testcontainers::ContainerAsync<Postgres>,
-        String,
-    ) {
+    async fn setup_temp_postgres() -> (testcontainers::ContainerAsync<Postgres>, String) {
         let container = Postgres::default().start().await.unwrap();
         let port = container.get_host_port_ipv4(5432).await.unwrap();
         let url = format!("postgres://postgres:postgres@localhost:{port}/postgres");
@@ -117,8 +114,6 @@ mod tests {
 
         assert!(!result.success);
         assert_eq!(result.errors.len(), 1);
-        assert!(result.errors[0]
-            .error_message
-            .contains("nonexistent_table"));
+        assert!(result.errors[0].error_message.contains("nonexistent_table"));
     }
 }

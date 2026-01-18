@@ -10,5 +10,6 @@ pub mod migrate;
 pub mod model;
 pub mod parser;
 pub mod pg;
+pub mod provider;
 pub mod util;
 pub mod validate;

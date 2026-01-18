@@ -12,10 +12,10 @@ use pgmold::lint::locks::detect_lock_hazards;
 use pgmold::lint::{has_errors, lint_migration_plan, LintOptions, LintSeverity};
 use pgmold::migrate::{find_next_migration_number, generate_migration_filename};
 use pgmold::model::Schema;
-use pgmold::parser::load_schema_sources;
 use pgmold::pg::connection::PgConnection;
 use pgmold::pg::introspect::introspect_schema;
 use pgmold::pg::sqlgen::generate_sql;
+use pgmold::provider::load_schema_from_sources;
 use pgmold::validate::validate_migration_on_temp_db;
 
 #[derive(Serialize)]
@@ -66,6 +66,7 @@ enum Commands {
 
     /// Generate migration plan
     Plan {
+        /// Schema source with prefix: sql:path (SQL files/dirs) or drizzle:config.ts (Drizzle ORM). Can be repeated.
         #[arg(long, required = true)]
         schema: Vec<String>,
         #[arg(long)]
@@ -109,6 +110,7 @@ enum Commands {
 
     /// Apply migrations
     Apply {
+        /// Schema source with prefix: sql:path (SQL files/dirs) or drizzle:config.ts (Drizzle ORM). Can be repeated.
         #[arg(long, required = true)]
         schema: Vec<String>,
         #[arg(long)]
@@ -147,6 +149,7 @@ enum Commands {
 
     /// Lint schema or migration plan
     Lint {
+        /// Schema source with prefix: sql:path (SQL files/dirs) or drizzle:config.ts (Drizzle ORM). Can be repeated.
         #[arg(long, required = true)]
         schema: Vec<String>,
         #[arg(long)]
@@ -157,6 +160,7 @@ enum Commands {
 
     /// Monitor for drift
     Monitor {
+        /// Schema source with prefix: sql:path (SQL files/dirs) or drizzle:config.ts (Drizzle ORM). Can be repeated.
         #[arg(long, required = true)]
         schema: Vec<String>,
         #[arg(long)]
@@ -167,6 +171,7 @@ enum Commands {
 
     /// Detect schema drift between SQL files and database
     Drift {
+        /// Schema source with prefix: sql:path (SQL files/dirs) or drizzle:config.ts (Drizzle ORM). Can be repeated.
         #[arg(long, required = true)]
         schema: Vec<String>,
         #[arg(long)]
@@ -220,7 +225,7 @@ enum Commands {
 enum MigrateAction {
     /// Generate a new migration file from schema diff
     Generate {
-        /// Schema files (source of truth)
+        /// Schema source with prefix: sql:path (SQL files/dirs) or drizzle:config.ts (Drizzle ORM). Can be repeated.
         #[arg(long, required = true)]
         schema: Vec<String>,
         /// Database connection string
@@ -251,17 +256,8 @@ fn parse_db_source(source: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("Database source must start with 'db:' prefix: {source}"))
 }
 
-fn load_sql_schema(sources: &[String]) -> Result<Schema> {
-    let paths: Vec<String> = sources
-        .iter()
-        .map(|s| {
-            s.strip_prefix("sql:")
-                .map(|p| p.to_string())
-                .ok_or_else(|| anyhow!("Schema source must start with 'sql:' prefix: {s}"))
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    load_schema_sources(&paths).map_err(|e| anyhow!("{e}"))
+fn load_schema(sources: &[String]) -> Result<Schema> {
+    load_schema_from_sources(sources).map_err(|e| anyhow!("{e}"))
 }
 
 pub async fn run() -> Result<()> {
@@ -269,8 +265,8 @@ pub async fn run() -> Result<()> {
 
     match cli.command {
         Commands::Diff { from, to } => {
-            let from_schema = load_sql_schema(&[from])?;
-            let to_schema = load_sql_schema(&[to])?;
+            let from_schema = load_schema(&[from])?;
+            let to_schema = load_schema(&[to])?;
             let ops = compute_diff(&from_schema, &to_schema);
 
             if ops.is_empty() {
@@ -302,7 +298,7 @@ pub async fn run() -> Result<()> {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
 
-            let target = load_sql_schema(&schema)?;
+            let target = load_schema(&schema)?;
             let filtered_target = filter_schema(&target, &filter);
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
@@ -498,7 +494,7 @@ pub async fn run() -> Result<()> {
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
-            let target = load_sql_schema(&schema)?;
+            let target = load_schema(&schema)?;
             let filtered_target = filter_schema(&target, &filter);
             let db_schema =
                 introspect_schema(&connection, &target_schemas, include_extension_objects)
@@ -599,7 +595,7 @@ pub async fn run() -> Result<()> {
             database,
             target_schemas,
         } => {
-            let target = load_sql_schema(&schema)?;
+            let target = load_schema(&schema)?;
 
             let ops = if let Some(db_source) = database {
                 let db_url = parse_db_source(&db_source)?;
@@ -644,7 +640,7 @@ pub async fn run() -> Result<()> {
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
-            let target = load_sql_schema(&schema)?;
+            let target = load_schema(&schema)?;
             let current = introspect_schema(&connection, &target_schemas, false)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
@@ -811,7 +807,7 @@ pub async fn run() -> Result<()> {
                 manage_ownership,
                 manage_grants,
             } => {
-                let target = load_sql_schema(&schema)?;
+                let target = load_schema(&schema)?;
                 let db_url = parse_db_source(&database)?;
                 let connection = PgConnection::new(&db_url)
                     .await
@@ -1174,10 +1170,7 @@ mod tests {
             "--manage-grants",
         ]);
 
-        if let Commands::Plan {
-            manage_grants, ..
-        } = args.command
-        {
+        if let Commands::Plan { manage_grants, .. } = args.command {
             assert!(manage_grants);
         } else {
             panic!("Expected Plan command");
@@ -1195,10 +1188,7 @@ mod tests {
             "db:postgres://localhost/db",
         ]);
 
-        if let Commands::Plan {
-            manage_grants, ..
-        } = args.command
-        {
+        if let Commands::Plan { manage_grants, .. } = args.command {
             assert!(!manage_grants);
         } else {
             panic!("Expected Plan command");
@@ -1217,10 +1207,7 @@ mod tests {
             "--manage-grants",
         ]);
 
-        if let Commands::Apply {
-            manage_grants, ..
-        } = args.command
-        {
+        if let Commands::Apply { manage_grants, .. } = args.command {
             assert!(manage_grants);
         } else {
             panic!("Expected Apply command");
@@ -1245,9 +1232,7 @@ mod tests {
         ]);
 
         if let Commands::Migrate {
-            action: MigrateAction::Generate {
-                manage_grants, ..
-            },
+            action: MigrateAction::Generate { manage_grants, .. },
         } = args.command
         {
             assert!(manage_grants);

@@ -1,30 +1,26 @@
 # Shared Task Notes
 
-## Last Completed: pgmold-59 - Temp DB Validation
+## In Progress: pgmold-60 - ORM Schema Loading
 
-Added `--validate <db-url>` flag to `plan` and `apply` commands. Users can now validate migrations against a temporary database before applying to production.
+Drizzle support is implemented. Prisma support is still pending.
 
 **Files created/modified:**
-- `src/validate/mod.rs` - New module with `validate_migration_on_temp_db()` function
-- `src/cli/mod.rs` - Added `--validate` flag to Plan and Apply commands
-- `src/lib.rs` - Added validate module export
+- `src/provider/mod.rs` - Schema provider routing by prefix (sql:, drizzle:)
+- `src/provider/drizzle.rs` - Drizzle provider (runs drizzle-kit export)
+- `src/cli/mod.rs` - Updated to use provider module
 
 **Usage:**
 ```bash
-pgmold plan --schema schema.sql --database db:postgres://prod:5432/mydb --validate db:postgres://localhost:5433/tempdb
-pgmold apply --schema schema.sql --database db:postgres://prod:5432/mydb --validate db:postgres://localhost:5433/tempdb
+pgmold plan --schema drizzle:drizzle.config.ts --database db:postgres://localhost/db
+pgmold plan --schema sql:schema.sql --schema drizzle:drizzle.config.ts --database db:postgres://localhost/db
 ```
 
-## Next Priority Tasks
+## Next Steps for pgmold-60
 
-Check `bd ready --json` for current ready tasks. As of last check, remaining priority 3 features are:
-- pgmold-60: Add ORM schema loading support (Drizzle, Prisma, etc.)
+1. Add Prisma provider (run `prisma db diff` or similar)
+2. Consider other ORMs: SQLAlchemy, TypeORM, etc.
+
+## Other Ready Tasks
+
 - pgmold-58: Create Kubernetes operator
 - pgmold-56: Create Terraform provider
-
-## Notes for Next Iteration
-
-The temp DB validation is a basic implementation. Future enhancements could include:
-1. Auto-provisioning temp DB via Docker/testcontainers (like pg-schema-diff does)
-2. Adding hazard classification/risk levels to validation results
-3. Integration with the lint system for unified hazard reporting
