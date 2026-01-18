@@ -344,7 +344,7 @@ mod tests {
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         schema.functions.insert(
@@ -360,7 +360,7 @@ mod tests {
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -386,7 +386,7 @@ mod tests {
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         schema.functions.insert(
@@ -402,7 +402,7 @@ mod tests {
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -433,7 +433,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         schema.tables.insert(
@@ -452,7 +452,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         schema.tables.insert(
@@ -471,7 +471,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -520,7 +520,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         schema.tables.insert(
@@ -539,7 +539,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -552,7 +552,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         schema.views.insert(
@@ -564,7 +564,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -615,7 +615,7 @@ mod tests {
                 values: vec!["active".to_string(), "inactive".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         schema.enums.insert(
@@ -626,7 +626,7 @@ mod tests {
                 values: vec!["a".to_string(), "b".to_string()],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -642,7 +642,7 @@ mod tests {
                 check_constraints: vec![],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         schema.domains.insert(
@@ -657,7 +657,7 @@ mod tests {
                 check_constraints: vec![],
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -676,7 +676,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         schema.sequences.insert(
@@ -694,7 +694,7 @@ mod tests {
                 owned_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -942,7 +942,7 @@ mod tests {
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         schema.tables.insert(
@@ -961,7 +961,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -988,7 +988,7 @@ mod tests {
                 security: SecurityType::Invoker,
                 config_params: vec![],
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         schema.tables.insert(
@@ -1007,7 +1007,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
         schema.views.insert(
@@ -1019,7 +1019,7 @@ mod tests {
                 materialized: false,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -1058,7 +1058,7 @@ mod tests {
                 partition_by: None,
 
                 owner: None,
-            grants: Vec::new(),
+                grants: Vec::new(),
             },
         );
 
@@ -1399,7 +1399,7 @@ mod tests {
                         security: SecurityType::Invoker,
                         config_params: vec![],
                         owner: None,
-            grants: Vec::new(),
+                        grants: Vec::new(),
                     },
                 )]
                 .into_iter()
@@ -1470,7 +1470,7 @@ mod tests {
                         security: SecurityType::Invoker,
                         config_params: vec![],
                         owner: None,
-            grants: Vec::new(),
+                        grants: Vec::new(),
                     },
                 )]
                 .into_iter()

@@ -1898,22 +1898,10 @@ mod tests {
 
     #[test]
     fn privilege_from_pg_string_maps_all_privileges() {
-        assert_eq!(
-            privilege_from_pg_string("SELECT"),
-            Some(Privilege::Select)
-        );
-        assert_eq!(
-            privilege_from_pg_string("INSERT"),
-            Some(Privilege::Insert)
-        );
-        assert_eq!(
-            privilege_from_pg_string("UPDATE"),
-            Some(Privilege::Update)
-        );
-        assert_eq!(
-            privilege_from_pg_string("DELETE"),
-            Some(Privilege::Delete)
-        );
+        assert_eq!(privilege_from_pg_string("SELECT"), Some(Privilege::Select));
+        assert_eq!(privilege_from_pg_string("INSERT"), Some(Privilege::Insert));
+        assert_eq!(privilege_from_pg_string("UPDATE"), Some(Privilege::Update));
+        assert_eq!(privilege_from_pg_string("DELETE"), Some(Privilege::Delete));
         assert_eq!(
             privilege_from_pg_string("TRUNCATE"),
             Some(Privilege::Truncate)
@@ -1931,10 +1919,7 @@ mod tests {
             privilege_from_pg_string("EXECUTE"),
             Some(Privilege::Execute)
         );
-        assert_eq!(
-            privilege_from_pg_string("CREATE"),
-            Some(Privilege::Create)
-        );
+        assert_eq!(privilege_from_pg_string("CREATE"), Some(Privilege::Create));
         assert_eq!(privilege_from_pg_string("UNKNOWN"), None);
     }
 }

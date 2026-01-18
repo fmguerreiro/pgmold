@@ -92,11 +92,14 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
                 object_kind: crate::diff::OwnerObjectKind::Function,
                 schema: function.schema.clone(),
                 name: function.name.clone(),
-                args: Some(function.arguments
-                    .iter()
-                    .map(|a| crate::model::normalize_pg_type(&a.data_type))
-                    .collect::<Vec<_>>()
-                    .join(", ")),
+                args: Some(
+                    function
+                        .arguments
+                        .iter()
+                        .map(|a| crate::model::normalize_pg_type(&a.data_type))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
                 new_owner: owner.clone(),
             });
         }
@@ -373,8 +376,8 @@ mod tests {
                 max_value: Some(9223372036854775807),
                 cache: Some(1),
                 cycle: false,
-            owner: None,
-            grants: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
                 owned_by: Some(SequenceOwner {
                     table_schema: "public".to_string(),
                     table_name: "users".to_string(),
