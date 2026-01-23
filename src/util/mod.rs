@@ -1472,7 +1472,6 @@ mod tests {
     }
 }
 
-
 #[test]
 fn view_with_left_join_and_public_schema_prefix() {
     // Bug report: View with LEFT JOINs and public. prefix
