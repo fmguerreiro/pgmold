@@ -797,6 +797,12 @@ fn normalize_join(j: &sqlparser::ast::Join) -> sqlparser::ast::Join {
             sqlparser::ast::JoinOperator::Inner(c) => {
                 sqlparser::ast::JoinOperator::Inner(normalize_join_constraint(c))
             }
+            sqlparser::ast::JoinOperator::Left(c) => {
+                sqlparser::ast::JoinOperator::Left(normalize_join_constraint(c))
+            }
+            sqlparser::ast::JoinOperator::Right(c) => {
+                sqlparser::ast::JoinOperator::Right(normalize_join_constraint(c))
+            }
             sqlparser::ast::JoinOperator::LeftOuter(c) => {
                 sqlparser::ast::JoinOperator::LeftOuter(normalize_join_constraint(c))
             }
@@ -1464,6 +1470,20 @@ mod tests {
             "Complex policy EXISTS with nested JOINs should match.\nSchema: {schema_expr}\nDB: {db_expr}"
         );
     }
+}
+
+
+#[test]
+fn view_with_left_join_and_public_schema_prefix() {
+    // Bug report: View with LEFT JOINs and public. prefix
+    // PostgreSQL stores without public. prefix and with nested parens
+    let schema_form = r#"SELECT e.id, u.email FROM public.enterprises e LEFT JOIN public.user_roles ur ON ur.enterprise_id = e.id LEFT JOIN auth.users u ON u.id = ur.user_id"#;
+    let db_form = r#"SELECT e.id, u.email FROM ((enterprises e LEFT JOIN user_roles ur ON (ur.enterprise_id = e.id)) LEFT JOIN auth.users u ON (u.id = ur.user_id))"#;
+
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "View with LEFT JOINs and public prefix should match.\nSchema: {schema_form}\nDB: {db_form}"
+    );
 }
 
 #[test]
