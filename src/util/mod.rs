@@ -750,53 +750,64 @@ fn normalize_table_factor(factor: &sqlparser::ast::TableFactor) -> sqlparser::as
 fn normalize_table_with_joins(
     twj: &sqlparser::ast::TableWithJoins,
 ) -> sqlparser::ast::TableWithJoins {
-    // First normalize the relation
-    let normalized_relation = normalize_table_factor(&twj.relation);
+    // If the relation is a NestedJoin without an alias, flatten it by combining joins
+    // PostgreSQL stores `((A JOIN B) JOIN C)` as NestedJoin { inner: {A, [B]}, joins: [C] }
+    // We want to produce: { relation: A, joins: [B, C] }
+    if let sqlparser::ast::TableFactor::NestedJoin {
+        table_with_joins: inner_twj,
+        alias,
+    } = &twj.relation
+    {
+        if alias.is_none() && !inner_twj.joins.is_empty() {
+            // Recursively normalize the inner TableWithJoins first
+            let normalized_inner = normalize_table_with_joins(inner_twj);
 
-    // If the relation is a NestedJoin with joins inside, and we have no outer joins,
-    // unwrap the nested join to flatten the structure
-    // PostgreSQL often does: FROM (table1 JOIN table2 ON ...) instead of FROM table1 JOIN table2 ON ...
-    if twj.joins.is_empty() {
-        if let sqlparser::ast::TableFactor::NestedJoin {
-            table_with_joins,
-            alias,
-        } = &twj.relation
-        {
-            if alias.is_none() && !table_with_joins.joins.is_empty() {
-                // Unwrap: return the normalized inner TableWithJoins
-                return normalize_table_with_joins(table_with_joins);
-            }
+            // Normalize outer joins
+            let normalized_outer_joins: Vec<_> = twj.joins.iter().map(normalize_join).collect();
+
+            // Combine: inner joins first, then outer joins
+            let mut combined_joins = normalized_inner.joins;
+            combined_joins.extend(normalized_outer_joins);
+
+            return sqlparser::ast::TableWithJoins {
+                relation: normalized_inner.relation,
+                joins: combined_joins,
+            };
         }
     }
 
+    // Standard case: normalize relation and joins separately
+    let normalized_relation = normalize_table_factor(&twj.relation);
+
     sqlparser::ast::TableWithJoins {
         relation: normalized_relation,
-        joins: twj
-            .joins
-            .iter()
-            .map(|j| sqlparser::ast::Join {
-                relation: normalize_table_factor(&j.relation),
-                global: j.global,
-                join_operator: match &j.join_operator {
-                    sqlparser::ast::JoinOperator::Join(c) => {
-                        sqlparser::ast::JoinOperator::Join(normalize_join_constraint(c))
-                    }
-                    sqlparser::ast::JoinOperator::Inner(c) => {
-                        sqlparser::ast::JoinOperator::Inner(normalize_join_constraint(c))
-                    }
-                    sqlparser::ast::JoinOperator::LeftOuter(c) => {
-                        sqlparser::ast::JoinOperator::LeftOuter(normalize_join_constraint(c))
-                    }
-                    sqlparser::ast::JoinOperator::RightOuter(c) => {
-                        sqlparser::ast::JoinOperator::RightOuter(normalize_join_constraint(c))
-                    }
-                    sqlparser::ast::JoinOperator::FullOuter(c) => {
-                        sqlparser::ast::JoinOperator::FullOuter(normalize_join_constraint(c))
-                    }
-                    other => other.clone(),
-                },
-            })
-            .collect(),
+        joins: twj.joins.iter().map(normalize_join).collect(),
+    }
+}
+
+/// Normalizes a single Join.
+fn normalize_join(j: &sqlparser::ast::Join) -> sqlparser::ast::Join {
+    sqlparser::ast::Join {
+        relation: normalize_table_factor(&j.relation),
+        global: j.global,
+        join_operator: match &j.join_operator {
+            sqlparser::ast::JoinOperator::Join(c) => {
+                sqlparser::ast::JoinOperator::Join(normalize_join_constraint(c))
+            }
+            sqlparser::ast::JoinOperator::Inner(c) => {
+                sqlparser::ast::JoinOperator::Inner(normalize_join_constraint(c))
+            }
+            sqlparser::ast::JoinOperator::LeftOuter(c) => {
+                sqlparser::ast::JoinOperator::LeftOuter(normalize_join_constraint(c))
+            }
+            sqlparser::ast::JoinOperator::RightOuter(c) => {
+                sqlparser::ast::JoinOperator::RightOuter(normalize_join_constraint(c))
+            }
+            sqlparser::ast::JoinOperator::FullOuter(c) => {
+                sqlparser::ast::JoinOperator::FullOuter(normalize_join_constraint(c))
+            }
+            other => other.clone(),
+        },
     }
 }
 
@@ -1355,6 +1366,102 @@ mod tests {
         assert_eq!(
             canon_db, canon_parsed,
             "DB: {canon_db} vs Parsed: {canon_parsed}"
+        );
+    }
+
+    // P0 Tests: Nested JOIN Flattening
+    // These tests verify that PostgreSQL's nested JOIN structures are correctly
+    // flattened to match the flat structure in schema files.
+
+    #[test]
+    fn flatten_double_nested_join() {
+        // Primary bug case: PostgreSQL stores `((A JOIN B) JOIN C)` but schema has `A JOIN B JOIN C`
+        // The current code only unwraps when twj.joins.is_empty() which doesn't handle this case.
+        let schema_form = "SELECT 1 FROM a JOIN b ON a.id = b.id JOIN c ON b.id = c.id";
+        let db_form = "SELECT 1 FROM ((a JOIN b ON a.id = b.id) JOIN c ON b.id = c.id)";
+
+        assert!(
+            views_semantically_equal(schema_form, db_form),
+            "Double nested JOIN should equal flat JOIN. Schema: {schema_form}, DB: {db_form}"
+        );
+    }
+
+    #[test]
+    fn flatten_double_nested_join_with_public_schema() {
+        // The exact bug scenario: cross-schema policy references with multiple JOINs
+        // PostgreSQL wraps in nested parens and removes public. prefix
+        let schema_form = r#"SELECT 1 FROM mrv."Cultivation" c JOIN public.user_roles ur1 ON ur1.user_id = c.owner_id JOIN public.user_roles ur2 ON ur2.farmer_id = ur1.farmer_id"#;
+        let db_form = r#"SELECT 1 FROM ((mrv."Cultivation" c JOIN user_roles ur1 ON ur1.user_id = c.owner_id) JOIN user_roles ur2 ON ur2.farmer_id = ur1.farmer_id)"#;
+
+        assert!(
+            views_semantically_equal(schema_form, db_form),
+            "Cross-schema nested JOIN with public prefix removal should match.\nSchema: {schema_form}\nDB: {db_form}"
+        );
+    }
+
+    #[test]
+    fn policy_expression_with_nested_join() {
+        // Real-world policy expression pattern with EXISTS and multiple JOINs
+        // This is the pattern that caused the original bug report
+        let schema_expr = r#"EXISTS (SELECT 1 FROM public.user_roles ur1 JOIN public.user_roles ur2 ON ur2.farmer_id = ur1.farmer_id WHERE ur1.user_id = auth.uid())"#;
+        let db_expr = r#"(EXISTS ( SELECT 1 FROM (user_roles ur1 JOIN user_roles ur2 ON ((ur2.farmer_id = ur1.farmer_id))) WHERE (ur1.user_id = auth.uid())))"#;
+
+        assert!(
+            expressions_semantically_equal(schema_expr, db_expr),
+            "Policy EXISTS with nested JOINs should be semantically equal.\nSchema: {schema_expr}\nDB: {db_expr}"
+        );
+    }
+
+    #[test]
+    fn flatten_triple_nested_join() {
+        // Deep nesting: `(((A JOIN B) JOIN C) JOIN D)` should equal `A JOIN B JOIN C JOIN D`
+        let schema_form =
+            "SELECT 1 FROM a JOIN b ON a.id = b.id JOIN c ON b.id = c.id JOIN d ON c.id = d.id";
+        let db_form =
+            "SELECT 1 FROM (((a JOIN b ON a.id = b.id) JOIN c ON b.id = c.id) JOIN d ON c.id = d.id)";
+
+        assert!(
+            views_semantically_equal(schema_form, db_form),
+            "Triple nested JOIN should equal flat JOIN.\nSchema: {schema_form}\nDB: {db_form}"
+        );
+    }
+
+    #[test]
+    fn nested_join_preserves_join_types() {
+        // Preserve LEFT/INNER join types during flattening
+        let schema_form = "SELECT 1 FROM a INNER JOIN b ON a.id = b.id LEFT JOIN c ON b.id = c.id";
+        let db_form = "SELECT 1 FROM ((a INNER JOIN b ON a.id = b.id) LEFT JOIN c ON b.id = c.id)";
+
+        assert!(
+            views_semantically_equal(schema_form, db_form),
+            "Nested JOINs should preserve join types.\nSchema: {schema_form}\nDB: {db_form}"
+        );
+    }
+
+    #[test]
+    fn nested_join_with_aliases() {
+        // Preserve table aliases during flattening
+        let schema_form =
+            "SELECT 1 FROM users u JOIN roles r ON u.id = r.user_id JOIN perms p ON r.id = p.role_id";
+        let db_form =
+            "SELECT 1 FROM ((users u JOIN roles r ON u.id = r.user_id) JOIN perms p ON r.id = p.role_id)";
+
+        assert!(
+            views_semantically_equal(schema_form, db_form),
+            "Nested JOINs should preserve aliases.\nSchema: {schema_form}\nDB: {db_form}"
+        );
+    }
+
+    #[test]
+    fn exists_subquery_with_nested_joins_in_policy() {
+        // Complex policy pattern: EXISTS with multiple JOINs inside
+        // This is the exact pattern from the bug report about mrv."Cultivation" policies
+        let schema_expr = r#"EXISTS (SELECT 1 FROM mrv."Farm" f JOIN public.user_roles ur1 ON ur1.user_id = auth.uid() JOIN public.user_roles ur2 ON ur2.farmer_id = ur1.farmer_id WHERE f.id = "Cultivation"."farmId")"#;
+        let db_expr = r#"(EXISTS ( SELECT 1 FROM ((mrv."Farm" f JOIN user_roles ur1 ON ((ur1.user_id = auth.uid()))) JOIN user_roles ur2 ON ((ur2.farmer_id = ur1.farmer_id))) WHERE (f.id = "farmId")))"#;
+
+        assert!(
+            expressions_semantically_equal(schema_expr, db_expr),
+            "Complex policy EXISTS with nested JOINs should match.\nSchema: {schema_expr}\nDB: {db_expr}"
         );
     }
 }
