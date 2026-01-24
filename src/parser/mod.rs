@@ -1,4 +1,9 @@
+mod dependencies;
 mod loader;
+
+pub use dependencies::{
+    extract_function_references, extract_table_references, topological_sort, ObjectRef,
+};
 pub use loader::load_schema_sources;
 
 use crate::model::*;

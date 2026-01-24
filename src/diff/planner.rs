@@ -1,5 +1,6 @@
 use super::MigrationOp;
 use crate::model::qualified_name;
+use crate::parser::extract_function_references;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Plan and order migration operations for safe execution.
@@ -141,6 +142,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     let create_tables = order_table_creates(create_tables);
     let drop_tables = order_table_drops(drop_tables);
+    let create_functions = order_function_creates(create_functions);
     let create_views = order_view_creates(create_views);
 
     let mut result = Vec::new();
@@ -428,6 +430,60 @@ fn extract_relation_references(query: &str) -> HashSet<String> {
     }
 
     refs
+}
+
+/// Topologically sort CreateFunction operations by function dependencies.
+/// Functions that call other functions must be created after those functions.
+/// This is critical for LANGUAGE sql functions which are validated at CREATE time.
+fn order_function_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+    if ops.is_empty() {
+        return ops;
+    }
+
+    let mut function_ops: HashMap<String, MigrationOp> = HashMap::new();
+    let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
+
+    // Collect all function signatures being created
+    let function_sigs: HashSet<String> = ops
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::CreateFunction(ref func) = op {
+                let args: Vec<&str> = func.arguments.iter().map(|a| a.data_type.as_str()).collect();
+                Some(qualified_name(&func.schema, &format!("{}({})", func.name, args.join(", "))))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for op in ops {
+        if let MigrationOp::CreateFunction(ref func) = op {
+            let args: Vec<&str> = func.arguments.iter().map(|a| a.data_type.as_str()).collect();
+            let func_sig = qualified_name(&func.schema, &format!("{}({})", func.name, args.join(", ")));
+
+            // Extract function references from body
+            let func_refs = extract_function_references(&func.body, &func.schema);
+
+            // Build dependencies: only functions being created in this migration
+            let mut deps = HashSet::new();
+            for func_ref in func_refs {
+                let ref_qualified = format!("{}.{}", func_ref.schema, func_ref.name);
+
+                // Try to match against function signatures being created
+                // We match by schema.name prefix since we don't know the full signature from the reference
+                for sig in &function_sigs {
+                    if sig.starts_with(&format!("{}(", ref_qualified)) && *sig != func_sig {
+                        deps.insert(sig.clone());
+                    }
+                }
+            }
+
+            dependencies.insert(func_sig.clone(), deps);
+            function_ops.insert(func_sig, op);
+        }
+    }
+
+    topological_sort(&function_ops, &dependencies)
 }
 
 /// Topologically sort CreateView operations by their dependencies.

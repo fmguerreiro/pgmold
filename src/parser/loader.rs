@@ -1,9 +1,49 @@
-use super::parse_sql_file;
+use super::{extract_function_references, extract_table_references, parse_sql_file, topological_sort};
 use crate::model::Schema;
 use crate::util::{Result, SchemaError};
 use glob::glob;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+
+/// Extract all object references from a schema.
+/// Returns a set of qualified names (schema.name) that this schema depends on.
+fn extract_schema_dependencies(schema: &Schema) -> HashSet<String> {
+    let mut deps = HashSet::new();
+
+    // Extract dependencies from functions
+    for func in schema.functions.values() {
+        let func_refs = extract_function_references(&func.body, &func.schema);
+        let table_refs = extract_table_references(&func.body, &func.schema);
+
+        for r in func_refs {
+            deps.insert(format!("{}.{}", r.schema, r.name));
+        }
+        for r in table_refs {
+            deps.insert(format!("{}.{}", r.schema, r.name));
+        }
+    }
+
+    // Extract dependencies from views
+    for view in schema.views.values() {
+        let table_refs = extract_table_references(&view.query, &view.schema);
+        let func_refs = extract_function_references(&view.query, &view.schema);
+
+        for r in table_refs {
+            deps.insert(format!("{}.{}", r.schema, r.name));
+        }
+        for r in func_refs {
+            deps.insert(format!("{}.{}", r.schema, r.name));
+        }
+    }
+
+    // Extract dependencies from triggers (function reference)
+    for trigger in schema.triggers.values() {
+        deps.insert(format!("{}.{}", trigger.function_schema, trigger.function_name));
+        deps.insert(format!("{}.{}", trigger.target_schema, trigger.target_name));
+    }
+
+    deps
+}
 
 /// Load schemas from multiple sources (files, directories, glob patterns).
 /// Returns a merged Schema or error on conflicts.
@@ -39,6 +79,14 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
         let schema = parse_sql_file(file_str)?;
         file_schemas.push((file.clone(), schema));
     }
+
+    // Sort files topologically based on dependencies
+    file_schemas = topological_sort(
+        file_schemas,
+        |item| item.0.to_string_lossy().to_string(),
+        |item| extract_schema_dependencies(&item.1),
+    )
+    .map_err(|e| SchemaError::ParseError(format!("Dependency resolution failed: {e}")))?;
 
     // Merge all schemas with conflict tracking
     let mut merged = Schema::new();
@@ -872,6 +920,74 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
             func.owner,
             Some("func_owner".to_string()),
             "Function owner should be applied from separate file"
+        );
+    }
+
+    #[test]
+    fn language_sql_functions_ordered_by_dependencies() {
+        // Regression test for GitHub issue:
+        // LANGUAGE sql functions are validated at CREATE time, so dependencies
+        // must be created first regardless of alphabetical file ordering.
+        //
+        // This test verifies:
+        // 1. is_admin() depends on is_admin_jwt()
+        // 2. Files are named to fail with alphabetical ordering:
+        //    - is_admin.sql < is_admin_jwt.sql alphabetically
+        //    - But is_admin_jwt() must be created FIRST
+        // 3. Topological sort resolves this correctly
+
+        let temp = TempDir::new().unwrap();
+
+        // File that would come FIRST alphabetically
+        fs::write(
+            temp.path().join("is_admin.sql"),
+            r#"
+            CREATE OR REPLACE FUNCTION auth.is_admin() RETURNS boolean
+            LANGUAGE sql
+            STABLE
+            AS $$
+                SELECT auth.is_admin_jwt()
+            $$;
+        "#,
+        )
+        .unwrap();
+
+        // File that would come SECOND alphabetically but must be created FIRST
+        fs::write(
+            temp.path().join("is_admin_jwt.sql"),
+            r#"
+            CREATE SCHEMA IF NOT EXISTS auth;
+
+            CREATE OR REPLACE FUNCTION auth.is_admin_jwt() RETURNS boolean
+            LANGUAGE sql
+            STABLE
+            AS $$
+                SELECT true
+            $$;
+        "#,
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", temp.path().display())];
+        let result = load_schema_sources(&sources);
+
+        // Should succeed - topological sort ensures is_admin_jwt is loaded first
+        assert!(
+            result.is_ok(),
+            "Topological sort should resolve function dependencies. Error: {:?}",
+            result.err()
+        );
+
+        let schema = result.unwrap();
+
+        // Verify both functions were loaded
+        assert!(
+            schema.functions.contains_key("auth.is_admin()"),
+            "is_admin() should be loaded"
+        );
+        assert!(
+            schema.functions.contains_key("auth.is_admin_jwt()"),
+            "is_admin_jwt() should be loaded"
         );
     }
 }
