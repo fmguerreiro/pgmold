@@ -28,6 +28,20 @@ impl ObjectRef {
     pub fn qualified_name(&self) -> String {
         format!("{}.{}", self.schema, self.name)
     }
+
+    fn from_object_name(name: &sqlparser::ast::ObjectName, default_schema: &str) -> Self {
+        let parts: Vec<String> = name
+            .0
+            .iter()
+            .map(|p| p.to_string().trim_matches('"').to_string())
+            .collect();
+
+        if parts.len() == 1 {
+            Self::new(default_schema, &parts[0])
+        } else {
+            Self::new(&parts[0], &parts[1])
+        }
+    }
 }
 
 /// Extract function references from a SQL body using sqlparser.
@@ -210,26 +224,11 @@ fn extract_functions_from_table_factor(
 fn extract_functions_from_expr(expr: &Expr, default_schema: &str, refs: &mut HashSet<ObjectRef>) {
     match expr {
         Expr::Function(f) => {
-            // Extract the function name
-            let parts: Vec<String> = f
-                .name
-                .0
-                .iter()
-                .map(|p| p.to_string().trim_matches('"').to_string())
-                .collect();
-
-            let (schema, name) = if parts.len() == 1 {
-                (default_schema.to_string(), parts[0].clone())
-            } else {
-                (parts[0].clone(), parts[1].clone())
-            };
-
-            // Filter out common PostgreSQL built-in functions
-            if !is_builtin_function(&name) {
-                refs.insert(ObjectRef::new(schema, name));
+            let obj_ref = ObjectRef::from_object_name(&f.name, default_schema);
+            if !is_builtin_function(&obj_ref.name) {
+                refs.insert(obj_ref);
             }
 
-            // Also recurse into function arguments
             if let FunctionArguments::List(FunctionArgumentList { args, .. }) = &f.args {
                 for arg in args {
                     if let FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) = arg {
@@ -369,17 +368,7 @@ fn extract_tables_from_table_factor(
 ) {
     match factor {
         TableFactor::Table { name, .. } => {
-            let parts: Vec<String> = name
-                .0
-                .iter()
-                .map(|p| p.to_string().trim_matches('"').to_string())
-                .collect();
-            let (schema, table_name) = if parts.len() == 1 {
-                (default_schema.to_string(), parts[0].clone())
-            } else {
-                (parts[0].clone(), parts[1].clone())
-            };
-            refs.insert(ObjectRef::new(schema, table_name));
+            refs.insert(ObjectRef::from_object_name(name, default_schema));
         }
         TableFactor::Derived { subquery, .. } => {
             extract_tables_from_query(subquery, default_schema, refs);

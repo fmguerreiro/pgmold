@@ -7,38 +7,27 @@ use glob::glob;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-/// Extract all object references from a schema.
-/// Returns a set of qualified names (schema.name) that this schema depends on.
 fn extract_schema_dependencies(schema: &Schema) -> HashSet<String> {
     let mut deps = HashSet::new();
 
-    // Extract dependencies from functions
     for func in schema.functions.values() {
-        let func_refs = extract_function_references(&func.body, &func.schema);
-        let table_refs = extract_table_references(&func.body, &func.schema);
-
-        for r in func_refs {
-            deps.insert(format!("{}.{}", r.schema, r.name));
+        for r in extract_function_references(&func.body, &func.schema) {
+            deps.insert(r.qualified_name());
         }
-        for r in table_refs {
-            deps.insert(format!("{}.{}", r.schema, r.name));
+        for r in extract_table_references(&func.body, &func.schema) {
+            deps.insert(r.qualified_name());
         }
     }
 
-    // Extract dependencies from views
     for view in schema.views.values() {
-        let table_refs = extract_table_references(&view.query, &view.schema);
-        let func_refs = extract_function_references(&view.query, &view.schema);
-
-        for r in table_refs {
-            deps.insert(format!("{}.{}", r.schema, r.name));
+        for r in extract_table_references(&view.query, &view.schema) {
+            deps.insert(r.qualified_name());
         }
-        for r in func_refs {
-            deps.insert(format!("{}.{}", r.schema, r.name));
+        for r in extract_function_references(&view.query, &view.schema) {
+            deps.insert(r.qualified_name());
         }
     }
 
-    // Extract dependencies from triggers (function reference)
     for trigger in schema.triggers.values() {
         deps.insert(format!(
             "{}.{}",
