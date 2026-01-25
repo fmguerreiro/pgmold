@@ -619,11 +619,14 @@ fn generate_alter_column(table: &str, column: &str, changes: &ColumnChanges) -> 
     let mut statements = Vec::new();
 
     if let Some(ref data_type) = changes.data_type {
+        let type_str = format_pg_type(data_type);
         statements.push(format!(
-            "ALTER TABLE {} ALTER COLUMN {} TYPE {};",
+            "ALTER TABLE {} ALTER COLUMN {} TYPE {} USING {}::{};",
             qualified,
             quote_ident(column),
-            format_pg_type(data_type)
+            type_str,
+            quote_ident(column),
+            type_str
         ));
     }
 
@@ -1470,7 +1473,7 @@ mod tests {
     }
 
     #[test]
-    fn alter_column_type_generates_valid_sql() {
+    fn alter_column_type_generates_valid_sql_with_using_clause() {
         let ops = vec![MigrationOp::AlterColumn {
             table: "public.users".to_string(),
             column: "name".to_string(),
@@ -1485,7 +1488,27 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER TABLE \"public\".\"users\" ALTER COLUMN \"name\" TYPE VARCHAR(100);"
+            "ALTER TABLE \"public\".\"users\" ALTER COLUMN \"name\" TYPE VARCHAR(100) USING \"name\"::VARCHAR(100);"
+        );
+    }
+
+    #[test]
+    fn alter_column_text_to_uuid_generates_using_clause() {
+        let ops = vec![MigrationOp::AlterColumn {
+            table: "public.users".to_string(),
+            column: "id".to_string(),
+            changes: ColumnChanges {
+                data_type: Some(PgType::Uuid),
+                nullable: None,
+                default: None,
+            },
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"users\" ALTER COLUMN \"id\" TYPE UUID USING \"id\"::UUID;"
         );
     }
 
