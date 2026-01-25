@@ -448,8 +448,15 @@ fn order_function_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
         .iter()
         .filter_map(|op| {
             if let MigrationOp::CreateFunction(ref func) = op {
-                let args: Vec<&str> = func.arguments.iter().map(|a| a.data_type.as_str()).collect();
-                Some(qualified_name(&func.schema, &format!("{}({})", func.name, args.join(", "))))
+                let args: Vec<&str> = func
+                    .arguments
+                    .iter()
+                    .map(|a| a.data_type.as_str())
+                    .collect();
+                Some(qualified_name(
+                    &func.schema,
+                    &format!("{}({})", func.name, args.join(", ")),
+                ))
             } else {
                 None
             }
@@ -458,8 +465,13 @@ fn order_function_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     for op in ops {
         if let MigrationOp::CreateFunction(ref func) = op {
-            let args: Vec<&str> = func.arguments.iter().map(|a| a.data_type.as_str()).collect();
-            let func_sig = qualified_name(&func.schema, &format!("{}({})", func.name, args.join(", ")));
+            let args: Vec<&str> = func
+                .arguments
+                .iter()
+                .map(|a| a.data_type.as_str())
+                .collect();
+            let func_sig =
+                qualified_name(&func.schema, &format!("{}({})", func.name, args.join(", ")));
 
             // Extract function references from body
             let func_refs = extract_function_references(&func.body, &func.schema);
@@ -472,7 +484,7 @@ fn order_function_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
                 // Try to match against function signatures being created
                 // We match by schema.name prefix since we don't know the full signature from the reference
                 for sig in &function_sigs {
-                    if sig.starts_with(&format!("{}(", ref_qualified)) && *sig != func_sig {
+                    if sig.starts_with(&format!("{ref_qualified}(")) && *sig != func_sig {
                         deps.insert(sig.clone());
                     }
                 }

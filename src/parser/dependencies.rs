@@ -2,7 +2,6 @@
 ///
 /// This module parses SQL DDL to identify object references, enabling
 /// topological sorting for correct creation order.
-
 use regex::Regex;
 use std::collections::HashSet;
 
@@ -37,7 +36,8 @@ pub fn extract_function_references(body: &str, default_schema: &str) -> HashSet<
 
     // Match function calls: schema.name() or name()
     // Matches: auth.jwt(), is_admin(), check_permission(args)
-    let func_pattern = Regex::new(r"(?i)(?:([a-z_][a-z0-9_]*)\.)?\s*([a-z_][a-z0-9_]*)\s*\(").unwrap();
+    let func_pattern =
+        Regex::new(r"(?i)(?:([a-z_][a-z0-9_]*)\.)?\s*([a-z_][a-z0-9_]*)\s*\(").unwrap();
 
     for cap in func_pattern.captures_iter(body) {
         let schema = cap.get(1).map(|m| m.as_str()).unwrap_or(default_schema);
@@ -122,7 +122,8 @@ pub fn extract_table_references(body: &str, default_schema: &str) -> HashSet<Obj
     let mut refs = HashSet::new();
 
     // Pattern 1: FROM clause - FROM schema.table or FROM table
-    let from_pattern = Regex::new(r"(?i)\bFROM\s+(?:([a-z_][a-z0-9_]*)\.)?\s*([a-z_][a-z0-9_]*)\b").unwrap();
+    let from_pattern =
+        Regex::new(r"(?i)\bFROM\s+(?:([a-z_][a-z0-9_]*)\.)?\s*([a-z_][a-z0-9_]*)\b").unwrap();
     for cap in from_pattern.captures_iter(body) {
         let schema = cap.get(1).map(|m| m.as_str()).unwrap_or(default_schema);
         let name = cap.get(2).map(|m| m.as_str()).unwrap();
@@ -130,7 +131,8 @@ pub fn extract_table_references(body: &str, default_schema: &str) -> HashSet<Obj
     }
 
     // Pattern 2: JOIN clause - JOIN schema.table or JOIN table
-    let join_pattern = Regex::new(r"(?i)\bJOIN\s+(?:([a-z_][a-z0-9_]*)\.)?\s*([a-z_][a-z0-9_]*)\b").unwrap();
+    let join_pattern =
+        Regex::new(r"(?i)\bJOIN\s+(?:([a-z_][a-z0-9_]*)\.)?\s*([a-z_][a-z0-9_]*)\b").unwrap();
     for cap in join_pattern.captures_iter(body) {
         let schema = cap.get(1).map(|m| m.as_str()).unwrap_or(default_schema);
         let name = cap.get(2).map(|m| m.as_str()).unwrap();
@@ -138,7 +140,9 @@ pub fn extract_table_references(body: &str, default_schema: &str) -> HashSet<Obj
     }
 
     // Pattern 3: INSERT INTO - INSERT INTO schema.table or INSERT INTO table
-    let insert_pattern = Regex::new(r"(?i)\bINSERT\s+INTO\s+(?:([a-z_][a-z0-9_]*)\.)?\s*([a-z_][a-z0-9_]*)\b").unwrap();
+    let insert_pattern =
+        Regex::new(r"(?i)\bINSERT\s+INTO\s+(?:([a-z_][a-z0-9_]*)\.)?\s*([a-z_][a-z0-9_]*)\b")
+            .unwrap();
     for cap in insert_pattern.captures_iter(body) {
         let schema = cap.get(1).map(|m| m.as_str()).unwrap_or(default_schema);
         let name = cap.get(2).map(|m| m.as_str()).unwrap();
@@ -146,7 +150,8 @@ pub fn extract_table_references(body: &str, default_schema: &str) -> HashSet<Obj
     }
 
     // Pattern 4: UPDATE - UPDATE schema.table or UPDATE table
-    let update_pattern = Regex::new(r"(?i)\bUPDATE\s+(?:([a-z_][a-z0-9_]*)\.)?\s*([a-z_][a-z0-9_]*)\b").unwrap();
+    let update_pattern =
+        Regex::new(r"(?i)\bUPDATE\s+(?:([a-z_][a-z0-9_]*)\.)?\s*([a-z_][a-z0-9_]*)\b").unwrap();
     for cap in update_pattern.captures_iter(body) {
         let schema = cap.get(1).map(|m| m.as_str()).unwrap_or(default_schema);
         let name = cap.get(2).map(|m| m.as_str()).unwrap();
@@ -199,7 +204,7 @@ where
         for dep_key in deps {
             // Only track dependencies that are in our item set
             if item_map.contains_key(&dep_key) {
-                graph.entry(dep_key.clone()).or_insert_with(Vec::new).push(key.clone());
+                graph.entry(dep_key.clone()).or_default().push(key.clone());
                 *in_degree.entry(key.clone()).or_insert(0) += 1;
             }
         }
@@ -235,10 +240,10 @@ where
         Ok(sorted)
     } else {
         // Find items involved in cycle for error message
-        let processed: HashSet<String> = sorted.iter().map(|item| get_key(item)).collect();
+        let processed: HashSet<String> = sorted.iter().map(&get_key).collect();
         let unprocessed: Vec<String> = items
             .iter()
-            .map(|item| get_key(item))
+            .map(get_key)
             .filter(|key| !processed.contains(key))
             .collect();
 
