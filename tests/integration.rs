@@ -4822,53 +4822,33 @@ async fn cross_file_fk_text_to_uuid_multifile() {
     let ops = compute_diff(&current_schema, &target_schema);
     let planned = plan_migration(ops);
 
-    // Print the planned operations
-    println!("Planned operations:");
-    for (i, op) in planned.iter().enumerate() {
-        match op {
-            MigrationOp::AlterColumn {
-                table,
-                column,
-                changes,
-            } => {
-                println!("  {i}: AlterColumn {table} {column} {changes:?}");
-            }
-            MigrationOp::AddForeignKey { table, foreign_key } => {
-                println!("  {}: AddForeignKey {} -> {}", i, table, foreign_key.name);
-            }
-            _ => {
-                println!("  {i}: {op:?}");
-            }
-        }
-    }
+    // Verify AlterColumn operations come before AddForeignKey
+    let mut found_alter_columns = false;
+    let mut found_add_fk = false;
+    let mut alter_after_fk = false;
 
-    // Generate SQL
-    let sql = generate_sql(&planned);
-    println!("\nGenerated SQL:");
-    for stmt in &sql {
-        println!("  {stmt}");
-    }
-
-    // Verify ordering
-    let mut last_alter_idx: Option<usize> = None;
-    let mut fk_idx: Option<usize> = None;
-
-    for (i, op) in planned.iter().enumerate() {
+    for op in &planned {
         match op {
             MigrationOp::AlterColumn { .. } => {
-                last_alter_idx = Some(i);
+                found_alter_columns = true;
+                if found_add_fk {
+                    alter_after_fk = true;
+                }
             }
             MigrationOp::AddForeignKey { .. } => {
-                fk_idx = Some(i);
+                found_add_fk = true;
             }
             _ => {}
         }
     }
 
-    if let (Some(alter), Some(fk)) = (last_alter_idx, fk_idx) {
-        assert!(
-            alter < fk,
-            "Last AlterColumn at {alter} should be before AddForeignKey at {fk}"
-        );
-    }
+    assert!(
+        found_alter_columns,
+        "Should have AlterColumn operations for TEXT->UUID conversion"
+    );
+    assert!(found_add_fk, "Should have AddForeignKey operation");
+    assert!(
+        !alter_after_fk,
+        "AlterColumn operations should come BEFORE AddForeignKey"
+    );
 }
