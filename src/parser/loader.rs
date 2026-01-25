@@ -1,4 +1,6 @@
-use super::{extract_function_references, extract_table_references, parse_sql_file, topological_sort};
+use super::{
+    extract_function_references, extract_table_references, parse_sql_file, topological_sort,
+};
 use crate::model::Schema;
 use crate::util::{Result, SchemaError};
 use glob::glob;
@@ -38,7 +40,10 @@ fn extract_schema_dependencies(schema: &Schema) -> HashSet<String> {
 
     // Extract dependencies from triggers (function reference)
     for trigger in schema.triggers.values() {
-        deps.insert(format!("{}.{}", trigger.function_schema, trigger.function_name));
+        deps.insert(format!(
+            "{}.{}",
+            trigger.function_schema, trigger.function_name
+        ));
         deps.insert(format!("{}.{}", trigger.target_schema, trigger.target_name));
     }
 
