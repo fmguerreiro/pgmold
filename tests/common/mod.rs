@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 pub use pgmold::diff::{compute_diff, planner::plan_migration, MigrationOp};
 pub use pgmold::drift::detect_drift;
 pub use pgmold::expand_contract::generate_version_schema_ops;
