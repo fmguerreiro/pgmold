@@ -58,4 +58,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run integration tests
-        run: cargo test --test integration --all-features
+        run: cargo test --all-features --test '*' -- --test-threads=4
