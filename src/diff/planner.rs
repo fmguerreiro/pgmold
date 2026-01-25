@@ -1,5 +1,6 @@
 use super::MigrationOp;
 use crate::model::qualified_name;
+use crate::parser::{extract_function_references, extract_table_references};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Plan and order migration operations for safe execution.
@@ -141,6 +142,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     let create_tables = order_table_creates(create_tables);
     let drop_tables = order_table_drops(drop_tables);
+    let create_functions = order_function_creates(create_functions);
     let create_views = order_view_creates(create_views);
 
     let mut result = Vec::new();
@@ -280,199 +282,96 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result
 }
 
-/// Extract table/view references from a SQL query string.
-/// Returns qualified names (schema.name) of all referenced relations.
 fn extract_relation_references(query: &str) -> HashSet<String> {
-    use sqlparser::ast::{
-        Expr, FunctionArg, FunctionArgExpr, FunctionArgumentList, FunctionArguments, Query, Select,
-        SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
-    };
-    use sqlparser::dialect::PostgreSqlDialect;
-    use sqlparser::parser::Parser;
-
-    let mut refs = HashSet::new();
-    let dialect = PostgreSqlDialect {};
-
-    let sql = format!("SELECT * FROM ({query}) AS subq");
-    let parse_result = Parser::parse_sql(&dialect, &sql);
-
-    let statements = match parse_result {
-        Ok(stmts) => stmts,
-        Err(_) => match Parser::parse_sql(&dialect, query) {
-            Ok(stmts) => stmts,
-            Err(_) => return refs,
-        },
-    };
-
-    fn extract_from_expr(expr: &Expr, refs: &mut HashSet<String>) {
-        match expr {
-            Expr::Subquery(query) => extract_from_query(query, refs),
-            Expr::InSubquery { subquery, .. } => extract_from_query(subquery, refs),
-            Expr::Exists { subquery, .. } => extract_from_query(subquery, refs),
-            Expr::BinaryOp { left, right, .. } => {
-                extract_from_expr(left, refs);
-                extract_from_expr(right, refs);
-            }
-            Expr::UnaryOp { expr, .. } => extract_from_expr(expr, refs),
-            Expr::Nested(e) => extract_from_expr(e, refs),
-            Expr::Case {
-                operand,
-                conditions,
-                else_result,
-                ..
-            } => {
-                if let Some(op) = operand {
-                    extract_from_expr(op, refs);
-                }
-                for cw in conditions {
-                    extract_from_expr(&cw.condition, refs);
-                    extract_from_expr(&cw.result, refs);
-                }
-                if let Some(else_r) = else_result {
-                    extract_from_expr(else_r, refs);
-                }
-            }
-            Expr::Function(f) => {
-                if let FunctionArguments::List(FunctionArgumentList { args, .. }) = &f.args {
-                    for arg in args {
-                        if let FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) = arg {
-                            extract_from_expr(e, refs);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn extract_from_select(select: &Select, refs: &mut HashSet<String>) {
-        for table_with_joins in &select.from {
-            extract_from_table_with_joins(table_with_joins, refs);
-        }
-
-        if let Some(selection) = &select.selection {
-            extract_from_expr(selection, refs);
-        }
-
-        for item in &select.projection {
-            if let SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } = item {
-                extract_from_expr(expr, refs);
-            }
-        }
-
-        if let Some(having) = &select.having {
-            extract_from_expr(having, refs);
-        }
-    }
-
-    fn extract_from_table_with_joins(twj: &TableWithJoins, refs: &mut HashSet<String>) {
-        extract_from_table_factor(&twj.relation, refs);
-        for join in &twj.joins {
-            extract_from_table_factor(&join.relation, refs);
-        }
-    }
-
-    fn extract_from_table_factor(factor: &TableFactor, refs: &mut HashSet<String>) {
-        match factor {
-            TableFactor::Table { name, .. } => {
-                let parts: Vec<String> = name
-                    .0
-                    .iter()
-                    .map(|p| p.to_string().trim_matches('"').to_string())
-                    .collect();
-                let qualified = if parts.len() == 1 {
-                    format!("public.{}", parts[0])
-                } else {
-                    format!("{}.{}", parts[0], parts[1])
-                };
-                refs.insert(qualified);
-            }
-            TableFactor::Derived { subquery, .. } => {
-                extract_from_query(subquery, refs);
-            }
-            TableFactor::NestedJoin {
-                table_with_joins, ..
-            } => {
-                extract_from_table_with_joins(table_with_joins, refs);
-            }
-            _ => {}
-        }
-    }
-
-    fn extract_from_query(query: &Query, refs: &mut HashSet<String>) {
-        if let Some(with) = &query.with {
-            for cte in &with.cte_tables {
-                extract_from_query(&cte.query, refs);
-            }
-        }
-
-        extract_from_set_expr(&query.body, refs);
-    }
-
-    fn extract_from_set_expr(set_expr: &SetExpr, refs: &mut HashSet<String>) {
-        match set_expr {
-            SetExpr::Select(select) => extract_from_select(select, refs),
-            SetExpr::Query(query) => extract_from_query(query, refs),
-            SetExpr::SetOperation { left, right, .. } => {
-                extract_from_set_expr(left, refs);
-                extract_from_set_expr(right, refs);
-            }
-            _ => {}
-        }
-    }
-
-    for statement in &statements {
-        if let Statement::Query(query) = statement {
-            extract_from_query(query, &mut refs);
-        }
-    }
-
-    refs
+    extract_table_references(query, "public")
+        .into_iter()
+        .map(|r| r.qualified_name())
+        .collect()
 }
 
-/// Topologically sort CreateView operations by their dependencies.
-/// Views that are referenced by other views must be created first.
+fn order_function_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+    if ops.is_empty() {
+        return ops;
+    }
+
+    fn func_signature(func: &crate::model::Function) -> String {
+        let args: Vec<&str> = func
+            .arguments
+            .iter()
+            .map(|a| a.data_type.as_str())
+            .collect();
+        qualified_name(&func.schema, &format!("{}({})", func.name, args.join(", ")))
+    }
+
+    let function_sigs: HashSet<String> = ops
+        .iter()
+        .filter_map(|op| match op {
+            MigrationOp::CreateFunction(func) => Some(func_signature(func)),
+            _ => None,
+        })
+        .collect();
+
+    let mut function_ops: HashMap<String, MigrationOp> = HashMap::new();
+    let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for op in ops {
+        if let MigrationOp::CreateFunction(ref func) = op {
+            let func_sig = func_signature(func);
+            let func_sig_for_filter = func_sig.clone();
+
+            let deps: HashSet<String> = extract_function_references(&func.body, &func.schema)
+                .into_iter()
+                .flat_map(|func_ref| {
+                    let ref_prefix = format!("{}.{}(", func_ref.schema, func_ref.name);
+                    let exclude_sig = func_sig_for_filter.clone();
+                    function_sigs
+                        .iter()
+                        .filter(move |sig| sig.starts_with(&ref_prefix) && **sig != exclude_sig)
+                        .cloned()
+                })
+                .collect();
+
+            dependencies.insert(func_sig.clone(), deps);
+            function_ops.insert(func_sig, op);
+        }
+    }
+
+    topological_sort(&function_ops, &dependencies)
+}
+
 fn order_view_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     if ops.is_empty() {
         return ops;
     }
 
-    let mut view_ops: HashMap<String, MigrationOp> = HashMap::new();
-    let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
-
     let view_names: HashSet<String> = ops
         .iter()
-        .filter_map(|op| {
-            if let MigrationOp::CreateView(ref view) = op {
-                Some(qualified_name(&view.schema, &view.name))
-            } else {
-                None
-            }
+        .filter_map(|op| match op {
+            MigrationOp::CreateView(view) => Some(qualified_name(&view.schema, &view.name)),
+            _ => None,
         })
         .collect();
 
+    let mut view_ops: HashMap<String, MigrationOp> = HashMap::new();
+    let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
+
     for op in ops {
         if let MigrationOp::CreateView(ref view) = op {
-            let qualified_view_name = qualified_name(&view.schema, &view.name);
+            let view_name = qualified_name(&view.schema, &view.name);
 
-            let all_refs = extract_relation_references(&view.query);
-
-            // Only keep references to views being created; tables are created first
-            let deps: HashSet<String> = all_refs
+            let deps: HashSet<String> = extract_relation_references(&view.query)
                 .into_iter()
-                .filter(|r| view_names.contains(r) && *r != qualified_view_name)
+                .filter(|r| view_names.contains(r) && *r != view_name)
                 .collect();
 
-            dependencies.insert(qualified_view_name.clone(), deps);
-            view_ops.insert(qualified_view_name, op);
+            dependencies.insert(view_name.clone(), deps);
+            view_ops.insert(view_name, op);
         }
     }
 
     topological_sort(&view_ops, &dependencies)
 }
 
-/// Topologically sort CreateTable operations by FK dependencies.
-/// Tables that are referenced by other tables must be created first.
 fn order_table_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     if ops.is_empty() {
         return ops;
@@ -483,39 +382,27 @@ fn order_table_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     for op in ops {
         if let MigrationOp::CreateTable(ref table) = op {
-            let qualified_table_name = qualified_name(&table.schema, &table.name);
-            let mut deps = HashSet::new();
-            for fk in &table.foreign_keys {
-                let qualified_ref = qualified_name(&fk.referenced_schema, &fk.referenced_table);
-                if qualified_ref != qualified_table_name {
-                    deps.insert(qualified_ref);
-                }
-            }
-            dependencies.insert(qualified_table_name.clone(), deps);
-            table_ops.insert(qualified_table_name, op);
+            let table_name = qualified_name(&table.schema, &table.name);
+
+            let deps: HashSet<String> = table
+                .foreign_keys
+                .iter()
+                .map(|fk| qualified_name(&fk.referenced_schema, &fk.referenced_table))
+                .filter(|r| *r != table_name)
+                .collect();
+
+            dependencies.insert(table_name.clone(), deps);
+            table_ops.insert(table_name, op);
         }
     }
 
     topological_sort(&table_ops, &dependencies)
 }
 
-/// Reverse topologically sort DropTable operations.
-/// Tables that reference other tables must be dropped first.
 fn order_table_drops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     if ops.is_empty() {
         return ops;
     }
-
-    let table_names: Vec<String> = ops
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::DropTable(name) = op {
-                Some(name.clone())
-            } else {
-                None
-            }
-        })
-        .collect();
 
     let mut table_ops: HashMap<String, MigrationOp> = HashMap::new();
     let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
@@ -529,17 +416,7 @@ fn order_table_drops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     let mut sorted = topological_sort(&table_ops, &dependencies);
     sorted.reverse();
-
     sorted
-        .into_iter()
-        .filter(|op| {
-            if let MigrationOp::DropTable(name) = op {
-                table_names.contains(name)
-            } else {
-                false
-            }
-        })
-        .collect()
 }
 
 /// Perform Kahn's algorithm for topological sort.
