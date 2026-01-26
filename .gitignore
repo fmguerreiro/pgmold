@@ -3,6 +3,7 @@ target/
 # AI tooling
 CLAUDE.md
 .beads/
+.auto-claude/
 .worktrees/
 notes/
 .DS_Store
