@@ -1583,7 +1583,7 @@ fn generate_trigger_ops_for_type_changes(
         };
 
         // Find triggers in the from schema
-        for (_, trigger) in &from.triggers {
+        for trigger in from.triggers.values() {
             if trigger.target_schema == table_schema && trigger.target_name == table_only_name {
                 // Skip if already being dropped
                 if existing_trigger_drops.contains(&(
