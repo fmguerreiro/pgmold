@@ -242,7 +242,7 @@ pub enum EnumValuePosition {
 }
 
 use crate::model::{parse_qualified_name, Schema};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 fn diff_grants_for_object(
     from_grants: &[Grant],
@@ -1353,6 +1353,20 @@ fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     ops
 }
 
+/// Extract tables that have columns with type changes from migration ops.
+fn tables_with_type_changes(ops: &[MigrationOp]) -> HashSet<String> {
+    ops.iter()
+        .filter_map(|op| {
+            if let MigrationOp::AlterColumn { table, changes, .. } = op {
+                if changes.data_type.is_some() {
+                    return Some(table.clone());
+                }
+            }
+            None
+        })
+        .collect()
+}
+
 /// Generate FK drop/add ops for columns with type changes.
 /// PostgreSQL requires FKs to be dropped before altering the type of columns they reference.
 fn generate_fk_ops_for_type_changes(
@@ -1360,11 +1374,9 @@ fn generate_fk_ops_for_type_changes(
     from: &crate::model::Schema,
     to: &crate::model::Schema,
 ) -> Vec<MigrationOp> {
-    use std::collections::HashSet;
-
     let mut additional_ops = Vec::new();
 
-    // Find all columns with type changes
+    // Find all columns with type changes (FK needs column-level granularity)
     let type_change_columns: HashSet<(String, String)> = ops
         .iter()
         .filter_map(|op| {
@@ -1458,24 +1470,10 @@ fn generate_policy_ops_for_type_changes(
     from: &crate::model::Schema,
     to: &crate::model::Schema,
 ) -> Vec<MigrationOp> {
-    use std::collections::HashSet;
-
     let mut additional_ops = Vec::new();
 
-    // Find all tables that have columns with type changes
-    let tables_with_type_changes: HashSet<String> = ops
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::AlterColumn { table, changes, .. } = op {
-                if changes.data_type.is_some() {
-                    return Some(table.clone());
-                }
-            }
-            None
-        })
-        .collect();
-
-    if tables_with_type_changes.is_empty() {
+    let affected_tables = tables_with_type_changes(ops);
+    if affected_tables.is_empty() {
         return additional_ops;
     }
 
@@ -1492,7 +1490,7 @@ fn generate_policy_ops_for_type_changes(
         .collect();
 
     // For each table with type changes, drop and recreate all policies
-    for table_name in &tables_with_type_changes {
+    for table_name in &affected_tables {
         if let Some(from_table) = from.tables.get(table_name) {
             for policy in &from_table.policies {
                 let qualified_table = qualified_name(&from_table.schema, &from_table.name);
@@ -1534,24 +1532,10 @@ fn generate_trigger_ops_for_type_changes(
     from: &crate::model::Schema,
     to: &crate::model::Schema,
 ) -> Vec<MigrationOp> {
-    use std::collections::HashSet;
-
     let mut additional_ops = Vec::new();
 
-    // Find all tables that have columns with type changes
-    let tables_with_type_changes: HashSet<String> = ops
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::AlterColumn { table, changes, .. } = op {
-                if changes.data_type.is_some() {
-                    return Some(table.clone());
-                }
-            }
-            None
-        })
-        .collect();
-
-    if tables_with_type_changes.is_empty() {
+    let affected_tables = tables_with_type_changes(ops);
+    if affected_tables.is_empty() {
         return additional_ops;
     }
 
@@ -1573,7 +1557,7 @@ fn generate_trigger_ops_for_type_changes(
         .collect();
 
     // For each table with type changes, drop and recreate all triggers
-    for table_name in &tables_with_type_changes {
+    for table_name in &affected_tables {
         // Parse schema and table from qualified name
         let parts: Vec<&str> = table_name.split('.').collect();
         let (table_schema, table_only_name) = if parts.len() == 2 {
@@ -1628,24 +1612,11 @@ fn generate_view_ops_for_type_changes(
     to: &crate::model::Schema,
 ) -> Vec<MigrationOp> {
     use crate::parser::extract_table_references;
-    use std::collections::HashSet;
 
     let mut additional_ops = Vec::new();
 
-    // Find all tables that have columns with type changes
-    let tables_with_type_changes: HashSet<String> = ops
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::AlterColumn { table, changes, .. } = op {
-                if changes.data_type.is_some() {
-                    return Some(table.clone());
-                }
-            }
-            None
-        })
-        .collect();
-
-    if tables_with_type_changes.is_empty() {
+    let affected_tables = tables_with_type_changes(ops);
+    if affected_tables.is_empty() {
         return additional_ops;
     }
 
@@ -1669,7 +1640,7 @@ fn generate_view_ops_for_type_changes(
         // Check if any referenced table has type changes
         let view_affected = referenced_tables
             .iter()
-            .any(|ref_table| tables_with_type_changes.contains(&ref_table.qualified_name()));
+            .any(|ref_table| affected_tables.contains(&ref_table.qualified_name()));
 
         if view_affected {
             let qualified_view_name = qualified_name(&view.schema, &view.name);
