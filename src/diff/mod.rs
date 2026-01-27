@@ -416,6 +416,10 @@ pub fn compute_diff_with_flags(
         }
     }
 
+    // Generate FK drop/add ops for columns with type changes
+    // This ensures FKs are dropped before ALTER COLUMN TYPE
+    ops.extend(generate_fk_ops_for_type_changes(&ops, from, to));
+
     ops
 }
 
@@ -1335,6 +1339,100 @@ fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     }
 
     ops
+}
+
+/// Generate FK drop/add ops for columns with type changes.
+/// PostgreSQL requires FKs to be dropped before altering the type of columns they reference.
+fn generate_fk_ops_for_type_changes(
+    ops: &[MigrationOp],
+    from: &crate::model::Schema,
+    to: &crate::model::Schema,
+) -> Vec<MigrationOp> {
+    use std::collections::HashSet;
+
+    let mut additional_ops = Vec::new();
+
+    // Find all columns with type changes
+    let type_change_columns: HashSet<(String, String)> = ops
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::AlterColumn {
+                table,
+                column,
+                changes,
+            } = op
+            {
+                if changes.data_type.is_some() {
+                    return Some((table.clone(), column.clone()));
+                }
+            }
+            None
+        })
+        .collect();
+
+    if type_change_columns.is_empty() {
+        return additional_ops;
+    }
+
+    // Collect existing FK ops to avoid duplicates
+    let existing_fk_drops: HashSet<(String, String)> = ops
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropForeignKey {
+                table,
+                foreign_key_name,
+            } = op
+            {
+                Some((table.clone(), foreign_key_name.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Check all FKs in the source schema for affected columns
+    for (table_name, table) in &from.tables {
+        for fk in &table.foreign_keys {
+            // Check if FK's columns or referenced columns are being type-changed
+            let qualified_table = qualified_name(&table.schema, &table.name);
+            let referenced_table = qualified_name(&fk.referenced_schema, &fk.referenced_table);
+
+            let fk_affected = fk.columns.iter().any(|col| {
+                type_change_columns.contains(&(qualified_table.clone(), col.clone()))
+            }) || fk.referenced_columns.iter().any(|col| {
+                type_change_columns.contains(&(referenced_table.clone(), col.clone()))
+            });
+
+            if fk_affected && !existing_fk_drops.contains(&(qualified_table.clone(), fk.name.clone())) {
+                // Get the FK from the target schema (if it exists)
+                let target_fk = to
+                    .tables
+                    .get(table_name)
+                    .and_then(|t| t.foreign_keys.iter().find(|f| f.name == fk.name));
+
+                additional_ops.push(MigrationOp::DropForeignKey {
+                    table: qualified_table.clone(),
+                    foreign_key_name: fk.name.clone(),
+                });
+
+                // Re-add the FK (use target FK if available, otherwise use from FK)
+                if let Some(target_fk) = target_fk {
+                    let target_table = to.tables.get(table_name).unwrap();
+                    additional_ops.push(MigrationOp::AddForeignKey {
+                        table: qualified_name(&target_table.schema, &target_table.name),
+                        foreign_key: target_fk.clone(),
+                    });
+                } else {
+                    additional_ops.push(MigrationOp::AddForeignKey {
+                        table: qualified_table,
+                        foreign_key: fk.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    additional_ops
 }
 
 fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
@@ -4082,6 +4180,127 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 assert_eq!(name, "users");
             }
             _ => panic!("Expected DropVersionView"),
+        }
+    }
+
+    #[test]
+    fn generates_fk_ops_for_column_type_changes() {
+        use crate::model::{Column, ForeignKey, ReferentialAction};
+
+        // Create source schema: users.id TEXT, posts.user_id TEXT with FK
+        let mut from = empty_schema();
+        let mut users_table = simple_table("users");
+        users_table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Text,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        from.tables.insert("public.users".to_string(), users_table);
+
+        let mut posts_table = simple_table("posts");
+        posts_table.columns.insert(
+            "user_id".to_string(),
+            Column {
+                name: "user_id".to_string(),
+                data_type: PgType::Text,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        posts_table.foreign_keys.push(ForeignKey {
+            name: "posts_user_id_fkey".to_string(),
+            columns: vec!["user_id".to_string()],
+            referenced_table: "users".to_string(),
+            referenced_schema: "public".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete: ReferentialAction::NoAction,
+            on_update: ReferentialAction::NoAction,
+        });
+        from.tables.insert("public.posts".to_string(), posts_table);
+
+        // Create target schema: same structure but UUID types
+        let mut to = empty_schema();
+        let mut users_table_uuid = simple_table("users");
+        users_table_uuid.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Uuid,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        to.tables.insert("public.users".to_string(), users_table_uuid);
+
+        let mut posts_table_uuid = simple_table("posts");
+        posts_table_uuid.columns.insert(
+            "user_id".to_string(),
+            Column {
+                name: "user_id".to_string(),
+                data_type: PgType::Uuid,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        posts_table_uuid.foreign_keys.push(ForeignKey {
+            name: "posts_user_id_fkey".to_string(),
+            columns: vec!["user_id".to_string()],
+            referenced_table: "users".to_string(),
+            referenced_schema: "public".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete: ReferentialAction::NoAction,
+            on_update: ReferentialAction::NoAction,
+        });
+        to.tables.insert("public.posts".to_string(), posts_table_uuid);
+
+        // Compute diff
+        let ops = compute_diff(&from, &to);
+
+        // Should have: AlterColumn for users.id, AlterColumn for posts.user_id,
+        // DropForeignKey and AddForeignKey for posts_user_id_fkey
+        let alter_column_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .collect();
+        let drop_fk_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropForeignKey { .. }))
+            .collect();
+        let add_fk_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AddForeignKey { .. }))
+            .collect();
+
+        assert_eq!(
+            alter_column_ops.len(),
+            2,
+            "Should have 2 AlterColumn ops"
+        );
+        assert_eq!(
+            drop_fk_ops.len(),
+            1,
+            "Should have 1 DropForeignKey op for FK affected by type change"
+        );
+        assert_eq!(
+            add_fk_ops.len(),
+            1,
+            "Should have 1 AddForeignKey op to restore FK after type change"
+        );
+
+        // Verify the FK ops reference the correct FK
+        if let MigrationOp::DropForeignKey { foreign_key_name, .. } = &drop_fk_ops[0] {
+            assert_eq!(foreign_key_name, "posts_user_id_fkey");
+        }
+        if let MigrationOp::AddForeignKey { foreign_key, .. } = &add_fk_ops[0] {
+            assert_eq!(foreign_key.name, "posts_user_id_fkey");
         }
     }
 }
