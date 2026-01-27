@@ -1,4 +1,4 @@
-use super::MigrationOp;
+use super::{extract_function_references_from_policy, function_names_match, MigrationOp};
 use crate::model::qualified_name;
 use crate::parser::{extract_function_references, extract_table_references};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -189,13 +189,50 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
         })
         .collect();
 
-    let (drop_policies_for_type_change, drop_policies_permanent): (Vec<_>, Vec<_>) =
+    let (drop_policies_temp, drop_policies_permanent): (Vec<_>, Vec<_>) =
         drop_policies.into_iter().partition(|op| {
             if let MigrationOp::DropPolicy { table, name } = op {
                 policy_create_keys.contains(&(table.clone(), name.clone()))
             } else {
                 false
             }
+        });
+
+    // Further split temporary policy drops:
+    // 1. For function changes - needed before DROP FUNCTION
+    // 2. For type changes - needed before ALTER COLUMN TYPE
+    // Detect by checking if the recreated policy references a function being dropped
+    let dropped_function_names: HashSet<String> = drop_functions
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropFunction { name, .. } = op {
+                Some(name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let (drop_policies_for_function_change, drop_policies_for_type_change): (Vec<_>, Vec<_>) =
+        drop_policies_temp.into_iter().partition(|op| {
+            if let MigrationOp::DropPolicy { table, name } = op {
+                // Find the matching CreatePolicy to check what functions it references
+                if let Some(MigrationOp::CreatePolicy(policy)) =
+                    create_policies.iter().find(|cop| {
+                        matches!(cop, MigrationOp::CreatePolicy(p) if
+                            qualified_name(&p.table_schema, &p.table) == *table && p.name == *name)
+                    })
+                {
+                    // Check if the policy references any dropped function
+                    let refs = extract_function_references_from_policy(policy);
+                    return refs.iter().any(|func_ref| {
+                        dropped_function_names
+                            .iter()
+                            .any(|dropped| function_names_match(dropped, func_ref))
+                    });
+                }
+            }
+            false
         });
 
     // Split trigger drops into two groups:
@@ -268,6 +305,9 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(add_enum_values);
     result.extend(create_domains);
     result.extend(create_sequences_without_owner);
+    // Drop policies that depend on functions being dropped - must come before DROP FUNCTION
+    // PostgreSQL requires dependent policies to be dropped before the function they reference
+    result.extend(drop_policies_for_function_change);
     // Drop functions before creating new ones - needed when modifying a function
     // that requires DROP + CREATE (e.g., parameter name changes, return type changes)
     result.extend(drop_functions);

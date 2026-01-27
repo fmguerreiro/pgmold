@@ -240,3 +240,134 @@ async fn policy_with_function_calls_round_trip_no_diff() {
         "Should have no policy diff after apply. Got: {policy_ops:?}"
     );
 }
+
+#[tokio::test]
+async fn policy_dropped_when_referenced_function_changes() {
+    // Bug test: When a function used by a policy is modified (drop/recreate),
+    // the policy must be dropped first, then recreated after the function.
+    // Otherwise DROP FUNCTION fails with "cannot drop function because policy depends on it"
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Initial schema: function with argument + policy that uses it
+    let initial_sql = r#"
+        CREATE FUNCTION public.check_user_access(user_name TEXT DEFAULT 'admin')
+        RETURNS BOOLEAN
+        LANGUAGE SQL
+        STABLE
+        AS $$
+            SELECT current_user = user_name
+        $$;
+
+        CREATE TABLE public.secure_data (
+            id BIGINT PRIMARY KEY,
+            data TEXT NOT NULL
+        );
+
+        ALTER TABLE public.secure_data ENABLE ROW LEVEL SECURITY;
+
+        CREATE POLICY "access_policy" ON public.secure_data
+        FOR SELECT
+        TO public
+        USING (public.check_user_access());
+    "#;
+
+    // Apply initial schema
+    let initial_schema = parse_sql_string(initial_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &initial_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Modified schema: argument default changed (triggers drop/recreate)
+    let modified_sql = r#"
+        CREATE FUNCTION public.check_user_access(user_name TEXT DEFAULT 'superuser')
+        RETURNS BOOLEAN
+        LANGUAGE SQL
+        STABLE
+        AS $$
+            SELECT current_user = user_name
+        $$;
+
+        CREATE TABLE public.secure_data (
+            id BIGINT PRIMARY KEY,
+            data TEXT NOT NULL
+        );
+
+        ALTER TABLE public.secure_data ENABLE ROW LEVEL SECURITY;
+
+        CREATE POLICY "access_policy" ON public.secure_data
+        FOR SELECT
+        TO public
+        USING (public.check_user_access());
+    "#;
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let modified_schema = parse_sql_string(modified_sql).unwrap();
+    let diff_ops = compute_diff(&db_schema, &modified_schema);
+    let planned = plan_migration(diff_ops);
+
+    // Verify the operations include:
+    // 1. DropPolicy for access_policy
+    // 2. DropFunction for check_user_access
+    // 3. CreateFunction for check_user_access
+    // 4. CreatePolicy for access_policy
+    let has_drop_policy = planned
+        .iter()
+        .any(|op| matches!(op, MigrationOp::DropPolicy { name, .. } if name == "access_policy"));
+    let has_drop_function = planned.iter().any(|op| {
+        matches!(op, MigrationOp::DropFunction { name, .. } if name == "public.check_user_access")
+    });
+    let has_create_function = planned
+        .iter()
+        .any(|op| matches!(op, MigrationOp::CreateFunction(f) if f.name == "check_user_access"));
+    let has_create_policy = planned
+        .iter()
+        .any(|op| matches!(op, MigrationOp::CreatePolicy(p) if p.name == "access_policy"));
+
+    assert!(
+        has_drop_function,
+        "Should have DropFunction op. Got: {planned:?}"
+    );
+    assert!(
+        has_create_function,
+        "Should have CreateFunction op. Got: {planned:?}"
+    );
+    assert!(
+        has_drop_policy,
+        "Should have DropPolicy for policy referencing the function. Got: {planned:?}"
+    );
+    assert!(
+        has_create_policy,
+        "Should have CreatePolicy to recreate policy after function. Got: {planned:?}"
+    );
+
+    // Verify ordering: DropPolicy must come before DropFunction
+    let drop_policy_pos = planned.iter().position(
+        |op| matches!(op, MigrationOp::DropPolicy { name, .. } if name == "access_policy"),
+    );
+    let drop_function_pos = planned.iter().position(|op| {
+        matches!(op, MigrationOp::DropFunction { name, .. } if name == "public.check_user_access")
+    });
+
+    if let (Some(policy_pos), Some(func_pos)) = (drop_policy_pos, drop_function_pos) {
+        assert!(
+            policy_pos < func_pos,
+            "DropPolicy must come BEFORE DropFunction. Policy at {policy_pos}, Function at {func_pos}"
+        );
+    }
+
+    // The migration should actually apply without errors
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Migration statement failed: {stmt}: {e}"));
+    }
+}
