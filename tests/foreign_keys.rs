@@ -348,3 +348,150 @@ async fn cross_file_fk_text_to_uuid_multifile() {
         "AlterColumn operations should come BEFORE AddForeignKey"
     );
 }
+
+/// Bug reproduction: FK constraints not dropped during ALTER COLUMN TYPE
+/// when FK exists in both database and target schema
+#[tokio::test]
+async fn fk_type_change_with_existing_fk_in_database() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create schema
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS mrv")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    // Initial state: Tables with TEXT columns AND FK constraint already exists
+    let initial_sql = r#"
+        CREATE TABLE "mrv"."CompoundUnit" (
+            "id" TEXT NOT NULL,
+            CONSTRAINT "CompoundUnit_pkey" PRIMARY KEY ("id")
+        );
+
+        CREATE TABLE "mrv"."FertilizerApplication" (
+            "id" TEXT NOT NULL,
+            "compoundUnitId" TEXT,
+            CONSTRAINT "FertilizerApplication_pkey" PRIMARY KEY ("id")
+        );
+
+        ALTER TABLE "mrv"."FertilizerApplication"
+        ADD CONSTRAINT "FertilizerApplication_compoundUnitId_fkey"
+        FOREIGN KEY ("compoundUnitId") REFERENCES "mrv"."CompoundUnit"("id");
+    "#;
+
+    for stmt in initial_sql.split(';').filter(|s| !s.trim().is_empty()) {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Insert test data (valid UUIDs as TEXT)
+    sqlx::query(
+        "INSERT INTO \"mrv\".\"CompoundUnit\" (\"id\") VALUES ('550e8400-e29b-41d4-a716-446655440000')",
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO \"mrv\".\"FertilizerApplication\" (\"id\", \"compoundUnitId\") VALUES ('660e8400-e29b-41d4-a716-446655440001', '550e8400-e29b-41d4-a716-446655440000')",
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    // Target state: UUID columns with SAME FK constraint
+    let target_schema = parse_sql_string(
+        r#"
+        CREATE SCHEMA IF NOT EXISTS "mrv";
+
+        CREATE TABLE "mrv"."CompoundUnit" (
+            "id" UUID NOT NULL,
+            CONSTRAINT "CompoundUnit_pkey" PRIMARY KEY ("id")
+        );
+
+        CREATE TABLE "mrv"."FertilizerApplication" (
+            "id" UUID NOT NULL,
+            "compoundUnitId" UUID,
+            CONSTRAINT "FertilizerApplication_pkey" PRIMARY KEY ("id")
+        );
+
+        ALTER TABLE "mrv"."FertilizerApplication"
+        ADD CONSTRAINT "FertilizerApplication_compoundUnitId_fkey"
+        FOREIGN KEY ("compoundUnitId") REFERENCES "mrv"."CompoundUnit"("id");
+        "#,
+    )
+    .unwrap();
+
+    let current_schema = introspect_schema(&connection, &["mrv".to_string()], false)
+        .await
+        .unwrap();
+
+    let ops = compute_diff(&current_schema, &target_schema);
+    let planned = plan_migration(ops);
+
+    // Check for expected operations
+    let alter_column_ops: Vec<_> = planned
+        .iter()
+        .filter(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+        .collect();
+    let drop_fk_ops: Vec<_> = planned
+        .iter()
+        .filter(|op| matches!(op, MigrationOp::DropForeignKey { .. }))
+        .collect();
+    let add_fk_ops: Vec<_> = planned
+        .iter()
+        .filter(|op| matches!(op, MigrationOp::AddForeignKey { .. }))
+        .collect();
+
+    // This is the bug: drop_fk_ops is empty when it shouldn't be
+    assert!(
+        !alter_column_ops.is_empty(),
+        "Should have AlterColumn operations for TEXT->UUID conversion"
+    );
+    assert!(
+        !drop_fk_ops.is_empty(),
+        "Should have DropForeignKey operation for FK affected by type change"
+    );
+    assert!(
+        !add_fk_ops.is_empty(),
+        "Should have AddForeignKey operation to restore FK after type change"
+    );
+
+    // Generate and apply SQL
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Failed to execute: {stmt}: {e}"));
+    }
+
+    // Verify column types are now UUID
+    let compound_col_type: (String,) = sqlx::query_as(
+        r#"
+        SELECT data_type FROM information_schema.columns
+        WHERE table_schema = 'mrv' AND table_name = 'CompoundUnit' AND column_name = 'id'
+        "#,
+    )
+    .fetch_one(connection.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        compound_col_type.0, "uuid",
+        "CompoundUnit.id should be UUID type"
+    );
+
+    // Verify FK constraint still exists
+    let fk_count: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*) FROM information_schema.table_constraints
+        WHERE constraint_type = 'FOREIGN KEY'
+        AND table_schema = 'mrv'
+        AND table_name = 'FertilizerApplication'
+        AND constraint_name = 'FertilizerApplication_compoundUnitId_fkey'
+        "#,
+    )
+    .fetch_one(connection.pool())
+    .await
+    .unwrap();
+    assert_eq!(fk_count.0, 1, "FK constraint should exist after migration");
+}

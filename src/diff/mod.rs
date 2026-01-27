@@ -4541,6 +4541,195 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
     }
 
     #[test]
+    fn generates_fk_ops_for_column_type_changes_non_public_schema() {
+        use crate::model::{Column, ForeignKey, ReferentialAction, Table};
+
+        // Reproduces bug: FK constraints not dropped during ALTER COLUMN TYPE in non-public schema
+        // Schema: mrv.CompoundUnit (id TEXT -> UUID)
+        //         mrv.FertilizerApplication (compoundUnitId TEXT -> UUID) with FK to CompoundUnit
+
+        // Create source schema (database state): TEXT columns with FK
+        let mut from = empty_schema();
+
+        let mut compound_unit = Table {
+            name: "CompoundUnit".to_string(),
+            schema: "mrv".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+            partition_by: None,
+            owner: None,
+            grants: Vec::new(),
+        };
+        compound_unit.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Text,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        from.tables
+            .insert("mrv.CompoundUnit".to_string(), compound_unit);
+
+        let mut fertilizer_app = Table {
+            name: "FertilizerApplication".to_string(),
+            schema: "mrv".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+            partition_by: None,
+            owner: None,
+            grants: Vec::new(),
+        };
+        fertilizer_app.columns.insert(
+            "compoundUnitId".to_string(),
+            Column {
+                name: "compoundUnitId".to_string(),
+                data_type: PgType::Text,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        fertilizer_app.foreign_keys.push(ForeignKey {
+            name: "FertilizerApplication_compoundUnitId_fkey".to_string(),
+            columns: vec!["compoundUnitId".to_string()],
+            referenced_table: "CompoundUnit".to_string(),
+            referenced_schema: "mrv".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete: ReferentialAction::NoAction,
+            on_update: ReferentialAction::NoAction,
+        });
+        from.tables
+            .insert("mrv.FertilizerApplication".to_string(), fertilizer_app);
+
+        // Create target schema (SQL files): UUID columns with FK
+        let mut to = empty_schema();
+
+        let mut compound_unit_uuid = Table {
+            name: "CompoundUnit".to_string(),
+            schema: "mrv".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+            partition_by: None,
+            owner: None,
+            grants: Vec::new(),
+        };
+        compound_unit_uuid.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Uuid,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        to.tables
+            .insert("mrv.CompoundUnit".to_string(), compound_unit_uuid);
+
+        let mut fertilizer_app_uuid = Table {
+            name: "FertilizerApplication".to_string(),
+            schema: "mrv".to_string(),
+            columns: BTreeMap::new(),
+            indexes: Vec::new(),
+            primary_key: None,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+            partition_by: None,
+            owner: None,
+            grants: Vec::new(),
+        };
+        fertilizer_app_uuid.columns.insert(
+            "compoundUnitId".to_string(),
+            Column {
+                name: "compoundUnitId".to_string(),
+                data_type: PgType::Uuid,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        fertilizer_app_uuid.foreign_keys.push(ForeignKey {
+            name: "FertilizerApplication_compoundUnitId_fkey".to_string(),
+            columns: vec!["compoundUnitId".to_string()],
+            referenced_table: "CompoundUnit".to_string(),
+            referenced_schema: "mrv".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete: ReferentialAction::NoAction,
+            on_update: ReferentialAction::NoAction,
+        });
+        to.tables
+            .insert("mrv.FertilizerApplication".to_string(), fertilizer_app_uuid);
+
+        // Compute diff
+        let ops = compute_diff(&from, &to);
+
+        // Should have: AlterColumn for both columns,
+        // DropForeignKey and AddForeignKey for the FK
+        let alter_column_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .collect();
+        let drop_fk_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropForeignKey { .. }))
+            .collect();
+        let add_fk_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AddForeignKey { .. }))
+            .collect();
+
+        assert_eq!(alter_column_ops.len(), 2, "Should have 2 AlterColumn ops");
+        assert_eq!(
+            drop_fk_ops.len(),
+            1,
+            "Should have 1 DropForeignKey op for FK affected by type change"
+        );
+        assert_eq!(
+            add_fk_ops.len(),
+            1,
+            "Should have 1 AddForeignKey op to restore FK after type change"
+        );
+
+        // Verify the FK ops reference the correct FK
+        if let MigrationOp::DropForeignKey {
+            foreign_key_name, ..
+        } = &drop_fk_ops[0]
+        {
+            assert_eq!(
+                foreign_key_name,
+                "FertilizerApplication_compoundUnitId_fkey"
+            );
+        }
+        if let MigrationOp::AddForeignKey { foreign_key, .. } = &add_fk_ops[0] {
+            assert_eq!(foreign_key.name, "FertilizerApplication_compoundUnitId_fkey");
+        }
+    }
+
+    #[test]
     fn generates_policy_ops_for_column_type_changes() {
         use crate::model::{Column, Policy, PolicyCommand};
 
