@@ -428,32 +428,53 @@ async fn fk_type_change_with_existing_fk_in_database() {
     let ops = compute_diff(&current_schema, &target_schema);
     let planned = plan_migration(ops);
 
-    // Check for expected operations
-    let alter_column_ops: Vec<_> = planned
-        .iter()
-        .filter(|op| matches!(op, MigrationOp::AlterColumn { .. }))
-        .collect();
-    let drop_fk_ops: Vec<_> = planned
-        .iter()
-        .filter(|op| matches!(op, MigrationOp::DropForeignKey { .. }))
-        .collect();
-    let add_fk_ops: Vec<_> = planned
-        .iter()
-        .filter(|op| matches!(op, MigrationOp::AddForeignKey { .. }))
-        .collect();
+    // Verify operation ordering: DropFK -> AlterColumn -> AddFK
+    let mut found_drop_fk = false;
+    let mut found_alter_columns = false;
+    let mut found_add_fk = false;
+    let mut alter_before_drop = false;
+    let mut add_before_alter = false;
 
-    // This is the bug: drop_fk_ops is empty when it shouldn't be
+    for op in &planned {
+        match op {
+            MigrationOp::DropForeignKey { .. } => {
+                found_drop_fk = true;
+                if found_alter_columns {
+                    alter_before_drop = true;
+                }
+            }
+            MigrationOp::AlterColumn { .. } => {
+                found_alter_columns = true;
+                if found_add_fk {
+                    add_before_alter = true;
+                }
+            }
+            MigrationOp::AddForeignKey { .. } => {
+                found_add_fk = true;
+            }
+            _ => {}
+        }
+    }
+
     assert!(
-        !alter_column_ops.is_empty(),
-        "Should have AlterColumn operations for TEXT->UUID conversion"
-    );
-    assert!(
-        !drop_fk_ops.is_empty(),
+        found_drop_fk,
         "Should have DropForeignKey operation for FK affected by type change"
     );
     assert!(
-        !add_fk_ops.is_empty(),
+        found_alter_columns,
+        "Should have AlterColumn operations for TEXT->UUID conversion"
+    );
+    assert!(
+        found_add_fk,
         "Should have AddForeignKey operation to restore FK after type change"
+    );
+    assert!(
+        !alter_before_drop,
+        "DropForeignKey must come BEFORE AlterColumn"
+    );
+    assert!(
+        !add_before_alter,
+        "AlterColumn must come BEFORE AddForeignKey"
     );
 
     // Generate and apply SQL
@@ -494,4 +515,98 @@ async fn fk_type_change_with_existing_fk_in_database() {
     .await
     .unwrap();
     assert_eq!(fk_count.0, 1, "FK constraint should exist after migration");
+}
+
+/// Test that FK is dropped when only the REFERENCED column changes type
+/// (FK column stays the same, but the column it references changes)
+#[tokio::test]
+async fn fk_type_change_referenced_column_only() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create schema
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS mrv")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    // Initial state: Parent has TEXT id, Child has TEXT FK column
+    let initial_sql = r#"
+        CREATE TABLE "mrv"."Parent" (
+            "id" TEXT NOT NULL,
+            CONSTRAINT "Parent_pkey" PRIMARY KEY ("id")
+        );
+
+        CREATE TABLE "mrv"."Child" (
+            "id" TEXT NOT NULL,
+            "parentId" TEXT,
+            CONSTRAINT "Child_pkey" PRIMARY KEY ("id")
+        );
+
+        ALTER TABLE "mrv"."Child"
+        ADD CONSTRAINT "Child_parentId_fkey"
+        FOREIGN KEY ("parentId") REFERENCES "mrv"."Parent"("id");
+    "#;
+
+    for stmt in initial_sql.split(';').filter(|s| !s.trim().is_empty()) {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Target state: ONLY Parent.id changes to UUID, Child.parentId stays TEXT
+    // This should fail because FK types must match - but pgmold should still
+    // generate the drop/add FK ops so the ALTER COLUMN TYPE can proceed
+    let target_schema = parse_sql_string(
+        r#"
+        CREATE SCHEMA IF NOT EXISTS "mrv";
+
+        CREATE TABLE "mrv"."Parent" (
+            "id" UUID NOT NULL,
+            CONSTRAINT "Parent_pkey" PRIMARY KEY ("id")
+        );
+
+        CREATE TABLE "mrv"."Child" (
+            "id" TEXT NOT NULL,
+            "parentId" UUID,
+            CONSTRAINT "Child_pkey" PRIMARY KEY ("id")
+        );
+
+        ALTER TABLE "mrv"."Child"
+        ADD CONSTRAINT "Child_parentId_fkey"
+        FOREIGN KEY ("parentId") REFERENCES "mrv"."Parent"("id");
+        "#,
+    )
+    .unwrap();
+
+    let current_schema = introspect_schema(&connection, &["mrv".to_string()], false)
+        .await
+        .unwrap();
+
+    let ops = compute_diff(&current_schema, &target_schema);
+    let planned = plan_migration(ops);
+
+    // Verify FK drop is generated even though we're only changing the referenced column
+    let drop_fk_ops: Vec<_> = planned
+        .iter()
+        .filter(|op| matches!(op, MigrationOp::DropForeignKey { .. }))
+        .collect();
+
+    assert!(
+        !drop_fk_ops.is_empty(),
+        "Should generate DropForeignKey when referenced column type changes"
+    );
+
+    // Verify ordering: DropFK before AlterColumn
+    let drop_fk_pos = planned
+        .iter()
+        .position(|op| matches!(op, MigrationOp::DropForeignKey { .. }))
+        .unwrap();
+    let alter_pos = planned
+        .iter()
+        .position(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+        .unwrap();
+
+    assert!(
+        drop_fk_pos < alter_pos,
+        "DropForeignKey (pos {drop_fk_pos}) must come before AlterColumn (pos {alter_pos})"
+    );
 }

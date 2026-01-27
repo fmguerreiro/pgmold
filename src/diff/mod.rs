@@ -1808,9 +1808,13 @@ mod tests {
     }
 
     fn simple_table(name: &str) -> Table {
+        simple_table_with_schema(name, "public")
+    }
+
+    fn simple_table_with_schema(name: &str, schema: &str) -> Table {
         Table {
             name: name.to_string(),
-            schema: "public".to_string(),
+            schema: schema.to_string(),
             columns: BTreeMap::new(),
             indexes: Vec::new(),
             primary_key: None,
@@ -4542,7 +4546,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
 
     #[test]
     fn generates_fk_ops_for_column_type_changes_non_public_schema() {
-        use crate::model::{Column, ForeignKey, ReferentialAction, Table};
+        use crate::model::{Column, ForeignKey, ReferentialAction};
 
         // Reproduces bug: FK constraints not dropped during ALTER COLUMN TYPE in non-public schema
         // Schema: mrv.CompoundUnit (id TEXT -> UUID)
@@ -4551,21 +4555,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         // Create source schema (database state): TEXT columns with FK
         let mut from = empty_schema();
 
-        let mut compound_unit = Table {
-            name: "CompoundUnit".to_string(),
-            schema: "mrv".to_string(),
-            columns: BTreeMap::new(),
-            indexes: Vec::new(),
-            primary_key: None,
-            foreign_keys: Vec::new(),
-            check_constraints: Vec::new(),
-            comment: None,
-            row_level_security: false,
-            policies: Vec::new(),
-            partition_by: None,
-            owner: None,
-            grants: Vec::new(),
-        };
+        let mut compound_unit = simple_table_with_schema("CompoundUnit", "mrv");
         compound_unit.columns.insert(
             "id".to_string(),
             Column {
@@ -4579,21 +4569,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         from.tables
             .insert("mrv.CompoundUnit".to_string(), compound_unit);
 
-        let mut fertilizer_app = Table {
-            name: "FertilizerApplication".to_string(),
-            schema: "mrv".to_string(),
-            columns: BTreeMap::new(),
-            indexes: Vec::new(),
-            primary_key: None,
-            foreign_keys: Vec::new(),
-            check_constraints: Vec::new(),
-            comment: None,
-            row_level_security: false,
-            policies: Vec::new(),
-            partition_by: None,
-            owner: None,
-            grants: Vec::new(),
-        };
+        let mut fertilizer_app = simple_table_with_schema("FertilizerApplication", "mrv");
         fertilizer_app.columns.insert(
             "compoundUnitId".to_string(),
             Column {
@@ -4619,21 +4595,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         // Create target schema (SQL files): UUID columns with FK
         let mut to = empty_schema();
 
-        let mut compound_unit_uuid = Table {
-            name: "CompoundUnit".to_string(),
-            schema: "mrv".to_string(),
-            columns: BTreeMap::new(),
-            indexes: Vec::new(),
-            primary_key: None,
-            foreign_keys: Vec::new(),
-            check_constraints: Vec::new(),
-            comment: None,
-            row_level_security: false,
-            policies: Vec::new(),
-            partition_by: None,
-            owner: None,
-            grants: Vec::new(),
-        };
+        let mut compound_unit_uuid = simple_table_with_schema("CompoundUnit", "mrv");
         compound_unit_uuid.columns.insert(
             "id".to_string(),
             Column {
@@ -4647,21 +4609,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         to.tables
             .insert("mrv.CompoundUnit".to_string(), compound_unit_uuid);
 
-        let mut fertilizer_app_uuid = Table {
-            name: "FertilizerApplication".to_string(),
-            schema: "mrv".to_string(),
-            columns: BTreeMap::new(),
-            indexes: Vec::new(),
-            primary_key: None,
-            foreign_keys: Vec::new(),
-            check_constraints: Vec::new(),
-            comment: None,
-            row_level_security: false,
-            policies: Vec::new(),
-            partition_by: None,
-            owner: None,
-            grants: Vec::new(),
-        };
+        let mut fertilizer_app_uuid = simple_table_with_schema("FertilizerApplication", "mrv");
         fertilizer_app_uuid.columns.insert(
             "compoundUnitId".to_string(),
             Column {
