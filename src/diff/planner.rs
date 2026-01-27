@@ -145,6 +145,118 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let create_functions = order_function_creates(create_functions);
     let create_views = order_view_creates(create_views);
 
+    // Split FK drops into two groups:
+    // 1. Temporary drops (matching add exists) - needed before ALTER COLUMN TYPE
+    // 2. Permanent drops (no matching add) - stay at original position
+    let fk_add_keys: HashSet<(String, String)> = add_foreign_keys
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::AddForeignKey { table, foreign_key } = op {
+                Some((table.clone(), foreign_key.name.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let (drop_fks_for_type_change, drop_fks_permanent): (Vec<_>, Vec<_>) =
+        drop_foreign_keys.into_iter().partition(|op| {
+            if let MigrationOp::DropForeignKey {
+                table,
+                foreign_key_name,
+            } = op
+            {
+                fk_add_keys.contains(&(table.clone(), foreign_key_name.clone()))
+            } else {
+                false
+            }
+        });
+
+    // Split policy drops into two groups:
+    // 1. Temporary drops (matching create exists) - needed before ALTER COLUMN TYPE
+    // 2. Permanent drops (no matching create) - stay at original position
+    let policy_create_keys: HashSet<(String, String)> = create_policies
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::CreatePolicy(policy) = op {
+                Some((
+                    qualified_name(&policy.table_schema, &policy.table),
+                    policy.name.clone(),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let (drop_policies_for_type_change, drop_policies_permanent): (Vec<_>, Vec<_>) =
+        drop_policies.into_iter().partition(|op| {
+            if let MigrationOp::DropPolicy { table, name } = op {
+                policy_create_keys.contains(&(table.clone(), name.clone()))
+            } else {
+                false
+            }
+        });
+
+    // Split trigger drops into two groups:
+    // 1. Temporary drops (matching create exists) - needed before ALTER COLUMN TYPE
+    // 2. Permanent drops (no matching create) - stay at original position
+    let trigger_create_keys: HashSet<(String, String, String)> = create_triggers
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::CreateTrigger(trigger) = op {
+                Some((
+                    trigger.target_schema.clone(),
+                    trigger.target_name.clone(),
+                    trigger.name.clone(),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let (drop_triggers_for_type_change, drop_triggers_permanent): (Vec<_>, Vec<_>) =
+        drop_triggers.into_iter().partition(|op| {
+            if let MigrationOp::DropTrigger {
+                target_schema,
+                target_name,
+                name,
+            } = op
+            {
+                trigger_create_keys.contains(&(
+                    target_schema.clone(),
+                    target_name.clone(),
+                    name.clone(),
+                ))
+            } else {
+                false
+            }
+        });
+
+    // Split view drops into two groups:
+    // 1. Temporary drops (matching create exists) - needed before ALTER COLUMN TYPE
+    // 2. Permanent drops (no matching create) - stay at original position
+    let view_create_keys: HashSet<String> = create_views
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::CreateView(view) = op {
+                Some(qualified_name(&view.schema, &view.name))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let (drop_views_for_type_change, drop_views_permanent): (Vec<_>, Vec<_>) =
+        drop_views.into_iter().partition(|op| {
+            if let MigrationOp::DropView { name, .. } = op {
+                view_create_keys.contains(name)
+            } else {
+                false
+            }
+        });
+
     let mut result = Vec::new();
 
     result.extend(create_schemas);
@@ -168,6 +280,18 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     // that requires DROP + CREATE (e.g., predicate changes, column changes)
     result.extend(drop_indexes);
     result.extend(add_indexes);
+    // Drop FKs that have matching adds (temporary drops for ALTER COLUMN TYPE)
+    // PostgreSQL requires FK to be dropped before altering referenced column types
+    result.extend(drop_fks_for_type_change);
+    // Drop policies that have matching creates (temporary drops for ALTER COLUMN TYPE)
+    // PostgreSQL requires policies to be dropped before altering column types they reference
+    result.extend(drop_policies_for_type_change);
+    // Drop triggers that have matching creates (temporary drops for ALTER COLUMN TYPE)
+    // PostgreSQL requires triggers to be dropped before altering column types they reference
+    result.extend(drop_triggers_for_type_change);
+    // Drop views that have matching creates (temporary drops for ALTER COLUMN TYPE)
+    // PostgreSQL requires views to be dropped before altering column types they reference
+    result.extend(drop_views_for_type_change);
     result.extend(alter_columns);
     result.extend(set_column_not_nulls);
     // Drop check constraints before adding new ones - needed when modifying a constraint
@@ -192,15 +316,23 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(grant_privileges);
 
     result.extend(revoke_privileges);
-    result.extend(drop_triggers);
+    // Note: drop_triggers_for_type_change is handled earlier (before alter_columns)
+    // to support ALTER COLUMN TYPE on columns referenced by triggers
+    result.extend(drop_triggers_permanent);
     // Drop version views BEFORE dropping base views (version views depend on base tables)
     result.extend(drop_version_views);
-    result.extend(drop_views);
-    result.extend(drop_policies);
+    // Note: drop_views_for_type_change is handled earlier (before alter_columns)
+    // to support ALTER COLUMN TYPE on columns referenced by views
+    result.extend(drop_views_permanent);
+    // Note: drop_policies_for_type_change is handled earlier (before alter_columns)
+    // to support ALTER COLUMN TYPE on columns referenced by policies
+    result.extend(drop_policies_permanent);
     result.extend(disable_rls);
     // Note: drop_check_constraints is handled earlier (before add_check_constraints)
     // to support constraint modifications
-    result.extend(drop_foreign_keys);
+    // Note: drop_fks_for_type_change is handled earlier (before alter_columns)
+    // to support ALTER COLUMN TYPE on FK-involved columns
+    result.extend(drop_fks_permanent);
     // Note: drop_indexes is handled earlier (before add_indexes)
     // to support index modifications that require DROP + CREATE
     result.extend(drop_primary_keys);
@@ -990,6 +1122,244 @@ mod tests {
         assert!(
             drop_pos < add_pos,
             "DropIndex must come before AddIndex. DROP at {drop_pos}, ADD at {add_pos}"
+        );
+    }
+
+    #[test]
+    fn drop_fk_before_alter_column_type() {
+        // When altering a column's type that is involved in a FK,
+        // the FK must be dropped before the ALTER and re-added after.
+        // This test verifies: DropForeignKey → AlterColumn → AddForeignKey
+        let fk = ForeignKey {
+            name: "posts_user_id_fkey".to_string(),
+            columns: vec!["user_id".to_string()],
+            referenced_table: "users".to_string(),
+            referenced_schema: "public".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete: ReferentialAction::NoAction,
+            on_update: ReferentialAction::NoAction,
+        };
+
+        let ops = vec![
+            MigrationOp::AlterColumn {
+                table: "public.posts".to_string(),
+                column: "user_id".to_string(),
+                changes: crate::diff::ColumnChanges {
+                    data_type: Some(PgType::Uuid),
+                    nullable: None,
+                    default: None,
+                },
+            },
+            MigrationOp::DropForeignKey {
+                table: "public.posts".to_string(),
+                foreign_key_name: "posts_user_id_fkey".to_string(),
+            },
+            MigrationOp::AddForeignKey {
+                table: "public.posts".to_string(),
+                foreign_key: fk,
+            },
+        ];
+
+        let planned = plan_migration(ops);
+
+        let drop_fk_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropForeignKey { .. }))
+            .unwrap();
+        let alter_col_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .unwrap();
+        let add_fk_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddForeignKey { .. }))
+            .unwrap();
+
+        assert!(
+            drop_fk_pos < alter_col_pos,
+            "DropForeignKey must come before AlterColumn. DROP_FK at {drop_fk_pos}, ALTER at {alter_col_pos}"
+        );
+        assert!(
+            alter_col_pos < add_fk_pos,
+            "AlterColumn must come before AddForeignKey. ALTER at {alter_col_pos}, ADD_FK at {add_fk_pos}"
+        );
+    }
+
+    #[test]
+    fn drop_policy_before_alter_column_type() {
+        // When altering a column's type that is referenced by a policy,
+        // the policy must be dropped before the ALTER and re-created after.
+        // This test verifies: DropPolicy → AlterColumn → CreatePolicy
+        let policy = Policy {
+            name: "users_select_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("id = current_user_id()".to_string()),
+            check_expr: None,
+        };
+
+        let ops = vec![
+            MigrationOp::AlterColumn {
+                table: "public.users".to_string(),
+                column: "id".to_string(),
+                changes: crate::diff::ColumnChanges {
+                    data_type: Some(PgType::Uuid),
+                    nullable: None,
+                    default: None,
+                },
+            },
+            MigrationOp::DropPolicy {
+                table: "public.users".to_string(),
+                name: "users_select_policy".to_string(),
+            },
+            MigrationOp::CreatePolicy(policy),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let drop_policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropPolicy { .. }))
+            .unwrap();
+        let alter_col_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .unwrap();
+        let create_policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .unwrap();
+
+        assert!(
+            drop_policy_pos < alter_col_pos,
+            "DropPolicy must come before AlterColumn. DROP_POLICY at {drop_policy_pos}, ALTER at {alter_col_pos}"
+        );
+        assert!(
+            alter_col_pos < create_policy_pos,
+            "AlterColumn must come before CreatePolicy. ALTER at {alter_col_pos}, CREATE_POLICY at {create_policy_pos}"
+        );
+    }
+
+    #[test]
+    fn drop_trigger_before_alter_column_type() {
+        // When altering a column's type that is referenced by a trigger,
+        // the trigger must be dropped before the ALTER and re-created after.
+        // This test verifies: DropTrigger → AlterColumn → CreateTrigger
+        let trigger = Trigger {
+            name: "users_update_trigger".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            timing: TriggerTiming::Before,
+            events: vec![TriggerEvent::Update],
+            update_columns: vec!["id".to_string()],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "update_timestamp".to_string(),
+            function_args: vec![],
+            enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
+        };
+
+        let ops = vec![
+            MigrationOp::AlterColumn {
+                table: "public.users".to_string(),
+                column: "id".to_string(),
+                changes: crate::diff::ColumnChanges {
+                    data_type: Some(PgType::Uuid),
+                    nullable: None,
+                    default: None,
+                },
+            },
+            MigrationOp::DropTrigger {
+                target_schema: "public".to_string(),
+                target_name: "users".to_string(),
+                name: "users_update_trigger".to_string(),
+            },
+            MigrationOp::CreateTrigger(trigger),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let drop_trigger_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropTrigger { .. }))
+            .unwrap();
+        let alter_col_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .unwrap();
+        let create_trigger_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTrigger(_)))
+            .unwrap();
+
+        assert!(
+            drop_trigger_pos < alter_col_pos,
+            "DropTrigger must come before AlterColumn. DROP_TRIGGER at {drop_trigger_pos}, ALTER at {alter_col_pos}"
+        );
+        assert!(
+            alter_col_pos < create_trigger_pos,
+            "AlterColumn must come before CreateTrigger. ALTER at {alter_col_pos}, CREATE_TRIGGER at {create_trigger_pos}"
+        );
+    }
+
+    #[test]
+    fn drop_view_before_alter_column_type() {
+        // When altering a column's type that is referenced by a view,
+        // the view must be dropped before the ALTER and re-created after.
+        // This test verifies: DropView → AlterColumn → CreateView
+        let view = View {
+            name: "users_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT id, name FROM users".to_string(),
+            materialized: false,
+            owner: None,
+            grants: vec![],
+        };
+
+        let ops = vec![
+            MigrationOp::AlterColumn {
+                table: "public.users".to_string(),
+                column: "id".to_string(),
+                changes: crate::diff::ColumnChanges {
+                    data_type: Some(PgType::Uuid),
+                    nullable: None,
+                    default: None,
+                },
+            },
+            MigrationOp::DropView {
+                name: "public.users_view".to_string(),
+                materialized: false,
+            },
+            MigrationOp::CreateView(view),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let drop_view_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropView { .. }))
+            .unwrap();
+        let alter_col_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .unwrap();
+        let create_view_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateView(_)))
+            .unwrap();
+
+        assert!(
+            drop_view_pos < alter_col_pos,
+            "DropView must come before AlterColumn. DROP_VIEW at {drop_view_pos}, ALTER at {alter_col_pos}"
+        );
+        assert!(
+            alter_col_pos < create_view_pos,
+            "AlterColumn must come before CreateView. ALTER at {alter_col_pos}, CREATE_VIEW at {create_view_pos}"
         );
     }
 }

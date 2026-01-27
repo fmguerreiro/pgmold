@@ -242,7 +242,7 @@ pub enum EnumValuePosition {
 }
 
 use crate::model::{parse_qualified_name, Schema};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 fn diff_grants_for_object(
     from_grants: &[Grant],
@@ -415,6 +415,22 @@ pub fn compute_diff_with_flags(
             }
         }
     }
+
+    // Generate FK drop/add ops for columns with type changes
+    // This ensures FKs are dropped before ALTER COLUMN TYPE
+    ops.extend(generate_fk_ops_for_type_changes(&ops, from, to));
+
+    // Generate policy drop/create ops for tables with column type changes
+    // This ensures policies are dropped before ALTER COLUMN TYPE
+    ops.extend(generate_policy_ops_for_type_changes(&ops, from, to));
+
+    // Generate trigger drop/create ops for tables with column type changes
+    // This ensures triggers are dropped before ALTER COLUMN TYPE
+    ops.extend(generate_trigger_ops_for_type_changes(&ops, from, to));
+
+    // Generate view drop/create ops for views that reference tables with column type changes
+    // This ensures views are dropped before ALTER COLUMN TYPE
+    ops.extend(generate_view_ops_for_type_changes(&ops, from, to));
 
     ops
 }
@@ -1335,6 +1351,323 @@ fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     }
 
     ops
+}
+
+/// Extract tables that have columns with type changes from migration ops.
+fn tables_with_type_changes(ops: &[MigrationOp]) -> HashSet<String> {
+    ops.iter()
+        .filter_map(|op| {
+            if let MigrationOp::AlterColumn { table, changes, .. } = op {
+                if changes.data_type.is_some() {
+                    return Some(table.clone());
+                }
+            }
+            None
+        })
+        .collect()
+}
+
+/// Generate FK drop/add ops for columns with type changes.
+/// PostgreSQL requires FKs to be dropped before altering the type of columns they reference.
+fn generate_fk_ops_for_type_changes(
+    ops: &[MigrationOp],
+    from: &crate::model::Schema,
+    to: &crate::model::Schema,
+) -> Vec<MigrationOp> {
+    let mut additional_ops = Vec::new();
+
+    // Find all columns with type changes (FK needs column-level granularity)
+    let type_change_columns: HashSet<(String, String)> = ops
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::AlterColumn {
+                table,
+                column,
+                changes,
+            } = op
+            {
+                if changes.data_type.is_some() {
+                    return Some((table.clone(), column.clone()));
+                }
+            }
+            None
+        })
+        .collect();
+
+    if type_change_columns.is_empty() {
+        return additional_ops;
+    }
+
+    // Collect existing FK ops to avoid duplicates
+    let existing_fk_drops: HashSet<(String, String)> = ops
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropForeignKey {
+                table,
+                foreign_key_name,
+            } = op
+            {
+                Some((table.clone(), foreign_key_name.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Check all FKs in the source schema for affected columns
+    for (table_name, table) in &from.tables {
+        for fk in &table.foreign_keys {
+            // Check if FK's columns or referenced columns are being type-changed
+            let qualified_table = qualified_name(&table.schema, &table.name);
+            let referenced_table = qualified_name(&fk.referenced_schema, &fk.referenced_table);
+
+            let fk_affected =
+                fk.columns.iter().any(|col| {
+                    type_change_columns.contains(&(qualified_table.clone(), col.clone()))
+                }) || fk.referenced_columns.iter().any(|col| {
+                    type_change_columns.contains(&(referenced_table.clone(), col.clone()))
+                });
+
+            if fk_affected
+                && !existing_fk_drops.contains(&(qualified_table.clone(), fk.name.clone()))
+            {
+                // Get the FK from the target schema (if it exists)
+                let target_fk = to
+                    .tables
+                    .get(table_name)
+                    .and_then(|t| t.foreign_keys.iter().find(|f| f.name == fk.name));
+
+                additional_ops.push(MigrationOp::DropForeignKey {
+                    table: qualified_table.clone(),
+                    foreign_key_name: fk.name.clone(),
+                });
+
+                // Re-add the FK (use target FK if available, otherwise use from FK)
+                if let Some(target_fk) = target_fk {
+                    let target_table = to.tables.get(table_name).unwrap();
+                    additional_ops.push(MigrationOp::AddForeignKey {
+                        table: qualified_name(&target_table.schema, &target_table.name),
+                        foreign_key: target_fk.clone(),
+                    });
+                } else {
+                    additional_ops.push(MigrationOp::AddForeignKey {
+                        table: qualified_table,
+                        foreign_key: fk.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    additional_ops
+}
+
+/// Generate policy drop/create ops for tables with column type changes.
+/// PostgreSQL requires policies to be dropped before altering the type of columns they reference.
+/// Uses conservative approach: if any column on a table changes type, drop/recreate all policies.
+fn generate_policy_ops_for_type_changes(
+    ops: &[MigrationOp],
+    from: &crate::model::Schema,
+    to: &crate::model::Schema,
+) -> Vec<MigrationOp> {
+    let mut additional_ops = Vec::new();
+
+    let affected_tables = tables_with_type_changes(ops);
+    if affected_tables.is_empty() {
+        return additional_ops;
+    }
+
+    // Collect existing policy ops to avoid duplicates
+    let existing_policy_drops: HashSet<(String, String)> = ops
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropPolicy { table, name } = op {
+                Some((table.clone(), name.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // For each table with type changes, drop and recreate all policies
+    for table_name in &affected_tables {
+        if let Some(from_table) = from.tables.get(table_name) {
+            for policy in &from_table.policies {
+                let qualified_table = qualified_name(&from_table.schema, &from_table.name);
+
+                // Skip if already being dropped
+                if existing_policy_drops.contains(&(qualified_table.clone(), policy.name.clone())) {
+                    continue;
+                }
+
+                // Get the policy from the target schema (if it exists)
+                let target_policy = to
+                    .tables
+                    .get(table_name)
+                    .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
+
+                additional_ops.push(MigrationOp::DropPolicy {
+                    table: qualified_table.clone(),
+                    name: policy.name.clone(),
+                });
+
+                // Re-add the policy (use target if available, otherwise use from)
+                if let Some(target_policy) = target_policy {
+                    additional_ops.push(MigrationOp::CreatePolicy(target_policy.clone()));
+                } else {
+                    additional_ops.push(MigrationOp::CreatePolicy(policy.clone()));
+                }
+            }
+        }
+    }
+
+    additional_ops
+}
+
+/// Generate trigger drop/create ops for tables with column type changes.
+/// PostgreSQL requires triggers to be dropped before altering the type of columns they reference.
+/// Uses conservative approach: if any column on a table changes type, drop/recreate all triggers.
+fn generate_trigger_ops_for_type_changes(
+    ops: &[MigrationOp],
+    from: &crate::model::Schema,
+    to: &crate::model::Schema,
+) -> Vec<MigrationOp> {
+    let mut additional_ops = Vec::new();
+
+    let affected_tables = tables_with_type_changes(ops);
+    if affected_tables.is_empty() {
+        return additional_ops;
+    }
+
+    // Collect existing trigger ops to avoid duplicates
+    let existing_trigger_drops: HashSet<(String, String, String)> = ops
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropTrigger {
+                target_schema,
+                target_name,
+                name,
+            } = op
+            {
+                Some((target_schema.clone(), target_name.clone(), name.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // For each table with type changes, drop and recreate all triggers
+    for table_name in &affected_tables {
+        // Parse schema and table from qualified name
+        let parts: Vec<&str> = table_name.split('.').collect();
+        let (table_schema, table_only_name) = if parts.len() == 2 {
+            (parts[0], parts[1])
+        } else {
+            ("public", table_name.as_str())
+        };
+
+        // Find triggers in the from schema
+        for trigger in from.triggers.values() {
+            if trigger.target_schema == table_schema && trigger.target_name == table_only_name {
+                // Skip if already being dropped
+                if existing_trigger_drops.contains(&(
+                    trigger.target_schema.clone(),
+                    trigger.target_name.clone(),
+                    trigger.name.clone(),
+                )) {
+                    continue;
+                }
+
+                // Get the trigger from the target schema (if it exists)
+                let target_trigger = to.triggers.values().find(|t| {
+                    t.name == trigger.name
+                        && t.target_schema == table_schema
+                        && t.target_name == table_only_name
+                });
+
+                additional_ops.push(MigrationOp::DropTrigger {
+                    target_schema: trigger.target_schema.clone(),
+                    target_name: trigger.target_name.clone(),
+                    name: trigger.name.clone(),
+                });
+
+                // Re-add the trigger (use target if available, otherwise use from)
+                if let Some(target_trigger) = target_trigger {
+                    additional_ops.push(MigrationOp::CreateTrigger(target_trigger.clone()));
+                } else {
+                    additional_ops.push(MigrationOp::CreateTrigger(trigger.clone()));
+                }
+            }
+        }
+    }
+
+    additional_ops
+}
+
+/// Generate view drop/create ops for views that reference tables with column type changes.
+/// PostgreSQL requires views to be dropped before altering the type of columns they reference.
+fn generate_view_ops_for_type_changes(
+    ops: &[MigrationOp],
+    from: &crate::model::Schema,
+    to: &crate::model::Schema,
+) -> Vec<MigrationOp> {
+    use crate::parser::extract_table_references;
+
+    let mut additional_ops = Vec::new();
+
+    let affected_tables = tables_with_type_changes(ops);
+    if affected_tables.is_empty() {
+        return additional_ops;
+    }
+
+    // Collect existing view ops to avoid duplicates
+    let existing_view_drops: HashSet<String> = ops
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropView { name, .. } = op {
+                Some(name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // For each view, check if it references any table with type changes
+    for (view_name, view) in &from.views {
+        // Extract table references from the view's query
+        let referenced_tables = extract_table_references(&view.query, &view.schema);
+
+        // Check if any referenced table has type changes
+        let view_affected = referenced_tables
+            .iter()
+            .any(|ref_table| affected_tables.contains(&ref_table.qualified_name()));
+
+        if view_affected {
+            let qualified_view_name = qualified_name(&view.schema, &view.name);
+
+            // Skip if already being dropped
+            if existing_view_drops.contains(&qualified_view_name) {
+                continue;
+            }
+
+            // Get the view from the target schema (if it exists)
+            let target_view = to.views.get(view_name);
+
+            additional_ops.push(MigrationOp::DropView {
+                name: qualified_view_name.clone(),
+                materialized: view.materialized,
+            });
+
+            // Re-add the view (use target if available, otherwise use from)
+            if let Some(target_view) = target_view {
+                additional_ops.push(MigrationOp::CreateView(target_view.clone()));
+            } else {
+                additional_ops.push(MigrationOp::CreateView(view.clone()));
+            }
+        }
+    }
+
+    additional_ops
 }
 
 fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
@@ -4082,6 +4415,445 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 assert_eq!(name, "users");
             }
             _ => panic!("Expected DropVersionView"),
+        }
+    }
+
+    #[test]
+    fn generates_fk_ops_for_column_type_changes() {
+        use crate::model::{Column, ForeignKey, ReferentialAction};
+
+        // Create source schema: users.id TEXT, posts.user_id TEXT with FK
+        let mut from = empty_schema();
+        let mut users_table = simple_table("users");
+        users_table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Text,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        from.tables.insert("public.users".to_string(), users_table);
+
+        let mut posts_table = simple_table("posts");
+        posts_table.columns.insert(
+            "user_id".to_string(),
+            Column {
+                name: "user_id".to_string(),
+                data_type: PgType::Text,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        posts_table.foreign_keys.push(ForeignKey {
+            name: "posts_user_id_fkey".to_string(),
+            columns: vec!["user_id".to_string()],
+            referenced_table: "users".to_string(),
+            referenced_schema: "public".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete: ReferentialAction::NoAction,
+            on_update: ReferentialAction::NoAction,
+        });
+        from.tables.insert("public.posts".to_string(), posts_table);
+
+        // Create target schema: same structure but UUID types
+        let mut to = empty_schema();
+        let mut users_table_uuid = simple_table("users");
+        users_table_uuid.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Uuid,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        to.tables
+            .insert("public.users".to_string(), users_table_uuid);
+
+        let mut posts_table_uuid = simple_table("posts");
+        posts_table_uuid.columns.insert(
+            "user_id".to_string(),
+            Column {
+                name: "user_id".to_string(),
+                data_type: PgType::Uuid,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        posts_table_uuid.foreign_keys.push(ForeignKey {
+            name: "posts_user_id_fkey".to_string(),
+            columns: vec!["user_id".to_string()],
+            referenced_table: "users".to_string(),
+            referenced_schema: "public".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete: ReferentialAction::NoAction,
+            on_update: ReferentialAction::NoAction,
+        });
+        to.tables
+            .insert("public.posts".to_string(), posts_table_uuid);
+
+        // Compute diff
+        let ops = compute_diff(&from, &to);
+
+        // Should have: AlterColumn for users.id, AlterColumn for posts.user_id,
+        // DropForeignKey and AddForeignKey for posts_user_id_fkey
+        let alter_column_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .collect();
+        let drop_fk_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropForeignKey { .. }))
+            .collect();
+        let add_fk_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AddForeignKey { .. }))
+            .collect();
+
+        assert_eq!(alter_column_ops.len(), 2, "Should have 2 AlterColumn ops");
+        assert_eq!(
+            drop_fk_ops.len(),
+            1,
+            "Should have 1 DropForeignKey op for FK affected by type change"
+        );
+        assert_eq!(
+            add_fk_ops.len(),
+            1,
+            "Should have 1 AddForeignKey op to restore FK after type change"
+        );
+
+        // Verify the FK ops reference the correct FK
+        if let MigrationOp::DropForeignKey {
+            foreign_key_name, ..
+        } = &drop_fk_ops[0]
+        {
+            assert_eq!(foreign_key_name, "posts_user_id_fkey");
+        }
+        if let MigrationOp::AddForeignKey { foreign_key, .. } = &add_fk_ops[0] {
+            assert_eq!(foreign_key.name, "posts_user_id_fkey");
+        }
+    }
+
+    #[test]
+    fn generates_policy_ops_for_column_type_changes() {
+        use crate::model::{Column, Policy, PolicyCommand};
+
+        // Create source schema: users table with TEXT id and a policy referencing it
+        let mut from = empty_schema();
+        let mut users_table = simple_table("users");
+        users_table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Text,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table.policies.push(Policy {
+            name: "users_select".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("id = current_user_id()".to_string()),
+            check_expr: None,
+        });
+        from.tables.insert("public.users".to_string(), users_table);
+
+        // Create target schema: same structure but UUID type
+        let mut to = empty_schema();
+        let mut users_table_uuid = simple_table("users");
+        users_table_uuid.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Uuid,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table_uuid.policies.push(Policy {
+            name: "users_select".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("id = current_user_id()".to_string()),
+            check_expr: None,
+        });
+        to.tables
+            .insert("public.users".to_string(), users_table_uuid);
+
+        // Compute diff
+        let ops = compute_diff(&from, &to);
+
+        // Should have: AlterColumn for users.id, DropPolicy and CreatePolicy for users_select
+        let alter_column_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .collect();
+        let drop_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropPolicy { .. }))
+            .collect();
+        let create_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .collect();
+
+        assert_eq!(alter_column_ops.len(), 1, "Should have 1 AlterColumn op");
+        assert_eq!(
+            drop_policy_ops.len(),
+            1,
+            "Should have 1 DropPolicy op for policy on table with type change"
+        );
+        assert_eq!(
+            create_policy_ops.len(),
+            1,
+            "Should have 1 CreatePolicy op to restore policy after type change"
+        );
+
+        // Verify the policy ops reference the correct policy
+        if let MigrationOp::DropPolicy { name, .. } = &drop_policy_ops[0] {
+            assert_eq!(name, "users_select");
+        }
+        if let MigrationOp::CreatePolicy(policy) = &create_policy_ops[0] {
+            assert_eq!(policy.name, "users_select");
+        }
+    }
+
+    #[test]
+    fn generates_trigger_ops_for_column_type_changes() {
+        use crate::model::{Column, Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
+
+        // Create source schema: users table with TEXT id and a trigger on it
+        let mut from = empty_schema();
+        let mut users_table = simple_table("users");
+        users_table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Text,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        from.tables.insert("public.users".to_string(), users_table);
+        from.triggers.insert(
+            "users_update_trigger".to_string(),
+            Trigger {
+                name: "users_update_trigger".to_string(),
+                target_schema: "public".to_string(),
+                target_name: "users".to_string(),
+                timing: TriggerTiming::Before,
+                events: vec![TriggerEvent::Update],
+                update_columns: vec![],
+                for_each_row: true,
+                when_clause: Some("OLD.id IS DISTINCT FROM NEW.id".to_string()),
+                function_schema: "public".to_string(),
+                function_name: "update_timestamp".to_string(),
+                function_args: vec![],
+                enabled: TriggerEnabled::Origin,
+                old_table_name: None,
+                new_table_name: None,
+            },
+        );
+
+        // Create target schema: same structure but UUID type
+        let mut to = empty_schema();
+        let mut users_table_uuid = simple_table("users");
+        users_table_uuid.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Uuid,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        to.tables
+            .insert("public.users".to_string(), users_table_uuid);
+        to.triggers.insert(
+            "users_update_trigger".to_string(),
+            Trigger {
+                name: "users_update_trigger".to_string(),
+                target_schema: "public".to_string(),
+                target_name: "users".to_string(),
+                timing: TriggerTiming::Before,
+                events: vec![TriggerEvent::Update],
+                update_columns: vec![],
+                for_each_row: true,
+                when_clause: Some("OLD.id IS DISTINCT FROM NEW.id".to_string()),
+                function_schema: "public".to_string(),
+                function_name: "update_timestamp".to_string(),
+                function_args: vec![],
+                enabled: TriggerEnabled::Origin,
+                old_table_name: None,
+                new_table_name: None,
+            },
+        );
+
+        // Compute diff
+        let ops = compute_diff(&from, &to);
+
+        // Should have: AlterColumn for users.id, DropTrigger and CreateTrigger for users_update_trigger
+        let alter_column_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .collect();
+        let drop_trigger_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropTrigger { .. }))
+            .collect();
+        let create_trigger_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreateTrigger(_)))
+            .collect();
+
+        assert_eq!(alter_column_ops.len(), 1, "Should have 1 AlterColumn op");
+        assert_eq!(
+            drop_trigger_ops.len(),
+            1,
+            "Should have 1 DropTrigger op for trigger on table with type change"
+        );
+        assert_eq!(
+            create_trigger_ops.len(),
+            1,
+            "Should have 1 CreateTrigger op to restore trigger after type change"
+        );
+
+        // Verify the trigger ops reference the correct trigger
+        if let MigrationOp::DropTrigger { name, .. } = &drop_trigger_ops[0] {
+            assert_eq!(name, "users_update_trigger");
+        }
+        if let MigrationOp::CreateTrigger(trigger) = &create_trigger_ops[0] {
+            assert_eq!(trigger.name, "users_update_trigger");
+        }
+    }
+
+    #[test]
+    fn generates_view_ops_for_column_type_changes() {
+        use crate::model::{Column, View};
+
+        // Create source schema: users table with TEXT id and a view referencing it
+        let mut from = empty_schema();
+        let mut users_table = simple_table("users");
+        users_table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Text,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table.columns.insert(
+            "name".to_string(),
+            Column {
+                name: "name".to_string(),
+                data_type: PgType::Text,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        from.tables.insert("public.users".to_string(), users_table);
+        from.views.insert(
+            "public.users_view".to_string(),
+            View {
+                name: "users_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id, name FROM users".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+
+        // Create target schema: same structure but UUID type for id
+        let mut to = empty_schema();
+        let mut users_table_uuid = simple_table("users");
+        users_table_uuid.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Uuid,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table_uuid.columns.insert(
+            "name".to_string(),
+            Column {
+                name: "name".to_string(),
+                data_type: PgType::Text,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        to.tables
+            .insert("public.users".to_string(), users_table_uuid);
+        to.views.insert(
+            "public.users_view".to_string(),
+            View {
+                name: "users_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id, name FROM users".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+
+        // Compute diff
+        let ops = compute_diff(&from, &to);
+
+        // Should have: AlterColumn for users.id, DropView and CreateView for users_view
+        let alter_column_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .collect();
+        let drop_view_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropView { .. }))
+            .collect();
+        let create_view_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreateView(_)))
+            .collect();
+
+        assert_eq!(alter_column_ops.len(), 1, "Should have 1 AlterColumn op");
+        assert_eq!(
+            drop_view_ops.len(),
+            1,
+            "Should have 1 DropView op for view referencing table with type change"
+        );
+        assert_eq!(
+            create_view_ops.len(),
+            1,
+            "Should have 1 CreateView op to restore view after type change"
+        );
+
+        // Verify the view ops reference the correct view
+        if let MigrationOp::DropView { name, .. } = &drop_view_ops[0] {
+            assert_eq!(name, "public.users_view");
+        }
+        if let MigrationOp::CreateView(view) = &create_view_ops[0] {
+            assert_eq!(view.name, "users_view");
         }
     }
 }
