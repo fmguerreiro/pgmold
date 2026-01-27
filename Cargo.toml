@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "pgmold"
-version = "0.19.15"
+version = "0.19.16"
 edition = "2021"
 exclude = [".auto-claude/", ".auto-claude-security.json", ".claude_settings.json"]
 description = "PostgreSQL schema-as-code management tool"
