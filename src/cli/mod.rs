@@ -48,6 +48,7 @@ struct DriftOutput {
 
 #[derive(Parser)]
 #[command(name = "pgmold")]
+#[command(version)]
 #[command(about = "PostgreSQL schema-as-code management", long_about = None)]
 struct Cli {
     #[command(subcommand)]
