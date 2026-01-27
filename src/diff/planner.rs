@@ -189,13 +189,50 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
         })
         .collect();
 
-    let (drop_policies_for_type_change, drop_policies_permanent): (Vec<_>, Vec<_>) =
+    let (drop_policies_temp, drop_policies_permanent): (Vec<_>, Vec<_>) =
         drop_policies.into_iter().partition(|op| {
             if let MigrationOp::DropPolicy { table, name } = op {
                 policy_create_keys.contains(&(table.clone(), name.clone()))
             } else {
                 false
             }
+        });
+
+    // Further split temporary policy drops:
+    // 1. For function changes - needed before DROP FUNCTION
+    // 2. For type changes - needed before ALTER COLUMN TYPE
+    // Detect by checking if the recreated policy references a function being dropped
+    let dropped_function_names: HashSet<String> = drop_functions
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropFunction { name, .. } = op {
+                Some(name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let (drop_policies_for_function_change, drop_policies_for_type_change): (Vec<_>, Vec<_>) =
+        drop_policies_temp.into_iter().partition(|op| {
+            if let MigrationOp::DropPolicy { table, name } = op {
+                // Find the matching CreatePolicy to check what functions it references
+                if let Some(MigrationOp::CreatePolicy(policy)) =
+                    create_policies.iter().find(|cop| {
+                        matches!(cop, MigrationOp::CreatePolicy(p) if
+                            qualified_name(&p.table_schema, &p.table) == *table && p.name == *name)
+                    })
+                {
+                    // Check if the policy references any dropped function
+                    let refs = extract_function_references_from_policy(policy);
+                    return refs.iter().any(|func_ref| {
+                        dropped_function_names
+                            .iter()
+                            .any(|dropped| function_names_match(dropped, func_ref))
+                    });
+                }
+            }
+            false
         });
 
     // Split trigger drops into two groups:
@@ -268,6 +305,9 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(add_enum_values);
     result.extend(create_domains);
     result.extend(create_sequences_without_owner);
+    // Drop policies that depend on functions being dropped - must come before DROP FUNCTION
+    // PostgreSQL requires dependent policies to be dropped before the function they reference
+    result.extend(drop_policies_for_function_change);
     // Drop functions before creating new ones - needed when modifying a function
     // that requires DROP + CREATE (e.g., parameter name changes, return type changes)
     result.extend(drop_functions);
@@ -610,6 +650,49 @@ fn topological_sort(
         .into_iter()
         .filter_map(|name| table_ops.get(&name).cloned())
         .collect()
+}
+
+/// Extract function references from a policy's USING and WITH CHECK expressions.
+fn extract_function_references_from_policy(policy: &crate::model::Policy) -> HashSet<String> {
+    let mut refs = HashSet::new();
+
+    if let Some(ref using_expr) = policy.using_expr {
+        for func_ref in extract_function_references(using_expr, &policy.table_schema) {
+            refs.insert(qualified_name(&func_ref.schema, &func_ref.name));
+        }
+    }
+
+    if let Some(ref check_expr) = policy.check_expr {
+        for func_ref in extract_function_references(check_expr, &policy.table_schema) {
+            refs.insert(qualified_name(&func_ref.schema, &func_ref.name));
+        }
+    }
+
+    refs
+}
+
+/// Check if two function names match (handles schema qualification).
+fn function_names_match(dropped_name: &str, referenced_name: &str) -> bool {
+    // Both are qualified names like "public.func_name"
+    if dropped_name == referenced_name {
+        return true;
+    }
+
+    // Try matching just the function name part if schemas differ or one is unqualified
+    let dropped_parts: Vec<&str> = dropped_name.split('.').collect();
+    let ref_parts: Vec<&str> = referenced_name.split('.').collect();
+
+    // Extract function names
+    let dropped_func = dropped_parts.last().unwrap_or(&"");
+    let ref_func = ref_parts.last().unwrap_or(&"");
+
+    // If same schema and same function name
+    if dropped_parts.len() == 2 && ref_parts.len() == 2 {
+        return dropped_parts[0] == ref_parts[0] && dropped_func == ref_func;
+    }
+
+    // Fallback: just compare function names (for unqualified references)
+    dropped_func == ref_func
 }
 
 #[cfg(test)]

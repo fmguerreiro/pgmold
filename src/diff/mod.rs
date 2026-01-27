@@ -432,6 +432,10 @@ pub fn compute_diff_with_flags(
     // This ensures views are dropped before ALTER COLUMN TYPE
     ops.extend(generate_view_ops_for_type_changes(&ops, from, to));
 
+    // Generate policy drop/create ops for policies that reference functions being dropped
+    // This ensures policies are dropped before DROP FUNCTION
+    ops.extend(generate_policy_ops_for_function_changes(&ops, from, to));
+
     ops
 }
 
@@ -1668,6 +1672,133 @@ fn generate_view_ops_for_type_changes(
     }
 
     additional_ops
+}
+
+/// Generate policy drop/create ops for policies that reference functions being dropped.
+/// PostgreSQL requires dependent policies to be dropped before dropping functions they reference.
+fn generate_policy_ops_for_function_changes(
+    ops: &[MigrationOp],
+    from: &crate::model::Schema,
+    to: &crate::model::Schema,
+) -> Vec<MigrationOp> {
+    let mut additional_ops = Vec::new();
+
+    // Find all functions being dropped (not just renamed, but actually removed from ops)
+    let dropped_functions: HashSet<String> = ops
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropFunction { name, .. } = op {
+                Some(name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if dropped_functions.is_empty() {
+        return additional_ops;
+    }
+
+    // Collect existing policy ops to avoid duplicates
+    let existing_policy_drops: HashSet<(String, String)> = ops
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropPolicy { table, name } = op {
+                Some((table.clone(), name.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Check all policies in the source schema for function references
+    for table in from.tables.values() {
+        for policy in &table.policies {
+            let qualified_table = qualified_name(&table.schema, &table.name);
+
+            // Check if policy references any dropped function in its expressions
+            let policy_affected = policy_references_functions(policy, &dropped_functions);
+
+            if policy_affected
+                && !existing_policy_drops.contains(&(qualified_table.clone(), policy.name.clone()))
+            {
+                // Get the policy from the target schema (if it exists)
+                let target_policy = to
+                    .tables
+                    .get(&qualified_name(&table.schema, &table.name))
+                    .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
+
+                additional_ops.push(MigrationOp::DropPolicy {
+                    table: qualified_table.clone(),
+                    name: policy.name.clone(),
+                });
+
+                // Re-add the policy (use target if available, otherwise use from)
+                if let Some(target_policy) = target_policy {
+                    additional_ops.push(MigrationOp::CreatePolicy(target_policy.clone()));
+                } else {
+                    additional_ops.push(MigrationOp::CreatePolicy(policy.clone()));
+                }
+            }
+        }
+    }
+
+    additional_ops
+}
+
+/// Check if a policy references any of the given functions in its USING or WITH CHECK expressions.
+/// Uses parser-based function extraction for accurate detection.
+fn policy_references_functions(
+    policy: &crate::model::Policy,
+    function_names: &HashSet<String>,
+) -> bool {
+    use crate::parser::extract_function_references;
+
+    // Extract all function references from policy expressions
+    let mut policy_func_refs = HashSet::new();
+
+    if let Some(ref using_expr) = policy.using_expr {
+        for func_ref in extract_function_references(using_expr, &policy.table_schema) {
+            policy_func_refs.insert(qualified_name(&func_ref.schema, &func_ref.name));
+        }
+    }
+
+    if let Some(ref check_expr) = policy.check_expr {
+        for func_ref in extract_function_references(check_expr, &policy.table_schema) {
+            policy_func_refs.insert(qualified_name(&func_ref.schema, &func_ref.name));
+        }
+    }
+
+    // Check if any policy function references match dropped functions
+    policy_func_refs.iter().any(|policy_ref| {
+        function_names
+            .iter()
+            .any(|dropped| function_names_match(dropped, policy_ref))
+    })
+}
+
+/// Check if two function names match (handles schema qualification).
+fn function_names_match(dropped_name: &str, referenced_name: &str) -> bool {
+    // Both are qualified names like "public.func_name"
+    if dropped_name == referenced_name {
+        return true;
+    }
+
+    // Try matching just the function name part if schemas differ or one is unqualified
+    let dropped_parts: Vec<&str> = dropped_name.split('.').collect();
+    let ref_parts: Vec<&str> = referenced_name.split('.').collect();
+
+    // Extract function names
+    let dropped_func = dropped_parts.last().unwrap_or(&"");
+    let ref_func = ref_parts.last().unwrap_or(&"");
+
+    // If same schema and same function name
+    if dropped_parts.len() == 2 && ref_parts.len() == 2 {
+        return dropped_parts[0] == ref_parts[0] && dropped_func == ref_func;
+    }
+
+    // Fallback: just compare function names (for unqualified references)
+    dropped_func == ref_func
 }
 
 fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
@@ -4994,6 +5125,124 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         }
         if let MigrationOp::CreateView(view) = &create_view_ops[0] {
             assert_eq!(view.name, "users_view");
+        }
+    }
+
+    #[test]
+    fn generates_policy_ops_for_function_changes() {
+        // When a function is dropped and recreated (due to parameter changes),
+        // policies that reference it must also be dropped and recreated.
+        let mut from = empty_schema();
+        let mut to = empty_schema();
+
+        // Create a function in both schemas (with different defaults to trigger drop/recreate)
+        let func_old = Function {
+            name: "check_access".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("user_name".to_string()),
+                data_type: "text".to_string(),
+                mode: ArgMode::In,
+                default: Some("'admin'".to_string()),
+            }],
+            return_type: "boolean".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT true".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+        let func_new = Function {
+            name: "check_access".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("user_name".to_string()),
+                data_type: "text".to_string(),
+                mode: ArgMode::In,
+                default: Some("'superuser'".to_string()), // Changed default
+            }],
+            return_type: "boolean".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT true".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+        from.functions.insert(
+            qualified_name(&func_old.schema, &func_old.signature()),
+            func_old,
+        );
+        to.functions.insert(
+            qualified_name(&func_new.schema, &func_new.signature()),
+            func_new,
+        );
+
+        // Create a table with a policy that references the function
+        let mut table = simple_table("secure_data");
+        table.policies.push(Policy {
+            name: "access_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "secure_data".to_string(),
+            command: crate::model::PolicyCommand::Select,
+            roles: vec!["public".to_string()],
+            using_expr: Some("public.check_access()".to_string()),
+            check_expr: None,
+        });
+        table.row_level_security = true;
+
+        from.tables
+            .insert(qualified_name(&table.schema, &table.name), table.clone());
+        to.tables
+            .insert(qualified_name(&table.schema, &table.name), table);
+
+        // Compute diff
+        let ops = compute_diff(&from, &to);
+
+        // Should have: DropFunction, CreateFunction, DropPolicy, CreatePolicy
+        let drop_function_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropFunction { .. }))
+            .collect();
+        let create_function_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .collect();
+        let drop_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropPolicy { .. }))
+            .collect();
+        let create_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .collect();
+
+        assert_eq!(drop_function_ops.len(), 1, "Should have 1 DropFunction op");
+        assert_eq!(
+            create_function_ops.len(),
+            1,
+            "Should have 1 CreateFunction op"
+        );
+        assert_eq!(
+            drop_policy_ops.len(),
+            1,
+            "Should have 1 DropPolicy op for policy referencing changed function"
+        );
+        assert_eq!(
+            create_policy_ops.len(),
+            1,
+            "Should have 1 CreatePolicy op to restore policy"
+        );
+
+        // Verify the policy ops reference the correct policy
+        if let MigrationOp::DropPolicy { name, .. } = &drop_policy_ops[0] {
+            assert_eq!(name, "access_policy");
+        }
+        if let MigrationOp::CreatePolicy(policy) = &create_policy_ops[0] {
+            assert_eq!(policy.name, "access_policy");
         }
     }
 }
