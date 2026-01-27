@@ -1,4 +1,4 @@
-use super::MigrationOp;
+use super::{extract_function_references_from_policy, function_names_match, MigrationOp};
 use crate::model::qualified_name;
 use crate::parser::{extract_function_references, extract_table_references};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -650,49 +650,6 @@ fn topological_sort(
         .into_iter()
         .filter_map(|name| table_ops.get(&name).cloned())
         .collect()
-}
-
-/// Extract function references from a policy's USING and WITH CHECK expressions.
-fn extract_function_references_from_policy(policy: &crate::model::Policy) -> HashSet<String> {
-    let mut refs = HashSet::new();
-
-    if let Some(ref using_expr) = policy.using_expr {
-        for func_ref in extract_function_references(using_expr, &policy.table_schema) {
-            refs.insert(qualified_name(&func_ref.schema, &func_ref.name));
-        }
-    }
-
-    if let Some(ref check_expr) = policy.check_expr {
-        for func_ref in extract_function_references(check_expr, &policy.table_schema) {
-            refs.insert(qualified_name(&func_ref.schema, &func_ref.name));
-        }
-    }
-
-    refs
-}
-
-/// Check if two function names match (handles schema qualification).
-fn function_names_match(dropped_name: &str, referenced_name: &str) -> bool {
-    // Both are qualified names like "public.func_name"
-    if dropped_name == referenced_name {
-        return true;
-    }
-
-    // Try matching just the function name part if schemas differ or one is unqualified
-    let dropped_parts: Vec<&str> = dropped_name.split('.').collect();
-    let ref_parts: Vec<&str> = referenced_name.split('.').collect();
-
-    // Extract function names
-    let dropped_func = dropped_parts.last().unwrap_or(&"");
-    let ref_func = ref_parts.last().unwrap_or(&"");
-
-    // If same schema and same function name
-    if dropped_parts.len() == 2 && ref_parts.len() == 2 {
-        return dropped_parts[0] == ref_parts[0] && dropped_func == ref_func;
-    }
-
-    // Fallback: just compare function names (for unqualified references)
-    dropped_func == ref_func
 }
 
 #[cfg(test)]
