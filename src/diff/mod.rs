@@ -4725,7 +4725,10 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             );
         }
         if let MigrationOp::AddForeignKey { foreign_key, .. } = &add_fk_ops[0] {
-            assert_eq!(foreign_key.name, "FertilizerApplication_compoundUnitId_fkey");
+            assert_eq!(
+                foreign_key.name,
+                "FertilizerApplication_compoundUnitId_fkey"
+            );
         }
     }
 
