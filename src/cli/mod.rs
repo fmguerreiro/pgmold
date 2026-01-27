@@ -24,6 +24,12 @@ struct PlanOutput {
     statements: Vec<String>,
     lock_warnings: Vec<String>,
     statement_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    idempotent: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    residual_ops_count: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -328,32 +334,53 @@ pub async fn run() -> Result<()> {
                 ))
             };
 
-            if let Some(validate_db_url) = &validate {
+            let validation_info = if let Some(validate_db_url) = &validate {
                 let validate_url = parse_db_source(validate_db_url)?;
-                let current_schema = if reverse {
-                    &filtered_target
+                let (current_schema, target_schema_for_validation) = if reverse {
+                    (&filtered_target, &filtered_db_schema)
                 } else {
-                    &filtered_db_schema
+                    (&filtered_db_schema, &filtered_target)
                 };
-                let validation_result =
-                    validate_migration_on_temp_db(&ops, &validate_url, current_schema)
-                        .await
-                        .map_err(|e| anyhow!("Validation failed: {e}"))?;
+                let validation_result = validate_migration_on_temp_db(
+                    &ops,
+                    &validate_url,
+                    current_schema,
+                    target_schema_for_validation,
+                    &target_schemas,
+                )
+                .await
+                .map_err(|e| anyhow!("Validation failed: {e}"))?;
 
                 if !validation_result.success {
                     eprintln!("\n\u{274C} Validation failed on temp database:");
-                    for error in &validation_result.errors {
+                    for error in &validation_result.execution_errors {
                         eprintln!("  Statement {}: {}", error.statement_index + 1, error.sql);
                         eprintln!("    Error: {}", error.error_message);
                     }
                     return Err(anyhow!(
                         "Migration validation failed with {} error(s)",
-                        validation_result.errors.len()
+                        validation_result.execution_errors.len()
                     ));
-                } else if !ops.is_empty() {
+                } else if !ops.is_empty() && !json {
                     println!("\u{2705} Migration validated successfully on temp database");
+                    if validation_result.idempotent {
+                        println!(
+                            "\u{2713} Idempotency check passed: resulting schema matches target"
+                        );
+                    } else {
+                        println!(
+                            "\u{2717} Idempotency check failed: {} residual operations needed",
+                            validation_result.residual_ops.len()
+                        );
+                        for op in &validation_result.residual_ops {
+                            println!("  - {op:?}");
+                        }
+                    }
                 }
-            }
+                Some(validation_result)
+            } else {
+                None
+            };
 
             if zero_downtime {
                 let phased_plan = expand_operations(ops);
@@ -447,6 +474,9 @@ pub async fn run() -> Result<()> {
                         statements: sql.clone(),
                         lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
                         statement_count: sql.len(),
+                        validated: validation_info.as_ref().map(|v| v.success),
+                        idempotent: validation_info.as_ref().map(|v| v.idempotent),
+                        residual_ops_count: validation_info.as_ref().map(|v| v.residual_ops.len()),
                     };
                     let json_output = serde_json::to_string_pretty(&output)
                         .map_err(|e| anyhow!("Failed to serialize plan output to JSON: {e}"))?;
@@ -534,23 +564,41 @@ pub async fn run() -> Result<()> {
 
             if let Some(validate_db_url) = &validate {
                 let validate_url = parse_db_source(validate_db_url)?;
-                let validation_result =
-                    validate_migration_on_temp_db(&ops, &validate_url, &filtered_db_schema)
-                        .await
-                        .map_err(|e| anyhow!("Validation failed: {e}"))?;
+                let validation_result = validate_migration_on_temp_db(
+                    &ops,
+                    &validate_url,
+                    &filtered_db_schema,
+                    &filtered_target,
+                    &target_schemas,
+                )
+                .await
+                .map_err(|e| anyhow!("Validation failed: {e}"))?;
 
                 if !validation_result.success {
                     eprintln!("\n\u{274C} Validation failed on temp database:");
-                    for error in &validation_result.errors {
+                    for error in &validation_result.execution_errors {
                         eprintln!("  Statement {}: {}", error.statement_index + 1, error.sql);
                         eprintln!("    Error: {}", error.error_message);
                     }
                     return Err(anyhow!(
                         "Migration validation failed with {} error(s). Apply aborted.",
-                        validation_result.errors.len()
+                        validation_result.execution_errors.len()
                     ));
                 } else if !ops.is_empty() {
                     println!("\u{2705} Migration validated successfully on temp database");
+                    if validation_result.idempotent {
+                        println!(
+                            "\u{2713} Idempotency check passed: resulting schema matches target"
+                        );
+                    } else {
+                        println!(
+                            "\u{2717} Idempotency check failed: {} residual operations needed",
+                            validation_result.residual_ops.len()
+                        );
+                        for op in &validation_result.residual_ops {
+                            println!("  - {op:?}");
+                        }
+                    }
                 }
             }
 
