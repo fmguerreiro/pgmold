@@ -1466,10 +1466,7 @@ fn generate_policy_ops_for_type_changes(
     let tables_with_type_changes: HashSet<String> = ops
         .iter()
         .filter_map(|op| {
-            if let MigrationOp::AlterColumn {
-                table, changes, ..
-            } = op
-            {
+            if let MigrationOp::AlterColumn { table, changes, .. } = op {
                 if changes.data_type.is_some() {
                     return Some(table.clone());
                 }
@@ -1545,10 +1542,7 @@ fn generate_trigger_ops_for_type_changes(
     let tables_with_type_changes: HashSet<String> = ops
         .iter()
         .filter_map(|op| {
-            if let MigrationOp::AlterColumn {
-                table, changes, ..
-            } = op
-            {
+            if let MigrationOp::AlterColumn { table, changes, .. } = op {
                 if changes.data_type.is_some() {
                     return Some(table.clone());
                 }
@@ -1601,10 +1595,11 @@ fn generate_trigger_ops_for_type_changes(
                 }
 
                 // Get the trigger from the target schema (if it exists)
-                let target_trigger = to
-                    .triggers
-                    .values()
-                    .find(|t| t.name == trigger.name && t.target_schema == table_schema && t.target_name == table_only_name);
+                let target_trigger = to.triggers.values().find(|t| {
+                    t.name == trigger.name
+                        && t.target_schema == table_schema
+                        && t.target_name == table_only_name
+                });
 
                 additional_ops.push(MigrationOp::DropTrigger {
                     target_schema: trigger.target_schema.clone(),
@@ -1641,10 +1636,7 @@ fn generate_view_ops_for_type_changes(
     let tables_with_type_changes: HashSet<String> = ops
         .iter()
         .filter_map(|op| {
-            if let MigrationOp::AlterColumn {
-                table, changes, ..
-            } = op
-            {
+            if let MigrationOp::AlterColumn { table, changes, .. } = op {
                 if changes.data_type.is_some() {
                     return Some(table.clone());
                 }
@@ -1675,9 +1667,9 @@ fn generate_view_ops_for_type_changes(
         let referenced_tables = extract_table_references(&view.query, &view.schema);
 
         // Check if any referenced table has type changes
-        let view_affected = referenced_tables.iter().any(|ref_table| {
-            tables_with_type_changes.contains(&ref_table.qualified_name())
-        });
+        let view_affected = referenced_tables
+            .iter()
+            .any(|ref_table| tables_with_type_changes.contains(&ref_table.qualified_name()));
 
         if view_affected {
             let qualified_view_name = qualified_name(&view.schema, &view.name);
