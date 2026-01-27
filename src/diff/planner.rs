@@ -159,9 +159,8 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
         })
         .collect();
 
-    let (drop_fks_for_type_change, drop_fks_permanent): (Vec<_>, Vec<_>) = drop_foreign_keys
-        .into_iter()
-        .partition(|op| {
+    let (drop_fks_for_type_change, drop_fks_permanent): (Vec<_>, Vec<_>) =
+        drop_foreign_keys.into_iter().partition(|op| {
             if let MigrationOp::DropForeignKey {
                 table,
                 foreign_key_name,

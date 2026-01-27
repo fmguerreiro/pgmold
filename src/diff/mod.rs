@@ -1397,13 +1397,16 @@ fn generate_fk_ops_for_type_changes(
             let qualified_table = qualified_name(&table.schema, &table.name);
             let referenced_table = qualified_name(&fk.referenced_schema, &fk.referenced_table);
 
-            let fk_affected = fk.columns.iter().any(|col| {
-                type_change_columns.contains(&(qualified_table.clone(), col.clone()))
-            }) || fk.referenced_columns.iter().any(|col| {
-                type_change_columns.contains(&(referenced_table.clone(), col.clone()))
-            });
+            let fk_affected =
+                fk.columns.iter().any(|col| {
+                    type_change_columns.contains(&(qualified_table.clone(), col.clone()))
+                }) || fk.referenced_columns.iter().any(|col| {
+                    type_change_columns.contains(&(referenced_table.clone(), col.clone()))
+                });
 
-            if fk_affected && !existing_fk_drops.contains(&(qualified_table.clone(), fk.name.clone())) {
+            if fk_affected
+                && !existing_fk_drops.contains(&(qualified_table.clone(), fk.name.clone()))
+            {
                 // Get the FK from the target schema (if it exists)
                 let target_fk = to
                     .tables
@@ -4237,7 +4240,8 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 comment: None,
             },
         );
-        to.tables.insert("public.users".to_string(), users_table_uuid);
+        to.tables
+            .insert("public.users".to_string(), users_table_uuid);
 
         let mut posts_table_uuid = simple_table("posts");
         posts_table_uuid.columns.insert(
@@ -4259,7 +4263,8 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             on_delete: ReferentialAction::NoAction,
             on_update: ReferentialAction::NoAction,
         });
-        to.tables.insert("public.posts".to_string(), posts_table_uuid);
+        to.tables
+            .insert("public.posts".to_string(), posts_table_uuid);
 
         // Compute diff
         let ops = compute_diff(&from, &to);
@@ -4279,11 +4284,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             .filter(|op| matches!(op, MigrationOp::AddForeignKey { .. }))
             .collect();
 
-        assert_eq!(
-            alter_column_ops.len(),
-            2,
-            "Should have 2 AlterColumn ops"
-        );
+        assert_eq!(alter_column_ops.len(), 2, "Should have 2 AlterColumn ops");
         assert_eq!(
             drop_fk_ops.len(),
             1,
@@ -4296,7 +4297,10 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         );
 
         // Verify the FK ops reference the correct FK
-        if let MigrationOp::DropForeignKey { foreign_key_name, .. } = &drop_fk_ops[0] {
+        if let MigrationOp::DropForeignKey {
+            foreign_key_name, ..
+        } = &drop_fk_ops[0]
+        {
             assert_eq!(foreign_key_name, "posts_user_id_fkey");
         }
         if let MigrationOp::AddForeignKey { foreign_key, .. } = &add_fk_ops[0] {
