@@ -3561,6 +3561,60 @@ mod tests {
     }
 
     #[test]
+    fn policy_expression_comparison_ignores_enum_cast_in_case_expression() {
+        // Tests the exact bug scenario from the bug report:
+        // Schema file has: WHEN 'ENTERPRISE' THEN
+        // Database returns: WHEN 'ENTERPRISE'::test_schema."EntityType" THEN
+        let mut from = empty_schema();
+        let mut table = simple_table("entities");
+        table.row_level_security = true;
+        table.policies.push(crate::model::Policy {
+            name: "entity_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "entities".to_string(),
+            command: crate::model::PolicyCommand::Select,
+            roles: vec!["public".to_string()],
+            using_expr: Some(
+                r#"CASE entity_type
+                WHEN 'ENTERPRISE'::test_schema."EntityType" THEN true
+                WHEN 'SUPPLIER'::test_schema."EntityType" THEN true
+                ELSE false
+            END"#
+                    .to_string(),
+            ),
+            check_expr: None,
+        });
+        from.tables.insert("public.entities".to_string(), table);
+
+        let mut to = empty_schema();
+        let mut table = simple_table("entities");
+        table.row_level_security = true;
+        table.policies.push(crate::model::Policy {
+            name: "entity_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "entities".to_string(),
+            command: crate::model::PolicyCommand::Select,
+            roles: vec!["public".to_string()],
+            using_expr: Some(
+                r#"CASE entity_type
+                WHEN 'ENTERPRISE' THEN true
+                WHEN 'SUPPLIER' THEN true
+                ELSE false
+            END"#
+                    .to_string(),
+            ),
+            check_expr: None,
+        });
+        to.tables.insert("public.entities".to_string(), table);
+
+        let ops = compute_diff(&from, &to);
+        assert!(
+            ops.is_empty(),
+            "Should not report differences for enum casts in CASE expressions. Got: {ops:?}"
+        );
+    }
+
+    #[test]
     fn policy_expression_comparison_ignores_whitespace_after_parens() {
         // Tests the PostgreSQL pg_get_expr vs sqlparser formatting difference
         // PostgreSQL returns: "(EXISTS ( SELECT 1 FROM ..."

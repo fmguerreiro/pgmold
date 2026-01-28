@@ -214,6 +214,11 @@ fn normalize_expression_regex(expr: &str) -> String {
     let re_string_text_cast = Regex::new(r"'([^']*)'::text").unwrap();
     let result = re_string_text_cast.replace_all(&result, "'$1'");
 
+    // Strip casts from NULL values
+    // PostgreSQL adds explicit casts like NULL::uuid, NULL::text, NULL::schema."Type"
+    let re_null_cast = Regex::new(r#"(?i)\bNULL::[a-zA-Z0-9_."]+(?:\.[a-zA-Z0-9_."]+)?"#).unwrap();
+    let result = re_null_cast.replace_all(&result, "NULL");
+
     // ILIKE variants must come before LIKE variants
     let re_not_ilike = Regex::new(r"\s*!~~\*\s*").unwrap();
     let result = re_not_ilike.replace_all(&result, " NOT ILIKE ");
@@ -956,6 +961,13 @@ fn normalize_expr(expr: &Expr) -> Expr {
                 if matches!(v.value, sqlparser::ast::Value::Number(_, _))
                     && is_numeric_type(data_type)
                 {
+                    return norm_inner;
+                }
+            }
+            // Strip casts from NULL values
+            // PostgreSQL adds explicit casts like NULL::uuid, NULL::text
+            if let Expr::Value(v) = &norm_inner {
+                if matches!(v.value, sqlparser::ast::Value::Null) {
                     return norm_inner;
                 }
             }
@@ -1741,5 +1753,87 @@ fn expression_comparison_handles_postgresql_identifier_normalization() {
     assert!(
         expressions_semantically_equal(parsed_schema, db_no_schema),
         "Table with schema should equal table without schema: {parsed_schema} vs {db_no_schema}"
+    );
+}
+
+#[test]
+fn expression_comparison_handles_case_with_enum_cast() {
+    // This is the exact scenario from the bug report:
+    // Schema file has WHEN 'ENTERPRISE' THEN
+    // Database returns WHEN 'ENTERPRISE'::test_schema."EntityType" THEN
+    let without_cast = r#"
+        CASE entity_type
+            WHEN 'ENTERPRISE' THEN true
+            WHEN 'SUPPLIER' THEN true
+            ELSE false
+        END
+    "#;
+    let with_cast = r#"
+        CASE entity_type
+            WHEN 'ENTERPRISE'::test_schema."EntityType" THEN true
+            WHEN 'SUPPLIER'::test_schema."EntityType" THEN true
+            ELSE false
+        END
+    "#;
+    assert!(
+        expressions_semantically_equal(without_cast, with_cast),
+        "CASE with enum casts should be semantically equal"
+    );
+}
+
+#[test]
+fn expression_comparison_handles_case_with_exact_pg_format() {
+    // Exact format from bug report - pg_get_expr returns this
+    let with_cast = r#"CASE entity_type
+    WHEN 'ENTERPRISE'::test_schema."EntityType" THEN true
+    WHEN 'SUPPLIER'::test_schema."EntityType" THEN true
+    ELSE false
+END"#;
+    let without_cast = r#"CASE entity_type
+            WHEN 'ENTERPRISE' THEN true
+            WHEN 'SUPPLIER' THEN true
+            ELSE false
+        END"#;
+    assert!(
+        expressions_semantically_equal(with_cast, without_cast),
+        "CASE with exact pg_get_expr enum casts should be semantically equal"
+    );
+}
+
+#[test]
+fn regex_fallback_strips_schema_qualified_enum_cast() {
+    // Exact format from bug report
+    let with_cast = r#"'ENTERPRISE'::test_schema."EntityType""#;
+    let normalized = normalize_expression_regex(with_cast);
+    assert_eq!(
+        normalized, "'ENTERPRISE'",
+        "Should strip schema.\"EnumType\" cast"
+    );
+}
+
+#[test]
+fn regex_fallback_strips_case_with_enum_casts() {
+    let with_cast = r#"CASE entity_type WHEN 'ENTERPRISE'::test_schema."EntityType" THEN true WHEN 'SUPPLIER'::test_schema."EntityType" THEN true ELSE false END"#;
+    let without_cast =
+        r#"CASE entity_type WHEN 'ENTERPRISE' THEN true WHEN 'SUPPLIER' THEN true ELSE false END"#;
+
+    let normalized_with = normalize_expression_regex(with_cast);
+    let normalized_without = normalize_expression_regex(without_cast);
+
+    assert_eq!(
+        normalized_with, normalized_without,
+        "CASE expressions with enum casts should normalize to same form"
+    );
+}
+
+#[test]
+fn expression_comparison_handles_null_with_type_cast() {
+    // This is what PostgreSQL does to function defaults
+    let without_cast = "NULL";
+    let with_cast = "NULL::uuid";
+
+    assert!(
+        expressions_semantically_equal(without_cast, with_cast),
+        "NULL vs NULL::uuid should be semantically equal"
     );
 }
