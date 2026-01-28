@@ -797,16 +797,19 @@ fn generate_alter_policy(table: &str, name: &str, changes: &PolicyChanges) -> Ve
     let mut statements = Vec::new();
 
     if let Some(ref roles) = changes.roles {
-        statements.push(format!(
-            "ALTER POLICY {} ON {} TO {};",
-            quote_ident(name),
-            qualified,
-            roles
-                .iter()
-                .map(|r| quote_ident(r))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
+        // Only generate TO clause if roles is non-empty (empty roles would generate invalid SQL)
+        if !roles.is_empty() {
+            statements.push(format!(
+                "ALTER POLICY {} ON {} TO {};",
+                quote_ident(name),
+                qualified,
+                roles
+                    .iter()
+                    .map(|r| quote_ident(r))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
     }
 
     if let Some(Some(expr)) = &changes.using_expr {
