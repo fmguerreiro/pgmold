@@ -371,3 +371,131 @@ async fn policy_dropped_when_referenced_function_changes() {
             .unwrap_or_else(|e| panic!("Migration statement failed: {stmt}: {e}"));
     }
 }
+
+#[tokio::test]
+async fn policy_dropped_when_cross_schema_function_changes() {
+    // Bug reproduction: Policy in public schema references function in auth schema.
+    // When the function is modified (LANGUAGE change triggers drop/recreate),
+    // the policy must be dropped first, then recreated after.
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create auth schema
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS auth")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    // Initial schema: function in auth schema with default args, policy in public schema
+    let initial_sql = r#"
+        CREATE FUNCTION auth.check_permission(p_resource TEXT DEFAULT 'default_resource', p_operation TEXT DEFAULT 'read')
+        RETURNS BOOLEAN
+        LANGUAGE sql
+        STABLE
+        AS $$
+            SELECT true
+        $$;
+
+        CREATE TABLE public.items (
+            id BIGINT PRIMARY KEY,
+            name TEXT NOT NULL
+        );
+
+        ALTER TABLE public.items ENABLE ROW LEVEL SECURITY;
+
+        CREATE POLICY "users_can_insert" ON public.items
+        FOR INSERT
+        WITH CHECK (auth.check_permission('items', 'create'));
+    "#;
+
+    // Apply initial schema
+    let initial_schema = parse_sql_string(initial_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &initial_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Modified schema: function default changed (triggers drop/recreate)
+    let modified_sql = r#"
+        CREATE FUNCTION auth.check_permission(p_resource TEXT DEFAULT 'items', p_operation TEXT DEFAULT 'create')
+        RETURNS BOOLEAN
+        LANGUAGE sql
+        STABLE
+        AS $$
+            SELECT true
+        $$;
+
+        CREATE TABLE public.items (
+            id BIGINT PRIMARY KEY,
+            name TEXT NOT NULL
+        );
+
+        ALTER TABLE public.items ENABLE ROW LEVEL SECURITY;
+
+        CREATE POLICY "users_can_insert" ON public.items
+        FOR INSERT
+        WITH CHECK (auth.check_permission('items', 'create'));
+    "#;
+
+    let db_schema = introspect_schema(
+        &connection,
+        &["public".to_string(), "auth".to_string()],
+        false,
+    )
+    .await
+    .unwrap();
+    let modified_schema = parse_sql_string(modified_sql).unwrap();
+    let diff_ops = compute_diff(&db_schema, &modified_schema);
+    let planned = plan_migration(diff_ops);
+
+    // Verify the operations include policy drop/create
+    let has_drop_policy = planned
+        .iter()
+        .any(|op| matches!(op, MigrationOp::DropPolicy { name, .. } if name == "users_can_insert"));
+    let has_drop_function = planned.iter().any(|op| {
+        matches!(op, MigrationOp::DropFunction { name, .. } if name == "auth.check_permission")
+    });
+    let has_create_policy = planned
+        .iter()
+        .any(|op| matches!(op, MigrationOp::CreatePolicy(p) if p.name == "users_can_insert"));
+
+    assert!(
+        has_drop_function,
+        "Should have DropFunction op. Got: {planned:?}"
+    );
+    assert!(
+        has_drop_policy,
+        "Should have DropPolicy for policy referencing the cross-schema function. Got: {planned:?}"
+    );
+    assert!(
+        has_create_policy,
+        "Should have CreatePolicy to recreate policy after function. Got: {planned:?}"
+    );
+
+    // Verify ordering: DropPolicy must come before DropFunction
+    let drop_policy_pos = planned.iter().position(
+        |op| matches!(op, MigrationOp::DropPolicy { name, .. } if name == "users_can_insert"),
+    );
+    let drop_function_pos = planned.iter().position(|op| {
+        matches!(op, MigrationOp::DropFunction { name, .. } if name == "auth.check_permission")
+    });
+
+    if let (Some(policy_pos), Some(func_pos)) = (drop_policy_pos, drop_function_pos) {
+        assert!(
+            policy_pos < func_pos,
+            "DropPolicy must come BEFORE DropFunction. Policy at {policy_pos}, Function at {func_pos}"
+        );
+    }
+
+    // The migration should actually apply without errors
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Migration statement failed: {stmt}: {e}"));
+    }
+}
