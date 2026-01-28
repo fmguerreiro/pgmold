@@ -434,7 +434,20 @@ pub fn compute_diff_with_flags(
 
     // Generate policy drop/create ops for policies that reference functions being dropped
     // This ensures policies are dropped before DROP FUNCTION
-    ops.extend(generate_policy_ops_for_function_changes(&ops, from, to));
+    let (policy_ops, policies_to_filter) = generate_policy_ops_for_function_changes(&ops, from, to);
+
+    // Filter out AlterPolicy ops for policies that will be drop/recreated
+    if !policies_to_filter.is_empty() {
+        ops.retain(|op| {
+            if let MigrationOp::AlterPolicy { table, name, .. } = op {
+                !policies_to_filter.contains(&(table.clone(), name.clone()))
+            } else {
+                true
+            }
+        });
+    }
+
+    ops.extend(policy_ops);
 
     ops
 }
@@ -1676,12 +1689,15 @@ fn generate_view_ops_for_type_changes(
 
 /// Generate policy drop/create ops for policies that reference functions being dropped.
 /// PostgreSQL requires dependent policies to be dropped before dropping functions they reference.
+/// Returns (additional_ops, policies_to_filter) where policies_to_filter are (table, name) pairs
+/// of policies that should have their AlterPolicy ops removed (replaced by drop/create).
 fn generate_policy_ops_for_function_changes(
     ops: &[MigrationOp],
     from: &crate::model::Schema,
     to: &crate::model::Schema,
-) -> Vec<MigrationOp> {
+) -> (Vec<MigrationOp>, HashSet<(String, String)>) {
     let mut additional_ops = Vec::new();
+    let mut policies_to_filter = HashSet::new();
 
     // Find all functions being dropped (not just renamed, but actually removed from ops)
     let dropped_functions: HashSet<String> = ops
@@ -1696,7 +1712,7 @@ fn generate_policy_ops_for_function_changes(
         .collect();
 
     if dropped_functions.is_empty() {
-        return additional_ops;
+        return (additional_ops, policies_to_filter);
     }
 
     // Collect existing policy ops to avoid duplicates
@@ -1722,6 +1738,9 @@ fn generate_policy_ops_for_function_changes(
             if policy_affected
                 && !existing_policy_drops.contains(&(qualified_table.clone(), policy.name.clone()))
             {
+                // Mark this policy's AlterPolicy op for removal
+                policies_to_filter.insert((qualified_table.clone(), policy.name.clone()));
+
                 // Get the policy from the target schema (if it exists)
                 let target_policy = to
                     .tables
@@ -1743,7 +1762,7 @@ fn generate_policy_ops_for_function_changes(
         }
     }
 
-    additional_ops
+    (additional_ops, policies_to_filter)
 }
 
 /// Check if a policy references any of the given functions in its USING or WITH CHECK expressions.
