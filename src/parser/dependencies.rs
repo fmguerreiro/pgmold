@@ -231,9 +231,7 @@ fn extract_functions_from_expr(expr: &Expr, default_schema: &str, refs: &mut Has
 
             if let FunctionArguments::List(FunctionArgumentList { args, .. }) = &f.args {
                 for arg in args {
-                    if let FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) = arg {
-                        extract_functions_from_expr(e, default_schema, refs);
-                    }
+                    extract_functions_from_function_arg(arg, default_schema, refs);
                 }
             }
         }
@@ -286,6 +284,34 @@ fn extract_functions_from_expr(expr: &Expr, default_schema: &str, refs: &mut Has
             extract_functions_from_expr(expr, default_schema, refs);
             extract_functions_from_expr(low, default_schema, refs);
             extract_functions_from_expr(high, default_schema, refs);
+        }
+        _ => {}
+    }
+}
+
+/// Extract function references from a function argument (Unnamed, Named, or ExprNamed).
+fn extract_functions_from_function_arg(
+    arg: &FunctionArg,
+    default_schema: &str,
+    refs: &mut HashSet<ObjectRef>,
+) {
+    match arg {
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => {
+            extract_functions_from_expr(e, default_schema, refs);
+        }
+        FunctionArg::Named {
+            arg: FunctionArgExpr::Expr(e),
+            ..
+        } => {
+            extract_functions_from_expr(e, default_schema, refs);
+        }
+        FunctionArg::ExprNamed {
+            name,
+            arg: FunctionArgExpr::Expr(e),
+            ..
+        } => {
+            extract_functions_from_expr(name, default_schema, refs);
+            extract_functions_from_expr(e, default_schema, refs);
         }
         _ => {}
     }
@@ -396,11 +422,37 @@ fn extract_tables_from_expr(expr: &Expr, default_schema: &str, refs: &mut HashSe
         Expr::Function(f) => {
             if let FunctionArguments::List(FunctionArgumentList { args, .. }) = &f.args {
                 for arg in args {
-                    if let FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) = arg {
-                        extract_tables_from_expr(e, default_schema, refs);
-                    }
+                    extract_tables_from_function_arg(arg, default_schema, refs);
                 }
             }
+        }
+        _ => {}
+    }
+}
+
+/// Extract table references from a function argument (Unnamed, Named, or ExprNamed).
+fn extract_tables_from_function_arg(
+    arg: &FunctionArg,
+    default_schema: &str,
+    refs: &mut HashSet<ObjectRef>,
+) {
+    match arg {
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => {
+            extract_tables_from_expr(e, default_schema, refs);
+        }
+        FunctionArg::Named {
+            arg: FunctionArgExpr::Expr(e),
+            ..
+        } => {
+            extract_tables_from_expr(e, default_schema, refs);
+        }
+        FunctionArg::ExprNamed {
+            name,
+            arg: FunctionArgExpr::Expr(e),
+            ..
+        } => {
+            extract_tables_from_expr(name, default_schema, refs);
+            extract_tables_from_expr(e, default_schema, refs);
         }
         _ => {}
     }

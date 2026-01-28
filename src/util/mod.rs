@@ -126,14 +126,7 @@ fn strip_all_nested(expr: Expr) -> Expr {
                         args: args
                             .args
                             .into_iter()
-                            .map(|arg| match arg {
-                                sqlparser::ast::FunctionArg::Unnamed(
-                                    sqlparser::ast::FunctionArgExpr::Expr(e),
-                                ) => sqlparser::ast::FunctionArg::Unnamed(
-                                    sqlparser::ast::FunctionArgExpr::Expr(strip_all_nested(e)),
-                                ),
-                                other => other,
-                            })
+                            .map(strip_all_nested_function_arg)
                             .collect(),
                         clauses: args.clauses,
                     })
@@ -166,6 +159,85 @@ fn strip_all_nested(expr: Expr) -> Expr {
 
         // Everything else passes through unchanged
         other => other,
+    }
+}
+
+/// Recursively strips nested expressions from a function argument.
+fn strip_all_nested_function_arg(arg: sqlparser::ast::FunctionArg) -> sqlparser::ast::FunctionArg {
+    use sqlparser::ast::FunctionArg;
+    match arg {
+        FunctionArg::Unnamed(arg_expr) => {
+            FunctionArg::Unnamed(strip_all_nested_function_arg_expr(arg_expr))
+        }
+        FunctionArg::Named {
+            name,
+            arg,
+            operator,
+        } => FunctionArg::Named {
+            name,
+            arg: strip_all_nested_function_arg_expr(arg),
+            operator,
+        },
+        FunctionArg::ExprNamed {
+            name,
+            arg,
+            operator,
+        } => FunctionArg::ExprNamed {
+            name: strip_all_nested(name),
+            arg: strip_all_nested_function_arg_expr(arg),
+            operator,
+        },
+    }
+}
+
+/// Recursively strips nested expressions from a function argument expression.
+fn strip_all_nested_function_arg_expr(
+    arg_expr: sqlparser::ast::FunctionArgExpr,
+) -> sqlparser::ast::FunctionArgExpr {
+    use sqlparser::ast::FunctionArgExpr;
+    match arg_expr {
+        FunctionArgExpr::Expr(e) => FunctionArgExpr::Expr(strip_all_nested(e)),
+        other => other,
+    }
+}
+
+/// Normalizes a function argument for semantic comparison.
+/// Handles Unnamed, Named (p_id => value), and ExprNamed variants.
+fn normalize_function_arg(arg: &sqlparser::ast::FunctionArg) -> sqlparser::ast::FunctionArg {
+    use sqlparser::ast::FunctionArg;
+    match arg {
+        FunctionArg::Unnamed(arg_expr) => {
+            FunctionArg::Unnamed(normalize_function_arg_expr(arg_expr))
+        }
+        FunctionArg::Named {
+            name,
+            arg,
+            operator,
+        } => FunctionArg::Named {
+            name: normalize_ident(name),
+            arg: normalize_function_arg_expr(arg),
+            operator: operator.clone(),
+        },
+        FunctionArg::ExprNamed {
+            name,
+            arg,
+            operator,
+        } => FunctionArg::ExprNamed {
+            name: normalize_expr(name),
+            arg: normalize_function_arg_expr(arg),
+            operator: operator.clone(),
+        },
+    }
+}
+
+/// Normalizes a function argument expression for semantic comparison.
+fn normalize_function_arg_expr(
+    arg_expr: &sqlparser::ast::FunctionArgExpr,
+) -> sqlparser::ast::FunctionArgExpr {
+    use sqlparser::ast::FunctionArgExpr;
+    match arg_expr {
+        FunctionArgExpr::Expr(e) => FunctionArgExpr::Expr(normalize_expr(e)),
+        other => other.clone(),
     }
 }
 
@@ -1038,18 +1110,7 @@ fn normalize_expr(expr: &Expr) -> Expr {
                 sqlparser::ast::FunctionArguments::List(args) => {
                     sqlparser::ast::FunctionArguments::List(sqlparser::ast::FunctionArgumentList {
                         duplicate_treatment: args.duplicate_treatment,
-                        args: args
-                            .args
-                            .iter()
-                            .map(|arg| match arg {
-                                sqlparser::ast::FunctionArg::Unnamed(
-                                    sqlparser::ast::FunctionArgExpr::Expr(e),
-                                ) => sqlparser::ast::FunctionArg::Unnamed(
-                                    sqlparser::ast::FunctionArgExpr::Expr(normalize_expr(e)),
-                                ),
-                                other => other.clone(),
-                            })
-                            .collect(),
+                        args: args.args.iter().map(normalize_function_arg).collect(),
                         clauses: args.clauses.clone(),
                     })
                 }
@@ -1741,5 +1802,19 @@ fn expression_comparison_handles_postgresql_identifier_normalization() {
     assert!(
         expressions_semantically_equal(parsed_schema, db_no_schema),
         "Table with schema should equal table without schema: {parsed_schema} vs {db_no_schema}"
+    );
+}
+
+#[test]
+fn expression_comparison_handles_named_function_args_with_text_cast() {
+    // Bug reproduction: PostgreSQL adds ::text casts to string arguments in function calls
+    // Named arguments (p_supplier_id => supplier_id) should also be normalized
+    let parsed =
+        r#"auth.user_has_permission_in_context('farmers', 'create', p_supplier_id => supplier_id)"#;
+    let db = r#"auth.user_has_permission_in_context('farmers'::text, 'create'::text, p_supplier_id => supplier_id)"#;
+
+    assert!(
+        expressions_semantically_equal(parsed, db),
+        "Function call with named args should be semantically equal despite ::text casts.\nParsed: {parsed}\nDB: {db}"
     );
 }

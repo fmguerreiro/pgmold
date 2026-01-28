@@ -1094,3 +1094,97 @@ async fn policy_dropped_when_function_volatility_changes() {
             .unwrap_or_else(|e| panic!("Migration statement failed: {stmt}: {e}"));
     }
 }
+
+#[tokio::test]
+async fn policy_with_named_function_args_round_trip_no_diff() {
+    // Bug reproduction: Policy with named function arguments (p_supplier_id => supplier_id)
+    // should converge after apply - no diff should be detected on second plan.
+    //
+    // This tests the "silent failure" bug where apply reports success but re-running
+    // plan shows the same changes, indicating the schema never converged.
+    //
+    // We create the function directly in PostgreSQL (not via pgmold) to avoid function
+    // comparison issues and focus purely on policy expression convergence.
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Pre-create the auth function directly in PostgreSQL (not via pgmold)
+    // This simulates an existing function that pgmold shouldn't be managing
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS auth")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        r#"
+        CREATE OR REPLACE FUNCTION auth.user_has_permission_in_context(
+            p_resource TEXT,
+            p_operation TEXT,
+            p_enterprise_id UUID DEFAULT NULL,
+            p_supplier_id UUID DEFAULT NULL,
+            p_farmer_id UUID DEFAULT NULL
+        )
+        RETURNS BOOLEAN
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        AS $$
+        BEGIN
+            RETURN TRUE;
+        END;
+        $$
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    // Schema with just table and policy (function already exists)
+    let schema_sql = r#"
+        CREATE TABLE public.farmers (
+            id BIGINT PRIMARY KEY,
+            name TEXT NOT NULL,
+            supplier_id UUID
+        );
+
+        ALTER TABLE public.farmers ENABLE ROW LEVEL SECURITY;
+
+        CREATE POLICY "Supplier admins can create farmers" ON public.farmers
+        FOR INSERT
+        TO public
+        WITH CHECK (
+            auth.user_has_permission_in_context('farmers', 'create', p_supplier_id => supplier_id)
+        );
+    "#;
+
+    // Apply the schema to the database
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    // Now introspect (only public schema since auth isn't managed) and compute diff
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let policy_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreatePolicy { .. }
+                    | MigrationOp::DropPolicy { .. }
+                    | MigrationOp::AlterPolicy { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        policy_ops.is_empty(),
+        "Should have no policy diff after apply (convergence). Got: {policy_ops:?}"
+    );
+}
