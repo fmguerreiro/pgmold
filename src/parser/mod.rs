@@ -225,14 +225,22 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     table_schema: tbl_schema,
                     table: tbl_name,
                     command: parse_policy_command(&command),
-                    roles: to
-                        .iter()
-                        .flat_map(|owners| {
-                            owners
-                                .iter()
-                                .map(|o| crate::pg::sqlgen::strip_ident_quotes(&o.to_string()))
-                        })
-                        .collect(),
+                    roles: {
+                        let parsed_roles: Vec<String> = to
+                            .iter()
+                            .flat_map(|owners| {
+                                owners
+                                    .iter()
+                                    .map(|o| crate::pg::sqlgen::strip_ident_quotes(&o.to_string()))
+                            })
+                            .collect();
+                        // When TO clause is omitted, PostgreSQL defaults to PUBLIC
+                        if parsed_roles.is_empty() {
+                            vec!["public".to_string()]
+                        } else {
+                            parsed_roles
+                        }
+                    },
                     using_expr: using.as_ref().map(|e| normalize_expr(&e.to_string())),
                     check_expr: with_check.as_ref().map(|e| normalize_expr(&e.to_string())),
                 };
