@@ -615,6 +615,37 @@ mod tests {
     }
 
     #[test]
+    fn extract_function_call_with_named_args() {
+        // Tests function calls with named arguments (PostgreSQL => syntax)
+        let body = "SELECT auth.user_has_permission_in_context('farmers', 'create', p_supplier_id => supplier_id)";
+        let refs = extract_function_references(body, "public");
+
+        assert_eq!(refs.len(), 1);
+        assert!(refs.contains(&ObjectRef::new("auth", "user_has_permission_in_context")));
+    }
+
+    #[test]
+    fn extract_function_call_with_quoted_names() {
+        // Tests function calls with quoted identifiers
+        let body = r#"SELECT "auth"."user_has_permission"('test')"#;
+        let refs = extract_function_references(body, "public");
+
+        assert_eq!(refs.len(), 1);
+        // Quotes should be stripped
+        assert!(refs.contains(&ObjectRef::new("auth", "user_has_permission")));
+    }
+
+    #[test]
+    fn extract_function_call_from_policy_expression() {
+        // Tests the exact format PostgreSQL returns for policy expressions
+        let body = r#"auth.check_permission('items'::text, 'create'::text, p_id => item_id)"#;
+        let refs = extract_function_references(body, "public");
+
+        assert_eq!(refs.len(), 1);
+        assert!(refs.contains(&ObjectRef::new("auth", "check_permission")));
+    }
+
+    #[test]
     fn ignore_built_in_functions() {
         // Built-in PostgreSQL functions should not be treated as dependencies
         let body = "SELECT now(), current_timestamp, count(*)";

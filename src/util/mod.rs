@@ -44,6 +44,46 @@ pub fn canonicalize_expression(expr: &str) -> String {
     strip_numeric_literal_casts(&result)
 }
 
+/// Strips nested expressions from a FunctionArgExpr (owned version).
+fn strip_all_nested_function_arg_expr(
+    arg_expr: sqlparser::ast::FunctionArgExpr,
+) -> sqlparser::ast::FunctionArgExpr {
+    match arg_expr {
+        sqlparser::ast::FunctionArgExpr::Expr(e) => {
+            sqlparser::ast::FunctionArgExpr::Expr(strip_all_nested(e))
+        }
+        other => other,
+    }
+}
+
+/// Strips nested expressions from a FunctionArg (owned version).
+/// Handles all variants: Unnamed, Named, ExprNamed.
+fn strip_all_nested_function_arg(arg: sqlparser::ast::FunctionArg) -> sqlparser::ast::FunctionArg {
+    match arg {
+        sqlparser::ast::FunctionArg::Unnamed(arg_expr) => {
+            sqlparser::ast::FunctionArg::Unnamed(strip_all_nested_function_arg_expr(arg_expr))
+        }
+        sqlparser::ast::FunctionArg::Named {
+            name,
+            arg,
+            operator,
+        } => sqlparser::ast::FunctionArg::Named {
+            name,
+            arg: strip_all_nested_function_arg_expr(arg),
+            operator,
+        },
+        sqlparser::ast::FunctionArg::ExprNamed {
+            name,
+            arg,
+            operator,
+        } => sqlparser::ast::FunctionArg::ExprNamed {
+            name: strip_all_nested(name),
+            arg: strip_all_nested_function_arg_expr(arg),
+            operator,
+        },
+    }
+}
+
 /// Recursively strips ALL Nested (parenthesized) expressions throughout the AST,
 /// not just the outermost ones. This is needed for normalizing CHECK constraint
 /// expressions where PostgreSQL may add extra parentheses around subexpressions.
@@ -126,14 +166,7 @@ fn strip_all_nested(expr: Expr) -> Expr {
                         args: args
                             .args
                             .into_iter()
-                            .map(|arg| match arg {
-                                sqlparser::ast::FunctionArg::Unnamed(
-                                    sqlparser::ast::FunctionArgExpr::Expr(e),
-                                ) => sqlparser::ast::FunctionArg::Unnamed(
-                                    sqlparser::ast::FunctionArgExpr::Expr(strip_all_nested(e)),
-                                ),
-                                other => other,
-                            })
+                            .map(strip_all_nested_function_arg)
                             .collect(),
                         clauses: args.clauses,
                     })
@@ -213,6 +246,11 @@ fn normalize_expression_regex(expr: &str) -> String {
 
     let re_string_text_cast = Regex::new(r"'([^']*)'::text").unwrap();
     let result = re_string_text_cast.replace_all(&result, "'$1'");
+
+    // Strip casts from NULL values
+    // PostgreSQL adds explicit casts like NULL::uuid, NULL::text, NULL::schema."Type"
+    let re_null_cast = Regex::new(r#"(?i)\bNULL::[a-zA-Z0-9_."]+(?:\.[a-zA-Z0-9_."]+)?"#).unwrap();
+    let result = re_null_cast.replace_all(&result, "NULL");
 
     // ILIKE variants must come before LIKE variants
     let re_not_ilike = Regex::new(r"\s*!~~\*\s*").unwrap();
@@ -659,6 +697,47 @@ fn normalize_object_name(name: &sqlparser::ast::ObjectName) -> sqlparser::ast::O
     sqlparser::ast::ObjectName(normalized_parts)
 }
 
+/// Normalizes a FunctionArgExpr, recursively normalizing contained expressions.
+fn normalize_function_arg_expr(
+    arg_expr: &sqlparser::ast::FunctionArgExpr,
+) -> sqlparser::ast::FunctionArgExpr {
+    match arg_expr {
+        sqlparser::ast::FunctionArgExpr::Expr(e) => {
+            sqlparser::ast::FunctionArgExpr::Expr(normalize_expr(e))
+        }
+        other => other.clone(),
+    }
+}
+
+/// Normalizes a FunctionArg, handling all variants (Unnamed, Named, ExprNamed).
+/// This ensures that expressions inside function arguments are normalized,
+/// including stripping table qualifiers from column references.
+fn normalize_function_arg(arg: &sqlparser::ast::FunctionArg) -> sqlparser::ast::FunctionArg {
+    match arg {
+        sqlparser::ast::FunctionArg::Unnamed(arg_expr) => {
+            sqlparser::ast::FunctionArg::Unnamed(normalize_function_arg_expr(arg_expr))
+        }
+        sqlparser::ast::FunctionArg::Named {
+            name,
+            arg,
+            operator,
+        } => sqlparser::ast::FunctionArg::Named {
+            name: normalize_ident(name),
+            arg: normalize_function_arg_expr(arg),
+            operator: operator.clone(),
+        },
+        sqlparser::ast::FunctionArg::ExprNamed {
+            name,
+            arg,
+            operator,
+        } => sqlparser::ast::FunctionArg::ExprNamed {
+            name: normalize_expr(name),
+            arg: normalize_function_arg_expr(arg),
+            operator: operator.clone(),
+        },
+    }
+}
+
 /// Normalizes a TableFactor (the source in a FROM clause).
 fn normalize_table_factor(factor: &sqlparser::ast::TableFactor) -> sqlparser::ast::TableFactor {
     use sqlparser::ast::TableFactor;
@@ -959,6 +1038,13 @@ fn normalize_expr(expr: &Expr) -> Expr {
                     return norm_inner;
                 }
             }
+            // Strip casts from NULL values
+            // PostgreSQL adds explicit casts like NULL::uuid, NULL::text
+            if let Expr::Value(v) = &norm_inner {
+                if matches!(v.value, sqlparser::ast::Value::Null) {
+                    return norm_inner;
+                }
+            }
             Expr::Cast {
                 kind: kind.clone(),
                 expr: Box::new(norm_inner),
@@ -1038,18 +1124,7 @@ fn normalize_expr(expr: &Expr) -> Expr {
                 sqlparser::ast::FunctionArguments::List(args) => {
                     sqlparser::ast::FunctionArguments::List(sqlparser::ast::FunctionArgumentList {
                         duplicate_treatment: args.duplicate_treatment,
-                        args: args
-                            .args
-                            .iter()
-                            .map(|arg| match arg {
-                                sqlparser::ast::FunctionArg::Unnamed(
-                                    sqlparser::ast::FunctionArgExpr::Expr(e),
-                                ) => sqlparser::ast::FunctionArg::Unnamed(
-                                    sqlparser::ast::FunctionArgExpr::Expr(normalize_expr(e)),
-                                ),
-                                other => other.clone(),
-                            })
-                            .collect(),
+                        args: args.args.iter().map(normalize_function_arg).collect(),
                         clauses: args.clauses.clone(),
                     })
                 }
@@ -1741,5 +1816,119 @@ fn expression_comparison_handles_postgresql_identifier_normalization() {
     assert!(
         expressions_semantically_equal(parsed_schema, db_no_schema),
         "Table with schema should equal table without schema: {parsed_schema} vs {db_no_schema}"
+    );
+}
+
+#[test]
+fn expression_comparison_handles_case_with_enum_cast() {
+    // This is the exact scenario from the bug report:
+    // Schema file has WHEN 'ENTERPRISE' THEN
+    // Database returns WHEN 'ENTERPRISE'::test_schema."EntityType" THEN
+    let without_cast = r#"
+        CASE entity_type
+            WHEN 'ENTERPRISE' THEN true
+            WHEN 'SUPPLIER' THEN true
+            ELSE false
+        END
+    "#;
+    let with_cast = r#"
+        CASE entity_type
+            WHEN 'ENTERPRISE'::test_schema."EntityType" THEN true
+            WHEN 'SUPPLIER'::test_schema."EntityType" THEN true
+            ELSE false
+        END
+    "#;
+    assert!(
+        expressions_semantically_equal(without_cast, with_cast),
+        "CASE with enum casts should be semantically equal"
+    );
+}
+
+#[test]
+fn expression_comparison_handles_case_with_exact_pg_format() {
+    // Exact format from bug report - pg_get_expr returns this
+    let with_cast = r#"CASE entity_type
+    WHEN 'ENTERPRISE'::test_schema."EntityType" THEN true
+    WHEN 'SUPPLIER'::test_schema."EntityType" THEN true
+    ELSE false
+END"#;
+    let without_cast = r#"CASE entity_type
+            WHEN 'ENTERPRISE' THEN true
+            WHEN 'SUPPLIER' THEN true
+            ELSE false
+        END"#;
+    assert!(
+        expressions_semantically_equal(with_cast, without_cast),
+        "CASE with exact pg_get_expr enum casts should be semantically equal"
+    );
+}
+
+#[test]
+fn regex_fallback_strips_schema_qualified_enum_cast() {
+    // Exact format from bug report
+    let with_cast = r#"'ENTERPRISE'::test_schema."EntityType""#;
+    let normalized = normalize_expression_regex(with_cast);
+    assert_eq!(
+        normalized, "'ENTERPRISE'",
+        "Should strip schema.\"EnumType\" cast"
+    );
+}
+
+#[test]
+fn regex_fallback_strips_case_with_enum_casts() {
+    let with_cast = r#"CASE entity_type WHEN 'ENTERPRISE'::test_schema."EntityType" THEN true WHEN 'SUPPLIER'::test_schema."EntityType" THEN true ELSE false END"#;
+    let without_cast =
+        r#"CASE entity_type WHEN 'ENTERPRISE' THEN true WHEN 'SUPPLIER' THEN true ELSE false END"#;
+
+    let normalized_with = normalize_expression_regex(with_cast);
+    let normalized_without = normalize_expression_regex(without_cast);
+
+    assert_eq!(
+        normalized_with, normalized_without,
+        "CASE expressions with enum casts should normalize to same form"
+    );
+}
+
+#[test]
+fn expression_comparison_handles_null_with_type_cast() {
+    // This is what PostgreSQL does to function defaults
+    let without_cast = "NULL";
+    let with_cast = "NULL::uuid";
+
+    assert!(
+        expressions_semantically_equal(without_cast, with_cast),
+        "NULL vs NULL::uuid should be semantically equal"
+    );
+}
+
+#[test]
+fn expression_comparison_handles_named_function_args_with_table_qualifier() {
+    // Bug: PostgreSQL strips table qualifiers from column references in policy expressions
+    // when the table context is unambiguous (policy always references its target table).
+    //
+    // Schema file: auth.user_in_context(p_supplier_id => farmers.supplier_id)
+    // PostgreSQL returns: auth.user_in_context(p_supplier_id => supplier_id)
+    //
+    // This is a regression test for issue #XX - table qualifier normalization in named args
+
+    let schema_expr = r#"auth.user_in_context(p_supplier_id => farmers.supplier_id)"#;
+    let db_expr = r#"auth.user_in_context(p_supplier_id => supplier_id)"#;
+
+    assert!(
+        expressions_semantically_equal(schema_expr, db_expr),
+        "Named function args should normalize table qualifiers: {schema_expr} vs {db_expr}"
+    );
+}
+
+#[test]
+fn expression_comparison_handles_multiple_named_args_with_table_qualifiers() {
+    // More complex case with multiple named arguments
+    let schema_expr =
+        r#"auth.user_has_permission('farmers', 'create', p_supplier_id => farmers.supplier_id)"#;
+    let db_expr = r#"auth.user_has_permission('farmers'::text, 'create'::text, p_supplier_id => supplier_id)"#;
+
+    assert!(
+        expressions_semantically_equal(schema_expr, db_expr),
+        "Mixed positional/named args with table qualifiers and text casts should normalize"
     );
 }

@@ -149,6 +149,9 @@ enum Commands {
         /// Manage grants (GRANT/REVOKE) on objects
         #[arg(long)]
         manage_grants: bool,
+        /// Log each statement execution and result
+        #[arg(long, short = 'v')]
+        verbose: bool,
         /// Validate migration against a temporary database before applying. Provide a database URL for the temp DB (e.g., postgres://user:pass@localhost:5433/tempdb)
         #[arg(long)]
         validate: Option<String>,
@@ -515,6 +518,7 @@ pub async fn run() -> Result<()> {
             include_extension_objects,
             manage_ownership,
             manage_grants,
+            verbose,
             validate,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
@@ -617,25 +621,50 @@ pub async fn run() -> Result<()> {
                     println!("{statement}");
                 }
             } else {
+                let total = sql.len();
                 let mut transaction = connection
                     .pool()
                     .begin()
                     .await
                     .map_err(|e| anyhow!("Failed to begin transaction: {e}"))?;
 
-                for statement in &sql {
-                    transaction
+                for (i, statement) in sql.iter().enumerate() {
+                    let display_num = i + 1;
+                    if verbose {
+                        let truncated = if statement.len() > 80 {
+                            format!("{}...", &statement[..80])
+                        } else {
+                            statement.clone()
+                        };
+                        println!("[{display_num}/{total}] Executing: {truncated}");
+                    }
+                    let result = transaction
                         .execute(statement.as_str())
                         .await
                         .map_err(|e| anyhow!("Failed to execute SQL: {e}"))?;
+                    if verbose {
+                        println!(
+                            "[{display_num}/{total}] OK ({} rows affected)",
+                            result.rows_affected()
+                        );
+                    }
                 }
 
+                if verbose {
+                    println!("Committing transaction...");
+                }
                 transaction
                     .commit()
                     .await
                     .map_err(|e| anyhow!("Failed to commit transaction: {e}"))?;
+                if verbose {
+                    println!("Transaction committed.");
+                }
 
-                println!("\nSuccessfully applied {} statements.", sql.len());
+                println!(
+                    "
+Successfully applied {total} statements."
+                );
             }
             Ok(())
         }

@@ -286,13 +286,21 @@ pub struct Function {
 }
 
 impl Function {
-    /// Compares two functions ignoring whitespace differences in their bodies.
+    /// Compares two functions semantically, ignoring whitespace differences in body.
     /// Note: ownership (`owner` field) is not compared here. pgmold does not
     /// manage function ownership - PostgreSQL sets it to the creating user.
     pub fn semantically_equals(&self, other: &Function) -> bool {
+        // Compare arguments semantically to handle default value normalization
+        let args_equal = self.arguments.len() == other.arguments.len()
+            && self
+                .arguments
+                .iter()
+                .zip(other.arguments.iter())
+                .all(|(a, b)| a.semantically_equals(b));
+
         self.name == other.name
             && self.schema == other.schema
-            && self.arguments == other.arguments
+            && args_equal
             && self.return_type == other.return_type
             && self.language == other.language
             && self.volatility == other.volatility
@@ -310,9 +318,12 @@ impl Function {
 
         for (self_arg, other_arg) in self.arguments.iter().zip(other.arguments.iter()) {
             // Check if types/modes match but names or defaults differ
+            // Use semantic comparison for defaults to handle PostgreSQL normalization
+            let defaults_differ =
+                !crate::util::optional_expressions_equal(&self_arg.default, &other_arg.default);
             if self_arg.data_type == other_arg.data_type
                 && self_arg.mode == other_arg.mode
-                && (self_arg.name != other_arg.name || self_arg.default != other_arg.default)
+                && (self_arg.name != other_arg.name || defaults_differ)
             {
                 return true;
             }
@@ -354,6 +365,18 @@ pub struct FunctionArg {
     pub data_type: String,
     pub mode: ArgMode,
     pub default: Option<String>,
+}
+
+impl FunctionArg {
+    /// Compares two function arguments semantically.
+    /// Uses AST-based comparison for defaults to handle PostgreSQL normalization
+    /// (e.g., NULL vs NULL::uuid, 0 vs 0::integer).
+    pub fn semantically_equals(&self, other: &FunctionArg) -> bool {
+        self.name == other.name
+            && self.data_type == other.data_type
+            && self.mode == other.mode
+            && crate::util::optional_expressions_equal(&self.default, &other.default)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -1929,4 +1952,56 @@ mod tests {
         let deserialized: VersionView = serde_json::from_str(&json).expect("Failed to deserialize");
         assert_eq!(view, deserialized);
     }
+}
+
+#[test]
+fn function_semantically_equals_handles_null_type_cast() {
+    use crate::model::{ArgMode, Function, FunctionArg, SecurityType, Volatility};
+
+    // Function from schema file (without cast)
+    let from_file = Function {
+        name: "test_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![FunctionArg {
+            name: Some("p_id".to_string()),
+            data_type: "uuid".to_string(),
+            mode: ArgMode::In,
+            default: Some("NULL".to_string()),
+        }],
+        return_type: "void".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Volatile,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    // Function from database (with cast added by PostgreSQL)
+    let from_db = Function {
+        name: "test_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![FunctionArg {
+            name: Some("p_id".to_string()),
+            data_type: "uuid".to_string(),
+            mode: ArgMode::In,
+            default: Some("NULL::uuid".to_string()),
+        }],
+        return_type: "void".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Volatile,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    // This currently FAILS because defaults are compared as strings
+    // Bug: "NULL" != "NULL::uuid"
+    assert!(
+        from_file.semantically_equals(&from_db),
+        "Function defaults NULL vs NULL::uuid should be semantically equal"
+    );
 }

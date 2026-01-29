@@ -432,6 +432,23 @@ pub fn compute_diff_with_flags(
     // This ensures views are dropped before ALTER COLUMN TYPE
     ops.extend(generate_view_ops_for_type_changes(&ops, from, to));
 
+    // Generate policy drop/create ops for policies that reference functions being dropped
+    // This ensures policies are dropped before DROP FUNCTION
+    let (policy_ops, policies_to_filter) = generate_policy_ops_for_function_changes(&ops, from, to);
+
+    // Filter out AlterPolicy ops for policies that will be drop/recreated
+    if !policies_to_filter.is_empty() {
+        ops.retain(|op| {
+            if let MigrationOp::AlterPolicy { table, name, .. } = op {
+                !policies_to_filter.contains(&(table.clone(), name.clone()))
+            } else {
+                true
+            }
+        });
+    }
+
+    ops.extend(policy_ops);
+
     ops
 }
 
@@ -1670,6 +1687,139 @@ fn generate_view_ops_for_type_changes(
     additional_ops
 }
 
+/// Generate policy drop/create ops for policies that reference functions being dropped.
+/// PostgreSQL requires dependent policies to be dropped before dropping functions they reference.
+/// Returns (additional_ops, policies_to_filter) where policies_to_filter are (table, name) pairs
+/// of policies that should have their AlterPolicy ops removed (replaced by drop/create).
+fn generate_policy_ops_for_function_changes(
+    ops: &[MigrationOp],
+    from: &crate::model::Schema,
+    to: &crate::model::Schema,
+) -> (Vec<MigrationOp>, HashSet<(String, String)>) {
+    let mut additional_ops = Vec::new();
+    let mut policies_to_filter = HashSet::new();
+
+    // Find all functions being dropped (not just renamed, but actually removed from ops)
+    let dropped_functions: HashSet<String> = ops
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropFunction { name, .. } = op {
+                Some(name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if dropped_functions.is_empty() {
+        return (additional_ops, policies_to_filter);
+    }
+
+    // Collect existing policy ops to avoid duplicates
+    let existing_policy_drops: HashSet<(String, String)> = ops
+        .iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropPolicy { table, name } = op {
+                Some((table.clone(), name.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Check all policies in the source schema for function references
+    for table in from.tables.values() {
+        for policy in &table.policies {
+            let qualified_table = qualified_name(&table.schema, &table.name);
+
+            // Check if policy references any dropped function in its expressions
+            let policy_affected = policy_references_functions(policy, &dropped_functions);
+
+            if policy_affected
+                && !existing_policy_drops.contains(&(qualified_table.clone(), policy.name.clone()))
+            {
+                // Mark this policy's AlterPolicy op for removal
+                policies_to_filter.insert((qualified_table.clone(), policy.name.clone()));
+
+                // Get the policy from the target schema (if it exists)
+                let target_policy = to
+                    .tables
+                    .get(&qualified_name(&table.schema, &table.name))
+                    .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
+
+                additional_ops.push(MigrationOp::DropPolicy {
+                    table: qualified_table.clone(),
+                    name: policy.name.clone(),
+                });
+
+                // Re-add the policy (use target if available, otherwise use from)
+                if let Some(target_policy) = target_policy {
+                    additional_ops.push(MigrationOp::CreatePolicy(target_policy.clone()));
+                } else {
+                    additional_ops.push(MigrationOp::CreatePolicy(policy.clone()));
+                }
+            }
+        }
+    }
+
+    (additional_ops, policies_to_filter)
+}
+
+/// Check if a policy references any of the given functions in its USING or WITH CHECK expressions.
+fn policy_references_functions(
+    policy: &crate::model::Policy,
+    function_names: &HashSet<String>,
+) -> bool {
+    let policy_func_refs = extract_function_references_from_policy(policy);
+    policy_func_refs.iter().any(|policy_ref| {
+        function_names
+            .iter()
+            .any(|dropped| function_names_match(dropped, policy_ref))
+    })
+}
+
+/// Extract function references from a policy's USING and WITH CHECK expressions.
+pub(crate) fn extract_function_references_from_policy(
+    policy: &crate::model::Policy,
+) -> HashSet<String> {
+    use crate::parser::extract_function_references;
+
+    let mut refs = HashSet::new();
+
+    if let Some(ref using_expr) = policy.using_expr {
+        for func_ref in extract_function_references(using_expr, &policy.table_schema) {
+            refs.insert(qualified_name(&func_ref.schema, &func_ref.name));
+        }
+    }
+
+    if let Some(ref check_expr) = policy.check_expr {
+        for func_ref in extract_function_references(check_expr, &policy.table_schema) {
+            refs.insert(qualified_name(&func_ref.schema, &func_ref.name));
+        }
+    }
+
+    refs
+}
+
+/// Check if two function names match (handles schema qualification).
+pub(crate) fn function_names_match(dropped_name: &str, referenced_name: &str) -> bool {
+    if dropped_name == referenced_name {
+        return true;
+    }
+
+    let dropped_parts: Vec<&str> = dropped_name.split('.').collect();
+    let ref_parts: Vec<&str> = referenced_name.split('.').collect();
+
+    let dropped_func = dropped_parts.last().unwrap_or(&"");
+    let ref_func = ref_parts.last().unwrap_or(&"");
+
+    if dropped_parts.len() == 2 && ref_parts.len() == 2 {
+        return dropped_parts[0] == ref_parts[0] && dropped_func == ref_func;
+    }
+
+    dropped_func == ref_func
+}
+
 fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
     let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
@@ -1808,9 +1958,13 @@ mod tests {
     }
 
     fn simple_table(name: &str) -> Table {
+        simple_table_with_schema(name, "public")
+    }
+
+    fn simple_table_with_schema(name: &str, schema: &str) -> Table {
         Table {
             name: name.to_string(),
-            schema: "public".to_string(),
+            schema: schema.to_string(),
             columns: BTreeMap::new(),
             indexes: Vec::new(),
             primary_key: None,
@@ -3407,6 +3561,60 @@ mod tests {
     }
 
     #[test]
+    fn policy_expression_comparison_ignores_enum_cast_in_case_expression() {
+        // Tests the exact bug scenario from the bug report:
+        // Schema file has: WHEN 'ENTERPRISE' THEN
+        // Database returns: WHEN 'ENTERPRISE'::test_schema."EntityType" THEN
+        let mut from = empty_schema();
+        let mut table = simple_table("entities");
+        table.row_level_security = true;
+        table.policies.push(crate::model::Policy {
+            name: "entity_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "entities".to_string(),
+            command: crate::model::PolicyCommand::Select,
+            roles: vec!["public".to_string()],
+            using_expr: Some(
+                r#"CASE entity_type
+                WHEN 'ENTERPRISE'::test_schema."EntityType" THEN true
+                WHEN 'SUPPLIER'::test_schema."EntityType" THEN true
+                ELSE false
+            END"#
+                    .to_string(),
+            ),
+            check_expr: None,
+        });
+        from.tables.insert("public.entities".to_string(), table);
+
+        let mut to = empty_schema();
+        let mut table = simple_table("entities");
+        table.row_level_security = true;
+        table.policies.push(crate::model::Policy {
+            name: "entity_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "entities".to_string(),
+            command: crate::model::PolicyCommand::Select,
+            roles: vec!["public".to_string()],
+            using_expr: Some(
+                r#"CASE entity_type
+                WHEN 'ENTERPRISE' THEN true
+                WHEN 'SUPPLIER' THEN true
+                ELSE false
+            END"#
+                    .to_string(),
+            ),
+            check_expr: None,
+        });
+        to.tables.insert("public.entities".to_string(), table);
+
+        let ops = compute_diff(&from, &to);
+        assert!(
+            ops.is_empty(),
+            "Should not report differences for enum casts in CASE expressions. Got: {ops:?}"
+        );
+    }
+
+    #[test]
     fn policy_expression_comparison_ignores_whitespace_after_parens() {
         // Tests the PostgreSQL pg_get_expr vs sqlparser formatting difference
         // PostgreSQL returns: "(EXISTS ( SELECT 1 FROM ..."
@@ -4541,6 +4749,142 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
     }
 
     #[test]
+    fn generates_fk_ops_for_column_type_changes_non_public_schema() {
+        use crate::model::{Column, ForeignKey, ReferentialAction};
+
+        // Reproduces bug: FK constraints not dropped during ALTER COLUMN TYPE in non-public schema
+        // Schema: mrv.CompoundUnit (id TEXT -> UUID)
+        //         mrv.FertilizerApplication (compoundUnitId TEXT -> UUID) with FK to CompoundUnit
+
+        // Create source schema (database state): TEXT columns with FK
+        let mut from = empty_schema();
+
+        let mut compound_unit = simple_table_with_schema("CompoundUnit", "mrv");
+        compound_unit.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Text,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        from.tables
+            .insert("mrv.CompoundUnit".to_string(), compound_unit);
+
+        let mut fertilizer_app = simple_table_with_schema("FertilizerApplication", "mrv");
+        fertilizer_app.columns.insert(
+            "compoundUnitId".to_string(),
+            Column {
+                name: "compoundUnitId".to_string(),
+                data_type: PgType::Text,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        fertilizer_app.foreign_keys.push(ForeignKey {
+            name: "FertilizerApplication_compoundUnitId_fkey".to_string(),
+            columns: vec!["compoundUnitId".to_string()],
+            referenced_table: "CompoundUnit".to_string(),
+            referenced_schema: "mrv".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete: ReferentialAction::NoAction,
+            on_update: ReferentialAction::NoAction,
+        });
+        from.tables
+            .insert("mrv.FertilizerApplication".to_string(), fertilizer_app);
+
+        // Create target schema (SQL files): UUID columns with FK
+        let mut to = empty_schema();
+
+        let mut compound_unit_uuid = simple_table_with_schema("CompoundUnit", "mrv");
+        compound_unit_uuid.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Uuid,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        to.tables
+            .insert("mrv.CompoundUnit".to_string(), compound_unit_uuid);
+
+        let mut fertilizer_app_uuid = simple_table_with_schema("FertilizerApplication", "mrv");
+        fertilizer_app_uuid.columns.insert(
+            "compoundUnitId".to_string(),
+            Column {
+                name: "compoundUnitId".to_string(),
+                data_type: PgType::Uuid,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        fertilizer_app_uuid.foreign_keys.push(ForeignKey {
+            name: "FertilizerApplication_compoundUnitId_fkey".to_string(),
+            columns: vec!["compoundUnitId".to_string()],
+            referenced_table: "CompoundUnit".to_string(),
+            referenced_schema: "mrv".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete: ReferentialAction::NoAction,
+            on_update: ReferentialAction::NoAction,
+        });
+        to.tables
+            .insert("mrv.FertilizerApplication".to_string(), fertilizer_app_uuid);
+
+        // Compute diff
+        let ops = compute_diff(&from, &to);
+
+        // Should have: AlterColumn for both columns,
+        // DropForeignKey and AddForeignKey for the FK
+        let alter_column_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .collect();
+        let drop_fk_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropForeignKey { .. }))
+            .collect();
+        let add_fk_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AddForeignKey { .. }))
+            .collect();
+
+        assert_eq!(alter_column_ops.len(), 2, "Should have 2 AlterColumn ops");
+        assert_eq!(
+            drop_fk_ops.len(),
+            1,
+            "Should have 1 DropForeignKey op for FK affected by type change"
+        );
+        assert_eq!(
+            add_fk_ops.len(),
+            1,
+            "Should have 1 AddForeignKey op to restore FK after type change"
+        );
+
+        // Verify the FK ops reference the correct FK
+        if let MigrationOp::DropForeignKey {
+            foreign_key_name, ..
+        } = &drop_fk_ops[0]
+        {
+            assert_eq!(
+                foreign_key_name,
+                "FertilizerApplication_compoundUnitId_fkey"
+            );
+        }
+        if let MigrationOp::AddForeignKey { foreign_key, .. } = &add_fk_ops[0] {
+            assert_eq!(
+                foreign_key.name,
+                "FertilizerApplication_compoundUnitId_fkey"
+            );
+        }
+    }
+
+    #[test]
     fn generates_policy_ops_for_column_type_changes() {
         use crate::model::{Column, Policy, PolicyCommand};
 
@@ -4854,6 +5198,124 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         }
         if let MigrationOp::CreateView(view) = &create_view_ops[0] {
             assert_eq!(view.name, "users_view");
+        }
+    }
+
+    #[test]
+    fn generates_policy_ops_for_function_changes() {
+        // When a function is dropped and recreated (due to parameter changes),
+        // policies that reference it must also be dropped and recreated.
+        let mut from = empty_schema();
+        let mut to = empty_schema();
+
+        // Create a function in both schemas (with different defaults to trigger drop/recreate)
+        let func_old = Function {
+            name: "check_access".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("user_name".to_string()),
+                data_type: "text".to_string(),
+                mode: ArgMode::In,
+                default: Some("'admin'".to_string()),
+            }],
+            return_type: "boolean".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT true".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+        let func_new = Function {
+            name: "check_access".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("user_name".to_string()),
+                data_type: "text".to_string(),
+                mode: ArgMode::In,
+                default: Some("'superuser'".to_string()), // Changed default
+            }],
+            return_type: "boolean".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT true".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+        from.functions.insert(
+            qualified_name(&func_old.schema, &func_old.signature()),
+            func_old,
+        );
+        to.functions.insert(
+            qualified_name(&func_new.schema, &func_new.signature()),
+            func_new,
+        );
+
+        // Create a table with a policy that references the function
+        let mut table = simple_table("secure_data");
+        table.policies.push(Policy {
+            name: "access_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "secure_data".to_string(),
+            command: crate::model::PolicyCommand::Select,
+            roles: vec!["public".to_string()],
+            using_expr: Some("public.check_access()".to_string()),
+            check_expr: None,
+        });
+        table.row_level_security = true;
+
+        from.tables
+            .insert(qualified_name(&table.schema, &table.name), table.clone());
+        to.tables
+            .insert(qualified_name(&table.schema, &table.name), table);
+
+        // Compute diff
+        let ops = compute_diff(&from, &to);
+
+        // Should have: DropFunction, CreateFunction, DropPolicy, CreatePolicy
+        let drop_function_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropFunction { .. }))
+            .collect();
+        let create_function_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .collect();
+        let drop_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropPolicy { .. }))
+            .collect();
+        let create_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .collect();
+
+        assert_eq!(drop_function_ops.len(), 1, "Should have 1 DropFunction op");
+        assert_eq!(
+            create_function_ops.len(),
+            1,
+            "Should have 1 CreateFunction op"
+        );
+        assert_eq!(
+            drop_policy_ops.len(),
+            1,
+            "Should have 1 DropPolicy op for policy referencing changed function"
+        );
+        assert_eq!(
+            create_policy_ops.len(),
+            1,
+            "Should have 1 CreatePolicy op to restore policy"
+        );
+
+        // Verify the policy ops reference the correct policy
+        if let MigrationOp::DropPolicy { name, .. } = &drop_policy_ops[0] {
+            assert_eq!(name, "access_policy");
+        }
+        if let MigrationOp::CreatePolicy(policy) = &create_policy_ops[0] {
+            assert_eq!(policy.name, "access_policy");
         }
     }
 }
