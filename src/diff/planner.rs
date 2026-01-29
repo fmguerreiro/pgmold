@@ -448,7 +448,6 @@ impl MigrationGraph {
     }
 
     /// Add type-level dependency edges (all ops of type A before all ops of type B).
-    #[allow(dead_code)]
     pub fn add_type_level_edges(&mut self) {
         // Collect nodes by type using pattern matching
         let schemas = self.nodes_matching(|k| matches!(k, OpKey::CreateSchema(_)));
@@ -515,6 +514,7 @@ impl MigrationGraph {
         // Types before tables
         self.edges_all_to_all(&enums, &tables);
         self.edges_all_to_all(&enums, &add_columns);
+        self.edges_all_to_all(&enums, &add_enum_values);
         self.edges_all_to_all(&add_enum_values, &tables);
         self.edges_all_to_all(&add_enum_values, &add_columns);
         self.edges_all_to_all(&domains, &tables);
@@ -608,11 +608,15 @@ impl MigrationGraph {
         self.edges_all_to_all(&alter_columns, &views);
 
         // === MODIFICATION patterns (drop before create/alter) ===
+        // When objects are modified (dropped and recreated), drop must come before create
 
         let drop_functions = self.nodes_matching(|k| matches!(k, OpKey::DropFunction { .. }));
 
-        // Drop function before create function (for function modifications)
         self.edges_all_to_all(&drop_functions, &functions);
+        self.edges_all_to_all(&drop_indexes, &add_indexes);
+        self.edges_all_to_all(&drop_policies, &policies);
+        self.edges_all_to_all(&drop_triggers, &triggers);
+        self.edges_all_to_all(&drop_views, &views);
 
         // === CREATES BEFORE FINAL DROPS ===
         // Final drops (not for modifications) should happen after all creates complete.
@@ -680,7 +684,6 @@ impl MigrationGraph {
     }
 
     /// Add content-aware dependency edges (specific op A before specific op B based on content).
-    #[allow(dead_code)]
     pub fn add_content_aware_edges(&mut self) {
         // Clone keys to avoid borrow issues during iteration
         let keys: Vec<_> = self.nodes.keys().cloned().collect();
