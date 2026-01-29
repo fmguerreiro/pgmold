@@ -378,11 +378,10 @@ impl OpKey {
     }
 }
 
-/// Vertex in the dependency graph, wrapping a MigrationOp with its priority.
+/// Vertex in the dependency graph, wrapping a MigrationOp.
 #[derive(Clone)]
 struct OpVertex {
     op: MigrationOp,
-    priority: i32,
 }
 
 /// Operation type for grouping operations in type-level dependency rules.
@@ -517,9 +516,9 @@ impl MigrationGraph {
 
     /// Add an operation to the graph as a vertex.
     /// Returns the NodeIndex for the new vertex.
-    pub fn add_vertex(&mut self, op: MigrationOp, priority: i32) -> NodeIndex {
+    pub fn add_vertex(&mut self, op: MigrationOp) -> NodeIndex {
         let key = OpKey::from_op(&op);
-        let node = self.graph.add_node(OpVertex { op, priority });
+        let node = self.graph.add_node(OpVertex { op });
         self.nodes.insert(key, node);
         node
     }
@@ -535,26 +534,9 @@ impl MigrationGraph {
         }
     }
 
-    /// Get the NodeIndex for an operation by its key.
-    pub fn get_node(&self, key: &OpKey) -> Option<NodeIndex> {
-        self.nodes.get(key).copied()
-    }
-
     /// Get all OpKeys currently in the graph.
     pub fn keys(&self) -> impl Iterator<Item = &OpKey> {
         self.nodes.keys()
-    }
-
-    /// Get the number of operations in the graph.
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.graph.node_count()
-    }
-
-    /// Check if the graph is empty.
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.graph.node_count() == 0
     }
 
     /// Get all NodeIndexes for operations of a specific type.
@@ -724,6 +706,81 @@ impl MigrationGraph {
         self.edges_all_to_all(&drop_indexes, &alter_columns);
         self.edges_all_to_all(&drop_policies, &alter_columns);
         self.edges_all_to_all(&drop_triggers, &alter_columns);
+        self.edges_all_to_all(&drop_views, &alter_columns);
+
+        // Re-create constraints after alter column type
+        // Pattern: DropX → AlterColumn → CreateX
+        self.edges_all_to_all(&alter_columns, &add_fks);
+        self.edges_all_to_all(&alter_columns, &add_indexes);
+        self.edges_all_to_all(&alter_columns, &policies);
+        self.edges_all_to_all(&alter_columns, &triggers);
+        self.edges_all_to_all(&alter_columns, &views);
+
+        // === MODIFICATION patterns (drop before create/alter) ===
+
+        let drop_functions = self.nodes_of_type(OpType::DropFunction);
+
+        // Drop function before create function (for function modifications)
+        self.edges_all_to_all(&drop_functions, &functions);
+
+        // === CREATES BEFORE FINAL DROPS ===
+        // Final drops (not for modifications) should happen after all creates complete.
+        // Exclude drops that need to happen BEFORE creates/alters:
+        // - DropFunction (before CreateFunction for modifications)
+        // - DropFK, DropIndex, DropPolicy, DropTrigger, DropView (before AlterColumn)
+
+        // Create operations that should complete before final drops
+        let all_creates: Vec<NodeIndex> = [
+            &schemas,
+            &version_schemas,
+            &extensions,
+            &enums,
+            &add_enum_values,
+            &domains,
+            &sequences,
+            &functions,
+            &tables,
+            &partitions,
+            &add_columns,
+            &add_pks,
+            &add_indexes,
+            &add_fks,
+            &add_checks,
+            &enable_rls,
+            &policies,
+            &triggers,
+            &views,
+            &version_views,
+            &alter_columns,
+            &alter_sequences,
+        ]
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect();
+
+        // Final drops (not temporary drops for modifications)
+        // Note: DropFK, DropIndex, DropPolicy, DropTrigger, DropView, DropFunction
+        // are excluded because they may need to happen before alters/creates
+        let final_drops: Vec<NodeIndex> = [
+            &drop_columns,
+            &drop_pks,
+            &drop_tables,
+            &drop_partitions,
+            &drop_sequences,
+            &drop_domains,
+            &drop_enums,
+            &drop_extensions,
+            &drop_version_schemas,
+            &drop_schemas,
+            &drop_version_views,
+        ]
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect();
+
+        self.edges_all_to_all(&all_creates, &final_drops);
     }
 
     /// Get the MigrationOp for a given key.
@@ -748,7 +805,9 @@ impl MigrationGraph {
                         for fk in &table.foreign_keys {
                             let ref_qualified =
                                 qualified_name(&fk.referenced_schema, &fk.referenced_table);
-                            // Don't add self-edge
+                            // Skip self-referencing FKs - PostgreSQL handles these correctly
+                            // when the FK is defined inline with CREATE TABLE. No dependency
+                            // edge is needed because the table doesn't depend on itself.
                             if ref_qualified != *table_name {
                                 edges_to_add.push((OpKey::CreateTable(ref_qualified), key.clone()));
                             }
@@ -873,6 +932,37 @@ impl MigrationGraph {
                     }
                 }
 
+                // BackfillHint depends on column existing
+                OpKey::BackfillHint { table, column } => {
+                    edges_to_add.push((
+                        OpKey::AddColumn {
+                            table: table.clone(),
+                            column: column.clone(),
+                        },
+                        key.clone(),
+                    ));
+                }
+
+                // SetColumnNotNull depends on backfill completing and column existing
+                OpKey::SetColumnNotNull { table, column } => {
+                    // Depends on backfill (if present)
+                    edges_to_add.push((
+                        OpKey::BackfillHint {
+                            table: table.clone(),
+                            column: column.clone(),
+                        },
+                        key.clone(),
+                    ));
+                    // Depends on column existing
+                    edges_to_add.push((
+                        OpKey::AddColumn {
+                            table: table.clone(),
+                            column: column.clone(),
+                        },
+                        key.clone(),
+                    ));
+                }
+
                 _ => {}
             }
         }
@@ -884,8 +974,8 @@ impl MigrationGraph {
     }
 
     /// Perform topological sort and return operations in dependency order.
-    /// Uses priority as a tiebreaker for deterministic output.
-    #[allow(dead_code)]
+    /// Type-level edges establish priority relationships (schemas before tables, etc.).
+    /// Content-aware edges handle specific dependencies (FK ordering, etc.).
     pub fn topological_sort(&self) -> Result<Vec<MigrationOp>, PlanError> {
         // Get topological order - fails if there's a cycle
         let sorted = toposort(&self.graph, None).map_err(|cycle| {
@@ -894,102 +984,18 @@ impl MigrationGraph {
             PlanError::CyclicDependency(format!("{op:?}"))
         })?;
 
-        // Collect vertices with their original index for stable sorting
-        let mut vertices: Vec<(usize, &OpVertex)> = sorted
+        // Return operations in topological order
+        // Priority is encoded in type-level edges, not post-hoc sorting
+        Ok(sorted
             .into_iter()
-            .enumerate()
-            .map(|(idx, node)| (idx, &self.graph[node]))
-            .collect();
-
-        // Sort by priority, using original index as tiebreaker for same priority
-        // This ensures deterministic output while respecting topological constraints
-        vertices
-            .sort_by(|(idx_a, a), (idx_b, b)| a.priority.cmp(&b.priority).then(idx_a.cmp(idx_b)));
-
-        Ok(vertices.into_iter().map(|(_, v)| v.op.clone()).collect())
+            .map(|node| self.graph[node].op.clone())
+            .collect())
     }
 }
 
 impl Default for MigrationGraph {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Assign a priority value to each operation type for tiebreaking in topological sort.
-/// Lower values run earlier. This mirrors the implicit ordering from the bucket-based approach.
-fn priority_for(op: &MigrationOp) -> i32 {
-    match op {
-        // Schema infrastructure (earliest)
-        MigrationOp::CreateSchema(_) => 0,
-        MigrationOp::CreateVersionSchema { .. } => 5,
-        MigrationOp::CreateExtension(_) => 10,
-
-        // Types before tables
-        MigrationOp::CreateEnum(_) => 20,
-        MigrationOp::AddEnumValue { .. } => 25,
-        MigrationOp::CreateDomain(_) => 30,
-        MigrationOp::CreateSequence(_) => 40,
-
-        // Functions before tables (may be used in defaults/checks)
-        MigrationOp::DropFunction { .. } => 45,
-        MigrationOp::CreateFunction(_) => 50,
-
-        // Tables
-        MigrationOp::CreateTable(_) => 60,
-        MigrationOp::CreatePartition(_) => 65,
-        MigrationOp::AddColumn { .. } => 70,
-        MigrationOp::AddPrimaryKey { .. } => 80,
-        MigrationOp::DropIndex { .. } => 85,
-        MigrationOp::AddIndex { .. } => 90,
-
-        // Constraints and policies - drops before alters
-        MigrationOp::DropForeignKey { .. } => 95,
-        MigrationOp::DropPolicy { .. } => 96,
-        MigrationOp::DropTrigger { .. } => 97,
-        MigrationOp::DropView { .. } => 98,
-        MigrationOp::AlterColumn { .. } => 100,
-        MigrationOp::SetColumnNotNull { .. } => 105,
-        MigrationOp::DropCheckConstraint { .. } => 108,
-        MigrationOp::AddForeignKey { .. } => 110,
-        MigrationOp::AddCheckConstraint { .. } => 115,
-
-        // RLS and policies
-        MigrationOp::EnableRls { .. } => 120,
-        MigrationOp::CreatePolicy(_) => 125,
-        MigrationOp::AlterPolicy { .. } => 130,
-
-        // Sequences, domains, functions (alters)
-        MigrationOp::AlterSequence { .. } => 140,
-        MigrationOp::AlterDomain { .. } => 145,
-        MigrationOp::AlterFunction { .. } => 150,
-
-        // Views and triggers
-        MigrationOp::CreateView(_) => 160,
-        MigrationOp::AlterView { .. } => 165,
-        MigrationOp::CreateVersionView { .. } => 170,
-        MigrationOp::CreateTrigger(_) => 175,
-        MigrationOp::AlterTriggerEnabled { .. } => 180,
-
-        // Ownership and grants
-        MigrationOp::AlterOwner { .. } => 190,
-        MigrationOp::GrantPrivileges { .. } => 195,
-        MigrationOp::BackfillHint { .. } => 198,
-
-        // Drops (later)
-        MigrationOp::RevokePrivileges { .. } => 500,
-        MigrationOp::DropVersionView { .. } => 510,
-        MigrationOp::DisableRls { .. } => 520,
-        MigrationOp::DropPrimaryKey { .. } => 540,
-        MigrationOp::DropColumn { .. } => 550,
-        MigrationOp::DropPartition(_) => 555,
-        MigrationOp::DropTable(_) => 560,
-        MigrationOp::DropSequence(_) => 570,
-        MigrationOp::DropDomain(_) => 575,
-        MigrationOp::DropEnum(_) => 580,
-        MigrationOp::DropExtension(_) => 585,
-        MigrationOp::DropVersionSchema { .. } => 590,
-        MigrationOp::DropSchema(_) => 595,
     }
 }
 
@@ -1001,10 +1007,9 @@ pub fn plan_migration_checked(ops: Vec<MigrationOp>) -> Result<Vec<MigrationOp>,
 
     let mut graph = MigrationGraph::new();
 
-    // Add all ops as vertices with their priorities
+    // Add all ops as vertices
     for op in processed_ops {
-        let priority = priority_for(&op);
-        graph.add_vertex(op, priority);
+        graph.add_vertex(op);
     }
 
     // Add dependency edges
@@ -2213,5 +2218,75 @@ mod tests {
         if let (Some(c), Some(d)) = (v2_last_create, v2_first_drop) {
             assert!(c < d, "v2: creates should be before drops");
         }
+    }
+
+    #[test]
+    fn self_referencing_fk_does_not_create_cycle() {
+        // A table with a self-referencing FK (e.g., employees.manager_id -> employees.id)
+        // should not create a cycle in the dependency graph. PostgreSQL handles these
+        // correctly when the FK is defined inline with CREATE TABLE.
+        use crate::model::{Column, ForeignKey, PgType, PrimaryKey, ReferentialAction, Table};
+        use std::collections::BTreeMap;
+
+        let mut columns = BTreeMap::new();
+        columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        columns.insert(
+            "manager_id".to_string(),
+            Column {
+                name: "manager_id".to_string(),
+                data_type: PgType::Integer,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+
+        let table = Table {
+            schema: "public".to_string(),
+            name: "employees".to_string(),
+            columns,
+            indexes: vec![],
+            primary_key: Some(PrimaryKey {
+                columns: vec!["id".to_string()],
+            }),
+            foreign_keys: vec![ForeignKey {
+                name: "employees_manager_fkey".to_string(),
+                columns: vec!["manager_id".to_string()],
+                referenced_schema: "public".to_string(),
+                referenced_table: "employees".to_string(), // Self-reference
+                referenced_columns: vec!["id".to_string()],
+                on_delete: ReferentialAction::NoAction,
+                on_update: ReferentialAction::NoAction,
+            }],
+            check_constraints: vec![],
+            comment: None,
+            row_level_security: false,
+            policies: vec![],
+            partition_by: None,
+            owner: None,
+            grants: vec![],
+        };
+
+        let ops = vec![MigrationOp::CreateTable(table)];
+
+        // This should not panic with a cycle error
+        let result = plan_migration_checked(ops);
+        assert!(
+            result.is_ok(),
+            "Self-referencing FK should not cause a cycle"
+        );
+
+        let planned = result.unwrap();
+        assert_eq!(planned.len(), 1);
+        assert!(matches!(planned[0], MigrationOp::CreateTable(_)));
     }
 }
