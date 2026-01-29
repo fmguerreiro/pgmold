@@ -370,6 +370,33 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 }
                             }
                         }
+                        sqlparser::ast::AlterTableOperation::AddColumn {
+                            column_def, ..
+                        } => {
+                            if let Some(table) = schema.tables.get_mut(&tbl_key) {
+                                let (column, seq_opt) = parse_column_with_serial(
+                                    &tbl_schema,
+                                    &tbl_name,
+                                    &column_def,
+                                )?;
+                                table.columns.insert(column.name.clone(), column);
+                                if let Some(seq) = seq_opt {
+                                    let seq_key = qualified_name(&seq.schema, &seq.name);
+                                    schema.sequences.insert(seq_key, seq);
+                                }
+                            }
+                        }
+                        sqlparser::ast::AlterTableOperation::DropColumn {
+                            column_names, ..
+                        } => {
+                            if let Some(table) = schema.tables.get_mut(&tbl_key) {
+                                let names_to_drop: Vec<String> = column_names
+                                    .iter()
+                                    .map(|n| n.value.trim_matches('"').to_string())
+                                    .collect();
+                                table.columns.retain(|name, _| !names_to_drop.contains(name));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -3751,5 +3778,128 @@ CREATE TABLE "mrv"."Cultivation" (
             unique_idx.columns,
             vec!["session_id", "authentication_method"]
         );
+    }
+
+    #[test]
+    fn parse_alter_table_add_column() {
+        let sql = r#"
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL
+);
+
+ALTER TABLE users ADD COLUMN name TEXT;
+ALTER TABLE users ADD COLUMN active BOOLEAN NOT NULL DEFAULT true;
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let table = schema
+            .tables
+            .get("public.users")
+            .expect("Table should exist");
+        assert_eq!(table.columns.len(), 4); // id, email, name, active
+
+        let name_col = table.columns.get("name").expect("name column should exist");
+        assert_eq!(name_col.name, "name");
+        assert!(name_col.nullable);
+        assert!(name_col.default.is_none());
+
+        let active_col = table
+            .columns
+            .get("active")
+            .expect("active column should exist");
+        assert_eq!(active_col.name, "active");
+        assert!(!active_col.nullable);
+        assert_eq!(active_col.default.as_deref(), Some("true"));
+    }
+
+    #[test]
+    fn parse_alter_table_add_column_serial() {
+        let sql = r#"
+CREATE TABLE items (
+    id SERIAL PRIMARY KEY
+);
+
+ALTER TABLE items ADD COLUMN version SERIAL;
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let table = schema
+            .tables
+            .get("public.items")
+            .expect("Table should exist");
+        assert_eq!(table.columns.len(), 2); // id, version
+
+        let version_col = table
+            .columns
+            .get("version")
+            .expect("version column should exist");
+        assert_eq!(version_col.name, "version");
+        // SERIAL columns have nextval default
+        assert!(version_col.default.as_ref().unwrap().contains("nextval"));
+
+        // Should have created the sequence
+        assert!(schema.sequences.contains_key("public.items_version_seq"));
+    }
+
+    #[test]
+    fn parse_alter_table_drop_column() {
+        let sql = r#"
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    name TEXT,
+    deprecated_field TEXT
+);
+
+ALTER TABLE users DROP COLUMN deprecated_field;
+ALTER TABLE users DROP COLUMN name;
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let table = schema
+            .tables
+            .get("public.users")
+            .expect("Table should exist");
+        assert_eq!(table.columns.len(), 2); // id, email
+
+        assert!(table.columns.contains_key("id"));
+        assert!(table.columns.contains_key("email"));
+        assert!(!table.columns.contains_key("name"));
+        assert!(!table.columns.contains_key("deprecated_field"));
+    }
+
+    #[test]
+    fn parse_alter_table_add_and_drop_column() {
+        let sql = r#"
+CREATE TABLE products (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    old_price NUMERIC
+);
+
+ALTER TABLE products DROP COLUMN old_price;
+ALTER TABLE products ADD COLUMN price NUMERIC(10, 2) NOT NULL DEFAULT 0;
+ALTER TABLE products ADD COLUMN description TEXT;
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let table = schema
+            .tables
+            .get("public.products")
+            .expect("Table should exist");
+        assert_eq!(table.columns.len(), 4); // id, name, price, description
+
+        assert!(!table.columns.contains_key("old_price"));
+        assert!(table.columns.contains_key("price"));
+        assert!(table.columns.contains_key("description"));
+
+        let price_col = table.columns.get("price").expect("price column should exist");
+        assert!(!price_col.nullable);
+        assert_eq!(price_col.default.as_deref(), Some("0"));
     }
 }
