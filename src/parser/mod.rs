@@ -397,6 +397,79 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 table.columns.retain(|name, _| !names_to_drop.contains(name));
                             }
                         }
+                        sqlparser::ast::AlterTableOperation::RenameTable { table_name } => {
+                            // Extract new table name from either As or To variant
+                            let new_name = match table_name {
+                                sqlparser::ast::RenameTableNameKind::As(obj)
+                                | sqlparser::ast::RenameTableNameKind::To(obj) => {
+                                    let (new_schema, new_tbl) = extract_qualified_name(&obj);
+                                    // If new name has no schema qualifier, use the original schema
+                                    let effective_schema = if obj.0.len() == 1 {
+                                        tbl_schema.clone()
+                                    } else {
+                                        new_schema
+                                    };
+                                    (effective_schema, new_tbl)
+                                }
+                            };
+                            let new_key = qualified_name(&new_name.0, &new_name.1);
+
+                            // Move the table from old key to new key
+                            if let Some(mut table) = schema.tables.remove(&tbl_key) {
+                                table.schema = new_name.0.clone();
+                                table.name = new_name.1.clone();
+                                schema.tables.insert(new_key, table);
+                            }
+                        }
+                        sqlparser::ast::AlterTableOperation::RenameColumn {
+                            old_column_name,
+                            new_column_name,
+                        } => {
+                            if let Some(table) = schema.tables.get_mut(&tbl_key) {
+                                let old_name =
+                                    old_column_name.value.trim_matches('"').to_string();
+                                let new_name =
+                                    new_column_name.value.trim_matches('"').to_string();
+
+                                // Remove the column with the old name and insert with new name
+                                if let Some(mut column) = table.columns.remove(&old_name) {
+                                    column.name = new_name.clone();
+                                    table.columns.insert(new_name, column);
+                                }
+                            }
+                        }
+                        sqlparser::ast::AlterTableOperation::RenameConstraint {
+                            old_name,
+                            new_name,
+                        } => {
+                            let old_constraint_name =
+                                old_name.value.trim_matches('"').to_string();
+                            let new_constraint_name =
+                                new_name.value.trim_matches('"').to_string();
+
+                            if let Some(table) = schema.tables.get_mut(&tbl_key) {
+                                // Check indexes
+                                for idx in &mut table.indexes {
+                                    if idx.name == old_constraint_name {
+                                        idx.name = new_constraint_name.clone();
+                                    }
+                                }
+
+                                // Check foreign keys
+                                for fk in &mut table.foreign_keys {
+                                    if fk.name == old_constraint_name {
+                                        fk.name = new_constraint_name.clone();
+                                    }
+                                }
+
+                                // Check check constraints
+                                for cc in &mut table.check_constraints {
+                                    if cc.name == old_constraint_name {
+                                        cc.name = new_constraint_name.clone();
+                                    }
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -4155,6 +4228,80 @@ DROP EXTENSION pgcrypto;
 
         assert!(!schema.extensions.contains_key("pgcrypto"));
         assert!(schema.extensions.contains_key("uuid_ossp") || schema.extensions.contains_key("uuid-ossp"));
+    }
+
+
+    #[test]
+    fn parse_alter_table_rename_table() {
+        let sql = r#"
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL
+);
+
+ALTER TABLE users RENAME TO customers;
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert!(!schema.tables.contains_key("public.users"));
+        assert!(schema.tables.contains_key("public.customers"));
+
+        let table = schema
+            .tables
+            .get("public.customers")
+            .expect("Table should exist");
+        assert_eq!(table.columns.len(), 2);
+        assert!(table.columns.contains_key("id"));
+        assert!(table.columns.contains_key("email"));
+    }
+
+    #[test]
+    fn parse_alter_table_rename_column() {
+        let sql = r#"
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL,
+    username TEXT
+);
+
+ALTER TABLE users RENAME COLUMN username TO display_name;
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let table = schema
+            .tables
+            .get("public.users")
+            .expect("Table should exist");
+        assert_eq!(table.columns.len(), 3);
+        assert!(table.columns.contains_key("id"));
+        assert!(table.columns.contains_key("email"));
+        assert!(!table.columns.contains_key("username"));
+        assert!(table.columns.contains_key("display_name"));
+    }
+
+    #[test]
+    fn parse_alter_table_rename_constraint() {
+        let sql = r#"
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL
+);
+CREATE INDEX users_email_idx ON users (email);
+
+ALTER TABLE users RENAME CONSTRAINT users_email_idx TO users_email_index;
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let table = schema
+            .tables
+            .get("public.users")
+            .expect("Table should exist");
+
+        assert!(table.indexes.iter().all(|i| i.name != "users_email_idx"));
+        assert!(table.indexes.iter().any(|i| i.name == "users_email_index"));
     }
 
     #[test]
