@@ -1,395 +1,998 @@
-use super::{extract_function_references_from_policy, function_names_match, MigrationOp};
+use super::MigrationOp;
 use crate::model::qualified_name;
-use crate::parser::{extract_function_references, extract_table_references};
+use crate::parser::extract_table_references;
+use petgraph::algo::toposort;
+use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
+use thiserror::Error;
 
-/// Plan and order migration operations for safe execution.
-/// Creates are ordered first (with tables topologically sorted by FK dependencies),
-/// then drops are ordered last (in reverse dependency order).
-pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
-    let mut create_schemas = Vec::new();
-    let mut drop_schemas = Vec::new();
-    let mut create_extensions = Vec::new();
-    let mut drop_extensions = Vec::new();
-    let mut create_enums = Vec::new();
-    let mut add_enum_values = Vec::new();
-    let mut create_tables = Vec::new();
-    let mut create_partitions = Vec::new();
-    let mut add_columns = Vec::new();
-    let mut add_primary_keys = Vec::new();
-    let mut add_indexes = Vec::new();
-    let mut alter_columns = Vec::new();
-    let mut add_foreign_keys = Vec::new();
-    let mut add_check_constraints = Vec::new();
+/// Error returned when migration planning fails.
+#[derive(Debug, Error)]
+pub enum PlanError {
+    #[error("Circular dependency detected involving: {0}")]
+    CyclicDependency(String),
+}
 
-    let mut drop_check_constraints = Vec::new();
-    let mut drop_foreign_keys = Vec::new();
-    let mut drop_indexes = Vec::new();
-    let mut drop_primary_keys = Vec::new();
-    let mut drop_columns = Vec::new();
-    let mut drop_partitions = Vec::new();
-    let mut drop_tables = Vec::new();
-    let mut drop_enums = Vec::new();
-    let mut enable_rls = Vec::new();
-    let mut disable_rls = Vec::new();
-    let mut create_policies = Vec::new();
-    let mut drop_policies = Vec::new();
-    let mut alter_policies = Vec::new();
-    let mut create_functions = Vec::new();
-    let mut drop_functions = Vec::new();
-    let mut alter_functions = Vec::new();
-    let mut create_views = Vec::new();
-    let mut drop_views = Vec::new();
-    let mut alter_views = Vec::new();
-    let mut create_triggers = Vec::new();
-    let mut drop_triggers = Vec::new();
-    let mut alter_triggers = Vec::new();
-    let mut create_sequences = Vec::new();
-    let mut drop_sequences = Vec::new();
-    let mut alter_sequences = Vec::new();
-    let mut create_domains = Vec::new();
-    let mut drop_domains = Vec::new();
-    let mut alter_domains = Vec::new();
-    let mut alter_owners = Vec::new();
-    let mut backfill_hints = Vec::new();
-    let mut set_column_not_nulls = Vec::new();
-    let mut grant_privileges = Vec::new();
-    let mut revoke_privileges = Vec::new();
-    let mut create_version_schemas = Vec::new();
-    let mut drop_version_schemas = Vec::new();
-    let mut create_version_views = Vec::new();
-    let mut drop_version_views = Vec::new();
+/// Unique key for identifying each MigrationOp in the dependency graph.
+/// Used for edge lookup and duplicate detection.
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub enum OpKey {
+    CreateSchema(String),
+    DropSchema(String),
+    CreateExtension(String),
+    DropExtension(String),
+    CreateEnum(String),
+    DropEnum(String),
+    AddEnumValue {
+        enum_name: String,
+        value: String,
+    },
+    CreateDomain(String),
+    DropDomain(String),
+    AlterDomain(String),
+    CreateTable(String),
+    DropTable(String),
+    CreatePartition(String),
+    DropPartition(String),
+    AddColumn {
+        table: String,
+        column: String,
+    },
+    DropColumn {
+        table: String,
+        column: String,
+    },
+    AlterColumn {
+        table: String,
+        column: String,
+    },
+    AddPrimaryKey {
+        table: String,
+    },
+    DropPrimaryKey {
+        table: String,
+    },
+    AddIndex {
+        table: String,
+        name: String,
+    },
+    DropIndex {
+        table: String,
+        name: String,
+    },
+    AddForeignKey {
+        table: String,
+        name: String,
+    },
+    DropForeignKey {
+        table: String,
+        name: String,
+    },
+    AddCheckConstraint {
+        table: String,
+        name: String,
+    },
+    DropCheckConstraint {
+        table: String,
+        name: String,
+    },
+    EnableRls {
+        table: String,
+    },
+    DisableRls {
+        table: String,
+    },
+    CreatePolicy {
+        table: String,
+        name: String,
+    },
+    DropPolicy {
+        table: String,
+        name: String,
+    },
+    AlterPolicy {
+        table: String,
+        name: String,
+    },
+    CreateFunction {
+        name: String,
+        args: String,
+    },
+    DropFunction {
+        name: String,
+        args: String,
+    },
+    AlterFunction {
+        name: String,
+        args: String,
+    },
+    CreateView(String),
+    DropView(String),
+    AlterView(String),
+    CreateTrigger {
+        target: String,
+        name: String,
+    },
+    DropTrigger {
+        target: String,
+        name: String,
+    },
+    AlterTriggerEnabled {
+        target: String,
+        name: String,
+    },
+    CreateSequence(String),
+    DropSequence(String),
+    AlterSequence(String),
+    AlterOwner {
+        object_kind: String,
+        schema: String,
+        name: String,
+    },
+    BackfillHint {
+        table: String,
+        column: String,
+    },
+    SetColumnNotNull {
+        table: String,
+        column: String,
+    },
+    GrantPrivileges {
+        object_kind: String,
+        schema: String,
+        name: String,
+        grantee: String,
+    },
+    RevokePrivileges {
+        object_kind: String,
+        schema: String,
+        name: String,
+        grantee: String,
+    },
+    CreateVersionSchema {
+        base_schema: String,
+        version: String,
+    },
+    DropVersionSchema {
+        base_schema: String,
+        version: String,
+    },
+    CreateVersionView {
+        version_schema: String,
+        name: String,
+    },
+    DropVersionView {
+        version_schema: String,
+        name: String,
+    },
+}
 
-    for op in ops {
+impl OpKey {
+    /// Create an OpKey from a MigrationOp.
+    pub fn from_op(op: &MigrationOp) -> Self {
         match op {
-            MigrationOp::CreateSchema(_) => create_schemas.push(op),
-            MigrationOp::DropSchema(_) => drop_schemas.push(op),
-            MigrationOp::CreateExtension(_) => create_extensions.push(op),
-            MigrationOp::DropExtension(_) => drop_extensions.push(op),
-            MigrationOp::CreateEnum(_) => create_enums.push(op),
-            MigrationOp::AddEnumValue { .. } => add_enum_values.push(op),
-            MigrationOp::CreateTable(_) => create_tables.push(op),
-            MigrationOp::CreatePartition(_) => create_partitions.push(op),
-            MigrationOp::AddColumn { .. } => add_columns.push(op),
-            MigrationOp::AddPrimaryKey { .. } => add_primary_keys.push(op),
-            MigrationOp::AddIndex { .. } => add_indexes.push(op),
-            MigrationOp::AlterColumn { .. } => alter_columns.push(op),
-            MigrationOp::AddForeignKey { .. } => add_foreign_keys.push(op),
-            MigrationOp::AddCheckConstraint { .. } => add_check_constraints.push(op),
-            MigrationOp::DropCheckConstraint { .. } => drop_check_constraints.push(op),
-            MigrationOp::DropForeignKey { .. } => drop_foreign_keys.push(op),
-            MigrationOp::DropIndex { .. } => drop_indexes.push(op),
-            MigrationOp::DropPrimaryKey { .. } => drop_primary_keys.push(op),
-            MigrationOp::DropColumn { .. } => drop_columns.push(op),
-            MigrationOp::DropPartition(_) => drop_partitions.push(op),
-            MigrationOp::DropTable(_) => drop_tables.push(op),
-            MigrationOp::DropEnum(_) => drop_enums.push(op),
-            MigrationOp::EnableRls { .. } => enable_rls.push(op),
-            MigrationOp::DisableRls { .. } => disable_rls.push(op),
-            MigrationOp::CreatePolicy(_) => create_policies.push(op),
-            MigrationOp::DropPolicy { .. } => drop_policies.push(op),
-            MigrationOp::AlterPolicy { .. } => alter_policies.push(op),
-            MigrationOp::CreateFunction(_) => create_functions.push(op),
-            MigrationOp::DropFunction { .. } => drop_functions.push(op),
-            MigrationOp::AlterFunction { .. } => alter_functions.push(op),
-            MigrationOp::CreateView(_) => create_views.push(op),
-            MigrationOp::DropView { .. } => drop_views.push(op),
-            MigrationOp::AlterView { .. } => alter_views.push(op),
-            MigrationOp::CreateTrigger(_) => create_triggers.push(op),
-            MigrationOp::DropTrigger { .. } => drop_triggers.push(op),
-            MigrationOp::AlterTriggerEnabled { .. } => alter_triggers.push(op),
-            MigrationOp::CreateSequence(_) => create_sequences.push(op),
-            MigrationOp::DropSequence(_) => drop_sequences.push(op),
-            MigrationOp::AlterSequence { .. } => alter_sequences.push(op),
-            MigrationOp::CreateDomain(_) => create_domains.push(op),
-            MigrationOp::DropDomain(_) => drop_domains.push(op),
-            MigrationOp::AlterDomain { .. } => alter_domains.push(op),
-            MigrationOp::AlterOwner { .. } => alter_owners.push(op),
-            MigrationOp::BackfillHint { .. } => backfill_hints.push(op),
-            MigrationOp::SetColumnNotNull { .. } => set_column_not_nulls.push(op),
-            MigrationOp::GrantPrivileges { .. } => grant_privileges.push(op),
-            MigrationOp::RevokePrivileges { .. } => revoke_privileges.push(op),
-            MigrationOp::CreateVersionSchema { .. } => create_version_schemas.push(op),
-            MigrationOp::DropVersionSchema { .. } => drop_version_schemas.push(op),
-            MigrationOp::CreateVersionView { .. } => create_version_views.push(op),
-            MigrationOp::DropVersionView { .. } => drop_version_views.push(op),
+            MigrationOp::CreateSchema(s) => OpKey::CreateSchema(s.name.clone()),
+            MigrationOp::DropSchema(name) => OpKey::DropSchema(name.clone()),
+            MigrationOp::CreateExtension(ext) => OpKey::CreateExtension(ext.name.clone()),
+            MigrationOp::DropExtension(name) => OpKey::DropExtension(name.clone()),
+            MigrationOp::CreateEnum(e) => OpKey::CreateEnum(qualified_name(&e.schema, &e.name)),
+            MigrationOp::DropEnum(name) => OpKey::DropEnum(name.clone()),
+            MigrationOp::AddEnumValue {
+                enum_name, value, ..
+            } => OpKey::AddEnumValue {
+                enum_name: enum_name.clone(),
+                value: value.clone(),
+            },
+            MigrationOp::CreateDomain(d) => OpKey::CreateDomain(qualified_name(&d.schema, &d.name)),
+            MigrationOp::DropDomain(name) => OpKey::DropDomain(name.clone()),
+            MigrationOp::AlterDomain { name, .. } => OpKey::AlterDomain(name.clone()),
+            MigrationOp::CreateTable(t) => OpKey::CreateTable(qualified_name(&t.schema, &t.name)),
+            MigrationOp::DropTable(name) => OpKey::DropTable(name.clone()),
+            MigrationOp::CreatePartition(p) => {
+                OpKey::CreatePartition(qualified_name(&p.schema, &p.name))
+            }
+            MigrationOp::DropPartition(name) => OpKey::DropPartition(name.clone()),
+            MigrationOp::AddColumn { table, column } => OpKey::AddColumn {
+                table: table.clone(),
+                column: column.name.clone(),
+            },
+            MigrationOp::DropColumn { table, column } => OpKey::DropColumn {
+                table: table.clone(),
+                column: column.clone(),
+            },
+            MigrationOp::AlterColumn { table, column, .. } => OpKey::AlterColumn {
+                table: table.clone(),
+                column: column.clone(),
+            },
+            MigrationOp::AddPrimaryKey { table, .. } => OpKey::AddPrimaryKey {
+                table: table.clone(),
+            },
+            MigrationOp::DropPrimaryKey { table } => OpKey::DropPrimaryKey {
+                table: table.clone(),
+            },
+            MigrationOp::AddIndex { table, index } => OpKey::AddIndex {
+                table: table.clone(),
+                name: index.name.clone(),
+            },
+            MigrationOp::DropIndex { table, index_name } => OpKey::DropIndex {
+                table: table.clone(),
+                name: index_name.clone(),
+            },
+            MigrationOp::AddForeignKey { table, foreign_key } => OpKey::AddForeignKey {
+                table: table.clone(),
+                name: foreign_key.name.clone(),
+            },
+            MigrationOp::DropForeignKey {
+                table,
+                foreign_key_name,
+            } => OpKey::DropForeignKey {
+                table: table.clone(),
+                name: foreign_key_name.clone(),
+            },
+            MigrationOp::AddCheckConstraint {
+                table,
+                check_constraint,
+            } => OpKey::AddCheckConstraint {
+                table: table.clone(),
+                name: check_constraint.name.clone(),
+            },
+            MigrationOp::DropCheckConstraint {
+                table,
+                constraint_name,
+            } => OpKey::DropCheckConstraint {
+                table: table.clone(),
+                name: constraint_name.clone(),
+            },
+            MigrationOp::EnableRls { table } => OpKey::EnableRls {
+                table: table.clone(),
+            },
+            MigrationOp::DisableRls { table } => OpKey::DisableRls {
+                table: table.clone(),
+            },
+            MigrationOp::CreatePolicy(p) => OpKey::CreatePolicy {
+                table: qualified_name(&p.table_schema, &p.table),
+                name: p.name.clone(),
+            },
+            MigrationOp::DropPolicy { table, name } => OpKey::DropPolicy {
+                table: table.clone(),
+                name: name.clone(),
+            },
+            MigrationOp::AlterPolicy { table, name, .. } => OpKey::AlterPolicy {
+                table: table.clone(),
+                name: name.clone(),
+            },
+            MigrationOp::CreateFunction(f) => OpKey::CreateFunction {
+                name: qualified_name(&f.schema, &f.name),
+                args: f
+                    .arguments
+                    .iter()
+                    .map(|a| a.data_type.clone())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            },
+            MigrationOp::DropFunction { name, args } => OpKey::DropFunction {
+                name: name.clone(),
+                args: args.clone(),
+            },
+            MigrationOp::AlterFunction { name, args, .. } => OpKey::AlterFunction {
+                name: name.clone(),
+                args: args.clone(),
+            },
+            MigrationOp::CreateView(v) => OpKey::CreateView(qualified_name(&v.schema, &v.name)),
+            MigrationOp::DropView { name, .. } => OpKey::DropView(name.clone()),
+            MigrationOp::AlterView { name, .. } => OpKey::AlterView(name.clone()),
+            MigrationOp::CreateTrigger(t) => OpKey::CreateTrigger {
+                target: qualified_name(&t.target_schema, &t.target_name),
+                name: t.name.clone(),
+            },
+            MigrationOp::DropTrigger {
+                target_schema,
+                target_name,
+                name,
+            } => OpKey::DropTrigger {
+                target: qualified_name(target_schema, target_name),
+                name: name.clone(),
+            },
+            MigrationOp::AlterTriggerEnabled {
+                target_schema,
+                target_name,
+                name,
+                ..
+            } => OpKey::AlterTriggerEnabled {
+                target: qualified_name(target_schema, target_name),
+                name: name.clone(),
+            },
+            MigrationOp::CreateSequence(s) => {
+                OpKey::CreateSequence(qualified_name(&s.schema, &s.name))
+            }
+            MigrationOp::DropSequence(name) => OpKey::DropSequence(name.clone()),
+            MigrationOp::AlterSequence { name, .. } => OpKey::AlterSequence(name.clone()),
+            MigrationOp::AlterOwner {
+                object_kind,
+                schema,
+                name,
+                ..
+            } => OpKey::AlterOwner {
+                object_kind: format!("{object_kind:?}"),
+                schema: schema.clone(),
+                name: name.clone(),
+            },
+            MigrationOp::BackfillHint { table, column, .. } => OpKey::BackfillHint {
+                table: table.clone(),
+                column: column.clone(),
+            },
+            MigrationOp::SetColumnNotNull { table, column } => OpKey::SetColumnNotNull {
+                table: table.clone(),
+                column: column.clone(),
+            },
+            MigrationOp::GrantPrivileges {
+                object_kind,
+                schema,
+                name,
+                grantee,
+                ..
+            } => OpKey::GrantPrivileges {
+                object_kind: format!("{object_kind:?}"),
+                schema: schema.clone(),
+                name: name.clone(),
+                grantee: grantee.clone(),
+            },
+            MigrationOp::RevokePrivileges {
+                object_kind,
+                schema,
+                name,
+                grantee,
+                ..
+            } => OpKey::RevokePrivileges {
+                object_kind: format!("{object_kind:?}"),
+                schema: schema.clone(),
+                name: name.clone(),
+                grantee: grantee.clone(),
+            },
+            MigrationOp::CreateVersionSchema {
+                base_schema,
+                version,
+            } => OpKey::CreateVersionSchema {
+                base_schema: base_schema.clone(),
+                version: version.clone(),
+            },
+            MigrationOp::DropVersionSchema {
+                base_schema,
+                version,
+            } => OpKey::DropVersionSchema {
+                base_schema: base_schema.clone(),
+                version: version.clone(),
+            },
+            MigrationOp::CreateVersionView { view } => OpKey::CreateVersionView {
+                version_schema: view.version_schema.clone(),
+                name: view.name.clone(),
+            },
+            MigrationOp::DropVersionView {
+                version_schema,
+                name,
+            } => OpKey::DropVersionView {
+                version_schema: version_schema.clone(),
+                name: name.clone(),
+            },
+        }
+    }
+}
+
+/// Vertex in the dependency graph, wrapping a MigrationOp.
+#[derive(Clone)]
+struct OpVertex {
+    op: MigrationOp,
+}
+
+/// Graph-based migration planner using explicit dependency edges.
+pub struct MigrationGraph {
+    graph: DiGraph<OpVertex, ()>,
+    nodes: HashMap<OpKey, NodeIndex>,
+}
+
+impl MigrationGraph {
+    /// Create a new empty migration graph.
+    pub fn new() -> Self {
+        Self {
+            graph: DiGraph::new(),
+            nodes: HashMap::new(),
         }
     }
 
-    let mut create_sequences_without_owner = Vec::new();
-    let mut set_sequence_owners = Vec::new();
+    /// Add an operation to the graph as a vertex.
+    /// Returns the NodeIndex for the new vertex.
+    pub fn add_vertex(&mut self, op: MigrationOp) -> NodeIndex {
+        let key = OpKey::from_op(&op);
+        let node = self.graph.add_node(OpVertex { op });
+        self.nodes.insert(key, node);
+        node
+    }
 
-    for op in create_sequences {
-        if let MigrationOp::CreateSequence(ref seq) = op {
-            if let Some(ref owned_by) = seq.owned_by {
+    /// Add a directed edge from one operation to another (from must run before to).
+    /// Returns true if both nodes exist and the edge was added.
+    pub fn add_edge(&mut self, from: &OpKey, to: &OpKey) -> bool {
+        if let (Some(&from_node), Some(&to_node)) = (self.nodes.get(from), self.nodes.get(to)) {
+            self.graph.add_edge(from_node, to_node, ());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get all OpKeys currently in the graph.
+    pub fn keys(&self) -> impl Iterator<Item = &OpKey> {
+        self.nodes.keys()
+    }
+
+    /// Get all NodeIndexes for operations matching a predicate.
+    fn nodes_matching<F>(&self, predicate: F) -> Vec<NodeIndex>
+    where
+        F: Fn(&OpKey) -> bool,
+    {
+        self.nodes
+            .iter()
+            .filter(|(key, _)| predicate(key))
+            .map(|(_, &node)| node)
+            .collect()
+    }
+
+    /// Add edges from all nodes in `from` to all nodes in `to`.
+    fn edges_all_to_all(&mut self, from: &[NodeIndex], to: &[NodeIndex]) {
+        for &f in from {
+            for &t in to {
+                if f != t {
+                    self.graph.add_edge(f, t, ());
+                }
+            }
+        }
+    }
+
+    /// Add type-level dependency edges (all ops of type A before all ops of type B).
+    pub fn add_type_level_edges(&mut self) {
+        // Collect nodes by type using pattern matching
+        let schemas = self.nodes_matching(|k| matches!(k, OpKey::CreateSchema(_)));
+        let version_schemas =
+            self.nodes_matching(|k| matches!(k, OpKey::CreateVersionSchema { .. }));
+        let extensions = self.nodes_matching(|k| matches!(k, OpKey::CreateExtension(_)));
+        let enums = self.nodes_matching(|k| matches!(k, OpKey::CreateEnum(_)));
+        let add_enum_values = self.nodes_matching(|k| matches!(k, OpKey::AddEnumValue { .. }));
+        let domains = self.nodes_matching(|k| matches!(k, OpKey::CreateDomain(_)));
+        let sequences = self.nodes_matching(|k| matches!(k, OpKey::CreateSequence(_)));
+        let functions = self.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. }));
+        let tables = self.nodes_matching(|k| matches!(k, OpKey::CreateTable(_)));
+        let partitions = self.nodes_matching(|k| matches!(k, OpKey::CreatePartition(_)));
+        let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
+        let add_pks = self.nodes_matching(|k| matches!(k, OpKey::AddPrimaryKey { .. }));
+        let add_indexes = self.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. }));
+        let add_fks = self.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. }));
+        let add_checks = self.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. }));
+        let enable_rls = self.nodes_matching(|k| matches!(k, OpKey::EnableRls { .. }));
+        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
+        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
+        let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
+        let version_views = self.nodes_matching(|k| matches!(k, OpKey::CreateVersionView { .. }));
+        let alter_sequences = self.nodes_matching(|k| matches!(k, OpKey::AlterSequence(_)));
+
+        let drop_fks = self.nodes_matching(|k| matches!(k, OpKey::DropForeignKey { .. }));
+        let drop_indexes = self.nodes_matching(|k| matches!(k, OpKey::DropIndex { .. }));
+        let drop_checks = self.nodes_matching(|k| matches!(k, OpKey::DropCheckConstraint { .. }));
+        let drop_policies = self.nodes_matching(|k| matches!(k, OpKey::DropPolicy { .. }));
+        let drop_triggers = self.nodes_matching(|k| matches!(k, OpKey::DropTrigger { .. }));
+        let drop_views = self.nodes_matching(|k| matches!(k, OpKey::DropView(_)));
+        let drop_columns = self.nodes_matching(|k| matches!(k, OpKey::DropColumn { .. }));
+        let drop_pks = self.nodes_matching(|k| matches!(k, OpKey::DropPrimaryKey { .. }));
+        let drop_tables = self.nodes_matching(|k| matches!(k, OpKey::DropTable(_)));
+        let drop_partitions = self.nodes_matching(|k| matches!(k, OpKey::DropPartition(_)));
+        let drop_sequences = self.nodes_matching(|k| matches!(k, OpKey::DropSequence(_)));
+        let drop_domains = self.nodes_matching(|k| matches!(k, OpKey::DropDomain(_)));
+        let drop_enums = self.nodes_matching(|k| matches!(k, OpKey::DropEnum(_)));
+        let drop_extensions = self.nodes_matching(|k| matches!(k, OpKey::DropExtension(_)));
+        let drop_version_schemas =
+            self.nodes_matching(|k| matches!(k, OpKey::DropVersionSchema { .. }));
+        let drop_schemas = self.nodes_matching(|k| matches!(k, OpKey::DropSchema(_)));
+        let drop_version_views =
+            self.nodes_matching(|k| matches!(k, OpKey::DropVersionView { .. }));
+
+        let alter_columns = self.nodes_matching(|k| matches!(k, OpKey::AlterColumn { .. }));
+
+        // === CREATE dependencies ===
+
+        // Schema infrastructure first
+        self.edges_all_to_all(&schemas, &tables);
+        self.edges_all_to_all(&schemas, &enums);
+        self.edges_all_to_all(&schemas, &domains);
+        self.edges_all_to_all(&schemas, &sequences);
+        self.edges_all_to_all(&schemas, &functions);
+        self.edges_all_to_all(&schemas, &views);
+        self.edges_all_to_all(&version_schemas, &version_views);
+
+        // Extensions before types/tables
+        self.edges_all_to_all(&extensions, &enums);
+        self.edges_all_to_all(&extensions, &domains);
+        self.edges_all_to_all(&extensions, &tables);
+
+        // Types before tables
+        self.edges_all_to_all(&enums, &tables);
+        self.edges_all_to_all(&enums, &add_columns);
+        self.edges_all_to_all(&enums, &add_enum_values);
+        self.edges_all_to_all(&add_enum_values, &tables);
+        self.edges_all_to_all(&add_enum_values, &add_columns);
+        self.edges_all_to_all(&domains, &tables);
+        self.edges_all_to_all(&domains, &add_columns);
+        self.edges_all_to_all(&sequences, &tables);
+
+        // Functions before tables (used in defaults/checks)
+        self.edges_all_to_all(&functions, &tables);
+        self.edges_all_to_all(&functions, &add_columns);
+        self.edges_all_to_all(&functions, &triggers);
+        self.edges_all_to_all(&functions, &policies);
+
+        // Tables before partitions
+        self.edges_all_to_all(&tables, &partitions);
+
+        // Tables before table-level objects
+        self.edges_all_to_all(&tables, &add_columns);
+        self.edges_all_to_all(&tables, &add_pks);
+        self.edges_all_to_all(&tables, &add_indexes);
+        self.edges_all_to_all(&tables, &add_fks);
+        self.edges_all_to_all(&tables, &add_checks);
+        self.edges_all_to_all(&tables, &enable_rls);
+        self.edges_all_to_all(&tables, &policies);
+        self.edges_all_to_all(&tables, &triggers);
+
+        // Columns before indexes/constraints on them
+        self.edges_all_to_all(&add_columns, &add_indexes);
+        self.edges_all_to_all(&add_columns, &add_fks);
+        self.edges_all_to_all(&add_columns, &add_checks);
+
+        // Enable RLS before policies
+        self.edges_all_to_all(&enable_rls, &policies);
+
+        // Tables before views (views depend on tables)
+        self.edges_all_to_all(&tables, &views);
+
+        // Tables before AlterSequence (for OWNED BY)
+        self.edges_all_to_all(&tables, &alter_sequences);
+
+        // === DROP dependencies (reverse order) ===
+
+        // Drop constraints before drop tables
+        self.edges_all_to_all(&drop_fks, &drop_tables);
+        self.edges_all_to_all(&drop_indexes, &drop_tables);
+        self.edges_all_to_all(&drop_checks, &drop_tables);
+        self.edges_all_to_all(&drop_policies, &drop_tables);
+        self.edges_all_to_all(&drop_triggers, &drop_tables);
+        self.edges_all_to_all(&drop_pks, &drop_tables);
+        self.edges_all_to_all(&drop_columns, &drop_tables);
+
+        // Drop partitions before parent tables
+        self.edges_all_to_all(&drop_partitions, &drop_tables);
+
+        // Drop views before drop tables they depend on
+        self.edges_all_to_all(&drop_views, &drop_tables);
+
+        // Drop version views before version schemas
+        self.edges_all_to_all(&drop_version_views, &drop_version_schemas);
+
+        // Drop tables before schemas/types
+        self.edges_all_to_all(&drop_tables, &drop_schemas);
+        self.edges_all_to_all(&drop_tables, &drop_enums);
+        self.edges_all_to_all(&drop_tables, &drop_domains);
+        self.edges_all_to_all(&drop_tables, &drop_sequences);
+
+        // Drop sequences before extensions
+        self.edges_all_to_all(&drop_sequences, &drop_extensions);
+
+        // Drop enums/domains before extensions
+        self.edges_all_to_all(&drop_enums, &drop_extensions);
+        self.edges_all_to_all(&drop_domains, &drop_extensions);
+
+        // Drop extensions before schemas
+        self.edges_all_to_all(&drop_extensions, &drop_schemas);
+
+        // === ALTER dependencies ===
+
+        // Drop constraints before alter column type
+        self.edges_all_to_all(&drop_fks, &alter_columns);
+        self.edges_all_to_all(&drop_indexes, &alter_columns);
+        self.edges_all_to_all(&drop_policies, &alter_columns);
+        self.edges_all_to_all(&drop_triggers, &alter_columns);
+        self.edges_all_to_all(&drop_views, &alter_columns);
+
+        // Re-create constraints after alter column type
+        // Pattern: DropX → AlterColumn → CreateX
+        self.edges_all_to_all(&alter_columns, &add_fks);
+        self.edges_all_to_all(&alter_columns, &add_indexes);
+        self.edges_all_to_all(&alter_columns, &policies);
+        self.edges_all_to_all(&alter_columns, &triggers);
+        self.edges_all_to_all(&alter_columns, &views);
+
+        // === MODIFICATION patterns (drop before create/alter) ===
+        // When objects are modified (dropped and recreated), drop must come before create
+
+        let drop_functions = self.nodes_matching(|k| matches!(k, OpKey::DropFunction { .. }));
+
+        self.edges_all_to_all(&drop_functions, &functions);
+        self.edges_all_to_all(&drop_indexes, &add_indexes);
+        self.edges_all_to_all(&drop_fks, &add_fks);
+        self.edges_all_to_all(&drop_checks, &add_checks);
+        self.edges_all_to_all(&drop_policies, &policies);
+        self.edges_all_to_all(&drop_triggers, &triggers);
+        self.edges_all_to_all(&drop_views, &views);
+
+        // === CREATES BEFORE FINAL DROPS ===
+        // Final drops (not for modifications) should happen after all creates complete.
+        // Exclude drops that need to happen BEFORE creates/alters:
+        // - DropFunction (before CreateFunction for modifications)
+        // - DropFK, DropIndex, DropPolicy, DropTrigger, DropView (before AlterColumn)
+
+        // Create operations that should complete before final drops
+        let all_creates: Vec<NodeIndex> = [
+            &schemas,
+            &version_schemas,
+            &extensions,
+            &enums,
+            &add_enum_values,
+            &domains,
+            &sequences,
+            &functions,
+            &tables,
+            &partitions,
+            &add_columns,
+            &add_pks,
+            &add_indexes,
+            &add_fks,
+            &add_checks,
+            &enable_rls,
+            &policies,
+            &triggers,
+            &views,
+            &version_views,
+            &alter_columns,
+            &alter_sequences,
+        ]
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect();
+
+        // Final drops (not temporary drops for modifications)
+        // Note: DropFK, DropIndex, DropPolicy, DropTrigger, DropView, DropFunction
+        // are excluded because they may need to happen before alters/creates
+        let final_drops: Vec<NodeIndex> = [
+            &drop_columns,
+            &drop_pks,
+            &drop_tables,
+            &drop_partitions,
+            &drop_sequences,
+            &drop_domains,
+            &drop_enums,
+            &drop_extensions,
+            &drop_version_schemas,
+            &drop_schemas,
+            &drop_version_views,
+        ]
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect();
+
+        self.edges_all_to_all(&all_creates, &final_drops);
+    }
+
+    /// Get the MigrationOp for a given key.
+    fn get_op(&self, key: &OpKey) -> Option<&MigrationOp> {
+        self.nodes.get(key).map(|&idx| &self.graph[idx].op)
+    }
+
+    /// Add content-aware dependency edges (specific op A before specific op B based on content).
+    pub fn add_content_aware_edges(&mut self) {
+        // Clone keys to avoid borrow issues during iteration
+        let keys: Vec<_> = self.nodes.keys().cloned().collect();
+
+        // Collect edges to add to avoid borrow issues
+        let mut edges_to_add: Vec<(OpKey, OpKey)> = Vec::new();
+
+        for key in &keys {
+            match key {
+                // CreateTable with FKs depends on referenced tables existing
+                OpKey::CreateTable(table_name) => {
+                    if let Some(MigrationOp::CreateTable(table)) = self.get_op(key) {
+                        for fk in &table.foreign_keys {
+                            let ref_qualified =
+                                qualified_name(&fk.referenced_schema, &fk.referenced_table);
+                            // Skip self-referencing FKs - PostgreSQL handles these correctly
+                            // when the FK is defined inline with CREATE TABLE. No dependency
+                            // edge is needed because the table doesn't depend on itself.
+                            if ref_qualified != *table_name {
+                                edges_to_add.push((OpKey::CreateTable(ref_qualified), key.clone()));
+                            }
+                        }
+                    }
+                }
+
+                // FK depends on referenced table existing (for separate AddForeignKey ops)
+                OpKey::AddForeignKey { .. } => {
+                    if let Some(MigrationOp::AddForeignKey { foreign_key, .. }) = self.get_op(key) {
+                        let ref_table = foreign_key.referenced_table.clone();
+                        let ref_schema = foreign_key.referenced_schema.clone();
+                        let qualified = qualified_name(&ref_schema, &ref_table);
+                        edges_to_add.push((OpKey::CreateTable(qualified), key.clone()));
+                    }
+                }
+
+                // CreateView depends on tables/views it references in its query
+                OpKey::CreateView(view_name) => {
+                    if let Some(MigrationOp::CreateView(view)) = self.get_op(key) {
+                        let refs = extract_relation_references(&view.query);
+                        for ref_name in refs {
+                            // Don't add self-edge
+                            if ref_name != *view_name {
+                                // Try both table and view keys
+                                edges_to_add
+                                    .push((OpKey::CreateTable(ref_name.clone()), key.clone()));
+                                edges_to_add.push((OpKey::CreateView(ref_name), key.clone()));
+                            }
+                        }
+                    }
+                }
+
+                // Trigger depends on its target table
+                OpKey::CreateTrigger { target, .. } => {
+                    edges_to_add.push((OpKey::CreateTable(target.clone()), key.clone()));
+                }
+
+                // Policy depends on its table
+                OpKey::CreatePolicy { table, .. } => {
+                    edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
+                }
+
+                // Index depends on its table
+                OpKey::AddIndex { table, .. } => {
+                    edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
+                }
+
+                // AddColumn depends on table
+                OpKey::AddColumn { table, .. } => {
+                    edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
+                }
+
+                // AddCheckConstraint depends on table
+                OpKey::AddCheckConstraint { table, .. } => {
+                    edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
+                }
+
+                // DropColumn must happen after DropFK/DropIndex on that column
+                OpKey::DropColumn { table, .. } => {
+                    for other in &keys {
+                        match other {
+                            OpKey::DropForeignKey { table: t, .. } if t == table => {
+                                edges_to_add.push((other.clone(), key.clone()));
+                            }
+                            OpKey::DropIndex { table: t, .. } if t == table => {
+                                edges_to_add.push((other.clone(), key.clone()));
+                            }
+                            OpKey::DropCheckConstraint { table: t, .. } if t == table => {
+                                edges_to_add.push((other.clone(), key.clone()));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                // DropTable must happen after dropping all table objects
+                OpKey::DropTable(table) => {
+                    for other in &keys {
+                        match other {
+                            OpKey::DropForeignKey { table: t, .. } if t == table => {
+                                edges_to_add.push((other.clone(), key.clone()));
+                            }
+                            OpKey::DropIndex { table: t, .. } if t == table => {
+                                edges_to_add.push((other.clone(), key.clone()));
+                            }
+                            OpKey::DropPolicy { table: t, .. } if t == table => {
+                                edges_to_add.push((other.clone(), key.clone()));
+                            }
+                            OpKey::DropTrigger { target: t, .. } if t == table => {
+                                edges_to_add.push((other.clone(), key.clone()));
+                            }
+                            OpKey::DropColumn { table: t, .. } if t == table => {
+                                edges_to_add.push((other.clone(), key.clone()));
+                            }
+                            OpKey::DropCheckConstraint { table: t, .. } if t == table => {
+                                edges_to_add.push((other.clone(), key.clone()));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                // AlterColumn must happen after dropping dependent objects
+                OpKey::AlterColumn { table, .. } => {
+                    for other in &keys {
+                        match other {
+                            OpKey::DropForeignKey { table: t, .. } if t == table => {
+                                edges_to_add.push((other.clone(), key.clone()));
+                            }
+                            OpKey::DropIndex { table: t, .. } if t == table => {
+                                edges_to_add.push((other.clone(), key.clone()));
+                            }
+                            OpKey::DropPolicy { table: t, .. } if t == table => {
+                                edges_to_add.push((other.clone(), key.clone()));
+                            }
+                            OpKey::DropTrigger { target: t, .. } if t == table => {
+                                edges_to_add.push((other.clone(), key.clone()));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                // BackfillHint depends on column existing
+                OpKey::BackfillHint { table, column } => {
+                    edges_to_add.push((
+                        OpKey::AddColumn {
+                            table: table.clone(),
+                            column: column.clone(),
+                        },
+                        key.clone(),
+                    ));
+                }
+
+                // SetColumnNotNull depends on backfill completing and column existing
+                OpKey::SetColumnNotNull { table, column } => {
+                    // Depends on backfill (if present)
+                    edges_to_add.push((
+                        OpKey::BackfillHint {
+                            table: table.clone(),
+                            column: column.clone(),
+                        },
+                        key.clone(),
+                    ));
+                    // Depends on column existing
+                    edges_to_add.push((
+                        OpKey::AddColumn {
+                            table: table.clone(),
+                            column: column.clone(),
+                        },
+                        key.clone(),
+                    ));
+                }
+
+                // AlterOwner depends on the object existing
+                OpKey::AlterOwner {
+                    object_kind,
+                    schema,
+                    name,
+                } => {
+                    let qualified = qualified_name(schema, name);
+                    match object_kind.as_str() {
+                        "Table" => {
+                            edges_to_add.push((OpKey::CreateTable(qualified), key.clone()));
+                        }
+                        "View" => {
+                            edges_to_add.push((OpKey::CreateView(qualified), key.clone()));
+                        }
+                        "Sequence" => {
+                            edges_to_add.push((OpKey::CreateSequence(qualified), key.clone()));
+                        }
+                        "Type" => {
+                            edges_to_add.push((OpKey::CreateEnum(qualified), key.clone()));
+                        }
+                        "Domain" => {
+                            edges_to_add.push((OpKey::CreateDomain(qualified), key.clone()));
+                        }
+                        "Function" => {
+                            // For functions, we need to find the matching CreateFunction
+                            // by looking at the MigrationOp to get the args signature
+                            if let Some(MigrationOp::AlterOwner {
+                                args: Some(args), ..
+                            }) = self.get_op(key)
+                            {
+                                edges_to_add.push((
+                                    OpKey::CreateFunction {
+                                        name: qualified,
+                                        args: args.clone(),
+                                    },
+                                    key.clone(),
+                                ));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                _ => {}
+            }
+        }
+
+        // Add all collected edges
+        for (from, to) in edges_to_add {
+            self.add_edge(&from, &to);
+        }
+    }
+
+    /// Perform topological sort and return operations in dependency order.
+    /// Type-level edges establish priority relationships (schemas before tables, etc.).
+    /// Content-aware edges handle specific dependencies (FK ordering, etc.).
+    pub fn topological_sort(&self) -> Result<Vec<MigrationOp>, PlanError> {
+        // Get topological order - fails if there's a cycle
+        let sorted = toposort(&self.graph, None).map_err(|cycle| {
+            let node = cycle.node_id();
+            let op = &self.graph[node].op;
+            PlanError::CyclicDependency(format!("{op:?}"))
+        })?;
+
+        // Return operations in topological order
+        // Priority is encoded in type-level edges, not post-hoc sorting
+        Ok(sorted
+            .into_iter()
+            .map(|node| self.graph[node].op.clone())
+            .collect())
+    }
+}
+
+impl Default for MigrationGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Plan migration operations using graph-based dependency ordering.
+/// Returns an error if a circular dependency is detected.
+pub fn plan_migration_checked(ops: Vec<MigrationOp>) -> Result<Vec<MigrationOp>, PlanError> {
+    // Pre-process: Split sequences with owned_by into CreateSequence + AlterSequence
+    let processed_ops = preprocess_ops(ops);
+
+    let mut graph = MigrationGraph::new();
+
+    // Add all ops as vertices
+    for op in processed_ops {
+        graph.add_vertex(op);
+    }
+
+    // Add dependency edges
+    graph.add_type_level_edges();
+    graph.add_content_aware_edges();
+
+    // Sort and return
+    graph.topological_sort()
+}
+
+/// Pre-process operations to handle special cases.
+fn preprocess_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+    let mut result = Vec::new();
+
+    for op in ops {
+        match op {
+            // Split CreateSequence with owned_by into CreateSequence + AlterSequence
+            MigrationOp::CreateSequence(ref seq) if seq.owned_by.is_some() => {
+                let owned_by = seq.owned_by.as_ref().unwrap();
                 let mut seq_without_owner = seq.clone();
                 seq_without_owner.owned_by = None;
-                create_sequences_without_owner.push(MigrationOp::CreateSequence(seq_without_owner));
+                result.push(MigrationOp::CreateSequence(seq_without_owner));
 
                 let changes = super::SequenceChanges {
                     owned_by: Some(Some(owned_by.clone())),
                     ..Default::default()
                 };
-                set_sequence_owners.push(MigrationOp::AlterSequence {
+                result.push(MigrationOp::AlterSequence {
                     name: qualified_name(&seq.schema, &seq.name),
                     changes,
                 });
-            } else {
-                create_sequences_without_owner.push(op);
             }
+            _ => result.push(op),
         }
     }
 
-    let create_tables = order_table_creates(create_tables);
-    let drop_tables = order_table_drops(drop_tables);
-    let create_functions = order_function_creates(create_functions);
-    let create_views = order_view_creates(create_views);
-
-    // Split FK drops into two groups:
-    // 1. Temporary drops (matching add exists) - needed before ALTER COLUMN TYPE
-    // 2. Permanent drops (no matching add) - stay at original position
-    let fk_add_keys: HashSet<(String, String)> = add_foreign_keys
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::AddForeignKey { table, foreign_key } = op {
-                Some((table.clone(), foreign_key.name.clone()))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let (drop_fks_for_type_change, drop_fks_permanent): (Vec<_>, Vec<_>) =
-        drop_foreign_keys.into_iter().partition(|op| {
-            if let MigrationOp::DropForeignKey {
-                table,
-                foreign_key_name,
-            } = op
-            {
-                fk_add_keys.contains(&(table.clone(), foreign_key_name.clone()))
-            } else {
-                false
-            }
-        });
-
-    // Split policy drops into two groups:
-    // 1. Temporary drops (matching create exists) - needed before ALTER COLUMN TYPE
-    // 2. Permanent drops (no matching create) - stay at original position
-    let policy_create_keys: HashSet<(String, String)> = create_policies
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::CreatePolicy(policy) = op {
-                Some((
-                    qualified_name(&policy.table_schema, &policy.table),
-                    policy.name.clone(),
-                ))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let (drop_policies_temp, drop_policies_permanent): (Vec<_>, Vec<_>) =
-        drop_policies.into_iter().partition(|op| {
-            if let MigrationOp::DropPolicy { table, name } = op {
-                policy_create_keys.contains(&(table.clone(), name.clone()))
-            } else {
-                false
-            }
-        });
-
-    // Further split temporary policy drops:
-    // 1. For function changes - needed before DROP FUNCTION
-    // 2. For type changes - needed before ALTER COLUMN TYPE
-    // Detect by checking if the recreated policy references a function being dropped
-    let dropped_function_names: HashSet<String> = drop_functions
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::DropFunction { name, .. } = op {
-                Some(name.clone())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let (drop_policies_for_function_change, drop_policies_for_type_change): (Vec<_>, Vec<_>) =
-        drop_policies_temp.into_iter().partition(|op| {
-            if let MigrationOp::DropPolicy { table, name } = op {
-                // Find the matching CreatePolicy to check what functions it references
-                if let Some(MigrationOp::CreatePolicy(policy)) =
-                    create_policies.iter().find(|cop| {
-                        matches!(cop, MigrationOp::CreatePolicy(p) if
-                            qualified_name(&p.table_schema, &p.table) == *table && p.name == *name)
-                    })
-                {
-                    // Check if the policy references any dropped function
-                    let refs = extract_function_references_from_policy(policy);
-                    return refs.iter().any(|func_ref| {
-                        dropped_function_names
-                            .iter()
-                            .any(|dropped| function_names_match(dropped, func_ref))
-                    });
-                }
-            }
-            false
-        });
-
-    // Split trigger drops into two groups:
-    // 1. Temporary drops (matching create exists) - needed before ALTER COLUMN TYPE
-    // 2. Permanent drops (no matching create) - stay at original position
-    let trigger_create_keys: HashSet<(String, String, String)> = create_triggers
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::CreateTrigger(trigger) = op {
-                Some((
-                    trigger.target_schema.clone(),
-                    trigger.target_name.clone(),
-                    trigger.name.clone(),
-                ))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let (drop_triggers_for_type_change, drop_triggers_permanent): (Vec<_>, Vec<_>) =
-        drop_triggers.into_iter().partition(|op| {
-            if let MigrationOp::DropTrigger {
-                target_schema,
-                target_name,
-                name,
-            } = op
-            {
-                trigger_create_keys.contains(&(
-                    target_schema.clone(),
-                    target_name.clone(),
-                    name.clone(),
-                ))
-            } else {
-                false
-            }
-        });
-
-    // Split view drops into two groups:
-    // 1. Temporary drops (matching create exists) - needed before ALTER COLUMN TYPE
-    // 2. Permanent drops (no matching create) - stay at original position
-    let view_create_keys: HashSet<String> = create_views
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::CreateView(view) = op {
-                Some(qualified_name(&view.schema, &view.name))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let (drop_views_for_type_change, drop_views_permanent): (Vec<_>, Vec<_>) =
-        drop_views.into_iter().partition(|op| {
-            if let MigrationOp::DropView { name, .. } = op {
-                view_create_keys.contains(name)
-            } else {
-                false
-            }
-        });
-
-    let mut result = Vec::new();
-
-    result.extend(create_schemas);
-    // Create version schemas early (right after base schemas) since they're empty containers
-    // that version views will be created in later
-    result.extend(create_version_schemas);
-    result.extend(create_extensions);
-    result.extend(create_enums);
-    result.extend(add_enum_values);
-    result.extend(create_domains);
-    result.extend(create_sequences_without_owner);
-    // Drop policies that depend on functions being dropped - must come before DROP FUNCTION
-    // PostgreSQL requires dependent policies to be dropped before the function they reference
-    result.extend(drop_policies_for_function_change);
-    // Drop functions before creating new ones - needed when modifying a function
-    // that requires DROP + CREATE (e.g., parameter name changes, return type changes)
-    result.extend(drop_functions);
-    result.extend(create_functions);
-    result.extend(create_tables);
-    result.extend(create_partitions);
-    result.extend(add_columns);
-    result.extend(add_primary_keys);
-    // Drop indexes before adding new ones - needed when modifying an index
-    // that requires DROP + CREATE (e.g., predicate changes, column changes)
-    result.extend(drop_indexes);
-    result.extend(add_indexes);
-    // Drop FKs that have matching adds (temporary drops for ALTER COLUMN TYPE)
-    // PostgreSQL requires FK to be dropped before altering referenced column types
-    result.extend(drop_fks_for_type_change);
-    // Drop policies that have matching creates (temporary drops for ALTER COLUMN TYPE)
-    // PostgreSQL requires policies to be dropped before altering column types they reference
-    result.extend(drop_policies_for_type_change);
-    // Drop triggers that have matching creates (temporary drops for ALTER COLUMN TYPE)
-    // PostgreSQL requires triggers to be dropped before altering column types they reference
-    result.extend(drop_triggers_for_type_change);
-    // Drop views that have matching creates (temporary drops for ALTER COLUMN TYPE)
-    // PostgreSQL requires views to be dropped before altering column types they reference
-    result.extend(drop_views_for_type_change);
-    result.extend(alter_columns);
-    result.extend(set_column_not_nulls);
-    // Drop check constraints before adding new ones - needed when modifying a constraint
-    // (same name, different expression) since PostgreSQL doesn't allow duplicate names
-    result.extend(drop_check_constraints);
-    result.extend(add_foreign_keys);
-    result.extend(add_check_constraints);
-    result.extend(set_sequence_owners);
-    result.extend(enable_rls);
-    result.extend(create_policies);
-    result.extend(alter_policies);
-    result.extend(alter_sequences);
-    result.extend(alter_domains);
-    result.extend(alter_functions);
-    result.extend(create_views);
-    result.extend(alter_views);
-    // Create version views AFTER base tables and views exist (version views reference them)
-    result.extend(create_version_views);
-    result.extend(create_triggers);
-    result.extend(alter_triggers);
-    result.extend(alter_owners);
-    result.extend(grant_privileges);
-
-    result.extend(revoke_privileges);
-    // Note: drop_triggers_for_type_change is handled earlier (before alter_columns)
-    // to support ALTER COLUMN TYPE on columns referenced by triggers
-    result.extend(drop_triggers_permanent);
-    // Drop version views BEFORE dropping base views (version views depend on base tables)
-    result.extend(drop_version_views);
-    // Note: drop_views_for_type_change is handled earlier (before alter_columns)
-    // to support ALTER COLUMN TYPE on columns referenced by views
-    result.extend(drop_views_permanent);
-    // Note: drop_policies_for_type_change is handled earlier (before alter_columns)
-    // to support ALTER COLUMN TYPE on columns referenced by policies
-    result.extend(drop_policies_permanent);
-    result.extend(disable_rls);
-    // Note: drop_check_constraints is handled earlier (before add_check_constraints)
-    // to support constraint modifications
-    // Note: drop_fks_for_type_change is handled earlier (before alter_columns)
-    // to support ALTER COLUMN TYPE on FK-involved columns
-    result.extend(drop_fks_permanent);
-    // Note: drop_indexes is handled earlier (before add_indexes)
-    // to support index modifications that require DROP + CREATE
-    result.extend(drop_primary_keys);
-    result.extend(drop_columns);
-    result.extend(drop_partitions);
-    result.extend(drop_tables);
-    // Note: drop_functions is handled earlier (before create_functions)
-    // to support function modifications that require DROP + CREATE
-    result.extend(drop_sequences);
-    result.extend(drop_domains);
-    result.extend(drop_enums);
-    result.extend(drop_extensions);
-    // Drop version schemas at the end via CASCADE (drops all version views automatically)
-    result.extend(drop_version_schemas);
-    result.extend(drop_schemas);
-
     result
+}
+
+/// Plan and order migration operations for safe execution.
+/// Uses graph-based dependency ordering for correct operation sequencing.
+/// Panics if a circular dependency is detected (use `plan_migration_checked` to handle errors).
+pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+    plan_migration_checked(ops).expect("Circular dependency detected in migration operations")
 }
 
 /// Plan operations for a schema dump (not migration).
@@ -461,56 +1064,6 @@ fn extract_relation_references(query: &str) -> HashSet<String> {
         .collect()
 }
 
-fn order_function_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
-    if ops.is_empty() {
-        return ops;
-    }
-
-    fn func_signature(func: &crate::model::Function) -> String {
-        let args: Vec<&str> = func
-            .arguments
-            .iter()
-            .map(|a| a.data_type.as_str())
-            .collect();
-        qualified_name(&func.schema, &format!("{}({})", func.name, args.join(", ")))
-    }
-
-    let function_sigs: HashSet<String> = ops
-        .iter()
-        .filter_map(|op| match op {
-            MigrationOp::CreateFunction(func) => Some(func_signature(func)),
-            _ => None,
-        })
-        .collect();
-
-    let mut function_ops: HashMap<String, MigrationOp> = HashMap::new();
-    let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
-
-    for op in ops {
-        if let MigrationOp::CreateFunction(ref func) = op {
-            let func_sig = func_signature(func);
-            let func_sig_for_filter = func_sig.clone();
-
-            let deps: HashSet<String> = extract_function_references(&func.body, &func.schema)
-                .into_iter()
-                .flat_map(|func_ref| {
-                    let ref_prefix = format!("{}.{}(", func_ref.schema, func_ref.name);
-                    let exclude_sig = func_sig_for_filter.clone();
-                    function_sigs
-                        .iter()
-                        .filter(move |sig| sig.starts_with(&ref_prefix) && **sig != exclude_sig)
-                        .cloned()
-                })
-                .collect();
-
-            dependencies.insert(func_sig.clone(), deps);
-            function_ops.insert(func_sig, op);
-        }
-    }
-
-    topological_sort(&function_ops, &dependencies)
-}
-
 fn order_view_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     if ops.is_empty() {
         return ops;
@@ -569,26 +1122,6 @@ fn order_table_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     }
 
     topological_sort(&table_ops, &dependencies)
-}
-
-fn order_table_drops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
-    if ops.is_empty() {
-        return ops;
-    }
-
-    let mut table_ops: HashMap<String, MigrationOp> = HashMap::new();
-    let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
-
-    for op in ops {
-        if let MigrationOp::DropTable(ref name) = op {
-            dependencies.insert(name.clone(), HashSet::new());
-            table_ops.insert(name.clone(), op);
-        }
-    }
-
-    let mut sorted = topological_sort(&table_ops, &dependencies);
-    sorted.reverse();
-    sorted
 }
 
 /// Perform Kahn's algorithm for topological sort.
@@ -655,6 +1188,7 @@ fn topological_sort(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diff::ColumnChanges;
     use crate::model::*;
     use std::collections::BTreeMap;
 
@@ -1401,5 +1935,297 @@ mod tests {
             alter_col_pos < create_view_pos,
             "AlterColumn must come before CreateView. ALTER at {alter_col_pos}, CREATE_VIEW at {create_view_pos}"
         );
+    }
+
+    // === Graph planner v2 tests ===
+
+    #[test]
+    fn v2_basic_create_table() {
+        let users = make_table("users", vec![]);
+        let ops = vec![MigrationOp::CreateTable(users)];
+
+        let v2_result = plan_migration_checked(ops.clone()).unwrap();
+        let bucket_result = plan_migration(ops);
+
+        assert_eq!(v2_result.len(), bucket_result.len());
+    }
+
+    #[test]
+    fn v2_fk_dependencies() {
+        let posts = make_table("posts", vec![make_fk("users")]);
+        let users = make_table("users", vec![]);
+
+        let ops = vec![
+            MigrationOp::CreateTable(posts),
+            MigrationOp::CreateTable(users),
+        ];
+
+        let v2_result = plan_migration_checked(ops).unwrap();
+
+        // Users should come before posts due to FK dependency
+        let users_pos = v2_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "users"))
+            .unwrap();
+        let posts_pos = v2_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "posts"))
+            .unwrap();
+
+        assert!(
+            users_pos < posts_pos,
+            "users should be created before posts (FK dependency)"
+        );
+    }
+
+    #[test]
+    fn v2_enum_before_table() {
+        let my_enum = EnumType {
+            name: "status".to_string(),
+            schema: "public".to_string(),
+            values: vec!["active".to_string(), "inactive".to_string()],
+            owner: None,
+            grants: vec![],
+        };
+        let users = make_table("users", vec![]);
+
+        let ops = vec![
+            MigrationOp::CreateTable(users),
+            MigrationOp::CreateEnum(my_enum),
+        ];
+
+        let v2_result = plan_migration_checked(ops).unwrap();
+
+        let enum_pos = v2_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateEnum(_)))
+            .unwrap();
+        let table_pos = v2_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .unwrap();
+
+        assert!(enum_pos < table_pos, "enum should be created before table");
+    }
+
+    #[test]
+    fn v2_drop_fk_before_alter_column() {
+        let ops = vec![
+            MigrationOp::AlterColumn {
+                table: "public.users".to_string(),
+                column: "id".to_string(),
+                changes: ColumnChanges {
+                    data_type: Some(PgType::Text),
+                    nullable: None,
+                    default: None,
+                },
+            },
+            MigrationOp::DropForeignKey {
+                table: "public.users".to_string(),
+                foreign_key_name: "fk_id".to_string(),
+            },
+        ];
+
+        let v2_result = plan_migration_checked(ops).unwrap();
+
+        let drop_fk_pos = v2_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropForeignKey { .. }))
+            .unwrap();
+        let alter_pos = v2_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .unwrap();
+
+        assert!(
+            drop_fk_pos < alter_pos,
+            "DropForeignKey should come before AlterColumn"
+        );
+    }
+
+    #[test]
+    fn v2_no_cycle_for_simple_ops() {
+        let users = make_table("users", vec![]);
+        let posts = make_table("posts", vec![make_fk("users")]);
+
+        let ops = vec![
+            MigrationOp::CreateTable(users),
+            MigrationOp::CreateTable(posts),
+        ];
+
+        // Should not return an error
+        let result = plan_migration_checked(ops);
+        assert!(result.is_ok(), "Simple ops should not have cycles");
+    }
+
+    #[test]
+    fn v2_equivalence_complex_schema() {
+        // Build a complex set of operations
+        let my_enum = EnumType {
+            name: "status".to_string(),
+            schema: "public".to_string(),
+            values: vec!["active".to_string()],
+            owner: None,
+            grants: vec![],
+        };
+
+        let users = make_table("users", vec![]);
+        let posts = make_table("posts", vec![make_fk("users")]);
+        let comments = make_table("comments", vec![make_fk("posts"), make_fk("users")]);
+
+        let ops = vec![
+            MigrationOp::CreateEnum(my_enum),
+            MigrationOp::CreateTable(comments.clone()),
+            MigrationOp::CreateTable(posts.clone()),
+            MigrationOp::CreateTable(users.clone()),
+            MigrationOp::DropTable("public.old_table".to_string()),
+        ];
+
+        let bucket_result = plan_migration(ops.clone());
+        let v2_result = plan_migration_checked(ops).unwrap();
+
+        // Both should have same length
+        assert_eq!(
+            bucket_result.len(),
+            v2_result.len(),
+            "Both implementations should return same number of ops"
+        );
+
+        // Key ordering constraints should be preserved in both:
+        // 1. Enum before tables
+        let bucket_enum_pos = bucket_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateEnum(_)));
+        let bucket_first_table_pos = bucket_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)));
+
+        let v2_enum_pos = v2_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateEnum(_)));
+        let v2_first_table_pos = v2_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)));
+
+        if let (Some(e), Some(t)) = (bucket_enum_pos, bucket_first_table_pos) {
+            assert!(e < t, "bucket: enum should be before first table");
+        }
+        if let (Some(e), Some(t)) = (v2_enum_pos, v2_first_table_pos) {
+            assert!(e < t, "v2: enum should be before first table");
+        }
+
+        // 2. Users before posts (FK dependency)
+        let bucket_users_pos = bucket_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "users"));
+        let bucket_posts_pos = bucket_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "posts"));
+
+        let v2_users_pos = v2_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "users"));
+        let v2_posts_pos = v2_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "posts"));
+
+        if let (Some(u), Some(p)) = (bucket_users_pos, bucket_posts_pos) {
+            assert!(u < p, "bucket: users should be before posts");
+        }
+        if let (Some(u), Some(p)) = (v2_users_pos, v2_posts_pos) {
+            assert!(u < p, "v2: users should be before posts");
+        }
+
+        // 3. Creates before drops
+        let bucket_last_create = bucket_result
+            .iter()
+            .rposition(|op| matches!(op, MigrationOp::CreateTable(_) | MigrationOp::CreateEnum(_)));
+        let bucket_first_drop = bucket_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropTable(_)));
+
+        let v2_last_create = v2_result
+            .iter()
+            .rposition(|op| matches!(op, MigrationOp::CreateTable(_) | MigrationOp::CreateEnum(_)));
+        let v2_first_drop = v2_result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropTable(_)));
+
+        if let (Some(c), Some(d)) = (bucket_last_create, bucket_first_drop) {
+            assert!(c < d, "bucket: creates should be before drops");
+        }
+        if let (Some(c), Some(d)) = (v2_last_create, v2_first_drop) {
+            assert!(c < d, "v2: creates should be before drops");
+        }
+    }
+
+    #[test]
+    fn self_referencing_fk_does_not_create_cycle() {
+        // A table with a self-referencing FK (e.g., employees.manager_id -> employees.id)
+        // should not create a cycle in the dependency graph. PostgreSQL handles these
+        // correctly when the FK is defined inline with CREATE TABLE.
+        use crate::model::{Column, ForeignKey, PgType, PrimaryKey, ReferentialAction, Table};
+        use std::collections::BTreeMap;
+
+        let mut columns = BTreeMap::new();
+        columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        columns.insert(
+            "manager_id".to_string(),
+            Column {
+                name: "manager_id".to_string(),
+                data_type: PgType::Integer,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+
+        let table = Table {
+            schema: "public".to_string(),
+            name: "employees".to_string(),
+            columns,
+            indexes: vec![],
+            primary_key: Some(PrimaryKey {
+                columns: vec!["id".to_string()],
+            }),
+            foreign_keys: vec![ForeignKey {
+                name: "employees_manager_fkey".to_string(),
+                columns: vec!["manager_id".to_string()],
+                referenced_schema: "public".to_string(),
+                referenced_table: "employees".to_string(), // Self-reference
+                referenced_columns: vec!["id".to_string()],
+                on_delete: ReferentialAction::NoAction,
+                on_update: ReferentialAction::NoAction,
+            }],
+            check_constraints: vec![],
+            comment: None,
+            row_level_security: false,
+            policies: vec![],
+            partition_by: None,
+            owner: None,
+            grants: vec![],
+        };
+
+        let ops = vec![MigrationOp::CreateTable(table)];
+
+        // This should not panic with a cycle error
+        let result = plan_migration_checked(ops);
+        assert!(
+            result.is_ok(),
+            "Self-referencing FK should not cause a cycle"
+        );
+
+        let planned = result.unwrap();
+        assert_eq!(planned.len(), 1);
+        assert!(matches!(planned[0], MigrationOp::CreateTable(_)));
     }
 }
