@@ -683,6 +683,107 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 let key = qualified_name(&seq_schema, &seq_name);
                 schema.sequences.insert(key, sequence);
             }
+            Statement::Drop {
+                object_type,
+                names,
+                ..
+            } => {
+                use sqlparser::ast::ObjectType;
+                for name in names {
+                    let (obj_schema, obj_name) = extract_qualified_name(&name);
+                    let key = qualified_name(&obj_schema, &obj_name);
+
+                    match object_type {
+                        ObjectType::Table => {
+                            schema.tables.remove(&key);
+                            schema.partitions.remove(&key);
+                        }
+                        ObjectType::View | ObjectType::MaterializedView => {
+                            schema.views.remove(&key);
+                        }
+                        ObjectType::Sequence => {
+                            schema.sequences.remove(&key);
+                        }
+                        ObjectType::Schema => {
+                            schema.schemas.remove(&obj_name);
+                        }
+                        ObjectType::Type => {
+                            schema.enums.remove(&key);
+                        }
+                        ObjectType::Index => {
+                            for table in schema.tables.values_mut() {
+                                table.indexes.retain(|idx| idx.name != obj_name);
+                            }
+                            for partition in schema.partitions.values_mut() {
+                                partition.indexes.retain(|idx| idx.name != obj_name);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Statement::DropFunction(sqlparser::ast::DropFunction { func_desc, .. }) => {
+                for desc in func_desc {
+                    let (func_schema, func_name) = extract_qualified_name(&desc.name);
+                    let args_str = desc
+                        .args
+                        .as_ref()
+                        .map(|args| {
+                            args.iter()
+                                .map(|a| {
+                                    let type_str = a.data_type.to_string();
+                                    crate::model::normalize_pg_type(&type_str)
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
+                    let signature = format!("{func_name}({args_str})");
+                    let key = qualified_name(&func_schema, &signature);
+                    schema.functions.remove(&key);
+                }
+            }
+            Statement::DropDomain(sqlparser::ast::DropDomain { name, .. }) => {
+                let (domain_schema, domain_name) = extract_qualified_name(&name);
+                let key = qualified_name(&domain_schema, &domain_name);
+                schema.domains.remove(&key);
+            }
+            Statement::DropTrigger(sqlparser::ast::DropTrigger {
+                trigger_name,
+                table_name,
+                ..
+            }) => {
+                if let Some(ref tbl) = table_name {
+                    let (tbl_schema, tbl_name) = extract_qualified_name(tbl);
+                    let trigger_key = format!(
+                        "{}.{}.{}",
+                        tbl_schema,
+                        tbl_name,
+                        trigger_name.to_string().trim_matches('"')
+                    );
+                    schema.triggers.remove(&trigger_key);
+                }
+            }
+            Statement::DropPolicy {
+                name, table_name, ..
+            } => {
+                let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
+                let tbl_key = qualified_name(&tbl_schema, &tbl_name);
+                let policy_name = name.to_string().trim_matches('"').to_string();
+
+                if let Some(table) = schema.tables.get_mut(&tbl_key) {
+                    table.policies.retain(|p| p.name != policy_name);
+                }
+                schema
+                    .pending_policies
+                    .retain(|p| !(p.table_schema == tbl_schema && p.table == tbl_name && p.name == policy_name));
+            }
+            Statement::DropExtension(sqlparser::ast::DropExtension { names, .. }) => {
+                for name in names {
+                    let ext_name = name.to_string().trim_matches('"').to_string();
+                    schema.extensions.remove(&ext_name);
+                }
+            }
             _ => {}
         }
     }
@@ -3901,5 +4002,171 @@ ALTER TABLE products ADD COLUMN description TEXT;
         let price_col = table.columns.get("price").expect("price column should exist");
         assert!(!price_col.nullable);
         assert_eq!(price_col.default.as_deref(), Some("0"));
+    }
+
+
+    #[test]
+    fn parse_drop_table() {
+        let sql = r#"
+CREATE TABLE users (id SERIAL PRIMARY KEY, email TEXT);
+CREATE TABLE posts (id SERIAL PRIMARY KEY, title TEXT);
+DROP TABLE users;
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert!(!schema.tables.contains_key("public.users"));
+        assert!(schema.tables.contains_key("public.posts"));
+    }
+
+    #[test]
+    fn parse_drop_table_if_exists() {
+        let sql = r#"
+CREATE TABLE users (id SERIAL PRIMARY KEY);
+DROP TABLE IF EXISTS nonexistent;
+DROP TABLE IF EXISTS users;
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse");
+        assert!(!schema.tables.contains_key("public.users"));
+    }
+
+    #[test]
+    fn parse_drop_table_qualified() {
+        let sql = r#"
+CREATE SCHEMA auth;
+CREATE TABLE auth.users (id SERIAL PRIMARY KEY);
+DROP TABLE auth.users;
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse");
+        assert!(!schema.tables.contains_key("auth.users"));
+    }
+
+    #[test]
+    fn parse_drop_view() {
+        let sql = r#"
+CREATE TABLE users (id SERIAL PRIMARY KEY, email TEXT);
+CREATE VIEW active_users AS SELECT * FROM users;
+DROP VIEW active_users;
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert!(schema.tables.contains_key("public.users"));
+        assert!(!schema.views.contains_key("public.active_users"));
+    }
+
+    #[test]
+    fn parse_drop_index() {
+        let sql = r#"
+CREATE TABLE users (id SERIAL PRIMARY KEY, email TEXT);
+CREATE INDEX users_email_idx ON users (email);
+DROP INDEX users_email_idx;
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let table = &schema.tables["public.users"];
+        assert!(table.indexes.iter().all(|i| i.name != "users_email_idx"));
+    }
+
+    #[test]
+    fn parse_drop_sequence() {
+        let sql = r#"
+CREATE SEQUENCE user_id_seq;
+CREATE SEQUENCE post_id_seq;
+DROP SEQUENCE user_id_seq;
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert!(!schema.sequences.contains_key("public.user_id_seq"));
+        assert!(schema.sequences.contains_key("public.post_id_seq"));
+    }
+
+    #[test]
+    fn parse_drop_type() {
+        let sql = r#"
+CREATE TYPE status AS ENUM ('active', 'inactive');
+CREATE TYPE role AS ENUM ('admin', 'user');
+DROP TYPE status;
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert!(!schema.enums.contains_key("public.status"));
+        assert!(schema.enums.contains_key("public.role"));
+    }
+
+    #[test]
+    fn parse_drop_function() {
+        let sql = r#"
+CREATE FUNCTION add_one(x INTEGER) RETURNS INTEGER LANGUAGE sql AS 'SELECT x + 1';
+CREATE FUNCTION add_two(x INTEGER) RETURNS INTEGER LANGUAGE sql AS 'SELECT x + 2';
+DROP FUNCTION add_one(INTEGER);
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert!(!schema.functions.keys().any(|k| k.contains("add_one")));
+        assert!(schema.functions.keys().any(|k| k.contains("add_two")));
+    }
+
+    #[test]
+    fn parse_drop_trigger() {
+        let sql = r#"
+CREATE TABLE users (id SERIAL PRIMARY KEY);
+CREATE FUNCTION log_changes() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER users_audit AFTER INSERT ON users FOR EACH ROW EXECUTE FUNCTION log_changes();
+DROP TRIGGER users_audit ON users;
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse");
+        assert!(!schema.triggers.contains_key("public.users.users_audit"));
+    }
+
+    #[test]
+    fn parse_drop_policy() {
+        let sql = r#"
+CREATE TABLE users (id SERIAL PRIMARY KEY);
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+CREATE POLICY users_policy ON users FOR ALL USING (true);
+DROP POLICY users_policy ON users;
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        let table = &schema.tables["public.users"];
+        assert!(table.policies.is_empty());
+    }
+
+    #[test]
+    fn parse_drop_domain() {
+        let sql = r#"
+CREATE DOMAIN email_address AS TEXT CHECK (VALUE ~ '@');
+CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0);
+DROP DOMAIN email_address;
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert!(!schema.domains.contains_key("public.email_address"));
+        assert!(schema.domains.contains_key("public.positive_int"));
+    }
+
+    #[test]
+    fn parse_drop_extension() {
+        let sql = r#"
+CREATE EXTENSION pgcrypto;
+CREATE EXTENSION uuid_ossp;
+DROP EXTENSION pgcrypto;
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert!(!schema.extensions.contains_key("pgcrypto"));
+        assert!(schema.extensions.contains_key("uuid_ossp") || schema.extensions.contains_key("uuid-ossp"));
+    }
+
+    #[test]
+    fn parse_drop_schema() {
+        let sql = r#"
+CREATE SCHEMA staging;
+CREATE SCHEMA production;
+DROP SCHEMA staging;
+"#;
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert!(!schema.schemas.contains_key("staging"));
+        assert!(schema.schemas.contains_key("production"));
     }
 }
