@@ -859,6 +859,49 @@ impl MigrationGraph {
                     ));
                 }
 
+                // AlterOwner depends on the object existing
+                OpKey::AlterOwner {
+                    object_kind,
+                    schema,
+                    name,
+                } => {
+                    let qualified = qualified_name(schema, name);
+                    match object_kind.as_str() {
+                        "Table" => {
+                            edges_to_add.push((OpKey::CreateTable(qualified), key.clone()));
+                        }
+                        "View" => {
+                            edges_to_add.push((OpKey::CreateView(qualified), key.clone()));
+                        }
+                        "Sequence" => {
+                            edges_to_add.push((OpKey::CreateSequence(qualified), key.clone()));
+                        }
+                        "Type" => {
+                            edges_to_add.push((OpKey::CreateEnum(qualified), key.clone()));
+                        }
+                        "Domain" => {
+                            edges_to_add.push((OpKey::CreateDomain(qualified), key.clone()));
+                        }
+                        "Function" => {
+                            // For functions, we need to find the matching CreateFunction
+                            // by looking at the MigrationOp to get the args signature
+                            if let Some(MigrationOp::AlterOwner {
+                                args: Some(args), ..
+                            }) = self.get_op(key)
+                            {
+                                edges_to_add.push((
+                                    OpKey::CreateFunction {
+                                        name: qualified,
+                                        args: args.clone(),
+                                    },
+                                    key.clone(),
+                                ));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
                 _ => {}
             }
         }
