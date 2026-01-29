@@ -384,121 +384,6 @@ struct OpVertex {
     op: MigrationOp,
 }
 
-/// Operation type for grouping operations in type-level dependency rules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum OpType {
-    CreateSchema,
-    DropSchema,
-    CreateExtension,
-    DropExtension,
-    CreateEnum,
-    DropEnum,
-    AddEnumValue,
-    CreateDomain,
-    DropDomain,
-    AlterDomain,
-    CreateSequence,
-    DropSequence,
-    AlterSequence,
-    CreateFunction,
-    DropFunction,
-    AlterFunction,
-    CreateTable,
-    DropTable,
-    CreatePartition,
-    DropPartition,
-    AddColumn,
-    DropColumn,
-    AlterColumn,
-    AddPrimaryKey,
-    DropPrimaryKey,
-    AddIndex,
-    DropIndex,
-    AddForeignKey,
-    DropForeignKey,
-    AddCheckConstraint,
-    DropCheckConstraint,
-    EnableRls,
-    DisableRls,
-    CreatePolicy,
-    DropPolicy,
-    AlterPolicy,
-    CreateView,
-    DropView,
-    AlterView,
-    CreateTrigger,
-    DropTrigger,
-    AlterTriggerEnabled,
-    AlterOwner,
-    BackfillHint,
-    SetColumnNotNull,
-    GrantPrivileges,
-    RevokePrivileges,
-    CreateVersionSchema,
-    DropVersionSchema,
-    CreateVersionView,
-    DropVersionView,
-}
-
-impl OpKey {
-    /// Get the operation type for this key.
-    fn op_type(&self) -> OpType {
-        match self {
-            OpKey::CreateSchema(_) => OpType::CreateSchema,
-            OpKey::DropSchema(_) => OpType::DropSchema,
-            OpKey::CreateExtension(_) => OpType::CreateExtension,
-            OpKey::DropExtension(_) => OpType::DropExtension,
-            OpKey::CreateEnum(_) => OpType::CreateEnum,
-            OpKey::DropEnum(_) => OpType::DropEnum,
-            OpKey::AddEnumValue { .. } => OpType::AddEnumValue,
-            OpKey::CreateDomain(_) => OpType::CreateDomain,
-            OpKey::DropDomain(_) => OpType::DropDomain,
-            OpKey::AlterDomain(_) => OpType::AlterDomain,
-            OpKey::CreateTable(_) => OpType::CreateTable,
-            OpKey::DropTable(_) => OpType::DropTable,
-            OpKey::CreatePartition(_) => OpType::CreatePartition,
-            OpKey::DropPartition(_) => OpType::DropPartition,
-            OpKey::AddColumn { .. } => OpType::AddColumn,
-            OpKey::DropColumn { .. } => OpType::DropColumn,
-            OpKey::AlterColumn { .. } => OpType::AlterColumn,
-            OpKey::AddPrimaryKey { .. } => OpType::AddPrimaryKey,
-            OpKey::DropPrimaryKey { .. } => OpType::DropPrimaryKey,
-            OpKey::AddIndex { .. } => OpType::AddIndex,
-            OpKey::DropIndex { .. } => OpType::DropIndex,
-            OpKey::AddForeignKey { .. } => OpType::AddForeignKey,
-            OpKey::DropForeignKey { .. } => OpType::DropForeignKey,
-            OpKey::AddCheckConstraint { .. } => OpType::AddCheckConstraint,
-            OpKey::DropCheckConstraint { .. } => OpType::DropCheckConstraint,
-            OpKey::EnableRls { .. } => OpType::EnableRls,
-            OpKey::DisableRls { .. } => OpType::DisableRls,
-            OpKey::CreatePolicy { .. } => OpType::CreatePolicy,
-            OpKey::DropPolicy { .. } => OpType::DropPolicy,
-            OpKey::AlterPolicy { .. } => OpType::AlterPolicy,
-            OpKey::CreateFunction { .. } => OpType::CreateFunction,
-            OpKey::DropFunction { .. } => OpType::DropFunction,
-            OpKey::AlterFunction { .. } => OpType::AlterFunction,
-            OpKey::CreateView(_) => OpType::CreateView,
-            OpKey::DropView(_) => OpType::DropView,
-            OpKey::AlterView(_) => OpType::AlterView,
-            OpKey::CreateTrigger { .. } => OpType::CreateTrigger,
-            OpKey::DropTrigger { .. } => OpType::DropTrigger,
-            OpKey::AlterTriggerEnabled { .. } => OpType::AlterTriggerEnabled,
-            OpKey::CreateSequence(_) => OpType::CreateSequence,
-            OpKey::DropSequence(_) => OpType::DropSequence,
-            OpKey::AlterSequence(_) => OpType::AlterSequence,
-            OpKey::AlterOwner { .. } => OpType::AlterOwner,
-            OpKey::BackfillHint { .. } => OpType::BackfillHint,
-            OpKey::SetColumnNotNull { .. } => OpType::SetColumnNotNull,
-            OpKey::GrantPrivileges { .. } => OpType::GrantPrivileges,
-            OpKey::RevokePrivileges { .. } => OpType::RevokePrivileges,
-            OpKey::CreateVersionSchema { .. } => OpType::CreateVersionSchema,
-            OpKey::DropVersionSchema { .. } => OpType::DropVersionSchema,
-            OpKey::CreateVersionView { .. } => OpType::CreateVersionView,
-            OpKey::DropVersionView { .. } => OpType::DropVersionView,
-        }
-    }
-}
-
 /// Graph-based migration planner using explicit dependency edges.
 pub struct MigrationGraph {
     graph: DiGraph<OpVertex, ()>,
@@ -539,11 +424,14 @@ impl MigrationGraph {
         self.nodes.keys()
     }
 
-    /// Get all NodeIndexes for operations of a specific type.
-    fn nodes_of_type(&self, op_type: OpType) -> Vec<NodeIndex> {
+    /// Get all NodeIndexes for operations matching a predicate.
+    fn nodes_matching<F>(&self, predicate: F) -> Vec<NodeIndex>
+    where
+        F: Fn(&OpKey) -> bool,
+    {
         self.nodes
             .iter()
-            .filter(|(key, _)| key.op_type() == op_type)
+            .filter(|(key, _)| predicate(key))
             .map(|(_, &node)| node)
             .collect()
     }
@@ -562,48 +450,51 @@ impl MigrationGraph {
     /// Add type-level dependency edges (all ops of type A before all ops of type B).
     #[allow(dead_code)]
     pub fn add_type_level_edges(&mut self) {
-        // Collect nodes by type
-        let schemas = self.nodes_of_type(OpType::CreateSchema);
-        let version_schemas = self.nodes_of_type(OpType::CreateVersionSchema);
-        let extensions = self.nodes_of_type(OpType::CreateExtension);
-        let enums = self.nodes_of_type(OpType::CreateEnum);
-        let add_enum_values = self.nodes_of_type(OpType::AddEnumValue);
-        let domains = self.nodes_of_type(OpType::CreateDomain);
-        let sequences = self.nodes_of_type(OpType::CreateSequence);
-        let functions = self.nodes_of_type(OpType::CreateFunction);
-        let tables = self.nodes_of_type(OpType::CreateTable);
-        let partitions = self.nodes_of_type(OpType::CreatePartition);
-        let add_columns = self.nodes_of_type(OpType::AddColumn);
-        let add_pks = self.nodes_of_type(OpType::AddPrimaryKey);
-        let add_indexes = self.nodes_of_type(OpType::AddIndex);
-        let add_fks = self.nodes_of_type(OpType::AddForeignKey);
-        let add_checks = self.nodes_of_type(OpType::AddCheckConstraint);
-        let enable_rls = self.nodes_of_type(OpType::EnableRls);
-        let policies = self.nodes_of_type(OpType::CreatePolicy);
-        let triggers = self.nodes_of_type(OpType::CreateTrigger);
-        let views = self.nodes_of_type(OpType::CreateView);
-        let version_views = self.nodes_of_type(OpType::CreateVersionView);
-        let alter_sequences = self.nodes_of_type(OpType::AlterSequence);
+        // Collect nodes by type using pattern matching
+        let schemas = self.nodes_matching(|k| matches!(k, OpKey::CreateSchema(_)));
+        let version_schemas =
+            self.nodes_matching(|k| matches!(k, OpKey::CreateVersionSchema { .. }));
+        let extensions = self.nodes_matching(|k| matches!(k, OpKey::CreateExtension(_)));
+        let enums = self.nodes_matching(|k| matches!(k, OpKey::CreateEnum(_)));
+        let add_enum_values = self.nodes_matching(|k| matches!(k, OpKey::AddEnumValue { .. }));
+        let domains = self.nodes_matching(|k| matches!(k, OpKey::CreateDomain(_)));
+        let sequences = self.nodes_matching(|k| matches!(k, OpKey::CreateSequence(_)));
+        let functions = self.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. }));
+        let tables = self.nodes_matching(|k| matches!(k, OpKey::CreateTable(_)));
+        let partitions = self.nodes_matching(|k| matches!(k, OpKey::CreatePartition(_)));
+        let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
+        let add_pks = self.nodes_matching(|k| matches!(k, OpKey::AddPrimaryKey { .. }));
+        let add_indexes = self.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. }));
+        let add_fks = self.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. }));
+        let add_checks = self.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. }));
+        let enable_rls = self.nodes_matching(|k| matches!(k, OpKey::EnableRls { .. }));
+        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
+        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
+        let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
+        let version_views = self.nodes_matching(|k| matches!(k, OpKey::CreateVersionView { .. }));
+        let alter_sequences = self.nodes_matching(|k| matches!(k, OpKey::AlterSequence(_)));
 
-        let drop_fks = self.nodes_of_type(OpType::DropForeignKey);
-        let drop_indexes = self.nodes_of_type(OpType::DropIndex);
-        let drop_checks = self.nodes_of_type(OpType::DropCheckConstraint);
-        let drop_policies = self.nodes_of_type(OpType::DropPolicy);
-        let drop_triggers = self.nodes_of_type(OpType::DropTrigger);
-        let drop_views = self.nodes_of_type(OpType::DropView);
-        let drop_columns = self.nodes_of_type(OpType::DropColumn);
-        let drop_pks = self.nodes_of_type(OpType::DropPrimaryKey);
-        let drop_tables = self.nodes_of_type(OpType::DropTable);
-        let drop_partitions = self.nodes_of_type(OpType::DropPartition);
-        let drop_sequences = self.nodes_of_type(OpType::DropSequence);
-        let drop_domains = self.nodes_of_type(OpType::DropDomain);
-        let drop_enums = self.nodes_of_type(OpType::DropEnum);
-        let drop_extensions = self.nodes_of_type(OpType::DropExtension);
-        let drop_version_schemas = self.nodes_of_type(OpType::DropVersionSchema);
-        let drop_schemas = self.nodes_of_type(OpType::DropSchema);
-        let drop_version_views = self.nodes_of_type(OpType::DropVersionView);
+        let drop_fks = self.nodes_matching(|k| matches!(k, OpKey::DropForeignKey { .. }));
+        let drop_indexes = self.nodes_matching(|k| matches!(k, OpKey::DropIndex { .. }));
+        let drop_checks = self.nodes_matching(|k| matches!(k, OpKey::DropCheckConstraint { .. }));
+        let drop_policies = self.nodes_matching(|k| matches!(k, OpKey::DropPolicy { .. }));
+        let drop_triggers = self.nodes_matching(|k| matches!(k, OpKey::DropTrigger { .. }));
+        let drop_views = self.nodes_matching(|k| matches!(k, OpKey::DropView(_)));
+        let drop_columns = self.nodes_matching(|k| matches!(k, OpKey::DropColumn { .. }));
+        let drop_pks = self.nodes_matching(|k| matches!(k, OpKey::DropPrimaryKey { .. }));
+        let drop_tables = self.nodes_matching(|k| matches!(k, OpKey::DropTable(_)));
+        let drop_partitions = self.nodes_matching(|k| matches!(k, OpKey::DropPartition(_)));
+        let drop_sequences = self.nodes_matching(|k| matches!(k, OpKey::DropSequence(_)));
+        let drop_domains = self.nodes_matching(|k| matches!(k, OpKey::DropDomain(_)));
+        let drop_enums = self.nodes_matching(|k| matches!(k, OpKey::DropEnum(_)));
+        let drop_extensions = self.nodes_matching(|k| matches!(k, OpKey::DropExtension(_)));
+        let drop_version_schemas =
+            self.nodes_matching(|k| matches!(k, OpKey::DropVersionSchema { .. }));
+        let drop_schemas = self.nodes_matching(|k| matches!(k, OpKey::DropSchema(_)));
+        let drop_version_views =
+            self.nodes_matching(|k| matches!(k, OpKey::DropVersionView { .. }));
 
-        let alter_columns = self.nodes_of_type(OpType::AlterColumn);
+        let alter_columns = self.nodes_matching(|k| matches!(k, OpKey::AlterColumn { .. }));
 
         // === CREATE dependencies ===
 
@@ -718,7 +609,7 @@ impl MigrationGraph {
 
         // === MODIFICATION patterns (drop before create/alter) ===
 
-        let drop_functions = self.nodes_of_type(OpType::DropFunction);
+        let drop_functions = self.nodes_matching(|k| matches!(k, OpKey::DropFunction { .. }));
 
         // Drop function before create function (for function modifications)
         self.edges_all_to_all(&drop_functions, &functions);
