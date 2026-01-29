@@ -614,6 +614,8 @@ impl MigrationGraph {
 
         self.edges_all_to_all(&drop_functions, &functions);
         self.edges_all_to_all(&drop_indexes, &add_indexes);
+        self.edges_all_to_all(&drop_fks, &add_fks);
+        self.edges_all_to_all(&drop_checks, &add_checks);
         self.edges_all_to_all(&drop_policies, &policies);
         self.edges_all_to_all(&drop_triggers, &triggers);
         self.edges_all_to_all(&drop_views, &views);
