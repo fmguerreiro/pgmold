@@ -158,7 +158,6 @@ async fn round_trip_default_privileges() {
 
     assert!(
         adp_ops.is_empty(),
-        "Should have no AlterDefaultPrivileges ops after migration. Ops: {:?}",
-        adp_ops
+        "Should have no AlterDefaultPrivileges ops after migration. Ops: {adp_ops:?}"
     );
 }
