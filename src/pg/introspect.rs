@@ -118,6 +118,8 @@ pub async fn introspect_schema(
         }
     }
 
+    schema.default_privileges = introspect_default_privileges(connection, target_schemas).await?;
+
     Ok(schema)
 }
 
@@ -1870,6 +1872,97 @@ async fn introspect_type_grants(
         result.insert(qualified_name, grants_vec);
     }
 
+    Ok(result)
+}
+
+
+async fn introspect_default_privileges(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<Vec<DefaultPrivilege>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            r.rolname AS target_role,
+            CASE WHEN d.defaclnamespace = 0 THEN NULL
+                 ELSE n.nspname
+            END AS schema_name,
+            d.defaclobjtype AS object_type,
+            CASE
+                WHEN acl.grantee = 0 THEN 'PUBLIC'
+                ELSE pg_get_userbyid(acl.grantee)
+            END AS grantee,
+            acl.privilege_type AS privilege_type,
+            acl.is_grantable AS with_grant_option
+        FROM pg_default_acl d
+        JOIN pg_roles r ON d.defaclrole = r.oid
+        LEFT JOIN pg_namespace n ON d.defaclnamespace = n.oid
+        CROSS JOIN LATERAL aclexplode(d.defaclacl) AS acl
+        WHERE (d.defaclnamespace = 0 OR n.nspname = ANY($1))
+        ORDER BY r.rolname, n.nspname, d.defaclobjtype, acl.grantee
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch default privileges: {e}")))?;
+
+    let mut grouped: BTreeMap<(String, Option<String>, String, String, bool), BTreeSet<Privilege>> =
+        BTreeMap::new();
+
+    for row in rows {
+        let target_role: String = row.get("target_role");
+        let schema_name: Option<String> = row.get("schema_name");
+        let object_type_char: i8 = row.get("object_type");
+        let grantee: String = row.get("grantee");
+        let privilege_type: String = row.get("privilege_type");
+        let with_grant_option: bool = row.get("with_grant_option");
+
+        let object_type_str = match object_type_char as u8 as char {
+            'r' => "TABLES",
+            'S' => "SEQUENCES",
+            'f' => "FUNCTIONS",
+            'T' => "TYPES",
+            'n' => "SCHEMAS",
+            _ => continue,
+        };
+
+        if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
+            grouped
+                .entry((
+                    target_role,
+                    schema_name,
+                    object_type_str.to_string(),
+                    grantee,
+                    with_grant_option,
+                ))
+                .or_default()
+                .insert(privilege);
+        }
+    }
+
+    let mut result = Vec::new();
+    for ((target_role, schema, object_type_str, grantee, with_grant_option), privileges) in grouped {
+        let object_type = match object_type_str.as_str() {
+            "TABLES" => DefaultPrivilegeObjectType::Tables,
+            "SEQUENCES" => DefaultPrivilegeObjectType::Sequences,
+            "FUNCTIONS" => DefaultPrivilegeObjectType::Functions,
+            "TYPES" => DefaultPrivilegeObjectType::Types,
+            "SCHEMAS" => DefaultPrivilegeObjectType::Schemas,
+            _ => continue,
+        };
+
+        result.push(DefaultPrivilege {
+            target_role,
+            schema,
+            object_type,
+            grantee,
+            privileges,
+            with_grant_option,
+        });
+    }
+
+    result.sort();
     Ok(result)
 }
 
