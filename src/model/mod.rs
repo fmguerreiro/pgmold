@@ -42,6 +42,7 @@ pub struct Schema {
     /// Cleared after finalize() is called.
     #[serde(skip)]
     pub pending_owners: Vec<PendingOwner>,
+    pub default_privileges: Vec<DefaultPrivilege>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -240,6 +241,34 @@ pub enum Privilege {
     Usage,
     Execute,
     Create,
+}
+
+/// Object types that can have default privileges
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum DefaultPrivilegeObjectType {
+    Tables,
+    Sequences,
+    Functions,
+    Routines,
+    Types,
+    Schemas,
+}
+
+/// A default privilege entry - privileges automatically granted when a role creates objects
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct DefaultPrivilege {
+    /// Role whose created objects get this privilege (or "CURRENT_ROLE" sentinel)
+    pub target_role: String,
+    /// Schema scope (None = global, Some = per-schema)
+    pub schema: Option<String>,
+    /// Type of objects affected
+    pub object_type: DefaultPrivilegeObjectType,
+    /// Role receiving the privilege
+    pub grantee: String,
+    /// Privileges being granted
+    pub privileges: BTreeSet<Privilege>,
+    /// Whether grantee can grant to others
+    pub with_grant_option: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -613,6 +642,7 @@ impl Schema {
             partitions: BTreeMap::new(),
             pending_policies: Vec::new(),
             pending_owners: Vec::new(),
+            default_privileges: Vec::new(),
         }
     }
 
@@ -1951,6 +1981,35 @@ mod tests {
         let json = serde_json::to_string(&view).expect("Failed to serialize");
         let deserialized: VersionView = serde_json::from_str(&json).expect("Failed to deserialize");
         assert_eq!(view, deserialized);
+    }
+
+    #[test]
+    fn default_privilege_ordering() {
+        use std::collections::BTreeSet;
+
+        let mut privileges = BTreeSet::new();
+        privileges.insert(Privilege::Select);
+
+        let dp1 = DefaultPrivilege {
+            target_role: "admin".to_string(),
+            schema: Some("public".to_string()),
+            object_type: DefaultPrivilegeObjectType::Tables,
+            grantee: "app_user".to_string(),
+            privileges: privileges.clone(),
+            with_grant_option: false,
+        };
+
+        let dp2 = DefaultPrivilege {
+            target_role: "admin".to_string(),
+            schema: None,
+            object_type: DefaultPrivilegeObjectType::Tables,
+            grantee: "app_user".to_string(),
+            privileges: privileges.clone(),
+            with_grant_option: false,
+        };
+
+        // Global (None) should sort before per-schema
+        assert!(dp2 < dp1);
     }
 }
 

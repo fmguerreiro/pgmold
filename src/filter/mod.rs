@@ -242,6 +242,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         partitions: filter_field(&schema.partitions, filter, ObjectType::Partitions),
         pending_policies: Vec::new(),
         pending_owners: Vec::new(),
+        default_privileges: schema.default_privileges.clone(),
     }
 }
 
