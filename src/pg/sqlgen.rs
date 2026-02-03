@@ -437,9 +437,66 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             )]
         }
 
-        MigrationOp::AlterDefaultPrivileges { .. } => {
-            // TODO: Implement in Task 6 (sqlgen for AlterDefaultPrivileges)
-            vec![]
+        MigrationOp::AlterDefaultPrivileges {
+            target_role,
+            schema,
+            object_type,
+            grantee,
+            privileges,
+            with_grant_option,
+            revoke,
+        } => {
+            let object_type_sql = match object_type {
+                crate::model::DefaultPrivilegeObjectType::Tables => "TABLES",
+                crate::model::DefaultPrivilegeObjectType::Sequences => "SEQUENCES",
+                crate::model::DefaultPrivilegeObjectType::Functions => "FUNCTIONS",
+                crate::model::DefaultPrivilegeObjectType::Routines => "ROUTINES",
+                crate::model::DefaultPrivilegeObjectType::Types => "TYPES",
+                crate::model::DefaultPrivilegeObjectType::Schemas => "SCHEMAS",
+            };
+
+            let privs_sql = privileges
+                .iter()
+                .map(privilege_to_sql)
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let schema_clause = schema
+                .as_ref()
+                .map(|s| format!(" IN SCHEMA {}", quote_ident(s)))
+                .unwrap_or_default();
+
+            let grantee_sql = if grantee == "PUBLIC" {
+                "PUBLIC".to_string()
+            } else {
+                quote_ident(grantee)
+            };
+
+            if *revoke {
+                vec![format!(
+                    "ALTER DEFAULT PRIVILEGES FOR ROLE {}{} REVOKE {} ON {} FROM {};",
+                    quote_ident(target_role),
+                    schema_clause,
+                    privs_sql,
+                    object_type_sql,
+                    grantee_sql
+                )]
+            } else {
+                let grant_option = if *with_grant_option {
+                    " WITH GRANT OPTION"
+                } else {
+                    ""
+                };
+                vec![format!(
+                    "ALTER DEFAULT PRIVILEGES FOR ROLE {}{} GRANT {} ON {} TO {}{};",
+                    quote_ident(target_role),
+                    schema_clause,
+                    privs_sql,
+                    object_type_sql,
+                    grantee_sql,
+                    grant_option
+                )]
+            }
         }
 
         MigrationOp::CreateVersionSchema {
@@ -3028,5 +3085,97 @@ mod tests {
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
         assert_eq!(sql[0], "DROP VIEW IF EXISTS \"public_v0001\".\"users\";");
+    }
+
+    #[test]
+    fn alter_default_privileges_grant_generates_valid_sql() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        let ops = vec![MigrationOp::AlterDefaultPrivileges {
+            target_role: "admin".to_string(),
+            schema: Some("public".to_string()),
+            object_type: DefaultPrivilegeObjectType::Tables,
+            grantee: "app_user".to_string(),
+            privileges: vec![Privilege::Select, Privilege::Insert],
+            with_grant_option: false,
+            revoke: false,
+        }];
+
+        let sql = generate_sql(&ops);
+
+        assert!(
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"public\" GRANT SELECT, INSERT ON TABLES TO \"app_user\";".to_string()),
+            "Should generate correct ALTER DEFAULT PRIVILEGES SQL. SQL: {:?}",
+            sql
+        );
+    }
+
+    #[test]
+    fn alter_default_privileges_revoke_generates_valid_sql() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        let ops = vec![MigrationOp::AlterDefaultPrivileges {
+            target_role: "admin".to_string(),
+            schema: None,
+            object_type: DefaultPrivilegeObjectType::Functions,
+            grantee: "app_user".to_string(),
+            privileges: vec![Privilege::Execute],
+            with_grant_option: false,
+            revoke: true,
+        }];
+
+        let sql = generate_sql(&ops);
+
+        assert!(
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" REVOKE EXECUTE ON FUNCTIONS FROM \"app_user\";".to_string()),
+            "Should generate correct REVOKE SQL without IN SCHEMA. SQL: {:?}",
+            sql
+        );
+    }
+
+    #[test]
+    fn alter_default_privileges_with_grant_option() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        let ops = vec![MigrationOp::AlterDefaultPrivileges {
+            target_role: "admin".to_string(),
+            schema: Some("api".to_string()),
+            object_type: DefaultPrivilegeObjectType::Sequences,
+            grantee: "service_role".to_string(),
+            privileges: vec![Privilege::Usage],
+            with_grant_option: true,
+            revoke: false,
+        }];
+
+        let sql = generate_sql(&ops);
+
+        assert!(
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"api\" GRANT USAGE ON SEQUENCES TO \"service_role\" WITH GRANT OPTION;".to_string()),
+            "Should generate SQL WITH GRANT OPTION. SQL: {:?}",
+            sql
+        );
+    }
+
+    #[test]
+    fn alter_default_privileges_public_grantee() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        let ops = vec![MigrationOp::AlterDefaultPrivileges {
+            target_role: "admin".to_string(),
+            schema: Some("public".to_string()),
+            object_type: DefaultPrivilegeObjectType::Types,
+            grantee: "PUBLIC".to_string(),
+            privileges: vec![Privilege::Usage],
+            with_grant_option: false,
+            revoke: false,
+        }];
+
+        let sql = generate_sql(&ops);
+
+        assert!(
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"public\" GRANT USAGE ON TYPES TO PUBLIC;".to_string()),
+            "Should not quote PUBLIC grantee. SQL: {:?}",
+            sql
+        );
     }
 }
