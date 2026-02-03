@@ -1031,6 +1031,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut create_policies = Vec::new();
     let mut alter_owners = Vec::new();
     let mut grant_privileges = Vec::new();
+    let mut alter_default_privileges = Vec::new();
 
     for op in ops {
         match op {
@@ -1048,6 +1049,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::CreatePolicy(_) => create_policies.push(op),
             MigrationOp::AlterOwner { .. } => alter_owners.push(op),
             MigrationOp::GrantPrivileges { .. } => grant_privileges.push(op),
+            MigrationOp::AlterDefaultPrivileges { .. } => alter_default_privileges.push(op),
             _ => {}
         }
     }
@@ -1071,6 +1073,7 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(create_triggers);
     result.extend(alter_owners);
     result.extend(grant_privileges);
+    result.extend(alter_default_privileges);
 
     result
 }
@@ -2175,6 +2178,91 @@ mod tests {
         if let (Some(c), Some(d)) = (v2_last_create, v2_first_drop) {
             assert!(c < d, "v2: creates should be before drops");
         }
+    }
+
+    #[test]
+    fn planner_orders_default_privileges_at_end() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        let table = make_table("users", vec![]);
+
+        let ops = vec![
+            MigrationOp::AlterDefaultPrivileges {
+                target_role: "admin".to_string(),
+                schema: Some("public".to_string()),
+                object_type: DefaultPrivilegeObjectType::Tables,
+                grantee: "app_user".to_string(),
+                privileges: vec![Privilege::Select],
+                with_grant_option: false,
+                revoke: false,
+            },
+            MigrationOp::CreateTable(table),
+        ];
+
+        let ordered = plan_migration(ops);
+
+        let create_idx = ordered
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)));
+        let adp_idx = ordered
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterDefaultPrivileges { .. }));
+
+        assert!(
+            create_idx.unwrap() < adp_idx.unwrap(),
+            "CreateTable should come before AlterDefaultPrivileges"
+        );
+    }
+
+    #[test]
+    fn plan_dump_orders_default_privileges_at_end() {
+        use crate::diff::GrantObjectKind;
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        let table = make_table("users", vec![]);
+
+        let ops = vec![
+            MigrationOp::AlterDefaultPrivileges {
+                target_role: "admin".to_string(),
+                schema: Some("public".to_string()),
+                object_type: DefaultPrivilegeObjectType::Tables,
+                grantee: "app_user".to_string(),
+                privileges: vec![Privilege::Select],
+                with_grant_option: false,
+                revoke: false,
+            },
+            MigrationOp::GrantPrivileges {
+                object_kind: GrantObjectKind::Table,
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                args: None,
+                grantee: "reader".to_string(),
+                privileges: vec![Privilege::Select],
+                with_grant_option: false,
+            },
+            MigrationOp::CreateTable(table),
+        ];
+
+        let ordered = plan_dump(ops);
+
+        let create_idx = ordered
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)));
+        let grant_idx = ordered
+            .iter()
+            .position(|op| matches!(op, MigrationOp::GrantPrivileges { .. }));
+        let adp_idx = ordered
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterDefaultPrivileges { .. }));
+
+        assert!(
+            create_idx.unwrap() < grant_idx.unwrap(),
+            "CreateTable should come before GrantPrivileges in dump"
+        );
+        assert!(
+            grant_idx.unwrap() < adp_idx.unwrap(),
+            "GrantPrivileges should come before AlterDefaultPrivileges in dump"
+        );
     }
 
     #[test]
