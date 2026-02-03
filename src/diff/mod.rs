@@ -5485,8 +5485,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                     ..
                 } if target_role == "admin" && grantee == "app_user"
             )),
-            "Should generate AlterDefaultPrivileges op. Ops: {:?}",
-            ops
+            "Should generate AlterDefaultPrivileges op. Ops: {ops:?}"
         );
     }
 
@@ -5521,8 +5520,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                     ..
                 } if target_role == "admin" && grantee == "app_user"
             )),
-            "Should generate revoke AlterDefaultPrivileges op. Ops: {:?}",
-            ops
+            "Should generate revoke AlterDefaultPrivileges op. Ops: {ops:?}"
         );
     }
 }

@@ -128,8 +128,7 @@ async fn round_trip_default_privileges() {
     assert!(
         ops.iter()
             .any(|op| matches!(op, MigrationOp::AlterDefaultPrivileges { .. })),
-        "Should generate AlterDefaultPrivileges. Ops: {:?}",
-        ops
+        "Should generate AlterDefaultPrivileges. Ops: {ops:?}"
     );
 
     let planned = plan_migration(ops);

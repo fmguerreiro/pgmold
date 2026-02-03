@@ -1906,8 +1906,12 @@ async fn introspect_default_privileges(
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch default privileges: {e}")))?;
 
-    let mut grouped: BTreeMap<(String, Option<String>, String, String, bool), BTreeSet<Privilege>> =
-        BTreeMap::new();
+    // Key: (target_role, schema, object_type, grantee, with_grant_option)
+    #[allow(clippy::type_complexity)]
+    let mut grouped: BTreeMap<
+        (String, Option<String>, String, String, bool),
+        BTreeSet<Privilege>,
+    > = BTreeMap::new();
 
     for row in rows {
         let target_role: String = row.get("target_role");

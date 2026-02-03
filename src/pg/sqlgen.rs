@@ -3105,8 +3105,7 @@ mod tests {
 
         assert!(
             sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"public\" GRANT SELECT, INSERT ON TABLES TO \"app_user\";".to_string()),
-            "Should generate correct ALTER DEFAULT PRIVILEGES SQL. SQL: {:?}",
-            sql
+            "Should generate correct ALTER DEFAULT PRIVILEGES SQL. SQL: {sql:?}"
         );
     }
 
@@ -3128,8 +3127,7 @@ mod tests {
 
         assert!(
             sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" REVOKE EXECUTE ON FUNCTIONS FROM \"app_user\";".to_string()),
-            "Should generate correct REVOKE SQL without IN SCHEMA. SQL: {:?}",
-            sql
+            "Should generate correct REVOKE SQL without IN SCHEMA. SQL: {sql:?}"
         );
     }
 
@@ -3151,8 +3149,7 @@ mod tests {
 
         assert!(
             sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"api\" GRANT USAGE ON SEQUENCES TO \"service_role\" WITH GRANT OPTION;".to_string()),
-            "Should generate SQL WITH GRANT OPTION. SQL: {:?}",
-            sql
+            "Should generate SQL WITH GRANT OPTION. SQL: {sql:?}"
         );
     }
 
@@ -3174,8 +3171,7 @@ mod tests {
 
         assert!(
             sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"public\" GRANT USAGE ON TYPES TO PUBLIC;".to_string()),
-            "Should not quote PUBLIC grantee. SQL: {:?}",
-            sql
+            "Should not quote PUBLIC grantee. SQL: {sql:?}"
         );
     }
 }

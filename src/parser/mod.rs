@@ -818,19 +818,20 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             }
             Statement::DropTrigger(sqlparser::ast::DropTrigger {
                 trigger_name,
-                table_name,
+                table_name: Some(ref tbl),
                 ..
             }) => {
-                if let Some(ref tbl) = table_name {
-                    let (tbl_schema, tbl_name) = extract_qualified_name(tbl);
-                    let trigger_key = format!(
-                        "{}.{}.{}",
-                        tbl_schema,
-                        tbl_name,
-                        trigger_name.to_string().trim_matches('"')
-                    );
-                    schema.triggers.remove(&trigger_key);
-                }
+                let (tbl_schema, tbl_name) = extract_qualified_name(tbl);
+                let trigger_key = format!(
+                    "{}.{}.{}",
+                    tbl_schema,
+                    tbl_name,
+                    trigger_name.to_string().trim_matches('"')
+                );
+                schema.triggers.remove(&trigger_key);
+            }
+            Statement::DropTrigger(sqlparser::ast::DropTrigger { .. }) => {
+                // DROP TRIGGER without table name - skip
             }
             Statement::DropPolicy {
                 name, table_name, ..
