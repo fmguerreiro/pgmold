@@ -125,3 +125,33 @@ async fn dump_complex_schema() {
     );
     assert!(dump.contains("CREATE POLICY"), "dump should contain policy");
 }
+
+#[test]
+fn dump_includes_default_privileges() {
+    use pgmold::model::{DefaultPrivilege, DefaultPrivilegeObjectType, Privilege, Schema};
+    use std::collections::BTreeSet;
+
+    let mut schema = Schema::new();
+    let mut privs = BTreeSet::new();
+    privs.insert(Privilege::Select);
+    privs.insert(Privilege::Insert);
+    schema.default_privileges.push(DefaultPrivilege {
+        target_role: "admin".to_string(),
+        schema: Some("public".to_string()),
+        object_type: DefaultPrivilegeObjectType::Tables,
+        grantee: "app_user".to_string(),
+        privileges: privs,
+        with_grant_option: false,
+    });
+
+    let sql = generate_dump(&schema, None);
+
+    assert!(
+        sql.contains("ALTER DEFAULT PRIVILEGES"),
+        "Dump should include ALTER DEFAULT PRIVILEGES. SQL:\n{sql}"
+    );
+    assert!(
+        sql.contains("FOR ROLE"),
+        "Dump should include FOR ROLE. SQL:\n{sql}"
+    );
+}

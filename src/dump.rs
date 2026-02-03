@@ -122,6 +122,18 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
         ops.push(MigrationOp::CreateTrigger(trigger.clone()));
     }
 
+    for dp in &schema.default_privileges {
+        ops.push(MigrationOp::AlterDefaultPrivileges {
+            target_role: dp.target_role.clone(),
+            schema: dp.schema.clone(),
+            object_type: dp.object_type.clone(),
+            grantee: dp.grantee.clone(),
+            privileges: dp.privileges.iter().cloned().collect(),
+            with_grant_option: dp.with_grant_option,
+            revoke: false,
+        });
+    }
+
     ops
 }
 
