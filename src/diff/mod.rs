@@ -381,6 +381,104 @@ fn diff_grants_for_object(
     ops
 }
 
+
+fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+    use crate::model::{DefaultPrivilege, Privilege};
+
+    let mut ops = Vec::new();
+
+    type DpKey = (String, Option<String>, String, String);
+
+    fn dp_key(dp: &DefaultPrivilege) -> DpKey {
+        (
+            dp.target_role.clone(),
+            dp.schema.clone(),
+            format!("{:?}", dp.object_type),
+            dp.grantee.clone(),
+        )
+    }
+
+    let from_map: BTreeMap<DpKey, &DefaultPrivilege> =
+        from.default_privileges.iter().map(|dp| (dp_key(dp), dp)).collect();
+    let to_map: BTreeMap<DpKey, &DefaultPrivilege> =
+        to.default_privileges.iter().map(|dp| (dp_key(dp), dp)).collect();
+
+    for (key, from_dp) in &from_map {
+        if !to_map.contains_key(key) {
+            let privs: Vec<Privilege> = from_dp.privileges.iter().cloned().collect();
+            if !privs.is_empty() {
+                ops.push(MigrationOp::AlterDefaultPrivileges {
+                    target_role: from_dp.target_role.clone(),
+                    schema: from_dp.schema.clone(),
+                    object_type: from_dp.object_type.clone(),
+                    grantee: from_dp.grantee.clone(),
+                    privileges: privs,
+                    with_grant_option: from_dp.with_grant_option,
+                    revoke: true,
+                });
+            }
+        }
+    }
+
+    for (key, to_dp) in &to_map {
+        if !from_map.contains_key(key) {
+            let privs: Vec<Privilege> = to_dp.privileges.iter().cloned().collect();
+            if !privs.is_empty() {
+                ops.push(MigrationOp::AlterDefaultPrivileges {
+                    target_role: to_dp.target_role.clone(),
+                    schema: to_dp.schema.clone(),
+                    object_type: to_dp.object_type.clone(),
+                    grantee: to_dp.grantee.clone(),
+                    privileges: privs,
+                    with_grant_option: to_dp.with_grant_option,
+                    revoke: false,
+                });
+            }
+        }
+    }
+
+    for (key, to_dp) in &to_map {
+        if let Some(from_dp) = from_map.get(key) {
+            let privs_to_revoke: Vec<Privilege> = from_dp
+                .privileges
+                .difference(&to_dp.privileges)
+                .cloned()
+                .collect();
+            let privs_to_grant: Vec<Privilege> = to_dp
+                .privileges
+                .difference(&from_dp.privileges)
+                .cloned()
+                .collect();
+
+            if !privs_to_revoke.is_empty() {
+                ops.push(MigrationOp::AlterDefaultPrivileges {
+                    target_role: from_dp.target_role.clone(),
+                    schema: from_dp.schema.clone(),
+                    object_type: from_dp.object_type.clone(),
+                    grantee: from_dp.grantee.clone(),
+                    privileges: privs_to_revoke,
+                    with_grant_option: from_dp.with_grant_option,
+                    revoke: true,
+                });
+            }
+
+            if !privs_to_grant.is_empty() {
+                ops.push(MigrationOp::AlterDefaultPrivileges {
+                    target_role: to_dp.target_role.clone(),
+                    schema: to_dp.schema.clone(),
+                    object_type: to_dp.object_type.clone(),
+                    grantee: to_dp.grantee.clone(),
+                    privileges: privs_to_grant,
+                    with_grant_option: to_dp.with_grant_option,
+                    revoke: false,
+                });
+            }
+        }
+    }
+
+    ops
+}
+
 pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     compute_diff_with_flags(from, to, false, false)
 }
@@ -458,6 +556,8 @@ pub fn compute_diff_with_flags(
     }
 
     ops.extend(policy_ops);
+
+    ops.extend(diff_default_privileges(from, to));
 
     ops
 }
@@ -5348,5 +5448,78 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         if let MigrationOp::CreatePolicy(policy) = &create_policy_ops[0] {
             assert_eq!(policy.name, "access_policy");
         }
+    }
+
+
+    #[test]
+    fn diff_default_privileges_adds_new() {
+        use crate::model::{DefaultPrivilege, DefaultPrivilegeObjectType, Privilege, Schema};
+        use std::collections::BTreeSet;
+
+        let from = Schema::new();
+
+        let mut to = Schema::new();
+        let mut privs = BTreeSet::new();
+        privs.insert(Privilege::Select);
+        to.default_privileges.push(DefaultPrivilege {
+            target_role: "admin".to_string(),
+            schema: Some("public".to_string()),
+            object_type: DefaultPrivilegeObjectType::Tables,
+            grantee: "app_user".to_string(),
+            privileges: privs,
+            with_grant_option: false,
+        });
+
+        let ops = compute_diff(&from, &to);
+
+        assert!(
+            ops.iter().any(|op| matches!(
+                op,
+                MigrationOp::AlterDefaultPrivileges {
+                    target_role,
+                    grantee,
+                    revoke: false,
+                    ..
+                } if target_role == "admin" && grantee == "app_user"
+            )),
+            "Should generate AlterDefaultPrivileges op. Ops: {:?}",
+            ops
+        );
+    }
+
+    #[test]
+    fn diff_default_privileges_revokes_removed() {
+        use crate::model::{DefaultPrivilege, DefaultPrivilegeObjectType, Privilege, Schema};
+        use std::collections::BTreeSet;
+
+        let mut from = Schema::new();
+        let mut privs = BTreeSet::new();
+        privs.insert(Privilege::Select);
+        from.default_privileges.push(DefaultPrivilege {
+            target_role: "admin".to_string(),
+            schema: Some("public".to_string()),
+            object_type: DefaultPrivilegeObjectType::Tables,
+            grantee: "app_user".to_string(),
+            privileges: privs,
+            with_grant_option: false,
+        });
+
+        let to = Schema::new();
+
+        let ops = compute_diff(&from, &to);
+
+        assert!(
+            ops.iter().any(|op| matches!(
+                op,
+                MigrationOp::AlterDefaultPrivileges {
+                    target_role,
+                    grantee,
+                    revoke: true,
+                    ..
+                } if target_role == "admin" && grantee == "app_user"
+            )),
+            "Should generate revoke AlterDefaultPrivileges op. Ops: {:?}",
+            ops
+        );
     }
 }
