@@ -1237,14 +1237,9 @@ fn parse_alter_default_privileges(sql: &str, schema: &mut Schema) -> Result<()> 
         let grantee = cap.get(5).unwrap().as_str().to_string();
         let with_grant_option = cap.get(6).is_some();
 
-        let object_type = match object_type_str.as_str() {
-            "TABLES" => DefaultPrivilegeObjectType::Tables,
-            "SEQUENCES" => DefaultPrivilegeObjectType::Sequences,
-            "FUNCTIONS" => DefaultPrivilegeObjectType::Functions,
-            "ROUTINES" => DefaultPrivilegeObjectType::Routines,
-            "TYPES" => DefaultPrivilegeObjectType::Types,
-            "SCHEMAS" => DefaultPrivilegeObjectType::Schemas,
-            _ => continue,
+        let object_type = match DefaultPrivilegeObjectType::from_sql_str(&object_type_str) {
+            Some(ot) => ot,
+            None => continue,
         };
 
         let mut privileges = BTreeSet::new();
@@ -1307,6 +1302,95 @@ fn parse_alter_default_privileges(sql: &str, schema: &mut Schema) -> Result<()> 
             privileges,
             with_grant_option,
         });
+    }
+
+    // Pattern: ALTER DEFAULT PRIVILEGES [FOR ROLE role] [IN SCHEMA schema]
+    //          REVOKE privileges ON object_type FROM grantee
+    let revoke_re = Regex::new(
+        r"(?is)ALTER\s+DEFAULT\s+PRIVILEGES\s+(?:FOR\s+ROLE\s+(\w+)\s+)?(?:IN\s+SCHEMA\s+(\w+)\s+)?REVOKE\s+(.+?)\s+ON\s+(TABLES|SEQUENCES|FUNCTIONS|ROUTINES|TYPES|SCHEMAS)\s+FROM\s+(\w+|PUBLIC)\s*;"
+    ).unwrap();
+
+    for cap in revoke_re.captures_iter(sql) {
+        let target_role = cap
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_else(|| "CURRENT_ROLE".to_string());
+        let schema_scope = cap.get(2).map(|m| m.as_str().to_string());
+        let privileges_str = cap.get(3).unwrap().as_str();
+        let object_type_str = cap.get(4).unwrap().as_str().to_uppercase();
+        let grantee = cap.get(5).unwrap().as_str().to_string();
+
+        let object_type = match DefaultPrivilegeObjectType::from_sql_str(&object_type_str) {
+            Some(ot) => ot,
+            None => continue,
+        };
+
+        // Parse privileges to revoke
+        let mut privs_to_revoke = BTreeSet::new();
+        let priv_upper = privileges_str.to_uppercase();
+        if priv_upper.contains("ALL") {
+            match object_type {
+                DefaultPrivilegeObjectType::Tables => {
+                    privs_to_revoke.insert(Privilege::Select);
+                    privs_to_revoke.insert(Privilege::Insert);
+                    privs_to_revoke.insert(Privilege::Update);
+                    privs_to_revoke.insert(Privilege::Delete);
+                    privs_to_revoke.insert(Privilege::Truncate);
+                    privs_to_revoke.insert(Privilege::References);
+                    privs_to_revoke.insert(Privilege::Trigger);
+                }
+                DefaultPrivilegeObjectType::Sequences => {
+                    privs_to_revoke.insert(Privilege::Usage);
+                    privs_to_revoke.insert(Privilege::Select);
+                    privs_to_revoke.insert(Privilege::Update);
+                }
+                DefaultPrivilegeObjectType::Functions | DefaultPrivilegeObjectType::Routines => {
+                    privs_to_revoke.insert(Privilege::Execute);
+                }
+                DefaultPrivilegeObjectType::Types => {
+                    privs_to_revoke.insert(Privilege::Usage);
+                }
+                DefaultPrivilegeObjectType::Schemas => {
+                    privs_to_revoke.insert(Privilege::Usage);
+                    privs_to_revoke.insert(Privilege::Create);
+                }
+            }
+        } else {
+            for priv_str in privileges_str.split(',') {
+                let priv_trimmed = priv_str.trim().to_uppercase();
+                match priv_trimmed.as_str() {
+                    "SELECT" => privs_to_revoke.insert(Privilege::Select),
+                    "INSERT" => privs_to_revoke.insert(Privilege::Insert),
+                    "UPDATE" => privs_to_revoke.insert(Privilege::Update),
+                    "DELETE" => privs_to_revoke.insert(Privilege::Delete),
+                    "TRUNCATE" => privs_to_revoke.insert(Privilege::Truncate),
+                    "REFERENCES" => privs_to_revoke.insert(Privilege::References),
+                    "TRIGGER" => privs_to_revoke.insert(Privilege::Trigger),
+                    "USAGE" => privs_to_revoke.insert(Privilege::Usage),
+                    "EXECUTE" => privs_to_revoke.insert(Privilege::Execute),
+                    "CREATE" => privs_to_revoke.insert(Privilege::Create),
+                    _ => continue,
+                };
+            }
+        }
+
+        // Remove matching privileges from existing default privileges
+        for dp in &mut schema.default_privileges {
+            if dp.target_role == target_role
+                && dp.schema == schema_scope
+                && dp.object_type == object_type
+                && dp.grantee == grantee
+            {
+                for privilege in &privs_to_revoke {
+                    dp.privileges.remove(privilege);
+                }
+            }
+        }
+
+        // Remove any entries that now have no privileges
+        schema
+            .default_privileges
+            .retain(|dp| !dp.privileges.is_empty());
     }
 
     Ok(())

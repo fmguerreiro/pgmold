@@ -254,6 +254,33 @@ pub enum DefaultPrivilegeObjectType {
     Schemas,
 }
 
+impl DefaultPrivilegeObjectType {
+    /// Returns the SQL keyword for this object type
+    pub fn as_sql_str(&self) -> &'static str {
+        match self {
+            DefaultPrivilegeObjectType::Tables => "TABLES",
+            DefaultPrivilegeObjectType::Sequences => "SEQUENCES",
+            DefaultPrivilegeObjectType::Functions => "FUNCTIONS",
+            DefaultPrivilegeObjectType::Routines => "ROUTINES",
+            DefaultPrivilegeObjectType::Types => "TYPES",
+            DefaultPrivilegeObjectType::Schemas => "SCHEMAS",
+        }
+    }
+
+    /// Parse from SQL keyword string
+    pub fn from_sql_str(s: &str) -> Option<Self> {
+        match s.to_uppercase().as_str() {
+            "TABLES" => Some(DefaultPrivilegeObjectType::Tables),
+            "SEQUENCES" => Some(DefaultPrivilegeObjectType::Sequences),
+            "FUNCTIONS" => Some(DefaultPrivilegeObjectType::Functions),
+            "ROUTINES" => Some(DefaultPrivilegeObjectType::Routines),
+            "TYPES" => Some(DefaultPrivilegeObjectType::Types),
+            "SCHEMAS" => Some(DefaultPrivilegeObjectType::Schemas),
+            _ => None,
+        }
+    }
+}
+
 /// A default privilege entry - privileges automatically granted when a role creates objects
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct DefaultPrivilege {

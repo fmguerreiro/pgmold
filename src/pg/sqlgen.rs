@@ -446,14 +446,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             with_grant_option,
             revoke,
         } => {
-            let object_type_sql = match object_type {
-                crate::model::DefaultPrivilegeObjectType::Tables => "TABLES",
-                crate::model::DefaultPrivilegeObjectType::Sequences => "SEQUENCES",
-                crate::model::DefaultPrivilegeObjectType::Functions => "FUNCTIONS",
-                crate::model::DefaultPrivilegeObjectType::Routines => "ROUTINES",
-                crate::model::DefaultPrivilegeObjectType::Types => "TYPES",
-                crate::model::DefaultPrivilegeObjectType::Schemas => "SCHEMAS",
-            };
+            let object_type_sql = object_type.as_sql_str();
 
             let privs_sql = privileges
                 .iter()

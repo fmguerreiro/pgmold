@@ -364,7 +364,7 @@ impl OpKey {
             } => OpKey::AlterDefaultPrivileges {
                 target_role: target_role.clone(),
                 schema: schema.clone(),
-                object_type: format!("{object_type:?}"),
+                object_type: object_type.as_sql_str().to_string(),
                 grantee: grantee.clone(),
             },
             MigrationOp::CreateVersionSchema {

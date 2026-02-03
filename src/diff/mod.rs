@@ -392,7 +392,7 @@ fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
         (
             dp.target_role.clone(),
             dp.schema.clone(),
-            format!("{:?}", dp.object_type),
+            dp.object_type.as_sql_str().to_string(),
             dp.grantee.clone(),
         )
     }
@@ -477,6 +477,36 @@ fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                     with_grant_option: to_dp.with_grant_option,
                     revoke: false,
                 });
+            }
+
+            // Handle with_grant_option changes for common privileges
+            if from_dp.with_grant_option != to_dp.with_grant_option {
+                let common_privs: Vec<Privilege> = from_dp
+                    .privileges
+                    .intersection(&to_dp.privileges)
+                    .cloned()
+                    .collect();
+                if !common_privs.is_empty() {
+                    // Revoke old grant and re-grant with new option
+                    ops.push(MigrationOp::AlterDefaultPrivileges {
+                        target_role: from_dp.target_role.clone(),
+                        schema: from_dp.schema.clone(),
+                        object_type: from_dp.object_type.clone(),
+                        grantee: from_dp.grantee.clone(),
+                        privileges: common_privs.clone(),
+                        with_grant_option: from_dp.with_grant_option,
+                        revoke: true,
+                    });
+                    ops.push(MigrationOp::AlterDefaultPrivileges {
+                        target_role: to_dp.target_role.clone(),
+                        schema: to_dp.schema.clone(),
+                        object_type: to_dp.object_type.clone(),
+                        grantee: to_dp.grantee.clone(),
+                        privileges: common_privs,
+                        with_grant_option: to_dp.with_grant_option,
+                        revoke: false,
+                    });
+                }
             }
         }
     }

@@ -1909,7 +1909,13 @@ async fn introspect_default_privileges(
     // Key: (target_role, schema, object_type, grantee, with_grant_option)
     #[allow(clippy::type_complexity)]
     let mut grouped: BTreeMap<
-        (String, Option<String>, String, String, bool),
+        (
+            String,
+            Option<String>,
+            DefaultPrivilegeObjectType,
+            String,
+            bool,
+        ),
         BTreeSet<Privilege>,
     > = BTreeMap::new();
 
@@ -1921,12 +1927,12 @@ async fn introspect_default_privileges(
         let privilege_type: String = row.get("privilege_type");
         let with_grant_option: bool = row.get("with_grant_option");
 
-        let object_type_str = match object_type_char as u8 as char {
-            'r' => "TABLES",
-            'S' => "SEQUENCES",
-            'f' => "FUNCTIONS",
-            'T' => "TYPES",
-            'n' => "SCHEMAS",
+        let object_type = match object_type_char as u8 as char {
+            'r' => DefaultPrivilegeObjectType::Tables,
+            'S' => DefaultPrivilegeObjectType::Sequences,
+            'f' => DefaultPrivilegeObjectType::Functions,
+            'T' => DefaultPrivilegeObjectType::Types,
+            'n' => DefaultPrivilegeObjectType::Schemas,
             _ => continue,
         };
 
@@ -1935,7 +1941,7 @@ async fn introspect_default_privileges(
                 .entry((
                     target_role,
                     schema_name,
-                    object_type_str.to_string(),
+                    object_type,
                     grantee,
                     with_grant_option,
                 ))
@@ -1945,17 +1951,7 @@ async fn introspect_default_privileges(
     }
 
     let mut result = Vec::new();
-    for ((target_role, schema, object_type_str, grantee, with_grant_option), privileges) in grouped
-    {
-        let object_type = match object_type_str.as_str() {
-            "TABLES" => DefaultPrivilegeObjectType::Tables,
-            "SEQUENCES" => DefaultPrivilegeObjectType::Sequences,
-            "FUNCTIONS" => DefaultPrivilegeObjectType::Functions,
-            "TYPES" => DefaultPrivilegeObjectType::Types,
-            "SCHEMAS" => DefaultPrivilegeObjectType::Schemas,
-            _ => continue,
-        };
-
+    for ((target_role, schema, object_type, grantee, with_grant_option), privileges) in grouped {
         result.push(DefaultPrivilege {
             target_role,
             schema,
