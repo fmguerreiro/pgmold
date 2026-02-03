@@ -381,7 +381,6 @@ fn diff_grants_for_object(
     ops
 }
 
-
 fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     use crate::model::{DefaultPrivilege, Privilege};
 
@@ -398,10 +397,16 @@ fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
         )
     }
 
-    let from_map: BTreeMap<DpKey, &DefaultPrivilege> =
-        from.default_privileges.iter().map(|dp| (dp_key(dp), dp)).collect();
-    let to_map: BTreeMap<DpKey, &DefaultPrivilege> =
-        to.default_privileges.iter().map(|dp| (dp_key(dp), dp)).collect();
+    let from_map: BTreeMap<DpKey, &DefaultPrivilege> = from
+        .default_privileges
+        .iter()
+        .map(|dp| (dp_key(dp), dp))
+        .collect();
+    let to_map: BTreeMap<DpKey, &DefaultPrivilege> = to
+        .default_privileges
+        .iter()
+        .map(|dp| (dp_key(dp), dp))
+        .collect();
 
     for (key, from_dp) in &from_map {
         if !to_map.contains_key(key) {
@@ -2053,7 +2058,6 @@ fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
         },
     }
 }
-
 
 #[cfg(test)]
 mod migration_op_variant_tests {
@@ -5449,7 +5453,6 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             assert_eq!(policy.name, "access_policy");
         }
     }
-
 
     #[test]
     fn diff_default_privileges_adds_new() {

@@ -374,15 +374,10 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 }
                             }
                         }
-                        sqlparser::ast::AlterTableOperation::AddColumn {
-                            column_def, ..
-                        } => {
+                        sqlparser::ast::AlterTableOperation::AddColumn { column_def, .. } => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
-                                let (column, seq_opt) = parse_column_with_serial(
-                                    &tbl_schema,
-                                    &tbl_name,
-                                    &column_def,
-                                )?;
+                                let (column, seq_opt) =
+                                    parse_column_with_serial(&tbl_schema, &tbl_name, &column_def)?;
                                 table.columns.insert(column.name.clone(), column);
                                 if let Some(seq) = seq_opt {
                                     let seq_key = qualified_name(&seq.schema, &seq.name);
@@ -398,7 +393,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                     .iter()
                                     .map(|n| n.value.trim_matches('"').to_string())
                                     .collect();
-                                table.columns.retain(|name, _| !names_to_drop.contains(name));
+                                table
+                                    .columns
+                                    .retain(|name, _| !names_to_drop.contains(name));
                             }
                         }
                         sqlparser::ast::AlterTableOperation::RenameTable { table_name } => {
@@ -430,10 +427,8 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                             new_column_name,
                         } => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
-                                let old_name =
-                                    old_column_name.value.trim_matches('"').to_string();
-                                let new_name =
-                                    new_column_name.value.trim_matches('"').to_string();
+                                let old_name = old_column_name.value.trim_matches('"').to_string();
+                                let new_name = new_column_name.value.trim_matches('"').to_string();
 
                                 // Remove the column with the old name and insert with new name
                                 if let Some(mut column) = table.columns.remove(&old_name) {
@@ -446,10 +441,8 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                             old_name,
                             new_name,
                         } => {
-                            let old_constraint_name =
-                                old_name.value.trim_matches('"').to_string();
-                            let new_constraint_name =
-                                new_name.value.trim_matches('"').to_string();
+                            let old_constraint_name = old_name.value.trim_matches('"').to_string();
+                            let new_constraint_name = new_name.value.trim_matches('"').to_string();
 
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 // Check indexes
@@ -761,9 +754,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 schema.sequences.insert(key, sequence);
             }
             Statement::Drop {
-                object_type,
-                names,
-                ..
+                object_type, names, ..
             } => {
                 use sqlparser::ast::ObjectType;
                 for name in names {
@@ -851,9 +842,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 if let Some(table) = schema.tables.get_mut(&tbl_key) {
                     table.policies.retain(|p| p.name != policy_name);
                 }
-                schema
-                    .pending_policies
-                    .retain(|p| !(p.table_schema == tbl_schema && p.table == tbl_name && p.name == policy_name));
+                schema.pending_policies.retain(|p| {
+                    !(p.table_schema == tbl_schema && p.table == tbl_name && p.name == policy_name)
+                });
             }
             Statement::DropExtension(sqlparser::ast::DropExtension { names, .. }) => {
                 for name in names {
@@ -1223,7 +1214,6 @@ fn revoke_from_grants(
         }
     });
 }
-
 
 fn parse_alter_default_privileges(sql: &str, schema: &mut Schema) -> Result<()> {
     use regex::Regex;
@@ -4176,11 +4166,13 @@ ALTER TABLE products ADD COLUMN description TEXT;
         assert!(table.columns.contains_key("price"));
         assert!(table.columns.contains_key("description"));
 
-        let price_col = table.columns.get("price").expect("price column should exist");
+        let price_col = table
+            .columns
+            .get("price")
+            .expect("price column should exist");
         assert!(!price_col.nullable);
         assert_eq!(price_col.default.as_deref(), Some("0"));
     }
-
 
     #[test]
     fn parse_drop_table() {
@@ -4331,9 +4323,11 @@ DROP EXTENSION pgcrypto;
         let schema = parse_sql_string(sql).expect("Should parse");
 
         assert!(!schema.extensions.contains_key("pgcrypto"));
-        assert!(schema.extensions.contains_key("uuid_ossp") || schema.extensions.contains_key("uuid-ossp"));
+        assert!(
+            schema.extensions.contains_key("uuid_ossp")
+                || schema.extensions.contains_key("uuid-ossp")
+        );
     }
-
 
     #[test]
     fn parse_alter_table_rename_table() {
@@ -4407,7 +4401,6 @@ ALTER TABLE users RENAME CONSTRAINT users_email_idx TO users_email_index;
         assert!(table.indexes.iter().all(|i| i.name != "users_email_idx"));
         assert!(table.indexes.iter().any(|i| i.name == "users_email_index"));
     }
-
 
     #[test]
     fn parses_alter_default_privileges_for_role_in_schema() {

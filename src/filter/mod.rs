@@ -1546,7 +1546,9 @@ mod tests {
     fn filter_excludes_default_privileges() {
         let filter = Filter::new(&[], &[], &[], &[ObjectType::DefaultPrivileges]).unwrap();
 
-        assert!(filter.exclude_types.contains(&ObjectType::DefaultPrivileges));
+        assert!(filter
+            .exclude_types
+            .contains(&ObjectType::DefaultPrivileges));
         assert!(!filter.should_include_type(ObjectType::DefaultPrivileges));
     }
 }

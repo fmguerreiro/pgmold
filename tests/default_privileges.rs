@@ -45,7 +45,10 @@ async fn introspects_default_privileges() {
 
     let dp = dp.unwrap();
     assert_eq!(dp.schema, Some("public".to_string()));
-    assert_eq!(dp.object_type, pgmold::model::DefaultPrivilegeObjectType::Tables);
+    assert_eq!(
+        dp.object_type,
+        pgmold::model::DefaultPrivilegeObjectType::Tables
+    );
     assert!(dp.privileges.contains(&pgmold::model::Privilege::Select));
 }
 
@@ -65,7 +68,7 @@ async fn introspects_global_default_privileges() {
         .unwrap();
 
     sqlx::query(
-        "ALTER DEFAULT PRIVILEGES FOR ROLE test_admin GRANT EXECUTE ON FUNCTIONS TO service_role"
+        "ALTER DEFAULT PRIVILEGES FOR ROLE test_admin GRANT EXECUTE ON FUNCTIONS TO service_role",
     )
     .execute(connection.pool())
     .await
@@ -87,7 +90,10 @@ async fn introspects_global_default_privileges() {
     );
 
     let dp = dp.unwrap();
-    assert_eq!(dp.object_type, pgmold::model::DefaultPrivilegeObjectType::Functions);
+    assert_eq!(
+        dp.object_type,
+        pgmold::model::DefaultPrivilegeObjectType::Functions
+    );
     assert!(dp.privileges.contains(&pgmold::model::Privilege::Execute));
 }
 
@@ -120,7 +126,8 @@ async fn round_trip_default_privileges() {
     let ops = compute_diff(&db_schema, &source_schema);
 
     assert!(
-        ops.iter().any(|op| matches!(op, MigrationOp::AlterDefaultPrivileges { .. })),
+        ops.iter()
+            .any(|op| matches!(op, MigrationOp::AlterDefaultPrivileges { .. })),
         "Should generate AlterDefaultPrivileges. Ops: {:?}",
         ops
     );

@@ -1875,7 +1875,6 @@ async fn introspect_type_grants(
     Ok(result)
 }
 
-
 async fn introspect_default_privileges(
     connection: &PgConnection,
     target_schemas: &[String],
@@ -1942,7 +1941,8 @@ async fn introspect_default_privileges(
     }
 
     let mut result = Vec::new();
-    for ((target_role, schema, object_type_str, grantee, with_grant_option), privileges) in grouped {
+    for ((target_role, schema, object_type_str, grantee, with_grant_option), privileges) in grouped
+    {
         let object_type = match object_type_str.as_str() {
             "TABLES" => DefaultPrivilegeObjectType::Tables,
             "SEQUENCES" => DefaultPrivilegeObjectType::Sequences,
