@@ -103,6 +103,9 @@ fn preprocess_sql(sql: &str) -> String {
     let alter_type_re = Regex::new(r"(?i)ALTER\s+TYPE\s+[^;]+;").unwrap();
     // Remove ALTER DOMAIN statements (sqlparser doesn't support them)
     let alter_domain_re = Regex::new(r"(?i)ALTER\s+DOMAIN\s+[^;]+;").unwrap();
+    // Remove ALTER DEFAULT PRIVILEGES statements (sqlparser doesn't support them, parsed separately)
+    let alter_default_privileges_re =
+        Regex::new(r"(?i)ALTER\s+DEFAULT\s+PRIVILEGES\s+[^;]+;").unwrap();
     // Remove REVOKE statements (must be before GRANT since REVOKE contains GRANT keyword)
     let revoke_re = Regex::new(r"(?i)REVOKE\s+[^;]+;").unwrap();
     // Remove GRANT statements (sqlparser doesn't support them, but we'll parse them separately)
@@ -115,6 +118,7 @@ fn preprocess_sql(sql: &str) -> String {
     let processed = alter_sequence_re.replace_all(&processed, "");
     let processed = alter_type_re.replace_all(&processed, "");
     let processed = alter_domain_re.replace_all(&processed, "");
+    let processed = alter_default_privileges_re.replace_all(&processed, "");
     let processed = revoke_re.replace_all(&processed, "");
     let processed = grant_re.replace_all(&processed, "");
 
@@ -982,6 +986,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
     // Parse REVOKE statements
     parse_revoke_statements(sql, &mut schema)?;
 
+    // Parse ALTER DEFAULT PRIVILEGES statements
+    parse_alter_default_privileges(sql, &mut schema)?;
+
     // Associate pending policies with their tables.
     // Orphaned policies (referencing non-existent tables) remain in pending_policies
     // for potential resolution after schema merging in load_schema_sources.
@@ -1215,6 +1222,103 @@ fn revoke_from_grants(
             true
         }
     });
+}
+
+
+fn parse_alter_default_privileges(sql: &str, schema: &mut Schema) -> Result<()> {
+    use regex::Regex;
+    use std::collections::BTreeSet;
+
+    // Pattern: ALTER DEFAULT PRIVILEGES [FOR ROLE role] [IN SCHEMA schema]
+    //          GRANT privileges ON object_type TO grantee [WITH GRANT OPTION]
+    let grant_re = Regex::new(
+        r"(?is)ALTER\s+DEFAULT\s+PRIVILEGES\s+(?:FOR\s+ROLE\s+(\w+)\s+)?(?:IN\s+SCHEMA\s+(\w+)\s+)?GRANT\s+(.+?)\s+ON\s+(TABLES|SEQUENCES|FUNCTIONS|ROUTINES|TYPES|SCHEMAS)\s+TO\s+(\w+|PUBLIC)\s*(WITH\s+GRANT\s+OPTION)?\s*;"
+    ).unwrap();
+
+    for cap in grant_re.captures_iter(sql) {
+        let target_role = cap
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_else(|| "CURRENT_ROLE".to_string());
+        let schema_scope = cap.get(2).map(|m| m.as_str().to_string());
+        let privileges_str = cap.get(3).unwrap().as_str();
+        let object_type_str = cap.get(4).unwrap().as_str().to_uppercase();
+        let grantee = cap.get(5).unwrap().as_str().to_string();
+        let with_grant_option = cap.get(6).is_some();
+
+        let object_type = match object_type_str.as_str() {
+            "TABLES" => DefaultPrivilegeObjectType::Tables,
+            "SEQUENCES" => DefaultPrivilegeObjectType::Sequences,
+            "FUNCTIONS" => DefaultPrivilegeObjectType::Functions,
+            "ROUTINES" => DefaultPrivilegeObjectType::Routines,
+            "TYPES" => DefaultPrivilegeObjectType::Types,
+            "SCHEMAS" => DefaultPrivilegeObjectType::Schemas,
+            _ => continue,
+        };
+
+        let mut privileges = BTreeSet::new();
+        let priv_upper = privileges_str.to_uppercase();
+        if priv_upper.contains("ALL") {
+            match object_type {
+                DefaultPrivilegeObjectType::Tables => {
+                    privileges.insert(Privilege::Select);
+                    privileges.insert(Privilege::Insert);
+                    privileges.insert(Privilege::Update);
+                    privileges.insert(Privilege::Delete);
+                    privileges.insert(Privilege::Truncate);
+                    privileges.insert(Privilege::References);
+                    privileges.insert(Privilege::Trigger);
+                }
+                DefaultPrivilegeObjectType::Sequences => {
+                    privileges.insert(Privilege::Usage);
+                    privileges.insert(Privilege::Select);
+                    privileges.insert(Privilege::Update);
+                }
+                DefaultPrivilegeObjectType::Functions | DefaultPrivilegeObjectType::Routines => {
+                    privileges.insert(Privilege::Execute);
+                }
+                DefaultPrivilegeObjectType::Types => {
+                    privileges.insert(Privilege::Usage);
+                }
+                DefaultPrivilegeObjectType::Schemas => {
+                    privileges.insert(Privilege::Usage);
+                    privileges.insert(Privilege::Create);
+                }
+            }
+        } else {
+            for priv_str in privileges_str.split(',') {
+                let priv_trimmed = priv_str.trim().to_uppercase();
+                match priv_trimmed.as_str() {
+                    "SELECT" => privileges.insert(Privilege::Select),
+                    "INSERT" => privileges.insert(Privilege::Insert),
+                    "UPDATE" => privileges.insert(Privilege::Update),
+                    "DELETE" => privileges.insert(Privilege::Delete),
+                    "TRUNCATE" => privileges.insert(Privilege::Truncate),
+                    "REFERENCES" => privileges.insert(Privilege::References),
+                    "TRIGGER" => privileges.insert(Privilege::Trigger),
+                    "USAGE" => privileges.insert(Privilege::Usage),
+                    "EXECUTE" => privileges.insert(Privilege::Execute),
+                    "CREATE" => privileges.insert(Privilege::Create),
+                    _ => continue,
+                };
+            }
+        }
+
+        if privileges.is_empty() {
+            continue;
+        }
+
+        schema.default_privileges.push(DefaultPrivilege {
+            target_role,
+            schema: schema_scope,
+            object_type,
+            grantee,
+            privileges,
+            with_grant_option,
+        });
+    }
+
+    Ok(())
 }
 
 fn parse_object_name(name: &str) -> (String, String) {
@@ -4302,6 +4406,71 @@ ALTER TABLE users RENAME CONSTRAINT users_email_idx TO users_email_index;
 
         assert!(table.indexes.iter().all(|i| i.name != "users_email_idx"));
         assert!(table.indexes.iter().any(|i| i.name == "users_email_index"));
+    }
+
+
+    #[test]
+    fn parses_alter_default_privileges_for_role_in_schema() {
+        let sql = r#"
+            ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA public
+            GRANT SELECT, INSERT ON TABLES TO app_user;
+        "#;
+
+        let schema = parse_sql_string(sql).unwrap();
+        assert_eq!(schema.default_privileges.len(), 1);
+
+        let dp = &schema.default_privileges[0];
+        assert_eq!(dp.target_role, "admin");
+        assert_eq!(dp.schema, Some("public".to_string()));
+        assert_eq!(dp.object_type, DefaultPrivilegeObjectType::Tables);
+        assert_eq!(dp.grantee, "app_user");
+        assert!(dp.privileges.contains(&Privilege::Select));
+        assert!(dp.privileges.contains(&Privilege::Insert));
+        assert!(!dp.with_grant_option);
+    }
+
+    #[test]
+    fn parses_alter_default_privileges_global() {
+        let sql = r#"
+            ALTER DEFAULT PRIVILEGES FOR ROLE admin
+            GRANT ALL ON SEQUENCES TO app_user WITH GRANT OPTION;
+        "#;
+
+        let schema = parse_sql_string(sql).unwrap();
+        assert_eq!(schema.default_privileges.len(), 1);
+
+        let dp = &schema.default_privileges[0];
+        assert_eq!(dp.target_role, "admin");
+        assert_eq!(dp.schema, None);
+        assert_eq!(dp.object_type, DefaultPrivilegeObjectType::Sequences);
+        assert!(dp.with_grant_option);
+    }
+
+    #[test]
+    fn parses_alter_default_privileges_implicit_role() {
+        let sql = r#"
+            ALTER DEFAULT PRIVILEGES IN SCHEMA api
+            GRANT EXECUTE ON FUNCTIONS TO service_role;
+        "#;
+
+        let schema = parse_sql_string(sql).unwrap();
+        assert_eq!(schema.default_privileges.len(), 1);
+
+        let dp = &schema.default_privileges[0];
+        assert_eq!(dp.target_role, "CURRENT_ROLE");
+        assert_eq!(dp.schema, Some("api".to_string()));
+        assert_eq!(dp.object_type, DefaultPrivilegeObjectType::Functions);
+    }
+
+    #[test]
+    fn parses_alter_default_privileges_revoke() {
+        let sql = r#"
+            ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA public
+            REVOKE SELECT ON TABLES FROM app_user;
+        "#;
+
+        let schema = parse_sql_string(sql).unwrap();
+        assert_eq!(schema.default_privileges.len(), 0);
     }
 
     #[test]
