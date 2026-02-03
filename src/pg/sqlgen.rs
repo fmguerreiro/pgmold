@@ -437,6 +437,11 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             )]
         }
 
+        MigrationOp::AlterDefaultPrivileges { .. } => {
+            // TODO: Implement in Task 6 (sqlgen for AlterDefaultPrivileges)
+            vec![]
+        }
+
         MigrationOp::CreateVersionSchema {
             base_schema,
             version,

@@ -182,6 +182,16 @@ pub enum MigrationOp {
         revoke_grant_option: bool,
     },
 
+    AlterDefaultPrivileges {
+        target_role: String,
+        schema: Option<String>,
+        object_type: crate::model::DefaultPrivilegeObjectType,
+        grantee: String,
+        privileges: Vec<crate::model::Privilege>,
+        with_grant_option: bool,
+        revoke: bool,
+    },
+
     /// Create a version schema for expand/contract migrations (e.g., public_v0001)
     CreateVersionSchema {
         base_schema: String,
@@ -1941,6 +1951,27 @@ fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
         } else {
             None
         },
+    }
+}
+
+
+#[cfg(test)]
+mod migration_op_variant_tests {
+    use super::*;
+
+    #[test]
+    fn migration_op_alter_default_privileges_exists() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        let _op = MigrationOp::AlterDefaultPrivileges {
+            target_role: "admin".to_string(),
+            schema: Some("public".to_string()),
+            object_type: DefaultPrivilegeObjectType::Tables,
+            grantee: "app_user".to_string(),
+            privileges: vec![Privilege::Select],
+            with_grant_option: false,
+            revoke: false,
+        };
     }
 }
 

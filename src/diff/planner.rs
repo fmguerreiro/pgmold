@@ -149,6 +149,12 @@ pub enum OpKey {
         name: String,
         grantee: String,
     },
+    AlterDefaultPrivileges {
+        target_role: String,
+        schema: Option<String>,
+        object_type: String,
+        grantee: String,
+    },
     CreateVersionSchema {
         base_schema: String,
         version: String,
@@ -347,6 +353,18 @@ impl OpKey {
                 object_kind: format!("{object_kind:?}"),
                 schema: schema.clone(),
                 name: name.clone(),
+                grantee: grantee.clone(),
+            },
+            MigrationOp::AlterDefaultPrivileges {
+                target_role,
+                schema,
+                object_type,
+                grantee,
+                ..
+            } => OpKey::AlterDefaultPrivileges {
+                target_role: target_role.clone(),
+                schema: schema.clone(),
+                object_type: format!("{object_type:?}"),
                 grantee: grantee.clone(),
             },
             MigrationOp::CreateVersionSchema {
