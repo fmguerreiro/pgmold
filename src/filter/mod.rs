@@ -21,6 +21,7 @@ pub enum ObjectType {
     Indexes,
     ForeignKeys,
     CheckConstraints,
+    DefaultPrivileges,
 }
 
 impl FromStr for ObjectType {
@@ -42,8 +43,9 @@ impl FromStr for ObjectType {
             "indexes" => Ok(ObjectType::Indexes),
             "foreignkeys" => Ok(ObjectType::ForeignKeys),
             "checkconstraints" => Ok(ObjectType::CheckConstraints),
+            "defaultprivileges" => Ok(ObjectType::DefaultPrivileges),
             _ => Err(format!(
-                "Invalid object type '{s}'. Valid types: schemas, extensions, tables, enums, domains, functions, views, triggers, sequences, partitions, policies, indexes, foreignkeys, checkconstraints"
+                "Invalid object type '{s}'. Valid types: schemas, extensions, tables, enums, domains, functions, views, triggers, sequences, partitions, policies, indexes, foreignkeys, checkconstraints, defaultprivileges"
             )),
         }
     }
@@ -66,6 +68,7 @@ impl fmt::Display for ObjectType {
             ObjectType::Indexes => "indexes",
             ObjectType::ForeignKeys => "foreignkeys",
             ObjectType::CheckConstraints => "checkconstraints",
+            ObjectType::DefaultPrivileges => "defaultprivileges",
         };
         write!(f, "{s}")
     }
@@ -1537,5 +1540,13 @@ mod tests {
         let filtered_table = filtered_schema.tables.get("public.users").unwrap();
         assert_eq!(filtered_table.indexes.len(), 1);
         assert_eq!(filtered_table.policies.len(), 0);
+    }
+
+    #[test]
+    fn filter_excludes_default_privileges() {
+        let filter = Filter::new(&[], &[], &[], &[ObjectType::DefaultPrivileges]).unwrap();
+
+        assert!(filter.exclude_types.contains(&ObjectType::DefaultPrivileges));
+        assert!(!filter.should_include_type(ObjectType::DefaultPrivileges));
     }
 }
