@@ -86,11 +86,29 @@ impl ObjectType {
     }
 }
 
+#[derive(Clone)]
 pub struct Filter {
     include: Vec<Pattern>,
     exclude: Vec<Pattern>,
     include_types: HashSet<ObjectType>,
     exclude_types: HashSet<ObjectType>,
+}
+
+impl std::fmt::Debug for Filter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Filter")
+            .field(
+                "include",
+                &self.include.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+            )
+            .field(
+                "exclude",
+                &self.exclude.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+            )
+            .field("include_types", &self.include_types)
+            .field("exclude_types", &self.exclude_types)
+            .finish()
+    }
 }
 
 impl Filter {
