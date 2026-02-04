@@ -995,15 +995,16 @@ fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
 
     // Pattern: GRANT privileges ON [object_type] qualified_name TO grantee [WITH GRANT OPTION]
     // Handle TABLE, VIEW, SEQUENCE, FUNCTION, SCHEMA, TYPE objects
+    // Grantee can be: unquoted identifier, "quoted identifier", or PUBLIC
     let grant_re = Regex::new(
-        r"(?i)GRANT\s+(.+?)\s+ON\s+(?:(TABLE|VIEW|SEQUENCE|FUNCTION|SCHEMA|TYPE)\s+)?(.+?)\s+TO\s+(\w+|PUBLIC)\s*(WITH\s+GRANT\s+OPTION)?"
+        r#"(?i)GRANT\s+(.+?)\s+ON\s+(?:(TABLE|VIEW|SEQUENCE|FUNCTION|SCHEMA|TYPE)\s+)?(.+?)\s+TO\s+("[\w]+"|\w+|PUBLIC)\s*(WITH\s+GRANT\s+OPTION)?"#
     ).unwrap();
 
     for cap in grant_re.captures_iter(sql) {
         let privileges_str = cap.get(1).unwrap().as_str();
         let object_type = cap.get(2).map(|m| m.as_str().to_uppercase());
         let object_name_raw = cap.get(3).unwrap().as_str();
-        let grantee = cap.get(4).unwrap().as_str();
+        let grantee = cap.get(4).unwrap().as_str().trim_matches('"');
         let with_grant_option = cap.get(5).is_some();
 
         // Parse privileges (comma-separated)
@@ -1095,8 +1096,9 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
     use std::collections::BTreeSet;
 
     // Pattern: REVOKE [GRANT OPTION FOR] privileges ON [object_type] qualified_name FROM grantee;
+    // Grantee can be: unquoted identifier, "quoted identifier", or PUBLIC
     let revoke_re = Regex::new(
-        r"(?i)REVOKE\s+(GRANT\s+OPTION\s+FOR\s+)?(.+?)\s+ON\s+(?:(TABLE|VIEW|SEQUENCE|FUNCTION|SCHEMA|TYPE)\s+)?(.+?)\s+FROM\s+(\w+|PUBLIC)\s*;"
+        r#"(?i)REVOKE\s+(GRANT\s+OPTION\s+FOR\s+)?(.+?)\s+ON\s+(?:(TABLE|VIEW|SEQUENCE|FUNCTION|SCHEMA|TYPE)\s+)?(.+?)\s+FROM\s+("[\w]+"|\w+|PUBLIC)\s*;"#
     ).unwrap();
 
     for cap in revoke_re.captures_iter(sql) {
@@ -1104,7 +1106,7 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
         let privileges_str = cap.get(2).unwrap().as_str();
         let object_type = cap.get(3).map(|m| m.as_str().to_uppercase());
         let object_name_raw = cap.get(4).unwrap().as_str();
-        let grantee = cap.get(5).unwrap().as_str();
+        let grantee = cap.get(5).unwrap().as_str().trim_matches('"');
 
         // Parse privileges (comma-separated)
         let mut privileges = BTreeSet::new();

@@ -1,13 +1,42 @@
 use crate::diff::planner::plan_dump;
-use crate::diff::MigrationOp;
-use crate::model::{qualified_name, Schema};
+use crate::diff::{GrantObjectKind, MigrationOp};
+use crate::model::{qualified_name, Grant, Schema};
 use crate::pg::sqlgen::generate_sql;
+
+/// Helper to generate GrantPrivileges operations for a list of grants
+fn grants_to_ops(
+    grants: &[Grant],
+    object_kind: GrantObjectKind,
+    schema: &str,
+    name: &str,
+    args: Option<String>,
+) -> Vec<MigrationOp> {
+    grants
+        .iter()
+        .map(|grant| MigrationOp::GrantPrivileges {
+            object_kind: object_kind.clone(),
+            schema: schema.to_string(),
+            name: name.to_string(),
+            args: args.clone(),
+            grantee: grant.grantee.clone(),
+            privileges: grant.privileges.iter().cloned().collect(),
+            with_grant_option: grant.with_grant_option,
+        })
+        .collect()
+}
 
 pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for pg_schema in schema.schemas.values() {
         ops.push(MigrationOp::CreateSchema(pg_schema.clone()));
+        ops.extend(grants_to_ops(
+            &pg_schema.grants,
+            GrantObjectKind::Schema,
+            &pg_schema.name,
+            &pg_schema.name,
+            None,
+        ));
     }
 
     for extension in schema.extensions.values() {
@@ -25,6 +54,13 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
                 new_owner: owner.clone(),
             });
         }
+        ops.extend(grants_to_ops(
+            &enum_type.grants,
+            GrantObjectKind::Type,
+            &enum_type.schema,
+            &enum_type.name,
+            None,
+        ));
     }
 
     for domain in schema.domains.values() {
@@ -38,6 +74,13 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
                 new_owner: owner.clone(),
             });
         }
+        ops.extend(grants_to_ops(
+            &domain.grants,
+            GrantObjectKind::Domain,
+            &domain.schema,
+            &domain.name,
+            None,
+        ));
     }
 
     for sequence in schema.sequences.values() {
@@ -51,6 +94,13 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
                 new_owner: owner.clone(),
             });
         }
+        ops.extend(grants_to_ops(
+            &sequence.grants,
+            GrantObjectKind::Sequence,
+            &sequence.schema,
+            &sequence.name,
+            None,
+        ));
     }
 
     for table in schema.tables.values() {
@@ -79,6 +129,14 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
         for policy in &table.policies {
             ops.push(MigrationOp::CreatePolicy(policy.clone()));
         }
+
+        ops.extend(grants_to_ops(
+            &table.grants,
+            GrantObjectKind::Table,
+            &table.schema,
+            &table.name,
+            None,
+        ));
     }
 
     for partition in schema.partitions.values() {
@@ -87,22 +145,28 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
 
     for function in schema.functions.values() {
         ops.push(MigrationOp::CreateFunction(function.clone()));
+        let func_args = function
+            .arguments
+            .iter()
+            .map(|a| crate::model::normalize_pg_type(&a.data_type))
+            .collect::<Vec<_>>()
+            .join(", ");
         if let Some(ref owner) = function.owner {
             ops.push(MigrationOp::AlterOwner {
                 object_kind: crate::diff::OwnerObjectKind::Function,
                 schema: function.schema.clone(),
                 name: function.name.clone(),
-                args: Some(
-                    function
-                        .arguments
-                        .iter()
-                        .map(|a| crate::model::normalize_pg_type(&a.data_type))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                ),
+                args: Some(func_args.clone()),
                 new_owner: owner.clone(),
             });
         }
+        ops.extend(grants_to_ops(
+            &function.grants,
+            GrantObjectKind::Function,
+            &function.schema,
+            &function.name,
+            Some(func_args),
+        ));
     }
 
     for view in schema.views.values() {
@@ -116,6 +180,13 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
                 new_owner: owner.clone(),
             });
         }
+        ops.extend(grants_to_ops(
+            &view.grants,
+            GrantObjectKind::View,
+            &view.schema,
+            &view.name,
+            None,
+        ));
     }
 
     for trigger in schema.triggers.values() {
@@ -166,6 +237,7 @@ pub struct SplitDump {
     pub views: String,
     pub triggers: String,
     pub policies: String,
+    pub grants: String,
 }
 
 pub fn generate_split_dump(schema: &Schema) -> SplitDump {
@@ -180,6 +252,7 @@ pub fn generate_split_dump(schema: &Schema) -> SplitDump {
     let mut view_ops = Vec::new();
     let mut trigger_ops = Vec::new();
     let mut policy_ops = Vec::new();
+    let mut grant_ops = Vec::new();
 
     for op in planned {
         match &op {
@@ -193,6 +266,8 @@ pub fn generate_split_dump(schema: &Schema) -> SplitDump {
             MigrationOp::CreateView(_) => view_ops.push(op),
             MigrationOp::CreateTrigger(_) => trigger_ops.push(op),
             MigrationOp::CreatePolicy(_) => policy_ops.push(op),
+            MigrationOp::GrantPrivileges { .. }
+            | MigrationOp::AlterDefaultPrivileges { .. } => grant_ops.push(op),
             _ => {}
         }
     }
@@ -205,6 +280,7 @@ pub fn generate_split_dump(schema: &Schema) -> SplitDump {
     let views = generate_sql(&view_ops).join("\n\n") + "\n";
     let triggers = generate_sql(&trigger_ops).join("\n\n") + "\n";
     let policies = generate_sql(&policy_ops).join("\n\n") + "\n";
+    let grants = generate_sql(&grant_ops).join("\n\n") + "\n";
 
     SplitDump {
         extensions,
@@ -215,6 +291,7 @@ pub fn generate_split_dump(schema: &Schema) -> SplitDump {
         views,
         triggers,
         policies,
+        grants,
     }
 }
 
@@ -422,6 +499,7 @@ mod tests {
         assert_eq!(split.views, "\n");
         assert_eq!(split.triggers, "\n");
         assert_eq!(split.policies, "\n");
+        assert_eq!(split.grants, "\n");
     }
 
     #[test]
@@ -495,6 +573,7 @@ mod tests {
         assert_eq!(split.views, "\n");
         assert_eq!(split.triggers, "\n");
         assert_eq!(split.policies, "\n");
+        assert_eq!(split.grants, "\n");
     }
 
     #[test]
@@ -517,5 +596,184 @@ mod tests {
         assert!(split.tables.contains("CREATE TABLE"));
         assert!(split.tables.contains("PARTITION BY"));
         assert!(split.tables.contains("events_2024"));
+    }
+
+    #[test]
+    fn dump_includes_table_grants() {
+        use crate::model::{Grant, Privilege, Table};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let mut schema = Schema::default();
+        let mut privileges = BTreeSet::new();
+        privileges.insert(Privilege::Select);
+        privileges.insert(Privilege::Insert);
+
+        let table = Table {
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: vec![],
+            primary_key: None,
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            comment: None,
+            row_level_security: false,
+            policies: vec![],
+            partition_by: None,
+            owner: None,
+            grants: vec![Grant {
+                grantee: "app_user".to_string(),
+                privileges,
+                with_grant_option: false,
+            }],
+        };
+        schema.tables.insert("public.users".to_string(), table);
+
+        let dump = generate_dump(&schema, None);
+
+        assert!(dump.contains("GRANT"), "Dump should contain GRANT statement");
+        assert!(dump.contains("app_user"), "Dump should contain grantee");
+        assert!(
+            dump.contains("SELECT") || dump.contains("INSERT"),
+            "Dump should contain privileges"
+        );
+    }
+
+    #[test]
+    fn dump_includes_sequence_grants() {
+        use crate::model::{Grant, Privilege, Sequence, SequenceDataType};
+        use std::collections::BTreeSet;
+
+        let mut schema = Schema::default();
+        let mut privileges = BTreeSet::new();
+        privileges.insert(Privilege::Select);
+        privileges.insert(Privilege::Update);
+        privileges.insert(Privilege::Usage);
+
+        let sequence = Sequence {
+            name: "refresh_tokens_id_seq".to_string(),
+            schema: "auth".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cache: Some(1),
+            cycle: false,
+            owner: None,
+            owned_by: None,
+            grants: vec![
+                Grant {
+                    grantee: "supabase_auth_admin".to_string(),
+                    privileges: privileges.clone(),
+                    with_grant_option: false,
+                },
+                Grant {
+                    grantee: "dashboard_user".to_string(),
+                    privileges,
+                    with_grant_option: false,
+                },
+            ],
+        };
+        schema
+            .sequences
+            .insert("auth.refresh_tokens_id_seq".to_string(), sequence);
+
+        let dump = generate_dump(&schema, None);
+
+        assert!(
+            dump.contains("supabase_auth_admin"),
+            "Dump should contain supabase_auth_admin grant"
+        );
+        assert!(
+            dump.contains("dashboard_user"),
+            "Dump should contain dashboard_user grant"
+        );
+        assert!(
+            dump.contains("USAGE"),
+            "Dump should contain USAGE privilege"
+        );
+    }
+
+    #[test]
+    fn dump_grants_round_trip() {
+        use crate::model::{Grant, Privilege, Table};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let mut schema = Schema::default();
+        let mut privileges = BTreeSet::new();
+        privileges.insert(Privilege::Select);
+
+        let table = Table {
+            schema: "public".to_string(),
+            name: "items".to_string(),
+            columns: BTreeMap::new(),
+            indexes: vec![],
+            primary_key: None,
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            comment: None,
+            row_level_security: false,
+            policies: vec![],
+            partition_by: None,
+            owner: None,
+            grants: vec![Grant {
+                grantee: "readonly".to_string(),
+                privileges,
+                with_grant_option: false,
+            }],
+        };
+        schema.tables.insert("public.items".to_string(), table);
+
+        let dump = generate_dump(&schema, None);
+
+        // The dump should be parseable
+        let result = parse_sql_string(&dump);
+        assert!(
+            result.is_ok(),
+            "Failed to parse generated dump with grants: {result:?}\n\nDump:\n{dump}"
+        );
+
+        // Verify the parsed schema has the grant
+        let parsed = result.unwrap();
+        let parsed_table = parsed.tables.get("public.items").unwrap();
+        assert_eq!(parsed_table.grants.len(), 1);
+        assert_eq!(parsed_table.grants[0].grantee, "readonly");
+    }
+
+    #[test]
+    fn split_dump_includes_grants() {
+        use crate::model::{Grant, Privilege, Table};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let mut schema = Schema::default();
+        let mut privileges = BTreeSet::new();
+        privileges.insert(Privilege::Select);
+
+        let table = Table {
+            schema: "public".to_string(),
+            name: "data".to_string(),
+            columns: BTreeMap::new(),
+            indexes: vec![],
+            primary_key: None,
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            comment: None,
+            row_level_security: false,
+            policies: vec![],
+            partition_by: None,
+            owner: None,
+            grants: vec![Grant {
+                grantee: "analyst".to_string(),
+                privileges,
+                with_grant_option: false,
+            }],
+        };
+        schema.tables.insert("public.data".to_string(), table);
+
+        let split = generate_split_dump(&schema);
+
+        assert!(split.grants.contains("GRANT"), "Grants section should contain GRANT");
+        assert!(split.grants.contains("analyst"), "Grants section should contain grantee");
     }
 }
