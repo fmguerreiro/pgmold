@@ -217,11 +217,6 @@ async fn sequence_with_grants_from_scratch() {
     let planned = plan_migration(ops);
     let sql_stmts = generate_sql(&planned);
 
-    // Debug: Print the order of operations
-    for (i, stmt) in sql_stmts.iter().enumerate() {
-        eprintln!("Statement {i}: {stmt}");
-    }
-
     // Execute all statements - the bug causes this to fail
     for stmt in &sql_stmts {
         sqlx::query(stmt)

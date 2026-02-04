@@ -396,6 +396,39 @@ impl OpKey {
     }
 }
 
+/// Helper to add dependency edge from a Create op to a Grant/Revoke op.
+/// Used for both GrantPrivileges and RevokePrivileges to ensure objects exist before granting.
+fn add_privilege_dependency_edge(
+    edges: &mut Vec<(OpKey, OpKey)>,
+    object_kind: &str,
+    schema: &str,
+    name: &str,
+    args: Option<&String>,
+    key: &OpKey,
+) {
+    let qualified = qualified_name(schema, name);
+    match object_kind {
+        "Table" => edges.push((OpKey::CreateTable(qualified), key.clone())),
+        "View" => edges.push((OpKey::CreateView(qualified), key.clone())),
+        "Sequence" => edges.push((OpKey::CreateSequence(qualified), key.clone())),
+        "Type" => edges.push((OpKey::CreateEnum(qualified), key.clone())),
+        "Domain" => edges.push((OpKey::CreateDomain(qualified), key.clone())),
+        "Schema" => edges.push((OpKey::CreateSchema(name.to_string()), key.clone())),
+        "Function" => {
+            if let Some(args) = args {
+                edges.push((
+                    OpKey::CreateFunction {
+                        name: qualified,
+                        args: args.clone(),
+                    },
+                    key.clone(),
+                ));
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Vertex in the dependency graph, wrapping a MigrationOp.
 #[derive(Clone)]
 struct OpVertex {
@@ -927,44 +960,18 @@ impl MigrationGraph {
                     name,
                     ..
                 } => {
-                    let qualified = qualified_name(schema, name);
-                    match object_kind.as_str() {
-                        "Table" => {
-                            edges_to_add.push((OpKey::CreateTable(qualified), key.clone()));
-                        }
-                        "View" => {
-                            edges_to_add.push((OpKey::CreateView(qualified), key.clone()));
-                        }
-                        "Sequence" => {
-                            edges_to_add.push((OpKey::CreateSequence(qualified), key.clone()));
-                        }
-                        "Type" => {
-                            edges_to_add.push((OpKey::CreateEnum(qualified), key.clone()));
-                        }
-                        "Domain" => {
-                            edges_to_add.push((OpKey::CreateDomain(qualified), key.clone()));
-                        }
-                        "Schema" => {
-                            edges_to_add.push((OpKey::CreateSchema(name.clone()), key.clone()));
-                        }
-                        "Function" => {
-                            // For functions, we need to find the matching CreateFunction
-                            // by looking at the MigrationOp to get the args signature
-                            if let Some(MigrationOp::GrantPrivileges {
-                                args: Some(args), ..
-                            }) = self.get_op(key)
-                            {
-                                edges_to_add.push((
-                                    OpKey::CreateFunction {
-                                        name: qualified,
-                                        args: args.clone(),
-                                    },
-                                    key.clone(),
-                                ));
-                            }
-                        }
-                        _ => {}
-                    }
+                    let args = match self.get_op(key) {
+                        Some(MigrationOp::GrantPrivileges { args: Some(a), .. }) => Some(a.clone()),
+                        _ => None,
+                    };
+                    add_privilege_dependency_edge(
+                        &mut edges_to_add,
+                        object_kind,
+                        schema,
+                        name,
+                        args.as_ref(),
+                        key,
+                    );
                 }
 
                 // RevokePrivileges depends on the object existing
@@ -974,44 +981,20 @@ impl MigrationGraph {
                     name,
                     ..
                 } => {
-                    let qualified = qualified_name(schema, name);
-                    match object_kind.as_str() {
-                        "Table" => {
-                            edges_to_add.push((OpKey::CreateTable(qualified), key.clone()));
+                    let args = match self.get_op(key) {
+                        Some(MigrationOp::RevokePrivileges { args: Some(a), .. }) => {
+                            Some(a.clone())
                         }
-                        "View" => {
-                            edges_to_add.push((OpKey::CreateView(qualified), key.clone()));
-                        }
-                        "Sequence" => {
-                            edges_to_add.push((OpKey::CreateSequence(qualified), key.clone()));
-                        }
-                        "Type" => {
-                            edges_to_add.push((OpKey::CreateEnum(qualified), key.clone()));
-                        }
-                        "Domain" => {
-                            edges_to_add.push((OpKey::CreateDomain(qualified), key.clone()));
-                        }
-                        "Schema" => {
-                            edges_to_add.push((OpKey::CreateSchema(name.clone()), key.clone()));
-                        }
-                        "Function" => {
-                            // For functions, we need to find the matching CreateFunction
-                            // by looking at the MigrationOp to get the args signature
-                            if let Some(MigrationOp::RevokePrivileges {
-                                args: Some(args), ..
-                            }) = self.get_op(key)
-                            {
-                                edges_to_add.push((
-                                    OpKey::CreateFunction {
-                                        name: qualified,
-                                        args: args.clone(),
-                                    },
-                                    key.clone(),
-                                ));
-                            }
-                        }
-                        _ => {}
-                    }
+                        _ => None,
+                    };
+                    add_privilege_dependency_edge(
+                        &mut edges_to_add,
+                        object_kind,
+                        schema,
+                        name,
+                        args.as_ref(),
+                        key,
+                    );
                 }
 
                 _ => {}
@@ -2644,6 +2627,136 @@ mod tests {
         assert!(
             create_seq_pos < revoke_pos,
             "CreateSequence must come before RevokePrivileges. CREATE at {create_seq_pos}, REVOKE at {revoke_pos}"
+        );
+    }
+
+    #[test]
+    fn grant_privileges_on_enum_after_create_enum() {
+        use crate::diff::GrantObjectKind;
+        use crate::model::Privilege;
+
+        let my_enum = EnumType {
+            name: "status".to_string(),
+            schema: "public".to_string(),
+            values: vec!["active".to_string(), "inactive".to_string()],
+            owner: None,
+            grants: vec![],
+        };
+
+        let ops = vec![
+            MigrationOp::GrantPrivileges {
+                object_kind: GrantObjectKind::Type,
+                schema: "public".to_string(),
+                name: "status".to_string(),
+                args: None,
+                grantee: "app_user".to_string(),
+                privileges: vec![Privilege::Usage],
+                with_grant_option: false,
+            },
+            MigrationOp::CreateEnum(my_enum),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_enum_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateEnum(_)))
+            .expect("CreateEnum should exist");
+        let grant_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::GrantPrivileges { .. }))
+            .expect("GrantPrivileges should exist");
+
+        assert!(
+            create_enum_pos < grant_pos,
+            "CreateEnum must come before GrantPrivileges. CREATE at {create_enum_pos}, GRANT at {grant_pos}"
+        );
+    }
+
+    #[test]
+    fn grant_privileges_on_domain_after_create_domain() {
+        use crate::diff::GrantObjectKind;
+        use crate::model::Privilege;
+
+        let domain = Domain {
+            name: "email".to_string(),
+            schema: "public".to_string(),
+            data_type: PgType::Text,
+            default: None,
+            not_null: false,
+            collation: None,
+            check_constraints: vec![],
+            owner: None,
+            grants: vec![],
+        };
+
+        let ops = vec![
+            MigrationOp::GrantPrivileges {
+                object_kind: GrantObjectKind::Domain,
+                schema: "public".to_string(),
+                name: "email".to_string(),
+                args: None,
+                grantee: "app_user".to_string(),
+                privileges: vec![Privilege::Usage],
+                with_grant_option: false,
+            },
+            MigrationOp::CreateDomain(domain),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_domain_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateDomain(_)))
+            .expect("CreateDomain should exist");
+        let grant_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::GrantPrivileges { .. }))
+            .expect("GrantPrivileges should exist");
+
+        assert!(
+            create_domain_pos < grant_pos,
+            "CreateDomain must come before GrantPrivileges. CREATE at {create_domain_pos}, GRANT at {grant_pos}"
+        );
+    }
+
+    #[test]
+    fn grant_privileges_on_schema_after_create_schema() {
+        use crate::diff::GrantObjectKind;
+        use crate::model::Privilege;
+
+        let schema = PgSchema {
+            name: "api".to_string(),
+            grants: vec![],
+        };
+
+        let ops = vec![
+            MigrationOp::GrantPrivileges {
+                object_kind: GrantObjectKind::Schema,
+                schema: "api".to_string(),
+                name: "api".to_string(),
+                args: None,
+                grantee: "app_user".to_string(),
+                privileges: vec![Privilege::Usage],
+                with_grant_option: false,
+            },
+            MigrationOp::CreateSchema(schema),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_schema_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateSchema(_)))
+            .expect("CreateSchema should exist");
+        let grant_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::GrantPrivileges { .. }))
+            .expect("GrantPrivileges should exist");
+
+        assert!(
+            create_schema_pos < grant_pos,
+            "CreateSchema must come before GrantPrivileges. CREATE at {create_schema_pos}, GRANT at {grant_pos}"
         );
     }
 
