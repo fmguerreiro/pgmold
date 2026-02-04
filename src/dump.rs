@@ -266,8 +266,9 @@ pub fn generate_split_dump(schema: &Schema) -> SplitDump {
             MigrationOp::CreateView(_) => view_ops.push(op),
             MigrationOp::CreateTrigger(_) => trigger_ops.push(op),
             MigrationOp::CreatePolicy(_) => policy_ops.push(op),
-            MigrationOp::GrantPrivileges { .. }
-            | MigrationOp::AlterDefaultPrivileges { .. } => grant_ops.push(op),
+            MigrationOp::GrantPrivileges { .. } | MigrationOp::AlterDefaultPrivileges { .. } => {
+                grant_ops.push(op)
+            }
             _ => {}
         }
     }
@@ -631,7 +632,10 @@ mod tests {
 
         let dump = generate_dump(&schema, None);
 
-        assert!(dump.contains("GRANT"), "Dump should contain GRANT statement");
+        assert!(
+            dump.contains("GRANT"),
+            "Dump should contain GRANT statement"
+        );
         assert!(dump.contains("app_user"), "Dump should contain grantee");
         assert!(
             dump.contains("SELECT") || dump.contains("INSERT"),
@@ -773,7 +777,13 @@ mod tests {
 
         let split = generate_split_dump(&schema);
 
-        assert!(split.grants.contains("GRANT"), "Grants section should contain GRANT");
-        assert!(split.grants.contains("analyst"), "Grants section should contain grantee");
+        assert!(
+            split.grants.contains("GRANT"),
+            "Grants section should contain GRANT"
+        );
+        assert!(
+            split.grants.contains("analyst"),
+            "Grants section should contain grantee"
+        );
     }
 }
