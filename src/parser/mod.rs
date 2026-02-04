@@ -989,15 +989,39 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
     Ok(schema)
 }
 
+/// Parse comma-separated privilege strings into a set of Privilege enums
+fn parse_privileges(privileges_str: &str) -> BTreeSet<Privilege> {
+    use std::collections::BTreeSet;
+
+    let mut privileges = BTreeSet::new();
+    for priv_str in privileges_str.split(',') {
+        let priv_trimmed = priv_str.trim().to_uppercase();
+        match priv_trimmed.as_str() {
+            "SELECT" => privileges.insert(Privilege::Select),
+            "INSERT" => privileges.insert(Privilege::Insert),
+            "UPDATE" => privileges.insert(Privilege::Update),
+            "DELETE" => privileges.insert(Privilege::Delete),
+            "TRUNCATE" => privileges.insert(Privilege::Truncate),
+            "REFERENCES" => privileges.insert(Privilege::References),
+            "TRIGGER" => privileges.insert(Privilege::Trigger),
+            "USAGE" => privileges.insert(Privilege::Usage),
+            "EXECUTE" => privileges.insert(Privilege::Execute),
+            "CREATE" => privileges.insert(Privilege::Create),
+            _ => continue,
+        };
+    }
+    privileges
+}
+
 fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
     use regex::Regex;
-    use std::collections::BTreeSet;
 
     // Pattern: GRANT privileges ON [object_type] qualified_name TO grantee [WITH GRANT OPTION]
     // Handle TABLE, VIEW, SEQUENCE, FUNCTION, SCHEMA, TYPE objects
     // Grantee can be: unquoted identifier, "quoted identifier", or PUBLIC
+    // Use [^"]+ inside quotes to match any characters (spaces, hyphens, dots, etc.)
     let grant_re = Regex::new(
-        r#"(?i)GRANT\s+(.+?)\s+ON\s+(?:(TABLE|VIEW|SEQUENCE|FUNCTION|SCHEMA|TYPE)\s+)?(.+?)\s+TO\s+("[\w]+"|\w+|PUBLIC)\s*(WITH\s+GRANT\s+OPTION)?"#
+        r#"(?i)GRANT\s+(.+?)\s+ON\s+(?:(TABLE|VIEW|SEQUENCE|FUNCTION|SCHEMA|TYPE)\s+)?(.+?)\s+TO\s+("[^"]+"|\w+|PUBLIC)\s*(WITH\s+GRANT\s+OPTION)?"#
     ).unwrap();
 
     for cap in grant_re.captures_iter(sql) {
@@ -1007,25 +1031,7 @@ fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
         let grantee = cap.get(4).unwrap().as_str().trim_matches('"');
         let with_grant_option = cap.get(5).is_some();
 
-        // Parse privileges (comma-separated)
-        let mut privileges = BTreeSet::new();
-        for priv_str in privileges_str.split(',') {
-            let priv_trimmed = priv_str.trim().to_uppercase();
-            match priv_trimmed.as_str() {
-                "SELECT" => privileges.insert(Privilege::Select),
-                "INSERT" => privileges.insert(Privilege::Insert),
-                "UPDATE" => privileges.insert(Privilege::Update),
-                "DELETE" => privileges.insert(Privilege::Delete),
-                "TRUNCATE" => privileges.insert(Privilege::Truncate),
-                "REFERENCES" => privileges.insert(Privilege::References),
-                "TRIGGER" => privileges.insert(Privilege::Trigger),
-                "USAGE" => privileges.insert(Privilege::Usage),
-                "EXECUTE" => privileges.insert(Privilege::Execute),
-                "CREATE" => privileges.insert(Privilege::Create),
-                _ => continue,
-            };
-        }
-
+        let privileges = parse_privileges(privileges_str);
         if privileges.is_empty() {
             continue;
         }
@@ -1093,12 +1099,12 @@ fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
 
 fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
     use regex::Regex;
-    use std::collections::BTreeSet;
 
     // Pattern: REVOKE [GRANT OPTION FOR] privileges ON [object_type] qualified_name FROM grantee;
     // Grantee can be: unquoted identifier, "quoted identifier", or PUBLIC
+    // Use [^"]+ inside quotes to match any characters (spaces, hyphens, dots, etc.)
     let revoke_re = Regex::new(
-        r#"(?i)REVOKE\s+(GRANT\s+OPTION\s+FOR\s+)?(.+?)\s+ON\s+(?:(TABLE|VIEW|SEQUENCE|FUNCTION|SCHEMA|TYPE)\s+)?(.+?)\s+FROM\s+("[\w]+"|\w+|PUBLIC)\s*;"#
+        r#"(?i)REVOKE\s+(GRANT\s+OPTION\s+FOR\s+)?(.+?)\s+ON\s+(?:(TABLE|VIEW|SEQUENCE|FUNCTION|SCHEMA|TYPE)\s+)?(.+?)\s+FROM\s+("[^"]+"|\w+|PUBLIC)\s*;"#
     ).unwrap();
 
     for cap in revoke_re.captures_iter(sql) {
@@ -1108,25 +1114,7 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
         let object_name_raw = cap.get(4).unwrap().as_str();
         let grantee = cap.get(5).unwrap().as_str().trim_matches('"');
 
-        // Parse privileges (comma-separated)
-        let mut privileges = BTreeSet::new();
-        for priv_str in privileges_str.split(',') {
-            let priv_trimmed = priv_str.trim().to_uppercase();
-            match priv_trimmed.as_str() {
-                "SELECT" => privileges.insert(Privilege::Select),
-                "INSERT" => privileges.insert(Privilege::Insert),
-                "UPDATE" => privileges.insert(Privilege::Update),
-                "DELETE" => privileges.insert(Privilege::Delete),
-                "TRUNCATE" => privileges.insert(Privilege::Truncate),
-                "REFERENCES" => privileges.insert(Privilege::References),
-                "TRIGGER" => privileges.insert(Privilege::Trigger),
-                "USAGE" => privileges.insert(Privilege::Usage),
-                "EXECUTE" => privileges.insert(Privilege::Execute),
-                "CREATE" => privileges.insert(Privilege::Create),
-                _ => continue,
-            };
-        }
-
+        let privileges = parse_privileges(privileges_str);
         if privileges.is_empty() {
             continue;
         }
@@ -3952,6 +3940,54 @@ CREATE TABLE "mrv"."Cultivation" (
         assert_eq!(domain.grants.len(), 1);
         assert_eq!(domain.grants[0].grantee, "app_user");
         assert!(domain.grants[0].privileges.contains(&Privilege::Usage));
+    }
+
+    #[test]
+    fn parses_grant_to_quoted_grantee_with_hyphen() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT ON users TO "app-user";
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        assert_eq!(table.grants[0].grantee, "app-user");
+    }
+
+    #[test]
+    fn parses_grant_to_quoted_grantee_with_dot() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT ON users TO "service.account";
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        assert_eq!(table.grants[0].grantee, "service.account");
+    }
+
+    #[test]
+    fn parses_grant_to_quoted_grantee_with_space() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT ON users TO "my user role";
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        assert_eq!(table.grants[0].grantee, "my user role");
+    }
+
+    #[test]
+    fn parses_revoke_from_quoted_grantee_with_special_chars() {
+        let sql = r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT ON users TO "app-user";
+            REVOKE SELECT ON users FROM "app-user";
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 0);
     }
 
     #[test]
