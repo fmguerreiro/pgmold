@@ -1094,3 +1094,70 @@ async fn policy_dropped_when_function_volatility_changes() {
             .unwrap_or_else(|e| panic!("Migration statement failed: {stmt}: {e}"));
     }
 }
+
+#[tokio::test]
+async fn policy_with_role_names_applies_without_syntax_error() {
+    // Regression test: Role names in CREATE POLICY should NOT be quoted
+    // Bug: pgmold was generating `TO "public"` instead of `TO public`
+    // which caused PostgreSQL syntax errors
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS mrv")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    // Create a role for testing
+    sqlx::query("CREATE ROLE authenticated NOLOGIN")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema_sql = r#"
+        CREATE TABLE mrv."TableName" (
+            id BIGINT PRIMARY KEY,
+            owner_id BIGINT NOT NULL
+        );
+
+        ALTER TABLE mrv."TableName" ENABLE ROW LEVEL SECURITY;
+
+        CREATE POLICY "public_policy" ON mrv."TableName"
+        FOR ALL
+        TO public
+        USING (true);
+
+        CREATE POLICY "auth_policy" ON mrv."TableName"
+        FOR SELECT
+        TO authenticated
+        USING (owner_id IS NOT NULL);
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+
+    // Verify SQL doesn't contain quoted role names
+    for stmt in &sql {
+        if stmt.contains("CREATE POLICY") {
+            assert!(
+                !stmt.contains(r#"TO "public""#),
+                "Role 'public' should NOT be quoted. Got: {stmt}"
+            );
+            assert!(
+                !stmt.contains(r#"TO "authenticated""#),
+                "Role 'authenticated' should NOT be quoted. Got: {stmt}"
+            );
+        }
+    }
+
+    // Most importantly: the SQL should execute without syntax errors
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Statement failed with syntax error: {stmt}: {e}"));
+    }
+}
