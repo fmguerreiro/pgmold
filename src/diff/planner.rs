@@ -920,6 +920,100 @@ impl MigrationGraph {
                     }
                 }
 
+                // GrantPrivileges depends on the object existing
+                OpKey::GrantPrivileges {
+                    object_kind,
+                    schema,
+                    name,
+                    ..
+                } => {
+                    let qualified = qualified_name(schema, name);
+                    match object_kind.as_str() {
+                        "Table" => {
+                            edges_to_add.push((OpKey::CreateTable(qualified), key.clone()));
+                        }
+                        "View" => {
+                            edges_to_add.push((OpKey::CreateView(qualified), key.clone()));
+                        }
+                        "Sequence" => {
+                            edges_to_add.push((OpKey::CreateSequence(qualified), key.clone()));
+                        }
+                        "Type" => {
+                            edges_to_add.push((OpKey::CreateEnum(qualified), key.clone()));
+                        }
+                        "Domain" => {
+                            edges_to_add.push((OpKey::CreateDomain(qualified), key.clone()));
+                        }
+                        "Schema" => {
+                            edges_to_add.push((OpKey::CreateSchema(name.clone()), key.clone()));
+                        }
+                        "Function" => {
+                            // For functions, we need to find the matching CreateFunction
+                            // by looking at the MigrationOp to get the args signature
+                            if let Some(MigrationOp::GrantPrivileges {
+                                args: Some(args), ..
+                            }) = self.get_op(key)
+                            {
+                                edges_to_add.push((
+                                    OpKey::CreateFunction {
+                                        name: qualified,
+                                        args: args.clone(),
+                                    },
+                                    key.clone(),
+                                ));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                // RevokePrivileges depends on the object existing
+                OpKey::RevokePrivileges {
+                    object_kind,
+                    schema,
+                    name,
+                    ..
+                } => {
+                    let qualified = qualified_name(schema, name);
+                    match object_kind.as_str() {
+                        "Table" => {
+                            edges_to_add.push((OpKey::CreateTable(qualified), key.clone()));
+                        }
+                        "View" => {
+                            edges_to_add.push((OpKey::CreateView(qualified), key.clone()));
+                        }
+                        "Sequence" => {
+                            edges_to_add.push((OpKey::CreateSequence(qualified), key.clone()));
+                        }
+                        "Type" => {
+                            edges_to_add.push((OpKey::CreateEnum(qualified), key.clone()));
+                        }
+                        "Domain" => {
+                            edges_to_add.push((OpKey::CreateDomain(qualified), key.clone()));
+                        }
+                        "Schema" => {
+                            edges_to_add.push((OpKey::CreateSchema(name.clone()), key.clone()));
+                        }
+                        "Function" => {
+                            // For functions, we need to find the matching CreateFunction
+                            // by looking at the MigrationOp to get the args signature
+                            if let Some(MigrationOp::RevokePrivileges {
+                                args: Some(args), ..
+                            }) = self.get_op(key)
+                            {
+                                edges_to_add.push((
+                                    OpKey::CreateFunction {
+                                        name: qualified,
+                                        args: args.clone(),
+                                    },
+                                    key.clone(),
+                                ));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
                 _ => {}
             }
         }
@@ -2262,6 +2356,294 @@ mod tests {
         assert!(
             grant_idx.unwrap() < adp_idx.unwrap(),
             "GrantPrivileges should come before AlterDefaultPrivileges in dump"
+        );
+    }
+
+    #[test]
+    fn grant_privileges_on_sequence_after_create_sequence() {
+        // Grant on a sequence must come after the sequence is created
+        // Bug report: pgmold executes GRANT before CREATE SEQUENCE
+        use crate::diff::GrantObjectKind;
+        use crate::model::Privilege;
+
+        let seq = Sequence {
+            name: "refresh_tokens_id_seq".to_string(),
+            schema: "auth".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            owner: None,
+            grants: Vec::new(),
+            cache: Some(1),
+            owned_by: None,
+        };
+
+        // Create table that uses the sequence (like in the bug report)
+        let mut columns = BTreeMap::new();
+        columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::BigInt,
+                nullable: false,
+                default: Some("nextval('auth.refresh_tokens_id_seq'::regclass)".to_string()),
+                comment: None,
+            },
+        );
+        columns.insert(
+            "token".to_string(),
+            Column {
+                name: "token".to_string(),
+                data_type: PgType::Text,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+
+        let table = Table {
+            name: "refresh_tokens".to_string(),
+            schema: "auth".to_string(),
+            columns,
+            indexes: Vec::new(),
+            primary_key: Some(PrimaryKey {
+                columns: vec!["id".to_string()],
+            }),
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comment: None,
+            row_level_security: false,
+            policies: Vec::new(),
+            partition_by: None,
+            owner: None,
+            grants: Vec::new(),
+        };
+
+        // Input ops in wrong order (grant first, then sequence and table)
+        let ops = vec![
+            MigrationOp::GrantPrivileges {
+                object_kind: GrantObjectKind::Sequence,
+                schema: "auth".to_string(),
+                name: "refresh_tokens_id_seq".to_string(),
+                args: None,
+                grantee: "supabase_auth_admin".to_string(),
+                privileges: vec![Privilege::Select, Privilege::Update, Privilege::Usage],
+                with_grant_option: false,
+            },
+            MigrationOp::CreateTable(table),
+            MigrationOp::CreateSequence(seq),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_seq_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateSequence(_)))
+            .expect("CreateSequence should exist");
+        let grant_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::GrantPrivileges { .. }))
+            .expect("GrantPrivileges should exist");
+
+        assert!(
+            create_seq_pos < grant_pos,
+            "CreateSequence must come before GrantPrivileges. CREATE at {create_seq_pos}, GRANT at {grant_pos}"
+        );
+    }
+
+    #[test]
+    fn grant_privileges_on_table_after_create_table() {
+        use crate::diff::GrantObjectKind;
+        use crate::model::Privilege;
+
+        let table = make_table("users", vec![]);
+
+        let ops = vec![
+            MigrationOp::GrantPrivileges {
+                object_kind: GrantObjectKind::Table,
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                args: None,
+                grantee: "reader".to_string(),
+                privileges: vec![Privilege::Select],
+                with_grant_option: false,
+            },
+            MigrationOp::CreateTable(table),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_table_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .expect("CreateTable should exist");
+        let grant_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::GrantPrivileges { .. }))
+            .expect("GrantPrivileges should exist");
+
+        assert!(
+            create_table_pos < grant_pos,
+            "CreateTable must come before GrantPrivileges. CREATE at {create_table_pos}, GRANT at {grant_pos}"
+        );
+    }
+
+    #[test]
+    fn grant_privileges_on_view_after_create_view() {
+        use crate::diff::GrantObjectKind;
+        use crate::model::Privilege;
+
+        let view = View {
+            name: "active_users".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT * FROM users WHERE active = true".to_string(),
+            materialized: false,
+            owner: None,
+            grants: vec![],
+        };
+
+        let ops = vec![
+            MigrationOp::GrantPrivileges {
+                object_kind: GrantObjectKind::View,
+                schema: "public".to_string(),
+                name: "active_users".to_string(),
+                args: None,
+                grantee: "reader".to_string(),
+                privileges: vec![Privilege::Select],
+                with_grant_option: false,
+            },
+            MigrationOp::CreateView(view),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_view_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateView(_)))
+            .expect("CreateView should exist");
+        let grant_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::GrantPrivileges { .. }))
+            .expect("GrantPrivileges should exist");
+
+        assert!(
+            create_view_pos < grant_pos,
+            "CreateView must come before GrantPrivileges. CREATE at {create_view_pos}, GRANT at {grant_pos}"
+        );
+    }
+
+    #[test]
+    fn grant_privileges_on_function_after_create_function() {
+        use crate::diff::GrantObjectKind;
+        use crate::model::Privilege;
+
+        let func = Function {
+            name: "add_numbers".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![
+                FunctionArg {
+                    name: Some("a".to_string()),
+                    data_type: "integer".to_string(),
+                    default: None,
+                    mode: ArgMode::In,
+                },
+                FunctionArg {
+                    name: Some("b".to_string()),
+                    data_type: "integer".to_string(),
+                    default: None,
+                    mode: ArgMode::In,
+                },
+            ],
+            return_type: "integer".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT a + b".to_string(),
+            volatility: Volatility::Immutable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: vec![],
+        };
+
+        let ops = vec![
+            MigrationOp::GrantPrivileges {
+                object_kind: GrantObjectKind::Function,
+                schema: "public".to_string(),
+                name: "add_numbers".to_string(),
+                args: Some("integer, integer".to_string()),
+                grantee: "app_user".to_string(),
+                privileges: vec![Privilege::Execute],
+                with_grant_option: false,
+            },
+            MigrationOp::CreateFunction(func),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction should exist");
+        let grant_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::GrantPrivileges { .. }))
+            .expect("GrantPrivileges should exist");
+
+        assert!(
+            create_func_pos < grant_pos,
+            "CreateFunction must come before GrantPrivileges. CREATE at {create_func_pos}, GRANT at {grant_pos}"
+        );
+    }
+
+    #[test]
+    fn revoke_privileges_on_sequence_after_create_sequence() {
+        use crate::diff::GrantObjectKind;
+        use crate::model::Privilege;
+
+        let seq = Sequence {
+            name: "counter_seq".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            owner: None,
+            grants: Vec::new(),
+            cache: Some(1),
+            owned_by: None,
+        };
+
+        let ops = vec![
+            MigrationOp::RevokePrivileges {
+                object_kind: GrantObjectKind::Sequence,
+                schema: "public".to_string(),
+                name: "counter_seq".to_string(),
+                args: None,
+                grantee: "public".to_string(),
+                privileges: vec![Privilege::Usage],
+                revoke_grant_option: false,
+            },
+            MigrationOp::CreateSequence(seq),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_seq_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateSequence(_)))
+            .expect("CreateSequence should exist");
+        let revoke_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::RevokePrivileges { .. }))
+            .expect("RevokePrivileges should exist");
+
+        assert!(
+            create_seq_pos < revoke_pos,
+            "CreateSequence must come before RevokePrivileges. CREATE at {create_seq_pos}, REVOKE at {revoke_pos}"
         );
     }
 

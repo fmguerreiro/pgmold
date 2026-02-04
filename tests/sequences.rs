@@ -152,3 +152,88 @@ async fn sequence_alter() {
         "After alter, diff should be empty, but got: {final_diff:?}"
     );
 }
+
+#[tokio::test]
+async fn sequence_with_grants_from_scratch() {
+    // Bug: pgmold executes GRANT before CREATE SEQUENCE when applying from scratch
+    // See: https://github.com/fmguerreiro/pgmold/issues/XX
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Create the auth schema and role first
+    sqlx::query("CREATE SCHEMA auth")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+    sqlx::query("CREATE ROLE supabase_auth_admin")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    // Schema with sequence, table using it, and grants - matches the bug report
+    let sql = r#"
+        CREATE SCHEMA "auth";
+
+        CREATE SEQUENCE "auth"."refresh_tokens_id_seq";
+
+        CREATE TABLE "auth"."refresh_tokens" (
+            "id" BIGINT NOT NULL DEFAULT nextval('auth.refresh_tokens_id_seq'::regclass),
+            "token" TEXT,
+            PRIMARY KEY ("id")
+        );
+
+        GRANT SELECT, UPDATE, USAGE ON SEQUENCE "auth"."refresh_tokens_id_seq" TO "supabase_auth_admin";
+    "#;
+    let desired = parse_sql_string(sql).unwrap();
+
+    let current = introspect_schema(&connection, &["auth".to_string()], false)
+        .await
+        .unwrap();
+
+    let ops = pgmold::diff::compute_diff_with_flags(
+        &current,
+        &desired,
+        false,
+        true, // include grants
+        &std::collections::HashSet::new(),
+    );
+
+    // Verify we have both CreateSequence and GrantPrivileges ops
+    assert!(
+        ops.iter().any(
+            |op| matches!(op, MigrationOp::CreateSequence(s) if s.name == "refresh_tokens_id_seq")
+        ),
+        "Should have CreateSequence op"
+    );
+    assert!(
+        ops.iter().any(|op| matches!(
+            op,
+            MigrationOp::GrantPrivileges { name, .. } if name == "refresh_tokens_id_seq"
+        )),
+        "Should have GrantPrivileges op"
+    );
+
+    // Plan and execute - this should NOT fail with "relation does not exist"
+    let planned = plan_migration(ops);
+    let sql_stmts = generate_sql(&planned);
+
+    // Debug: Print the order of operations
+    for (i, stmt) in sql_stmts.iter().enumerate() {
+        eprintln!("Statement {i}: {stmt}");
+    }
+
+    // Execute all statements - the bug causes this to fail
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Failed to execute: {stmt}\nError: {e}"));
+    }
+
+    // Verify the schema was created correctly
+    let after = introspect_schema(&connection, &["auth".to_string()], false)
+        .await
+        .unwrap();
+    assert!(after.sequences.contains_key("auth.refresh_tokens_id_seq"));
+    assert!(after.tables.contains_key("auth.refresh_tokens"));
+}
