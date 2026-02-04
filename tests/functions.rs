@@ -152,7 +152,13 @@ async fn function_owner_round_trip() {
         .await
         .unwrap();
 
-    let ops = pgmold::diff::compute_diff_with_flags(&current, &parsed_schema, true, false);
+    let ops = pgmold::diff::compute_diff_with_flags(
+        &current,
+        &parsed_schema,
+        true,
+        false,
+        &std::collections::HashSet::new(),
+    );
     let planned = plan_migration(ops);
     let sql = generate_sql(&planned);
 
@@ -170,8 +176,13 @@ async fn function_owner_round_trip() {
         "Owner should match after round-trip"
     );
 
-    let diff_ops =
-        pgmold::diff::compute_diff_with_flags(&introspected, &parsed_schema, true, false);
+    let diff_ops = pgmold::diff::compute_diff_with_flags(
+        &introspected,
+        &parsed_schema,
+        true,
+        false,
+        &std::collections::HashSet::new(),
+    );
     let func_ops: Vec<_> = diff_ops
         .iter()
         .filter(|op| {
