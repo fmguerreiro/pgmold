@@ -456,7 +456,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             if *revoke {
                 vec![format!(
                     "ALTER DEFAULT PRIVILEGES FOR ROLE {}{} REVOKE {} ON {} FROM {};",
-                    quote_ident(target_role),
+                    format_role_name(target_role),
                     schema_clause,
                     privs_sql,
                     object_type_sql,
@@ -470,7 +470,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                 };
                 vec![format!(
                     "ALTER DEFAULT PRIVILEGES FOR ROLE {}{} GRANT {} ON {} TO {}{};",
-                    quote_ident(target_role),
+                    format_role_name(target_role),
                     schema_clause,
                     privs_sql,
                     object_type_sql,
@@ -3114,8 +3114,9 @@ mod tests {
 
         let sql = generate_sql(&ops);
 
+        // Role names like "admin" should NOT be quoted (simple identifier)
         assert!(
-            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"public\" GRANT SELECT, INSERT ON TABLES TO app_user;".to_string()),
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA \"public\" GRANT SELECT, INSERT ON TABLES TO app_user;".to_string()),
             "Should generate correct ALTER DEFAULT PRIVILEGES SQL. SQL: {sql:?}"
         );
     }
@@ -3136,8 +3137,9 @@ mod tests {
 
         let sql = generate_sql(&ops);
 
+        // Role names like "admin" should NOT be quoted (simple identifier)
         assert!(
-            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" REVOKE EXECUTE ON FUNCTIONS FROM app_user;".to_string()),
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE admin REVOKE EXECUTE ON FUNCTIONS FROM app_user;".to_string()),
             "Should generate correct REVOKE SQL without IN SCHEMA. SQL: {sql:?}"
         );
     }
@@ -3158,8 +3160,9 @@ mod tests {
 
         let sql = generate_sql(&ops);
 
+        // Role names like "admin" should NOT be quoted (simple identifier)
         assert!(
-            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"api\" GRANT USAGE ON SEQUENCES TO service_role WITH GRANT OPTION;".to_string()),
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA \"api\" GRANT USAGE ON SEQUENCES TO service_role WITH GRANT OPTION;".to_string()),
             "Should generate SQL WITH GRANT OPTION. SQL: {sql:?}"
         );
     }
@@ -3180,9 +3183,96 @@ mod tests {
 
         let sql = generate_sql(&ops);
 
+        // Role names like "admin" and PUBLIC should NOT be quoted
         assert!(
-            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"public\" GRANT USAGE ON TYPES TO public;".to_string()),
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA \"public\" GRANT USAGE ON TYPES TO public;".to_string()),
             "Should not quote PUBLIC grantee. SQL: {sql:?}"
+        );
+    }
+
+    #[test]
+    fn alter_default_privileges_public_target_role_not_quoted() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        // When the target_role is PUBLIC, it should NOT be quoted
+        // Bug: quote_ident("public") generates "public" instead of public
+        let ops = vec![MigrationOp::AlterDefaultPrivileges {
+            target_role: "public".to_string(),
+            schema: Some("api".to_string()),
+            object_type: DefaultPrivilegeObjectType::Tables,
+            grantee: "app_user".to_string(),
+            privileges: vec![Privilege::Select],
+            with_grant_option: false,
+            revoke: false,
+        }];
+
+        let sql = generate_sql(&ops);
+
+        // Should generate: ALTER DEFAULT PRIVILEGES FOR ROLE public IN SCHEMA "api" GRANT SELECT ON TABLES TO app_user;
+        // NOT: ALTER DEFAULT PRIVILEGES FOR ROLE "public" IN SCHEMA "api" GRANT SELECT ON TABLES TO app_user;
+        assert!(
+            sql[0].contains("FOR ROLE public IN"),
+            "target_role 'public' should NOT be quoted. Got: {}",
+            sql[0]
+        );
+        assert!(
+            !sql[0].contains(r#"FOR ROLE "public""#),
+            "target_role should NOT be double-quoted. Got: {}",
+            sql[0]
+        );
+    }
+
+    #[test]
+    fn alter_default_privileges_revoke_public_target_role_not_quoted() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        let ops = vec![MigrationOp::AlterDefaultPrivileges {
+            target_role: "PUBLIC".to_string(),
+            schema: None,
+            object_type: DefaultPrivilegeObjectType::Functions,
+            grantee: "service_role".to_string(),
+            privileges: vec![Privilege::Execute],
+            with_grant_option: false,
+            revoke: true,
+        }];
+
+        let sql = generate_sql(&ops);
+
+        // PUBLIC should be normalized to lowercase and unquoted
+        assert!(
+            sql[0].contains("FOR ROLE public REVOKE"),
+            "target_role 'PUBLIC' should be normalized to 'public' (unquoted). Got: {}",
+            sql[0]
+        );
+    }
+
+    #[test]
+    fn alter_default_privileges_special_char_role_is_quoted() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        // Role names with special characters (hyphen, space, etc.) SHOULD be quoted
+        let ops = vec![MigrationOp::AlterDefaultPrivileges {
+            target_role: "my-admin-role".to_string(),
+            schema: Some("api".to_string()),
+            object_type: DefaultPrivilegeObjectType::Tables,
+            grantee: "app-user".to_string(),
+            privileges: vec![Privilege::Select],
+            with_grant_option: false,
+            revoke: false,
+        }];
+
+        let sql = generate_sql(&ops);
+
+        // Role names with special characters SHOULD be quoted
+        assert!(
+            sql[0].contains(r#"FOR ROLE "my-admin-role""#),
+            "target_role with hyphen should be quoted. Got: {}",
+            sql[0]
+        );
+        assert!(
+            sql[0].contains(r#"TO "app-user""#),
+            "grantee with hyphen should be quoted. Got: {}",
+            sql[0]
         );
     }
 
