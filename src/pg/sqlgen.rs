@@ -1373,7 +1373,8 @@ fn privilege_to_sql(privilege: &Privilege) -> &'static str {
 fn grant_object_kind_to_sql(kind: &GrantObjectKind) -> &'static str {
     match kind {
         GrantObjectKind::Table => "TABLE",
-        GrantObjectKind::View => "VIEW",
+        // PostgreSQL GRANT/REVOKE syntax uses TABLE for views, not VIEW
+        GrantObjectKind::View => "TABLE",
         GrantObjectKind::Sequence => "SEQUENCE",
         GrantObjectKind::Function => "FUNCTION",
         GrantObjectKind::Schema => "SCHEMA",
@@ -2945,7 +2946,39 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "REVOKE GRANT OPTION FOR SELECT ON VIEW \"public\".\"user_view\" FROM viewer;"
+            "REVOKE GRANT OPTION FOR SELECT ON TABLE \"public\".\"user_view\" FROM viewer;"
+        );
+    }
+
+    #[test]
+    fn revoke_privileges_from_public() {
+        use crate::model::Privilege;
+
+        let ops = vec![MigrationOp::RevokePrivileges {
+            object_kind: GrantObjectKind::View,
+            schema: "public".to_string(),
+            name: "test_view".to_string(),
+            args: None,
+            grantee: "PUBLIC".to_string(),
+            privileges: vec![
+                Privilege::Select,
+                Privilege::Insert,
+                Privilege::Update,
+                Privilege::Delete,
+                Privilege::Truncate,
+                Privilege::References,
+                Privilege::Trigger,
+            ],
+            revoke_grant_option: false,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        // PUBLIC should be unquoted lowercase 'public', not ""public"" or "PUBLIC"
+        // Note: Views use TABLE keyword in GRANT/REVOKE syntax, not VIEW
+        assert_eq!(
+            sql[0],
+            "REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE \"public\".\"test_view\" FROM public;"
         );
     }
 
