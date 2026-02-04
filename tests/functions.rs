@@ -481,3 +481,71 @@ async fn function_modification_drop_before_create() {
     .unwrap();
     assert_eq!(result.0, 1, "Function should exist after modification");
 }
+
+#[tokio::test]
+async fn function_dependency_ordering_from_scratch() {
+    // Regression test: When function B calls function A, A must be created before B
+    // This tests the fix for the function ordering bug
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // Schema with a chain of dependent functions: top -> middle -> base
+    let schema_sql = r#"
+        CREATE FUNCTION base_helper(x integer) RETURNS integer
+        LANGUAGE sql IMMUTABLE
+        AS $$ SELECT x * 2 $$;
+
+        CREATE FUNCTION middle_func(n integer) RETURNS integer
+        LANGUAGE sql IMMUTABLE
+        AS $$ SELECT public.base_helper(n) + 1 $$;
+
+        CREATE FUNCTION top_func(m integer) RETURNS integer
+        LANGUAGE sql IMMUTABLE
+        AS $$ SELECT public.middle_func(m) + 10 $$;
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+
+    // Execute all statements - should not fail with "function does not exist"
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Failed to execute: {stmt}\nError: {e}"));
+    }
+
+    // Verify all functions exist and work correctly
+    let result: (i32,) = sqlx::query_as("SELECT public.top_func(5)")
+        .fetch_one(connection.pool())
+        .await
+        .unwrap();
+
+    // top_func(5) = middle_func(5) + 10 = (base_helper(5) + 1) + 10 = (5*2 + 1) + 10 = 21
+    assert_eq!(result.0, 21, "Function chain should work correctly");
+
+    // Verify no diff after round-trip
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let final_diff = compute_diff(&db_schema, &parsed_schema);
+    let func_ops: Vec<_> = final_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateFunction(_)
+                    | MigrationOp::AlterFunction { .. }
+                    | MigrationOp::DropFunction { .. }
+            )
+        })
+        .collect();
+    assert!(
+        func_ops.is_empty(),
+        "Should have no function diff after round-trip, got: {func_ops:?}"
+    );
+}

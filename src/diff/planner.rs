@@ -1,6 +1,6 @@
 use super::MigrationOp;
 use crate::model::qualified_name;
-use crate::parser::extract_table_references;
+use crate::parser::{extract_function_references, extract_table_references};
 use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -783,6 +783,33 @@ impl MigrationGraph {
                                 edges_to_add
                                     .push((OpKey::CreateTable(ref_name.clone()), key.clone()));
                                 edges_to_add.push((OpKey::CreateView(ref_name), key.clone()));
+                            }
+                        }
+                    }
+                }
+
+                // CreateFunction depends on other functions it calls in its body
+                OpKey::CreateFunction {
+                    name: func_name, ..
+                } => {
+                    if let Some(MigrationOp::CreateFunction(func)) = self.get_op(key) {
+                        let refs = extract_function_references(&func.body, &func.schema);
+                        for ref_obj in refs {
+                            let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
+                            // Don't add self-edge
+                            if ref_qualified != *func_name {
+                                // Add edge from all CreateFunction ops matching this name
+                                // (we can't know which overload is being called without type info)
+                                for other_key in &keys {
+                                    if let OpKey::CreateFunction {
+                                        name: other_name, ..
+                                    } = other_key
+                                    {
+                                        if *other_name == ref_qualified {
+                                            edges_to_add.push((other_key.clone(), key.clone()));
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -2828,5 +2855,111 @@ mod tests {
         let planned = result.unwrap();
         assert_eq!(planned.len(), 1);
         assert!(matches!(planned[0], MigrationOp::CreateTable(_)));
+    }
+
+    #[test]
+    fn create_functions_ordered_by_function_dependencies() {
+        // Chain: func_c calls func_b, func_b calls func_a
+        // Expected order: func_a -> func_b -> func_c
+        // Input order: [func_c, func_a, func_b] - completely scrambled
+
+        let func_a = Function {
+            name: "base_helper".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("x".to_string()),
+                data_type: "integer".to_string(),
+                default: None,
+                mode: ArgMode::In,
+            }],
+            return_type: "integer".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT x * 2".to_string(),
+            volatility: Volatility::Immutable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: vec![],
+        };
+
+        let func_b = Function {
+            name: "middle_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("n".to_string()),
+                data_type: "integer".to_string(),
+                default: None,
+                mode: ArgMode::In,
+            }],
+            return_type: "integer".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT public.base_helper(n) + 1".to_string(),
+            volatility: Volatility::Immutable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: vec![],
+        };
+
+        let func_c = Function {
+            name: "top_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("m".to_string()),
+                data_type: "integer".to_string(),
+                default: None,
+                mode: ArgMode::In,
+            }],
+            return_type: "integer".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT public.middle_func(m) + 10".to_string(),
+            volatility: Volatility::Immutable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: vec![],
+        };
+
+        // Input ops in scrambled order: [top, base, middle]
+        let ops = vec![
+            MigrationOp::CreateFunction(func_c.clone()),
+            MigrationOp::CreateFunction(func_a.clone()),
+            MigrationOp::CreateFunction(func_b.clone()),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let func_order: Vec<String> = planned
+            .iter()
+            .filter_map(|op| {
+                if let MigrationOp::CreateFunction(f) = op {
+                    Some(f.name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let base_pos = func_order
+            .iter()
+            .position(|n| n == "base_helper")
+            .expect("base_helper should exist");
+        let middle_pos = func_order
+            .iter()
+            .position(|n| n == "middle_func")
+            .expect("middle_func should exist");
+        let top_pos = func_order
+            .iter()
+            .position(|n| n == "top_func")
+            .expect("top_func should exist");
+
+        assert!(
+            base_pos < middle_pos,
+            "base_helper must be created before middle_func. base at {base_pos}, middle at {middle_pos}. Order: {func_order:?}"
+        );
+        assert!(
+            middle_pos < top_pos,
+            "middle_func must be created before top_func. middle at {middle_pos}, top at {top_pos}. Order: {func_order:?}"
+        );
     }
 }
