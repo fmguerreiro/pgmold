@@ -456,7 +456,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             if *revoke {
                 vec![format!(
                     "ALTER DEFAULT PRIVILEGES FOR ROLE {}{} REVOKE {} ON {} FROM {};",
-                    quote_ident(target_role),
+                    format_role_name(target_role),
                     schema_clause,
                     privs_sql,
                     object_type_sql,
@@ -470,7 +470,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                 };
                 vec![format!(
                     "ALTER DEFAULT PRIVILEGES FOR ROLE {}{} GRANT {} ON {} TO {}{};",
-                    quote_ident(target_role),
+                    format_role_name(target_role),
                     schema_clause,
                     privs_sql,
                     object_type_sql,
@@ -508,7 +508,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                 stmts.push(format!(
                     "ALTER VIEW {} OWNER TO {};",
                     quote_qualified(&view.version_schema, &view.name),
-                    quote_ident(owner)
+                    format_role_name(owner)
                 ));
             }
             stmts
@@ -803,13 +803,10 @@ fn escape_string(value: &str) -> String {
 
 /// Formats a role name for use in SQL statements (e.g., in GRANT or CREATE POLICY).
 ///
-/// Role names should NOT be quoted in most cases - only quote if they contain special characters.
+/// Role names are only quoted if they contain special characters.
 /// The "public" pseudo-role is a keyword meaning "all roles" and must be unquoted.
-///
-/// Bug context: PostgreSQL treats `TO "public"` as looking for a role literally named "public",
-/// while `TO public` means "all roles". This function ensures correct output.
 fn format_role_name(role: &str) -> String {
-    // PUBLIC (case-insensitive) is a keyword, not a role name - never quote it
+    // PUBLIC is a keyword, not a role name
     if role.eq_ignore_ascii_case("public") {
         return "public".to_string();
     }
@@ -1195,7 +1192,7 @@ fn generate_alter_owner(
         "ALTER {} {} OWNER TO {};",
         object_type,
         full_name,
-        quote_ident(new_owner)
+        format_role_name(new_owner)
     )
 }
 
@@ -2708,7 +2705,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER TABLE \"public\".\"users\" OWNER TO \"new_owner\";"
+            "ALTER TABLE \"public\".\"users\" OWNER TO new_owner;"
         );
     }
 
@@ -2726,7 +2723,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER VIEW \"public\".\"active_users\" OWNER TO \"app_user\";"
+            "ALTER VIEW \"public\".\"active_users\" OWNER TO app_user;"
         );
     }
 
@@ -2744,7 +2741,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER SEQUENCE \"public\".\"users_id_seq\" OWNER TO \"db_admin\";"
+            "ALTER SEQUENCE \"public\".\"users_id_seq\" OWNER TO db_admin;"
         );
     }
 
@@ -2762,7 +2759,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER FUNCTION \"auth\".\"check_user\"(text, uuid) OWNER TO \"supabase_auth_admin\";"
+            "ALTER FUNCTION \"auth\".\"check_user\"(text, uuid) OWNER TO supabase_auth_admin;"
         );
     }
 
@@ -2780,7 +2777,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER FUNCTION \"public\".\"get_timestamp\"() OWNER TO \"app_owner\";"
+            "ALTER FUNCTION \"public\".\"get_timestamp\"() OWNER TO app_owner;"
         );
     }
 
@@ -2798,7 +2795,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER TYPE \"public\".\"user_role\" OWNER TO \"role_admin\";"
+            "ALTER TYPE \"public\".\"user_role\" OWNER TO role_admin;"
         );
     }
 
@@ -2816,7 +2813,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER DOMAIN \"public\".\"email\" OWNER TO \"domain_owner\";"
+            "ALTER DOMAIN \"public\".\"email\" OWNER TO domain_owner;"
         );
     }
 
@@ -3114,8 +3111,9 @@ mod tests {
 
         let sql = generate_sql(&ops);
 
+        // Role names like "admin" should NOT be quoted (simple identifier)
         assert!(
-            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"public\" GRANT SELECT, INSERT ON TABLES TO app_user;".to_string()),
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA \"public\" GRANT SELECT, INSERT ON TABLES TO app_user;".to_string()),
             "Should generate correct ALTER DEFAULT PRIVILEGES SQL. SQL: {sql:?}"
         );
     }
@@ -3136,8 +3134,9 @@ mod tests {
 
         let sql = generate_sql(&ops);
 
+        // Role names like "admin" should NOT be quoted (simple identifier)
         assert!(
-            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" REVOKE EXECUTE ON FUNCTIONS FROM app_user;".to_string()),
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE admin REVOKE EXECUTE ON FUNCTIONS FROM app_user;".to_string()),
             "Should generate correct REVOKE SQL without IN SCHEMA. SQL: {sql:?}"
         );
     }
@@ -3158,8 +3157,9 @@ mod tests {
 
         let sql = generate_sql(&ops);
 
+        // Role names like "admin" should NOT be quoted (simple identifier)
         assert!(
-            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"api\" GRANT USAGE ON SEQUENCES TO service_role WITH GRANT OPTION;".to_string()),
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA \"api\" GRANT USAGE ON SEQUENCES TO service_role WITH GRANT OPTION;".to_string()),
             "Should generate SQL WITH GRANT OPTION. SQL: {sql:?}"
         );
     }
@@ -3180,9 +3180,89 @@ mod tests {
 
         let sql = generate_sql(&ops);
 
+        // Role names like "admin" and PUBLIC should NOT be quoted
         assert!(
-            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"public\" GRANT USAGE ON TYPES TO public;".to_string()),
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA \"public\" GRANT USAGE ON TYPES TO public;".to_string()),
             "Should not quote PUBLIC grantee. SQL: {sql:?}"
+        );
+    }
+
+    #[test]
+    fn alter_default_privileges_public_target_role_not_quoted() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        let ops = vec![MigrationOp::AlterDefaultPrivileges {
+            target_role: "public".to_string(),
+            schema: Some("api".to_string()),
+            object_type: DefaultPrivilegeObjectType::Tables,
+            grantee: "app_user".to_string(),
+            privileges: vec![Privilege::Select],
+            with_grant_option: false,
+            revoke: false,
+        }];
+
+        let sql = generate_sql(&ops);
+
+        assert!(
+            sql[0].contains("FOR ROLE public IN"),
+            "target_role 'public' should NOT be quoted. Got: {}",
+            sql[0]
+        );
+        assert!(
+            !sql[0].contains(r#"FOR ROLE "public""#),
+            "target_role should NOT be double-quoted. Got: {}",
+            sql[0]
+        );
+    }
+
+    #[test]
+    fn alter_default_privileges_revoke_public_target_role_not_quoted() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        let ops = vec![MigrationOp::AlterDefaultPrivileges {
+            target_role: "PUBLIC".to_string(),
+            schema: None,
+            object_type: DefaultPrivilegeObjectType::Functions,
+            grantee: "service_role".to_string(),
+            privileges: vec![Privilege::Execute],
+            with_grant_option: false,
+            revoke: true,
+        }];
+
+        let sql = generate_sql(&ops);
+
+        assert!(
+            sql[0].contains("FOR ROLE public REVOKE"),
+            "target_role 'PUBLIC' should be normalized to 'public' (unquoted). Got: {}",
+            sql[0]
+        );
+    }
+
+    #[test]
+    fn alter_default_privileges_special_char_role_is_quoted() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        let ops = vec![MigrationOp::AlterDefaultPrivileges {
+            target_role: "my-admin-role".to_string(),
+            schema: Some("api".to_string()),
+            object_type: DefaultPrivilegeObjectType::Tables,
+            grantee: "app-user".to_string(),
+            privileges: vec![Privilege::Select],
+            with_grant_option: false,
+            revoke: false,
+        }];
+
+        let sql = generate_sql(&ops);
+
+        assert!(
+            sql[0].contains(r#"FOR ROLE "my-admin-role""#),
+            "target_role with hyphen should be quoted. Got: {}",
+            sql[0]
+        );
+        assert!(
+            sql[0].contains(r#"TO "app-user""#),
+            "grantee with hyphen should be quoted. Got: {}",
+            sql[0]
         );
     }
 
