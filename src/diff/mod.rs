@@ -5626,11 +5626,14 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         to.tables
             .insert("public.users".to_string(), table_no_grants);
 
-        let excluded_roles: HashSet<String> =
-            HashSet::from(["rds_admin".to_string()]);
+        let excluded_roles: HashSet<String> = HashSet::from(["rds_admin".to_string()]);
         let ops = compute_diff_with_flags(&from, &to, false, true, &excluded_roles);
 
-        assert_eq!(ops.len(), 1, "Should only revoke for app_user, not rds_admin");
+        assert_eq!(
+            ops.len(),
+            1,
+            "Should only revoke for app_user, not rds_admin"
+        );
         assert!(matches!(
             &ops[0],
             MigrationOp::RevokePrivileges {
@@ -5665,11 +5668,14 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         ];
         to.tables.insert("public.users".to_string(), table);
 
-        let excluded_roles: HashSet<String> =
-            HashSet::from(["rds_admin".to_string()]);
+        let excluded_roles: HashSet<String> = HashSet::from(["rds_admin".to_string()]);
         let ops = compute_diff_with_flags(&from, &to, false, true, &excluded_roles);
 
-        assert_eq!(ops.len(), 1, "Should only grant for app_user, not rds_admin");
+        assert_eq!(
+            ops.len(),
+            1,
+            "Should only grant for app_user, not rds_admin"
+        );
         assert!(matches!(
             &ops[0],
             MigrationOp::GrantPrivileges {
@@ -5709,10 +5715,8 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         to.tables
             .insert("public.users".to_string(), table_no_grants);
 
-        let excluded_roles: HashSet<String> = HashSet::from([
-            "rds_admin".to_string(),
-            "rds_master".to_string(),
-        ]);
+        let excluded_roles: HashSet<String> =
+            HashSet::from(["rds_admin".to_string(), "rds_master".to_string()]);
         let ops = compute_diff_with_flags(&from, &to, false, true, &excluded_roles);
 
         assert_eq!(
@@ -5754,8 +5758,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         to.tables
             .insert("public.users".to_string(), table_no_grants);
 
-        let excluded_roles: HashSet<String> =
-            HashSet::from(["rds_admin".to_string()]);
+        let excluded_roles: HashSet<String> = HashSet::from(["rds_admin".to_string()]);
         let ops = compute_diff_with_flags(&from, &to, false, true, &excluded_roles);
 
         assert_eq!(
