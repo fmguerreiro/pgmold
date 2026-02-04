@@ -335,7 +335,7 @@ async fn ownership_management_end_to_end() {
         "Parsed function should have app_owner"
     );
 
-    let ops = pgmold::diff::compute_diff_with_flags(&initial_schema, &target_schema, true, false);
+    let ops = pgmold::diff::compute_diff_with_flags(&initial_schema, &target_schema, true, false, &std::collections::HashSet::new());
 
     let alter_owner_ops: Vec<_> = ops
         .iter()
@@ -484,7 +484,7 @@ async fn ownership_management_end_to_end() {
     );
 
     let final_ops =
-        pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema, true, false);
+        pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema, true, false, &std::collections::HashSet::new());
     let final_alter_ops: Vec<_> = final_ops
         .iter()
         .filter(|op| matches!(op, MigrationOp::AlterOwner { .. }))

@@ -172,7 +172,7 @@ async fn grants_management_end_to_end() {
         .privileges
         .contains(&pgmold::model::Privilege::Update));
 
-    let ops = pgmold::diff::compute_diff_with_flags(&initial_schema, &target_schema, false, true);
+    let ops = pgmold::diff::compute_diff_with_flags(&initial_schema, &target_schema, false, true, &std::collections::HashSet::new());
 
     let grant_ops: Vec<_> = ops
         .iter()
@@ -245,7 +245,7 @@ async fn grants_management_end_to_end() {
     );
 
     let final_ops =
-        pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema, false, true);
+        pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema, false, true, &std::collections::HashSet::new());
     let final_grant_ops: Vec<_> = final_ops
         .iter()
         .filter(|op| {
@@ -265,7 +265,7 @@ async fn grants_management_end_to_end() {
 
     let target_schema_revoke = parse_sql_string(schema_sql_revoke).unwrap();
     let ops_revoke =
-        pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema_revoke, false, true);
+        pgmold::diff::compute_diff_with_flags(&after_migration, &target_schema_revoke, false, true, &std::collections::HashSet::new());
 
     let revoke_ops: Vec<_> = ops_revoke
         .iter()

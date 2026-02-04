@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::{anyhow, Result};
 use clap::{ArgAction, Parser, Subcommand};
 use serde::Serialize;
@@ -110,6 +112,9 @@ enum Commands {
         /// Manage grants (GRANT/REVOKE) on objects (use --manage-grants=false to disable)
         #[arg(long, default_value = "true", action = ArgAction::Set)]
         manage_grants: bool,
+        /// Exclude grants for specific roles from comparison (e.g., RDS master user). Can be repeated.
+        #[arg(long, action = ArgAction::Append)]
+        exclude_grants_for_role: Vec<String>,
         /// Validate migration against a temporary database before applying. Provide a database URL for the temp DB (e.g., postgres://user:pass@localhost:5433/tempdb)
         #[arg(long)]
         validate: Option<String>,
@@ -149,6 +154,9 @@ enum Commands {
         /// Manage grants (GRANT/REVOKE) on objects (use --manage-grants=false to disable)
         #[arg(long, default_value = "true", action = ArgAction::Set)]
         manage_grants: bool,
+        /// Exclude grants for specific roles from comparison (e.g., RDS master user). Can be repeated.
+        #[arg(long, action = ArgAction::Append)]
+        exclude_grants_for_role: Vec<String>,
         /// Log each statement execution and result
         #[arg(long, short = 'v')]
         verbose: bool,
@@ -303,10 +311,16 @@ pub async fn run() -> Result<()> {
             zero_downtime,
             manage_ownership,
             manage_grants,
+            exclude_grants_for_role,
             validate,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
+
+            let excluded_grant_roles: HashSet<String> = exclude_grants_for_role
+                .into_iter()
+                .map(|s| s.to_lowercase())
+                .collect();
 
             let target = load_schema(&schema)?;
             let filtered_target = filter_schema(&target, &filter);
@@ -327,6 +341,7 @@ pub async fn run() -> Result<()> {
                     &filtered_db_schema,
                     manage_ownership,
                     manage_grants,
+                    &excluded_grant_roles,
                 ))
             } else {
                 plan_migration(pgmold::diff::compute_diff_with_flags(
@@ -334,6 +349,7 @@ pub async fn run() -> Result<()> {
                     &filtered_target,
                     manage_ownership,
                     manage_grants,
+                    &excluded_grant_roles,
                 ))
             };
 
@@ -518,11 +534,17 @@ pub async fn run() -> Result<()> {
             include_extension_objects,
             manage_ownership,
             manage_grants,
+            exclude_grants_for_role,
             verbose,
             validate,
         } => {
             let filter = Filter::new(&include, &exclude, &include_types, &exclude_types)
                 .map_err(|e| anyhow!("Invalid glob pattern: {e}"))?;
+
+            let excluded_grant_roles: HashSet<String> = exclude_grants_for_role
+                .into_iter()
+                .map(|s| s.to_lowercase())
+                .collect();
 
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
@@ -543,6 +565,7 @@ pub async fn run() -> Result<()> {
                 &filtered_target,
                 manage_ownership,
                 manage_grants,
+                &excluded_grant_roles,
             ));
             let lint_options = LintOptions {
                 allow_destructive,
@@ -899,6 +922,7 @@ Successfully applied {total} statements."
                     &target,
                     manage_ownership,
                     manage_grants,
+                    &HashSet::new(),
                 ));
                 let sql = generate_sql(&ops);
 
