@@ -62,10 +62,21 @@ fn plan_options_defaults() {
 
     assert_eq!(options.target_schemas, vec!["public"]);
     assert!(!options.reverse);
-    assert!(!options.zero_downtime);
     assert!(!options.manage_ownership);
     assert!(options.manage_grants);
     assert!(!options.include_extension_objects);
+}
+
+#[test]
+fn plan_options_builder() {
+    let options = PlanOptions::new(vec!["sql:schema.sql".into()], "postgres://localhost/test")
+        .reverse()
+        .manage_ownership()
+        .with_target_schemas(vec!["public".into(), "auth".into()]);
+
+    assert!(options.reverse);
+    assert!(options.manage_ownership);
+    assert_eq!(options.target_schemas, vec!["public", "auth"]);
 }
 
 #[test]
@@ -77,6 +88,16 @@ fn apply_options_defaults() {
     assert!(!options.dry_run);
     assert!(!options.manage_ownership);
     assert!(options.manage_grants);
+}
+
+#[test]
+fn apply_options_builder() {
+    let options = ApplyOptions::new(vec!["sql:schema.sql".into()], "postgres://localhost/test")
+        .allow_destructive()
+        .dry_run();
+
+    assert!(options.allow_destructive);
+    assert!(options.dry_run);
 }
 
 #[test]
@@ -97,8 +118,8 @@ fn error_display() {
     let err = Error::connection("connection refused");
     assert!(err.to_string().contains("connection"));
 
-    let err = Error::invalid_source("unknown:foo.sql");
-    assert!(err.to_string().contains("Invalid schema source"));
+    let err = Error::introspection("failed to query pg_catalog");
+    assert!(err.to_string().contains("Introspection failed"));
 }
 
 #[test]

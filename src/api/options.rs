@@ -13,8 +13,6 @@ pub struct PlanOptions {
     pub filter: Option<Filter>,
     /// Generate rollback SQL (schema → database direction)
     pub reverse: bool,
-    /// Generate zero-downtime expand/contract migration
-    pub zero_downtime: bool,
     /// Include ownership management (ALTER ... OWNER TO)
     pub manage_ownership: bool,
     /// Include grant management (GRANT/REVOKE)
@@ -31,7 +29,6 @@ impl Default for PlanOptions {
             target_schemas: vec!["public".into()],
             filter: None,
             reverse: false,
-            zero_downtime: false,
             manage_ownership: false,
             manage_grants: true,
             include_extension_objects: false,
@@ -40,12 +37,49 @@ impl Default for PlanOptions {
 }
 
 impl PlanOptions {
+    /// Create new plan options with required fields.
     pub fn new(schema_sources: Vec<String>, database_url: impl Into<String>) -> Self {
         Self {
             schema_sources,
             database_url: database_url.into(),
             ..Default::default()
         }
+    }
+
+    /// Set target schemas.
+    pub fn with_target_schemas(mut self, schemas: Vec<String>) -> Self {
+        self.target_schemas = schemas;
+        self
+    }
+
+    /// Set filter for including/excluding objects.
+    pub fn with_filter(mut self, filter: Filter) -> Self {
+        self.filter = Some(filter);
+        self
+    }
+
+    /// Generate rollback SQL (reverse direction).
+    pub fn reverse(mut self) -> Self {
+        self.reverse = true;
+        self
+    }
+
+    /// Include ownership management.
+    pub fn manage_ownership(mut self) -> Self {
+        self.manage_ownership = true;
+        self
+    }
+
+    /// Disable grant management (enabled by default).
+    pub fn without_grants(mut self) -> Self {
+        self.manage_grants = false;
+        self
+    }
+
+    /// Include extension-owned objects.
+    pub fn include_extension_objects(mut self) -> Self {
+        self.include_extension_objects = true;
+        self
     }
 }
 
@@ -89,12 +123,55 @@ impl Default for ApplyOptions {
 }
 
 impl ApplyOptions {
+    /// Create new apply options with required fields.
     pub fn new(schema_sources: Vec<String>, database_url: impl Into<String>) -> Self {
         Self {
             schema_sources,
             database_url: database_url.into(),
             ..Default::default()
         }
+    }
+
+    /// Set target schemas.
+    pub fn with_target_schemas(mut self, schemas: Vec<String>) -> Self {
+        self.target_schemas = schemas;
+        self
+    }
+
+    /// Set filter for including/excluding objects.
+    pub fn with_filter(mut self, filter: Filter) -> Self {
+        self.filter = Some(filter);
+        self
+    }
+
+    /// Allow destructive operations (DROP, etc.).
+    pub fn allow_destructive(mut self) -> Self {
+        self.allow_destructive = true;
+        self
+    }
+
+    /// Enable dry run mode (preview only).
+    pub fn dry_run(mut self) -> Self {
+        self.dry_run = true;
+        self
+    }
+
+    /// Include ownership management.
+    pub fn manage_ownership(mut self) -> Self {
+        self.manage_ownership = true;
+        self
+    }
+
+    /// Disable grant management (enabled by default).
+    pub fn without_grants(mut self) -> Self {
+        self.manage_grants = false;
+        self
+    }
+
+    /// Include extension-owned objects.
+    pub fn include_extension_objects(mut self) -> Self {
+        self.include_extension_objects = true;
+        self
     }
 }
 
@@ -108,6 +185,7 @@ pub struct DiffOptions {
 }
 
 impl DiffOptions {
+    /// Create new diff options.
     pub fn new(from: impl Into<String>, to: impl Into<String>) -> Self {
         Self {
             from: from.into(),
@@ -138,12 +216,19 @@ impl Default for DriftOptions {
 }
 
 impl DriftOptions {
+    /// Create new drift options with required fields.
     pub fn new(schema_sources: Vec<String>, database_url: impl Into<String>) -> Self {
         Self {
             schema_sources,
             database_url: database_url.into(),
             ..Default::default()
         }
+    }
+
+    /// Set target schemas.
+    pub fn with_target_schemas(mut self, schemas: Vec<String>) -> Self {
+        self.target_schemas = schemas;
+        self
     }
 }
 
@@ -172,11 +257,30 @@ impl Default for DumpOptions {
 }
 
 impl DumpOptions {
+    /// Create new dump options with required fields.
     pub fn new(database_url: impl Into<String>) -> Self {
         Self {
             database_url: database_url.into(),
             ..Default::default()
         }
+    }
+
+    /// Set target schemas.
+    pub fn with_target_schemas(mut self, schemas: Vec<String>) -> Self {
+        self.target_schemas = schemas;
+        self
+    }
+
+    /// Set filter for including/excluding objects.
+    pub fn with_filter(mut self, filter: Filter) -> Self {
+        self.filter = Some(filter);
+        self
+    }
+
+    /// Include extension-owned objects.
+    pub fn include_extension_objects(mut self) -> Self {
+        self.include_extension_objects = true;
+        self
     }
 }
 
@@ -202,6 +306,7 @@ impl Default for LintApiOptions {
 }
 
 impl LintApiOptions {
+    /// Create new lint options with required fields.
     pub fn new(schema_sources: Vec<String>) -> Self {
         Self {
             schema_sources,
@@ -209,8 +314,15 @@ impl LintApiOptions {
         }
     }
 
+    /// Set database URL for migration linting.
     pub fn with_database(mut self, database_url: impl Into<String>) -> Self {
         self.database_url = Some(database_url.into());
+        self
+    }
+
+    /// Set target schemas.
+    pub fn with_target_schemas(mut self, schemas: Vec<String>) -> Self {
+        self.target_schemas = schemas;
         self
     }
 }
