@@ -392,11 +392,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                 grant_object_kind_to_sql(object_kind),
                 quote_qualified(schema, name),
                 args.as_ref().map(|a| format!("({a})")).unwrap_or_default(),
-                if grantee == "PUBLIC" {
-                    "PUBLIC".to_string()
-                } else {
-                    quote_ident(grantee)
-                },
+                format_role_name(grantee),
                 if *with_grant_option {
                     " WITH GRANT OPTION"
                 } else {
@@ -429,11 +425,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                 grant_object_kind_to_sql(object_kind),
                 quote_qualified(schema, name),
                 args.as_ref().map(|a| format!("({a})")).unwrap_or_default(),
-                if grantee == "PUBLIC" {
-                    "PUBLIC".to_string()
-                } else {
-                    quote_ident(grantee)
-                }
+                format_role_name(grantee)
             )]
         }
 
@@ -459,11 +451,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                 .map(|s| format!(" IN SCHEMA {}", quote_ident(s)))
                 .unwrap_or_default();
 
-            let grantee_sql = if grantee == "PUBLIC" {
-                "PUBLIC".to_string()
-            } else {
-                quote_ident(grantee)
-            };
+            let grantee_sql = format_role_name(grantee);
 
             if *revoke {
                 vec![format!(
@@ -813,6 +801,36 @@ fn escape_string(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+/// Formats a role name for use in SQL statements (e.g., in GRANT or CREATE POLICY).
+///
+/// Role names should NOT be quoted in most cases - only quote if they contain special characters.
+/// The "public" pseudo-role is a keyword meaning "all roles" and must be unquoted.
+///
+/// Bug context: PostgreSQL treats `TO "public"` as looking for a role literally named "public",
+/// while `TO public` means "all roles". This function ensures correct output.
+fn format_role_name(role: &str) -> String {
+    // PUBLIC (case-insensitive) is a keyword, not a role name - never quote it
+    if role.eq_ignore_ascii_case("public") {
+        return "public".to_string();
+    }
+
+    // Check if role name is a simple identifier (doesn't need quoting)
+    let mut chars = role.chars();
+    let is_simple_identifier = match chars.next() {
+        None => false,
+        Some(first) => {
+            (first.is_ascii_alphabetic() || first == '_')
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+    };
+
+    if is_simple_identifier {
+        role.to_string()
+    } else {
+        quote_ident(role)
+    }
+}
+
 fn generate_create_policy(policy: &Policy) -> String {
     let mut sql = format!(
         "CREATE POLICY {} ON {}",
@@ -828,7 +846,7 @@ fn generate_create_policy(policy: &Policy) -> String {
             policy
                 .roles
                 .iter()
-                .map(|r| quote_ident(r))
+                .map(|r| format_role_name(r))
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -860,7 +878,7 @@ fn generate_alter_policy(table: &str, name: &str, changes: &PolicyChanges) -> Ve
                 qualified,
                 roles
                     .iter()
-                    .map(|r| quote_ident(r))
+                    .map(|r| format_role_name(r))
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
@@ -2820,7 +2838,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "GRANT SELECT, INSERT ON TABLE \"public\".\"users\" TO \"app_user\";"
+            "GRANT SELECT, INSERT ON TABLE \"public\".\"users\" TO app_user;"
         );
     }
 
@@ -2842,7 +2860,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "GRANT SELECT ON TABLE \"public\".\"users\" TO \"admin_user\" WITH GRANT OPTION;"
+            "GRANT SELECT ON TABLE \"public\".\"users\" TO admin_user WITH GRANT OPTION;"
         );
     }
 
@@ -2864,7 +2882,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "GRANT USAGE ON SEQUENCE \"public\".\"user_id_seq\" TO PUBLIC;"
+            "GRANT USAGE ON SEQUENCE \"public\".\"user_id_seq\" TO public;"
         );
     }
 
@@ -2886,7 +2904,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "GRANT EXECUTE ON FUNCTION \"public\".\"calculate\"(integer, text) TO \"app_user\";"
+            "GRANT EXECUTE ON FUNCTION \"public\".\"calculate\"(integer, text) TO app_user;"
         );
     }
 
@@ -2908,7 +2926,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "REVOKE DELETE ON TABLE \"public\".\"users\" FROM \"old_user\";"
+            "REVOKE DELETE ON TABLE \"public\".\"users\" FROM old_user;"
         );
     }
 
@@ -2930,7 +2948,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "REVOKE GRANT OPTION FOR SELECT ON VIEW \"public\".\"user_view\" FROM \"viewer\";"
+            "REVOKE GRANT OPTION FOR SELECT ON VIEW \"public\".\"user_view\" FROM viewer;"
         );
     }
 
@@ -3097,7 +3115,7 @@ mod tests {
         let sql = generate_sql(&ops);
 
         assert!(
-            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"public\" GRANT SELECT, INSERT ON TABLES TO \"app_user\";".to_string()),
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"public\" GRANT SELECT, INSERT ON TABLES TO app_user;".to_string()),
             "Should generate correct ALTER DEFAULT PRIVILEGES SQL. SQL: {sql:?}"
         );
     }
@@ -3119,7 +3137,7 @@ mod tests {
         let sql = generate_sql(&ops);
 
         assert!(
-            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" REVOKE EXECUTE ON FUNCTIONS FROM \"app_user\";".to_string()),
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" REVOKE EXECUTE ON FUNCTIONS FROM app_user;".to_string()),
             "Should generate correct REVOKE SQL without IN SCHEMA. SQL: {sql:?}"
         );
     }
@@ -3141,7 +3159,7 @@ mod tests {
         let sql = generate_sql(&ops);
 
         assert!(
-            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"api\" GRANT USAGE ON SEQUENCES TO \"service_role\" WITH GRANT OPTION;".to_string()),
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"api\" GRANT USAGE ON SEQUENCES TO service_role WITH GRANT OPTION;".to_string()),
             "Should generate SQL WITH GRANT OPTION. SQL: {sql:?}"
         );
     }
@@ -3163,8 +3181,83 @@ mod tests {
         let sql = generate_sql(&ops);
 
         assert!(
-            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"public\" GRANT USAGE ON TYPES TO PUBLIC;".to_string()),
+            sql.contains(&"ALTER DEFAULT PRIVILEGES FOR ROLE \"admin\" IN SCHEMA \"public\" GRANT USAGE ON TYPES TO public;".to_string()),
             "Should not quote PUBLIC grantee. SQL: {sql:?}"
         );
+    }
+
+    #[test]
+    fn create_policy_does_not_double_quote_role_names() {
+        use crate::model::{Policy, PolicyCommand};
+
+        let ops = vec![MigrationOp::CreatePolicy(Policy {
+            name: "admin_policy".to_string(),
+            table_schema: "mrv".to_string(),
+            table: "TableName".to_string(),
+            command: PolicyCommand::All,
+            roles: vec!["public".to_string()],
+            using_expr: Some("true".to_string()),
+            check_expr: None,
+        })];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        // Role names should NOT be quoted - PostgreSQL expects unquoted role names
+        assert!(
+            sql[0].contains("TO public"),
+            "Role name 'public' should NOT be quoted. Got: {}",
+            sql[0]
+        );
+        assert!(
+            !sql[0].contains(r#"TO "public""#),
+            "Role name should NOT be double-quoted. Got: {}",
+            sql[0]
+        );
+    }
+
+    #[test]
+    fn create_policy_with_custom_role() {
+        use crate::model::{Policy, PolicyCommand};
+
+        let ops = vec![MigrationOp::CreatePolicy(Policy {
+            name: "user_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string(), "service_role".to_string()],
+            using_expr: Some("auth.uid() = user_id".to_string()),
+            check_expr: None,
+        })];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        // Role names should NOT be quoted
+        assert!(
+            sql[0].contains("TO authenticated, service_role"),
+            "Role names should NOT be quoted. Got: {}",
+            sql[0]
+        );
+    }
+
+    #[test]
+    fn format_role_name_edge_cases() {
+        // PUBLIC variations (case-insensitive) - always unquoted lowercase
+        assert_eq!(format_role_name("public"), "public");
+        assert_eq!(format_role_name("PUBLIC"), "public");
+        assert_eq!(format_role_name("Public"), "public");
+        assert_eq!(format_role_name("PuBLiC"), "public");
+
+        // Simple identifiers - no quotes needed
+        assert_eq!(format_role_name("admin"), "admin");
+        assert_eq!(format_role_name("service_role"), "service_role");
+        assert_eq!(format_role_name("_internal"), "_internal");
+        assert_eq!(format_role_name("role123"), "role123");
+        assert_eq!(format_role_name("a"), "a");
+
+        // Names requiring quoting
+        assert_eq!(format_role_name("my-role"), "\"my-role\""); // hyphen
+        assert_eq!(format_role_name("my role"), "\"my role\""); // space
+        assert_eq!(format_role_name("123role"), "\"123role\""); // starts with digit
+        assert_eq!(format_role_name(""), "\"\""); // empty string
     }
 }
