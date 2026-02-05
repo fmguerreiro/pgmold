@@ -1383,8 +1383,6 @@ fn grant_object_kind_to_sql(kind: &GrantObjectKind) -> &'static str {
     }
 }
 
-/// Schema objects use unqualified names (GRANT ... ON SCHEMA "auth"),
-/// while other objects use schema-qualified names (GRANT ... ON TABLE "public"."users").
 fn format_grant_object_name(kind: &GrantObjectKind, schema: &str, name: &str) -> String {
     match kind {
         GrantObjectKind::Schema => quote_ident(name),
@@ -3420,6 +3418,46 @@ mod tests {
         assert_eq!(
             sql[0],
             "REVOKE USAGE, CREATE ON SCHEMA \"auth\" FROM app_user;"
+        );
+    }
+
+    #[test]
+    fn grant_on_type_uses_qualified_name() {
+        let ops = vec![MigrationOp::GrantPrivileges {
+            object_kind: GrantObjectKind::Type,
+            schema: "public".to_string(),
+            name: "user_role".to_string(),
+            args: None,
+            grantee: "app_user".to_string(),
+            privileges: vec![Privilege::Usage],
+            with_grant_option: false,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "GRANT USAGE ON TYPE \"public\".\"user_role\" TO app_user;"
+        );
+    }
+
+    #[test]
+    fn revoke_on_domain_uses_qualified_name() {
+        let ops = vec![MigrationOp::RevokePrivileges {
+            object_kind: GrantObjectKind::Domain,
+            schema: "public".to_string(),
+            name: "email".to_string(),
+            args: None,
+            grantee: "app_user".to_string(),
+            privileges: vec![Privilege::Usage],
+            revoke_grant_option: false,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "REVOKE USAGE ON DOMAIN \"public\".\"email\" FROM app_user;"
         );
     }
 }
