@@ -390,7 +390,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                     .collect::<Vec<_>>()
                     .join(", "),
                 grant_object_kind_to_sql(object_kind),
-                quote_qualified(schema, name),
+                format_grant_object_name(object_kind, schema, name),
                 args.as_ref().map(|a| format!("({a})")).unwrap_or_default(),
                 format_role_name(grantee),
                 if *with_grant_option {
@@ -423,7 +423,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                     .collect::<Vec<_>>()
                     .join(", "),
                 grant_object_kind_to_sql(object_kind),
-                quote_qualified(schema, name),
+                format_grant_object_name(object_kind, schema, name),
                 args.as_ref().map(|a| format!("({a})")).unwrap_or_default(),
                 format_role_name(grantee)
             )]
@@ -1380,6 +1380,13 @@ fn grant_object_kind_to_sql(kind: &GrantObjectKind) -> &'static str {
         GrantObjectKind::Schema => "SCHEMA",
         GrantObjectKind::Type => "TYPE",
         GrantObjectKind::Domain => "DOMAIN",
+    }
+}
+
+fn format_grant_object_name(kind: &GrantObjectKind, schema: &str, name: &str) -> String {
+    match kind {
+        GrantObjectKind::Schema => quote_ident(name),
+        _ => quote_qualified(schema, name),
     }
 }
 
@@ -3372,5 +3379,85 @@ mod tests {
         assert_eq!(format_role_name("my role"), "\"my role\""); // space
         assert_eq!(format_role_name("123role"), "\"123role\""); // starts with digit
         assert_eq!(format_role_name(""), "\"\""); // empty string
+    }
+
+    #[test]
+    fn grant_on_schema_uses_unqualified_name() {
+        let ops = vec![MigrationOp::GrantPrivileges {
+            object_kind: GrantObjectKind::Schema,
+            schema: "auth".to_string(),
+            name: "auth".to_string(),
+            args: None,
+            grantee: "app_user".to_string(),
+            privileges: vec![Privilege::Usage, Privilege::Create],
+            with_grant_option: false,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "GRANT USAGE, CREATE ON SCHEMA \"auth\" TO app_user;"
+        );
+    }
+
+    #[test]
+    fn revoke_on_schema_uses_unqualified_name() {
+        let ops = vec![MigrationOp::RevokePrivileges {
+            object_kind: GrantObjectKind::Schema,
+            schema: "auth".to_string(),
+            name: "auth".to_string(),
+            args: None,
+            grantee: "app_user".to_string(),
+            privileges: vec![Privilege::Usage, Privilege::Create],
+            revoke_grant_option: false,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "REVOKE USAGE, CREATE ON SCHEMA \"auth\" FROM app_user;"
+        );
+    }
+
+    #[test]
+    fn grant_on_type_uses_qualified_name() {
+        let ops = vec![MigrationOp::GrantPrivileges {
+            object_kind: GrantObjectKind::Type,
+            schema: "public".to_string(),
+            name: "user_role".to_string(),
+            args: None,
+            grantee: "app_user".to_string(),
+            privileges: vec![Privilege::Usage],
+            with_grant_option: false,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "GRANT USAGE ON TYPE \"public\".\"user_role\" TO app_user;"
+        );
+    }
+
+    #[test]
+    fn revoke_on_domain_uses_qualified_name() {
+        let ops = vec![MigrationOp::RevokePrivileges {
+            object_kind: GrantObjectKind::Domain,
+            schema: "public".to_string(),
+            name: "email".to_string(),
+            args: None,
+            grantee: "app_user".to_string(),
+            privileges: vec![Privilege::Usage],
+            revoke_grant_option: false,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "REVOKE USAGE ON DOMAIN \"public\".\"email\" FROM app_user;"
+        );
     }
 }

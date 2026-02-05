@@ -644,6 +644,38 @@ mod tests {
     }
 
     #[test]
+    fn dump_schema_grants_use_unqualified_name() {
+        use crate::model::{Grant, PgSchema, Privilege};
+        use std::collections::BTreeSet;
+
+        let mut schema = Schema::default();
+        let mut privileges = BTreeSet::new();
+        privileges.insert(Privilege::Usage);
+
+        schema.schemas.insert(
+            "auth".to_string(),
+            PgSchema {
+                name: "auth".to_string(),
+                grants: vec![Grant {
+                    grantee: "app_user".to_string(),
+                    privileges,
+                    with_grant_option: false,
+                }],
+            },
+        );
+
+        let dump = generate_dump(&schema, None);
+        assert!(
+            dump.contains(r#"GRANT USAGE ON SCHEMA "auth" TO app_user;"#),
+            "Expected unqualified schema name. Dump:\n{dump}"
+        );
+        assert!(
+            !dump.contains(r#""auth"."auth""#),
+            "Schema name must not be double-qualified. Dump:\n{dump}"
+        );
+    }
+
+    #[test]
     fn dump_includes_sequence_grants() {
         use crate::model::{Grant, Privilege, Sequence, SequenceDataType};
         use std::collections::BTreeSet;
