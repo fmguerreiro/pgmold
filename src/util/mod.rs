@@ -959,7 +959,10 @@ fn normalize_select_item(item: &sqlparser::ast::SelectItem) -> sqlparser::ast::S
 /// Key normalizations:
 /// - Unwrap Nested (parentheses)
 /// - Convert PGLikeMatch (~~) to Like
+/// - Convert = ANY(ARRAY[...]) to IN (...)
+/// - Convert <> ALL(ARRAY[...]) to NOT IN (...)
 /// - Strip ::text casts from string literals
+/// - Normalize FILTER clauses on aggregate functions
 fn normalize_expr(expr: &Expr) -> Expr {
     match expr {
         // Unwrap nested expressions (parentheses)
@@ -1118,7 +1121,6 @@ fn normalize_expr(expr: &Expr) -> Expr {
 
         Expr::Function(f) => {
             let mut func = f.clone();
-            // Normalize function name (schema.function_name) to handle quoting differences
             func.name = normalize_object_name(&f.name);
             func.args = match &f.args {
                 sqlparser::ast::FunctionArguments::List(args) => {
@@ -1130,6 +1132,8 @@ fn normalize_expr(expr: &Expr) -> Expr {
                 }
                 other => other.clone(),
             };
+            // Normalize FILTER (WHERE expr) clause — PostgreSQL adds extra parens
+            func.filter = f.filter.as_ref().map(|e| Box::new(normalize_expr(e)));
             Expr::Function(func)
         }
 
@@ -1201,6 +1205,62 @@ fn normalize_expr(expr: &Expr) -> Expr {
             value: ident.value.to_lowercase(),
             quote_style: None,
             span: ident.span,
+        }),
+
+        // PostgreSQL converts IN (...) to = ANY(ARRAY[...])
+        // Normalize back to InList for canonical comparison
+        Expr::AnyOp {
+            left,
+            compare_op,
+            right,
+            ..
+        } if *compare_op == BinaryOperator::Eq => {
+            let norm_left = normalize_expr(left);
+            let norm_right = normalize_expr(right);
+            if let Expr::Array(arr) = &norm_right {
+                Expr::InList {
+                    expr: Box::new(norm_left),
+                    list: arr.elem.iter().map(normalize_expr).collect(),
+                    negated: false,
+                }
+            } else {
+                Expr::AnyOp {
+                    left: Box::new(norm_left),
+                    compare_op: compare_op.clone(),
+                    right: Box::new(norm_right),
+                    is_some: false,
+                }
+            }
+        }
+
+        // PostgreSQL converts NOT IN (...) to <> ALL(ARRAY[...])
+        // Normalize back to InList { negated: true } for canonical comparison
+        Expr::AllOp {
+            left,
+            compare_op,
+            right,
+        } if *compare_op == BinaryOperator::NotEq => {
+            let norm_left = normalize_expr(left);
+            let norm_right = normalize_expr(right);
+            if let Expr::Array(arr) = &norm_right {
+                Expr::InList {
+                    expr: Box::new(norm_left),
+                    list: arr.elem.iter().map(normalize_expr).collect(),
+                    negated: true,
+                }
+            } else {
+                Expr::AllOp {
+                    left: Box::new(norm_left),
+                    compare_op: compare_op.clone(),
+                    right: Box::new(norm_right),
+                }
+            }
+        }
+
+        // Normalize Array elements recursively (strips casts inside ARRAY[...])
+        Expr::Array(arr) => Expr::Array(sqlparser::ast::Array {
+            elem: arr.elem.iter().map(normalize_expr).collect(),
+            named: arr.named,
         }),
 
         other => other.clone(),
@@ -1930,5 +1990,73 @@ fn expression_comparison_handles_multiple_named_args_with_table_qualifiers() {
     assert!(
         expressions_semantically_equal(schema_expr, db_expr),
         "Mixed positional/named args with table qualifiers and text casts should normalize"
+    );
+}
+
+// Issue #40: IN (...) vs = ANY(ARRAY[...]) normalization
+#[test]
+fn in_list_equals_any_array() {
+    let schema_form = "SELECT * FROM t WHERE r.name IN ('admin', 'member')";
+    let db_form = "SELECT * FROM t WHERE r.name = ANY (ARRAY['admin'::text, 'member'::text])";
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "IN list should equal = ANY(ARRAY[...])"
+    );
+}
+
+#[test]
+fn not_in_list_equals_not_any_array() {
+    let schema_form = "SELECT * FROM t WHERE r.name NOT IN ('admin', 'member')";
+    let db_form = "SELECT * FROM t WHERE r.name <> ALL (ARRAY['admin'::text, 'member'::text])";
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "NOT IN list should equal <> ALL(ARRAY[...])"
+    );
+}
+
+#[test]
+fn filter_clause_with_extra_parens() {
+    let schema_form = "SELECT json_agg(x) FILTER (WHERE u.id IS NOT NULL) FROM t";
+    let db_form = "SELECT json_agg(x) FILTER (WHERE (u.id IS NOT NULL)) FROM t";
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "FILTER clause extra parens should be normalized"
+    );
+}
+
+#[test]
+fn issue_40_full_view_query() {
+    // Exact scenario from issue #40
+    let schema_form = r#"SELECT
+    t.id AS team_id,
+    t.name AS team_name,
+    COALESCE(
+        json_agg(
+            json_build_object(
+                'user_id', u.id,
+                'email', u.email,
+                'role', r.name
+            )
+        ) FILTER (WHERE u.id IS NOT NULL),
+        '[]'::json
+    ) AS members
+FROM public.teams t
+LEFT JOIN public.memberships m ON m.team_id = t.id
+LEFT JOIN public.roles r ON m.role_id = r.id AND r.name IN ('admin', 'member')
+LEFT JOIN auth.users u ON m.user_id = u.id
+GROUP BY t.id, t.name"#;
+
+    let db_form = r#"SELECT t.id AS team_id,
+    t.name AS team_name,
+    COALESCE(json_agg(json_build_object('user_id', u.id, 'email', u.email, 'role', r.name)) FILTER (WHERE (u.id IS NOT NULL)), '[]'::json) AS members
+   FROM (((teams t
+     LEFT JOIN memberships m ON ((m.team_id = t.id)))
+     LEFT JOIN roles r ON (((m.role_id = r.id) AND (r.name = ANY (ARRAY['admin'::text, 'member'::text])))))
+     LEFT JOIN auth.users u ON ((m.user_id = u.id)))
+  GROUP BY t.id, t.name"#;
+
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "Full issue #40 view should be semantically equal despite PostgreSQL normalization"
     );
 }
