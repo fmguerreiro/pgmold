@@ -1,6 +1,90 @@
 mod common;
 use common::*;
 
+/// Issue #40: View with IN clause, COALESCE, json_agg, FILTER
+/// PostgreSQL normalizes IN (...) to = ANY(ARRAY[...]),
+/// adds extra parens, removes public prefix, etc.
+#[tokio::test]
+async fn view_with_in_clause_and_aggregate_filter_round_trip() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let schema_sql = r#"
+        CREATE TABLE public.teams (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL
+        );
+
+        CREATE TABLE public.memberships (
+            id SERIAL PRIMARY KEY,
+            team_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            role_id INTEGER NOT NULL
+        );
+
+        CREATE TABLE public.roles (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL
+        );
+
+        CREATE TABLE public.users (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL
+        );
+
+        CREATE OR REPLACE VIEW public.team_members_view AS
+        SELECT
+            t.id AS team_id,
+            t.name AS team_name,
+            COALESCE(
+                json_agg(
+                    json_build_object(
+                        'user_id', u.id,
+                        'email', u.email,
+                        'role', r.name
+                    )
+                ) FILTER (WHERE u.id IS NOT NULL),
+                '[]'::json
+            ) AS members
+        FROM public.teams t
+        LEFT JOIN public.memberships m ON m.team_id = t.id
+        LEFT JOIN public.roles r ON m.role_id = r.id AND r.name IN ('admin', 'member')
+        LEFT JOIN public.users u ON m.user_id = u.id
+        GROUP BY t.id, t.name;
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let view_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateView { .. }
+                    | MigrationOp::DropView { .. }
+                    | MigrationOp::AlterView { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        view_ops.is_empty(),
+        "Should have no view diff after apply (issue #40). Got: {view_ops:?}"
+    );
+}
+
 #[tokio::test]
 async fn view_with_cross_schema_join_round_trip_no_diff() {
     // Regression test: View with JOIN across schemas
