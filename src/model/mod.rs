@@ -867,77 +867,47 @@ impl Schema {
         self.pending_grants = unapplied;
     }
 
+    /// Resolves the grants vector for a given object type and key.
+    /// Handles Table/View and Enum/Domain fallback logic.
+    fn resolve_grants_mut(
+        &mut self,
+        object_type: PendingGrantObjectType,
+        key: &str,
+    ) -> Option<&mut Vec<Grant>> {
+        match object_type {
+            PendingGrantObjectType::Table => self
+                .tables
+                .get_mut(key)
+                .map(|t| &mut t.grants)
+                .or_else(|| self.views.get_mut(key).map(|v| &mut v.grants)),
+            PendingGrantObjectType::View => self
+                .views
+                .get_mut(key)
+                .map(|v| &mut v.grants)
+                .or_else(|| self.tables.get_mut(key).map(|t| &mut t.grants)),
+            PendingGrantObjectType::Sequence => self.sequences.get_mut(key).map(|s| &mut s.grants),
+            PendingGrantObjectType::Function => self.functions.get_mut(key).map(|f| &mut f.grants),
+            PendingGrantObjectType::Schema => self.schemas.get_mut(key).map(|s| &mut s.grants),
+            PendingGrantObjectType::Enum => self
+                .enums
+                .get_mut(key)
+                .map(|e| &mut e.grants)
+                .or_else(|| self.domains.get_mut(key).map(|d| &mut d.grants)),
+            PendingGrantObjectType::Domain => self
+                .domains
+                .get_mut(key)
+                .map(|d| &mut d.grants)
+                .or_else(|| self.enums.get_mut(key).map(|e| &mut e.grants)),
+        }
+    }
+
     /// Applies a single pending grant. Returns true if the object was found.
     fn apply_single_grant(&mut self, pg: &PendingGrant) -> bool {
-        match pg.object_type {
-            PendingGrantObjectType::Table => {
-                if let Some(table) = self.tables.get_mut(&pg.object_key) {
-                    table.grants.push(pg.grant.clone());
-                    true
-                } else if let Some(view) = self.views.get_mut(&pg.object_key) {
-                    view.grants.push(pg.grant.clone());
-                    true
-                } else {
-                    false
-                }
-            }
-            PendingGrantObjectType::View => {
-                if let Some(view) = self.views.get_mut(&pg.object_key) {
-                    view.grants.push(pg.grant.clone());
-                    true
-                } else if let Some(table) = self.tables.get_mut(&pg.object_key) {
-                    table.grants.push(pg.grant.clone());
-                    true
-                } else {
-                    false
-                }
-            }
-            PendingGrantObjectType::Sequence => {
-                if let Some(seq) = self.sequences.get_mut(&pg.object_key) {
-                    seq.grants.push(pg.grant.clone());
-                    true
-                } else {
-                    false
-                }
-            }
-            PendingGrantObjectType::Function => {
-                if let Some(func) = self.functions.get_mut(&pg.object_key) {
-                    func.grants.push(pg.grant.clone());
-                    true
-                } else {
-                    false
-                }
-            }
-            PendingGrantObjectType::Schema => {
-                if let Some(pg_schema) = self.schemas.get_mut(&pg.object_key) {
-                    pg_schema.grants.push(pg.grant.clone());
-                    true
-                } else {
-                    false
-                }
-            }
-            PendingGrantObjectType::Enum => {
-                if let Some(enum_type) = self.enums.get_mut(&pg.object_key) {
-                    enum_type.grants.push(pg.grant.clone());
-                    true
-                } else if let Some(domain) = self.domains.get_mut(&pg.object_key) {
-                    domain.grants.push(pg.grant.clone());
-                    true
-                } else {
-                    false
-                }
-            }
-            PendingGrantObjectType::Domain => {
-                if let Some(domain) = self.domains.get_mut(&pg.object_key) {
-                    domain.grants.push(pg.grant.clone());
-                    true
-                } else if let Some(enum_type) = self.enums.get_mut(&pg.object_key) {
-                    enum_type.grants.push(pg.grant.clone());
-                    true
-                } else {
-                    false
-                }
-            }
+        if let Some(grants) = self.resolve_grants_mut(pg.object_type, &pg.object_key) {
+            grants.push(pg.grant.clone());
+            true
+        } else {
+            false
         }
     }
 
@@ -963,130 +933,11 @@ impl Schema {
 
     /// Applies a single pending revoke. Returns true if the object was found.
     fn apply_single_revoke(&mut self, pr: &PendingRevoke) -> bool {
-        match pr.object_type {
-            PendingGrantObjectType::Table => {
-                if let Some(table) = self.tables.get_mut(&pr.object_key) {
-                    revoke_from_grants(
-                        &mut table.grants,
-                        &pr.grantee,
-                        &pr.privileges,
-                        pr.grant_option_for,
-                    );
-                    true
-                } else if let Some(view) = self.views.get_mut(&pr.object_key) {
-                    revoke_from_grants(
-                        &mut view.grants,
-                        &pr.grantee,
-                        &pr.privileges,
-                        pr.grant_option_for,
-                    );
-                    true
-                } else {
-                    false
-                }
-            }
-            PendingGrantObjectType::View => {
-                if let Some(view) = self.views.get_mut(&pr.object_key) {
-                    revoke_from_grants(
-                        &mut view.grants,
-                        &pr.grantee,
-                        &pr.privileges,
-                        pr.grant_option_for,
-                    );
-                    true
-                } else if let Some(table) = self.tables.get_mut(&pr.object_key) {
-                    revoke_from_grants(
-                        &mut table.grants,
-                        &pr.grantee,
-                        &pr.privileges,
-                        pr.grant_option_for,
-                    );
-                    true
-                } else {
-                    false
-                }
-            }
-            PendingGrantObjectType::Sequence => {
-                if let Some(seq) = self.sequences.get_mut(&pr.object_key) {
-                    revoke_from_grants(
-                        &mut seq.grants,
-                        &pr.grantee,
-                        &pr.privileges,
-                        pr.grant_option_for,
-                    );
-                    true
-                } else {
-                    false
-                }
-            }
-            PendingGrantObjectType::Function => {
-                if let Some(func) = self.functions.get_mut(&pr.object_key) {
-                    revoke_from_grants(
-                        &mut func.grants,
-                        &pr.grantee,
-                        &pr.privileges,
-                        pr.grant_option_for,
-                    );
-                    true
-                } else {
-                    false
-                }
-            }
-            PendingGrantObjectType::Schema => {
-                if let Some(pg_schema) = self.schemas.get_mut(&pr.object_key) {
-                    revoke_from_grants(
-                        &mut pg_schema.grants,
-                        &pr.grantee,
-                        &pr.privileges,
-                        pr.grant_option_for,
-                    );
-                    true
-                } else {
-                    false
-                }
-            }
-            PendingGrantObjectType::Enum => {
-                if let Some(enum_type) = self.enums.get_mut(&pr.object_key) {
-                    revoke_from_grants(
-                        &mut enum_type.grants,
-                        &pr.grantee,
-                        &pr.privileges,
-                        pr.grant_option_for,
-                    );
-                    true
-                } else if let Some(domain) = self.domains.get_mut(&pr.object_key) {
-                    revoke_from_grants(
-                        &mut domain.grants,
-                        &pr.grantee,
-                        &pr.privileges,
-                        pr.grant_option_for,
-                    );
-                    true
-                } else {
-                    false
-                }
-            }
-            PendingGrantObjectType::Domain => {
-                if let Some(domain) = self.domains.get_mut(&pr.object_key) {
-                    revoke_from_grants(
-                        &mut domain.grants,
-                        &pr.grantee,
-                        &pr.privileges,
-                        pr.grant_option_for,
-                    );
-                    true
-                } else if let Some(enum_type) = self.enums.get_mut(&pr.object_key) {
-                    revoke_from_grants(
-                        &mut enum_type.grants,
-                        &pr.grantee,
-                        &pr.privileges,
-                        pr.grant_option_for,
-                    );
-                    true
-                } else {
-                    false
-                }
-            }
+        if let Some(grants) = self.resolve_grants_mut(pr.object_type, &pr.object_key) {
+            revoke_from_grants(grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+            true
+        } else {
+            false
         }
     }
 }
