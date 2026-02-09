@@ -966,10 +966,20 @@ impl Schema {
         match pr.object_type {
             PendingGrantObjectType::Table => {
                 if let Some(table) = self.tables.get_mut(&pr.object_key) {
-                    revoke_from_grants(&mut table.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    revoke_from_grants(
+                        &mut table.grants,
+                        &pr.grantee,
+                        &pr.privileges,
+                        pr.grant_option_for,
+                    );
                     true
                 } else if let Some(view) = self.views.get_mut(&pr.object_key) {
-                    revoke_from_grants(&mut view.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    revoke_from_grants(
+                        &mut view.grants,
+                        &pr.grantee,
+                        &pr.privileges,
+                        pr.grant_option_for,
+                    );
                     true
                 } else {
                     false
@@ -977,10 +987,20 @@ impl Schema {
             }
             PendingGrantObjectType::View => {
                 if let Some(view) = self.views.get_mut(&pr.object_key) {
-                    revoke_from_grants(&mut view.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    revoke_from_grants(
+                        &mut view.grants,
+                        &pr.grantee,
+                        &pr.privileges,
+                        pr.grant_option_for,
+                    );
                     true
                 } else if let Some(table) = self.tables.get_mut(&pr.object_key) {
-                    revoke_from_grants(&mut table.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    revoke_from_grants(
+                        &mut table.grants,
+                        &pr.grantee,
+                        &pr.privileges,
+                        pr.grant_option_for,
+                    );
                     true
                 } else {
                     false
@@ -988,7 +1008,12 @@ impl Schema {
             }
             PendingGrantObjectType::Sequence => {
                 if let Some(seq) = self.sequences.get_mut(&pr.object_key) {
-                    revoke_from_grants(&mut seq.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    revoke_from_grants(
+                        &mut seq.grants,
+                        &pr.grantee,
+                        &pr.privileges,
+                        pr.grant_option_for,
+                    );
                     true
                 } else {
                     false
@@ -996,7 +1021,12 @@ impl Schema {
             }
             PendingGrantObjectType::Function => {
                 if let Some(func) = self.functions.get_mut(&pr.object_key) {
-                    revoke_from_grants(&mut func.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    revoke_from_grants(
+                        &mut func.grants,
+                        &pr.grantee,
+                        &pr.privileges,
+                        pr.grant_option_for,
+                    );
                     true
                 } else {
                     false
@@ -1004,7 +1034,12 @@ impl Schema {
             }
             PendingGrantObjectType::Schema => {
                 if let Some(pg_schema) = self.schemas.get_mut(&pr.object_key) {
-                    revoke_from_grants(&mut pg_schema.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    revoke_from_grants(
+                        &mut pg_schema.grants,
+                        &pr.grantee,
+                        &pr.privileges,
+                        pr.grant_option_for,
+                    );
                     true
                 } else {
                     false
@@ -1012,10 +1047,20 @@ impl Schema {
             }
             PendingGrantObjectType::Enum => {
                 if let Some(enum_type) = self.enums.get_mut(&pr.object_key) {
-                    revoke_from_grants(&mut enum_type.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    revoke_from_grants(
+                        &mut enum_type.grants,
+                        &pr.grantee,
+                        &pr.privileges,
+                        pr.grant_option_for,
+                    );
                     true
                 } else if let Some(domain) = self.domains.get_mut(&pr.object_key) {
-                    revoke_from_grants(&mut domain.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    revoke_from_grants(
+                        &mut domain.grants,
+                        &pr.grantee,
+                        &pr.privileges,
+                        pr.grant_option_for,
+                    );
                     true
                 } else {
                     false
@@ -1023,10 +1068,20 @@ impl Schema {
             }
             PendingGrantObjectType::Domain => {
                 if let Some(domain) = self.domains.get_mut(&pr.object_key) {
-                    revoke_from_grants(&mut domain.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    revoke_from_grants(
+                        &mut domain.grants,
+                        &pr.grantee,
+                        &pr.privileges,
+                        pr.grant_option_for,
+                    );
                     true
                 } else if let Some(enum_type) = self.enums.get_mut(&pr.object_key) {
-                    revoke_from_grants(&mut enum_type.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    revoke_from_grants(
+                        &mut enum_type.grants,
+                        &pr.grantee,
+                        &pr.privileges,
+                        pr.grant_option_for,
+                    );
                     true
                 } else {
                     false
