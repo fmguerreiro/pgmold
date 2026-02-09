@@ -22,6 +22,39 @@ pub enum PendingOwnerObjectType {
     Domain,
 }
 
+/// Represents a pending GRANT parsed from a GRANT statement.
+/// Used for cross-file resolution when GRANT statements are in separate files from object definitions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingGrant {
+    pub object_type: PendingGrantObjectType,
+    /// Qualified name for most objects (schema.name), function signature for functions,
+    /// or bare name for schemas
+    pub object_key: String,
+    pub grant: Grant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingGrantObjectType {
+    Table,
+    View,
+    Sequence,
+    Function,
+    Schema,
+    Enum,
+    Domain,
+}
+
+/// Represents a pending REVOKE parsed from a REVOKE statement.
+/// Used for cross-file resolution when REVOKE statements are in separate files from object definitions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingRevoke {
+    pub object_type: PendingGrantObjectType,
+    pub object_key: String,
+    pub grantee: String,
+    pub privileges: BTreeSet<Privilege>,
+    pub grant_option_for: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Schema {
     pub schemas: BTreeMap<String, PgSchema>,
@@ -42,6 +75,14 @@ pub struct Schema {
     /// Cleared after finalize() is called.
     #[serde(skip)]
     pub pending_owners: Vec<PendingOwner>,
+    /// Grant statements collected during parsing, awaiting association with objects.
+    /// Cleared after finalize() is called.
+    #[serde(skip)]
+    pub pending_grants: Vec<PendingGrant>,
+    /// Revoke statements collected during parsing, awaiting association with objects.
+    /// Cleared after finalize() is called.
+    #[serde(skip)]
+    pub pending_revokes: Vec<PendingRevoke>,
     pub default_privileges: Vec<DefaultPrivilege>,
 }
 
@@ -669,6 +710,8 @@ impl Schema {
             partitions: BTreeMap::new(),
             pending_policies: Vec::new(),
             pending_owners: Vec::new(),
+            pending_grants: Vec::new(),
+            pending_revokes: Vec::new(),
             default_privileges: Vec::new(),
         }
     }
@@ -698,12 +741,14 @@ impl Schema {
         }
 
         self.apply_pending_owners();
+        self.apply_pending_grants();
+        self.apply_pending_revokes();
         Ok(())
     }
 
     /// Associates pending policies with their respective tables.
     /// Policies referencing non-existent tables are returned.
-    /// Also applies pending ownership (keeping unapplied ones for cross-file resolution).
+    /// Also applies pending ownership and grants (keeping unapplied ones for cross-file resolution).
     pub fn finalize_partial(&mut self) -> Vec<Policy> {
         let pending = std::mem::take(&mut self.pending_policies);
         let mut orphaned = Vec::new();
@@ -718,6 +763,8 @@ impl Schema {
         }
 
         self.apply_pending_owners_partial();
+        self.apply_pending_grants_partial();
+        self.apply_pending_revokes_partial();
         orphaned
     }
 
@@ -799,6 +846,218 @@ impl Schema {
             }
         }
     }
+
+    /// Applies all pending grants. Grants for non-existent objects are silently ignored.
+    fn apply_pending_grants(&mut self) {
+        let pending = std::mem::take(&mut self.pending_grants);
+        for pg in pending {
+            self.apply_single_grant(&pg);
+        }
+    }
+
+    /// Applies pending grants, keeping unapplied ones for cross-file resolution.
+    fn apply_pending_grants_partial(&mut self) {
+        let pending = std::mem::take(&mut self.pending_grants);
+        let mut unapplied = Vec::new();
+        for pg in pending {
+            if !self.apply_single_grant(&pg) {
+                unapplied.push(pg);
+            }
+        }
+        self.pending_grants = unapplied;
+    }
+
+    /// Applies a single pending grant. Returns true if the object was found.
+    fn apply_single_grant(&mut self, pg: &PendingGrant) -> bool {
+        match pg.object_type {
+            PendingGrantObjectType::Table => {
+                if let Some(table) = self.tables.get_mut(&pg.object_key) {
+                    table.grants.push(pg.grant.clone());
+                    true
+                } else if let Some(view) = self.views.get_mut(&pg.object_key) {
+                    view.grants.push(pg.grant.clone());
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingGrantObjectType::View => {
+                if let Some(view) = self.views.get_mut(&pg.object_key) {
+                    view.grants.push(pg.grant.clone());
+                    true
+                } else if let Some(table) = self.tables.get_mut(&pg.object_key) {
+                    table.grants.push(pg.grant.clone());
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingGrantObjectType::Sequence => {
+                if let Some(seq) = self.sequences.get_mut(&pg.object_key) {
+                    seq.grants.push(pg.grant.clone());
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingGrantObjectType::Function => {
+                if let Some(func) = self.functions.get_mut(&pg.object_key) {
+                    func.grants.push(pg.grant.clone());
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingGrantObjectType::Schema => {
+                if let Some(pg_schema) = self.schemas.get_mut(&pg.object_key) {
+                    pg_schema.grants.push(pg.grant.clone());
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingGrantObjectType::Enum => {
+                if let Some(enum_type) = self.enums.get_mut(&pg.object_key) {
+                    enum_type.grants.push(pg.grant.clone());
+                    true
+                } else if let Some(domain) = self.domains.get_mut(&pg.object_key) {
+                    domain.grants.push(pg.grant.clone());
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingGrantObjectType::Domain => {
+                if let Some(domain) = self.domains.get_mut(&pg.object_key) {
+                    domain.grants.push(pg.grant.clone());
+                    true
+                } else if let Some(enum_type) = self.enums.get_mut(&pg.object_key) {
+                    enum_type.grants.push(pg.grant.clone());
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /// Applies all pending revokes. Revokes for non-existent objects are silently ignored.
+    fn apply_pending_revokes(&mut self) {
+        let pending = std::mem::take(&mut self.pending_revokes);
+        for pr in pending {
+            self.apply_single_revoke(&pr);
+        }
+    }
+
+    /// Applies pending revokes, keeping unapplied ones for cross-file resolution.
+    fn apply_pending_revokes_partial(&mut self) {
+        let pending = std::mem::take(&mut self.pending_revokes);
+        let mut unapplied = Vec::new();
+        for pr in pending {
+            if !self.apply_single_revoke(&pr) {
+                unapplied.push(pr);
+            }
+        }
+        self.pending_revokes = unapplied;
+    }
+
+    /// Applies a single pending revoke. Returns true if the object was found.
+    fn apply_single_revoke(&mut self, pr: &PendingRevoke) -> bool {
+        match pr.object_type {
+            PendingGrantObjectType::Table => {
+                if let Some(table) = self.tables.get_mut(&pr.object_key) {
+                    revoke_from_grants(&mut table.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    true
+                } else if let Some(view) = self.views.get_mut(&pr.object_key) {
+                    revoke_from_grants(&mut view.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingGrantObjectType::View => {
+                if let Some(view) = self.views.get_mut(&pr.object_key) {
+                    revoke_from_grants(&mut view.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    true
+                } else if let Some(table) = self.tables.get_mut(&pr.object_key) {
+                    revoke_from_grants(&mut table.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingGrantObjectType::Sequence => {
+                if let Some(seq) = self.sequences.get_mut(&pr.object_key) {
+                    revoke_from_grants(&mut seq.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingGrantObjectType::Function => {
+                if let Some(func) = self.functions.get_mut(&pr.object_key) {
+                    revoke_from_grants(&mut func.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingGrantObjectType::Schema => {
+                if let Some(pg_schema) = self.schemas.get_mut(&pr.object_key) {
+                    revoke_from_grants(&mut pg_schema.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingGrantObjectType::Enum => {
+                if let Some(enum_type) = self.enums.get_mut(&pr.object_key) {
+                    revoke_from_grants(&mut enum_type.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    true
+                } else if let Some(domain) = self.domains.get_mut(&pr.object_key) {
+                    revoke_from_grants(&mut domain.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingGrantObjectType::Domain => {
+                if let Some(domain) = self.domains.get_mut(&pr.object_key) {
+                    revoke_from_grants(&mut domain.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    true
+                } else if let Some(enum_type) = self.enums.get_mut(&pr.object_key) {
+                    revoke_from_grants(&mut enum_type.grants, &pr.grantee, &pr.privileges, pr.grant_option_for);
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
+/// Removes or modifies grants matching the given grantee and privileges.
+pub fn revoke_from_grants(
+    grants: &mut Vec<Grant>,
+    grantee: &str,
+    privileges_to_revoke: &BTreeSet<Privilege>,
+    grant_option_for: bool,
+) {
+    grants.retain_mut(|grant| {
+        if grant.grantee == grantee {
+            if grant_option_for {
+                grant.with_grant_option = false;
+                true
+            } else {
+                grant
+                    .privileges
+                    .retain(|p| !privileges_to_revoke.contains(p));
+                !grant.privileges.is_empty()
+            }
+        } else {
+            true
+        }
+    });
 }
 
 impl Default for Schema {
