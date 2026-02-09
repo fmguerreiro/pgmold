@@ -1007,6 +1007,16 @@ fn parse_privileges(privileges_str: &str) -> BTreeSet<Privilege> {
             "USAGE" => privileges.insert(Privilege::Usage),
             "EXECUTE" => privileges.insert(Privilege::Execute),
             "CREATE" => privileges.insert(Privilege::Create),
+            "ALL" | "ALL PRIVILEGES" => {
+                privileges.insert(Privilege::Select);
+                privileges.insert(Privilege::Insert);
+                privileges.insert(Privilege::Update);
+                privileges.insert(Privilege::Delete);
+                privileges.insert(Privilege::Truncate);
+                privileges.insert(Privilege::References);
+                privileges.insert(Privilege::Trigger);
+                true
+            }
             _ => continue,
         };
     }
@@ -1042,19 +1052,28 @@ fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
             with_grant_option,
         };
 
-        // Determine object type and apply grant
+        // Determine object type and apply grant (or defer to pending_grants for cross-file resolution)
         let inferred_type = object_type.as_deref().unwrap_or("TABLE");
         match inferred_type {
             "TABLE" | "VIEW" => {
-                // Parse qualified name (handle schema.table or just table)
                 let (obj_schema, obj_name) = parse_object_name(object_name_raw);
                 let key = qualified_name(&obj_schema, &obj_name);
 
-                // Try tables first, then views
                 if let Some(table) = schema.tables.get_mut(&key) {
-                    table.grants.push(grant.clone());
+                    table.grants.push(grant);
                 } else if let Some(view) = schema.views.get_mut(&key) {
                     view.grants.push(grant);
+                } else {
+                    let pending_type = if inferred_type == "VIEW" {
+                        PendingGrantObjectType::View
+                    } else {
+                        PendingGrantObjectType::Table
+                    };
+                    schema.pending_grants.push(PendingGrant {
+                        object_type: pending_type,
+                        object_key: key,
+                        grant,
+                    });
                 }
             }
             "SEQUENCE" => {
@@ -1062,32 +1081,52 @@ fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
                 let key = qualified_name(&obj_schema, &obj_name);
                 if let Some(sequence) = schema.sequences.get_mut(&key) {
                     sequence.grants.push(grant);
+                } else {
+                    schema.pending_grants.push(PendingGrant {
+                        object_type: PendingGrantObjectType::Sequence,
+                        object_key: key,
+                        grant,
+                    });
                 }
             }
             "FUNCTION" => {
-                // Functions include signature: func_name(type1, type2)
                 let function_key = parse_function_signature(object_name_raw);
                 if let Some(func) = schema.functions.get_mut(&function_key) {
                     func.grants.push(grant);
+                } else {
+                    schema.pending_grants.push(PendingGrant {
+                        object_type: PendingGrantObjectType::Function,
+                        object_key: function_key,
+                        grant,
+                    });
                 }
             }
             "SCHEMA" => {
-                // Schema name is just the name (no schema prefix)
                 let schema_name = object_name_raw.trim().trim_matches('"');
                 if let Some(pg_schema) = schema.schemas.get_mut(schema_name) {
                     pg_schema.grants.push(grant);
+                } else {
+                    schema.pending_grants.push(PendingGrant {
+                        object_type: PendingGrantObjectType::Schema,
+                        object_key: schema_name.to_string(),
+                        grant,
+                    });
                 }
             }
             "TYPE" => {
-                // TYPEs can be enums or domains
                 let (obj_schema, obj_name) = parse_object_name(object_name_raw);
                 let key = qualified_name(&obj_schema, &obj_name);
 
-                // Try enums first, then domains
                 if let Some(enum_type) = schema.enums.get_mut(&key) {
-                    enum_type.grants.push(grant.clone());
+                    enum_type.grants.push(grant);
                 } else if let Some(domain) = schema.domains.get_mut(&key) {
                     domain.grants.push(grant);
+                } else {
+                    schema.pending_grants.push(PendingGrant {
+                        object_type: PendingGrantObjectType::Enum,
+                        object_key: key,
+                        grant,
+                    });
                 }
             }
             _ => {}
@@ -1119,7 +1158,7 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
             continue;
         }
 
-        // Determine object type and apply revoke
+        // Determine object type and apply revoke (or defer to pending_revokes for cross-file resolution)
         let inferred_type = object_type.as_deref().unwrap_or("TABLE");
         match inferred_type {
             "TABLE" | "VIEW" => {
@@ -1130,6 +1169,19 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
                     revoke_from_grants(&mut table.grants, grantee, &privileges, grant_option_for);
                 } else if let Some(view) = schema.views.get_mut(&key) {
                     revoke_from_grants(&mut view.grants, grantee, &privileges, grant_option_for);
+                } else {
+                    let pending_type = if inferred_type == "VIEW" {
+                        PendingGrantObjectType::View
+                    } else {
+                        PendingGrantObjectType::Table
+                    };
+                    schema.pending_revokes.push(PendingRevoke {
+                        object_type: pending_type,
+                        object_key: key,
+                        grantee: grantee.to_string(),
+                        privileges,
+                        grant_option_for,
+                    });
                 }
             }
             "SEQUENCE" => {
@@ -1142,12 +1194,28 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
                         &privileges,
                         grant_option_for,
                     );
+                } else {
+                    schema.pending_revokes.push(PendingRevoke {
+                        object_type: PendingGrantObjectType::Sequence,
+                        object_key: key,
+                        grantee: grantee.to_string(),
+                        privileges,
+                        grant_option_for,
+                    });
                 }
             }
             "FUNCTION" => {
                 let function_key = parse_function_signature(object_name_raw);
                 if let Some(func) = schema.functions.get_mut(&function_key) {
                     revoke_from_grants(&mut func.grants, grantee, &privileges, grant_option_for);
+                } else {
+                    schema.pending_revokes.push(PendingRevoke {
+                        object_type: PendingGrantObjectType::Function,
+                        object_key: function_key,
+                        grantee: grantee.to_string(),
+                        privileges,
+                        grant_option_for,
+                    });
                 }
             }
             "SCHEMA" => {
@@ -1159,6 +1227,14 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
                         &privileges,
                         grant_option_for,
                     );
+                } else {
+                    schema.pending_revokes.push(PendingRevoke {
+                        object_type: PendingGrantObjectType::Schema,
+                        object_key: schema_name.to_string(),
+                        grantee: grantee.to_string(),
+                        privileges,
+                        grant_option_for,
+                    });
                 }
             }
             "TYPE" => {
@@ -1174,6 +1250,14 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
                     );
                 } else if let Some(domain) = schema.domains.get_mut(&key) {
                     revoke_from_grants(&mut domain.grants, grantee, &privileges, grant_option_for);
+                } else {
+                    schema.pending_revokes.push(PendingRevoke {
+                        object_type: PendingGrantObjectType::Enum,
+                        object_key: key,
+                        grantee: grantee.to_string(),
+                        privileges,
+                        grant_option_for,
+                    });
                 }
             }
             _ => {}
@@ -1181,29 +1265,6 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn revoke_from_grants(
-    grants: &mut Vec<Grant>,
-    grantee: &str,
-    privileges_to_revoke: &BTreeSet<Privilege>,
-    grant_option_for: bool,
-) {
-    grants.retain_mut(|grant| {
-        if grant.grantee == grantee {
-            if grant_option_for {
-                grant.with_grant_option = false;
-                true
-            } else {
-                grant
-                    .privileges
-                    .retain(|p| !privileges_to_revoke.contains(p));
-                !grant.privileges.is_empty()
-            }
-        } else {
-            true
-        }
-    });
 }
 
 fn parse_alter_default_privileges(sql: &str, schema: &mut Schema) -> Result<()> {

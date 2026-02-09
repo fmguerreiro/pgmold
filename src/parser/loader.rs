@@ -208,13 +208,15 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
             merged.partitions.insert(name, partition);
         }
 
-        // Collect pending policies and owners for cross-file resolution
+        // Collect pending policies, owners, grants, and revokes for cross-file resolution
         merged.pending_policies.extend(schema.pending_policies);
         merged.pending_owners.extend(schema.pending_owners);
+        merged.pending_grants.extend(schema.pending_grants);
+        merged.pending_revokes.extend(schema.pending_revokes);
     }
 
-    // Finalize: associate all pending policies with their tables and apply pending ownership.
-    // This handles policies and ownership defined in separate files from their objects.
+    // Finalize: associate all pending items with their objects.
+    // This handles policies, ownership, and grants defined in separate files from their objects.
     merged.finalize().map_err(SchemaError::ParseError)?;
 
     Ok(merged)
@@ -983,5 +985,265 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
             schema.functions.contains_key("auth.is_admin_jwt()"),
             "is_admin_jwt() should be loaded"
         );
+    }
+
+    #[test]
+    fn cross_file_grant_resolution() {
+        let temp = TempDir::new().unwrap();
+
+        fs::write(
+            temp.path().join("01_tables.sql"),
+            r#"
+            CREATE TABLE "mrv"."Farm" (id INTEGER PRIMARY KEY, name TEXT);
+            CREATE VIEW "mrv"."active_farms" AS SELECT * FROM "mrv"."Farm" WHERE id > 0;
+            CREATE SEQUENCE "mrv"."farm_id_seq";
+            CREATE FUNCTION "mrv"."get_farm"() RETURNS void LANGUAGE sql AS $$ SELECT 1; $$;
+            CREATE SCHEMA IF NOT EXISTS mrv;
+            CREATE TYPE "mrv"."farm_status" AS ENUM ('active', 'inactive');
+        "#,
+        )
+        .unwrap();
+
+        fs::write(
+            temp.path().join("02_grants.sql"),
+            r#"
+            GRANT ALL ON TABLE "mrv"."Farm" TO service_role;
+            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."Farm" TO authenticated;
+            GRANT SELECT ON "mrv"."active_farms" TO authenticated;
+            GRANT USAGE ON SEQUENCE "mrv"."farm_id_seq" TO authenticated;
+            GRANT EXECUTE ON FUNCTION "mrv"."get_farm"() TO authenticated;
+            GRANT USAGE ON SCHEMA mrv TO authenticated;
+            GRANT USAGE ON TYPE "mrv"."farm_status" TO authenticated;
+        "#,
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", temp.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        let table = schema.tables.get("mrv.Farm").unwrap();
+        assert_eq!(
+            table.grants.len(),
+            2,
+            "Table should have 2 grants from separate file, got: {:?}",
+            table.grants
+        );
+        let grantees: Vec<&str> = table.grants.iter().map(|g| g.grantee.as_str()).collect();
+        assert!(grantees.contains(&"service_role"));
+        assert!(grantees.contains(&"authenticated"));
+
+        let view = schema.views.get("mrv.active_farms").unwrap();
+        assert_eq!(
+            view.grants.len(),
+            1,
+            "View should have 1 grant from separate file"
+        );
+        assert_eq!(view.grants[0].grantee, "authenticated");
+
+        let seq = schema.sequences.get("mrv.farm_id_seq").unwrap();
+        assert_eq!(
+            seq.grants.len(),
+            1,
+            "Sequence should have 1 grant from separate file"
+        );
+
+        let func = schema.functions.get("mrv.get_farm()").unwrap();
+        assert_eq!(
+            func.grants.len(),
+            1,
+            "Function should have 1 grant from separate file"
+        );
+
+        let mrv_schema = schema.schemas.get("mrv").unwrap();
+        assert_eq!(
+            mrv_schema.grants.len(),
+            1,
+            "Schema should have 1 grant from separate file"
+        );
+
+        let enum_type = schema.enums.get("mrv.farm_status").unwrap();
+        assert_eq!(
+            enum_type.grants.len(),
+            1,
+            "Enum type should have 1 grant from separate file"
+        );
+    }
+
+    #[test]
+    fn cross_file_revoke_resolution() {
+        let temp = TempDir::new().unwrap();
+
+        fs::write(
+            temp.path().join("01_tables.sql"),
+            r#"
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+            GRANT SELECT, INSERT, DELETE ON TABLE users TO app_user;
+        "#,
+        )
+        .unwrap();
+
+        fs::write(
+            temp.path().join("02_revokes.sql"),
+            r#"
+            REVOKE DELETE ON TABLE users FROM app_user;
+        "#,
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", temp.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        let table = schema.tables.get("public.users").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        let grant = &table.grants[0];
+        assert_eq!(grant.grantee, "app_user");
+        assert!(grant.privileges.contains(&crate::model::Privilege::Select));
+        assert!(grant.privileges.contains(&crate::model::Privilege::Insert));
+        assert!(
+            !grant.privileges.contains(&crate::model::Privilege::Delete),
+            "DELETE should have been revoked by cross-file REVOKE"
+        );
+    }
+
+    #[test]
+    fn cross_file_revoke_non_table_types() {
+        let temp = TempDir::new().unwrap();
+
+        fs::write(
+            temp.path().join("01_objects.sql"),
+            r#"
+            CREATE SCHEMA IF NOT EXISTS app;
+            CREATE SEQUENCE "app"."counter_seq";
+            CREATE FUNCTION "app"."do_thing"() RETURNS void LANGUAGE sql AS $$ SELECT 1; $$;
+            CREATE TYPE "app"."status" AS ENUM ('active', 'inactive');
+
+            GRANT USAGE, CREATE ON SCHEMA app TO api_user;
+            GRANT USAGE, SELECT ON SEQUENCE "app"."counter_seq" TO api_user;
+            GRANT EXECUTE ON FUNCTION "app"."do_thing"() TO api_user;
+            GRANT USAGE ON TYPE "app"."status" TO api_user;
+        "#,
+        )
+        .unwrap();
+
+        fs::write(
+            temp.path().join("02_revokes.sql"),
+            r#"
+            REVOKE CREATE ON SCHEMA app FROM api_user;
+            REVOKE SELECT ON SEQUENCE "app"."counter_seq" FROM api_user;
+        "#,
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", temp.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        let app_schema = schema.schemas.get("app").unwrap();
+        assert_eq!(app_schema.grants.len(), 1);
+        assert!(app_schema.grants[0]
+            .privileges
+            .contains(&crate::model::Privilege::Usage));
+        assert!(
+            !app_schema.grants[0]
+                .privileges
+                .contains(&crate::model::Privilege::Create),
+            "CREATE should have been revoked"
+        );
+
+        let seq = schema.sequences.get("app.counter_seq").unwrap();
+        assert_eq!(seq.grants.len(), 1);
+        assert!(seq.grants[0]
+            .privileges
+            .contains(&crate::model::Privilege::Usage));
+        assert!(
+            !seq.grants[0]
+                .privileges
+                .contains(&crate::model::Privilege::Select),
+            "SELECT should have been revoked from sequence"
+        );
+
+        let func = schema.functions.get("app.do_thing()").unwrap();
+        assert_eq!(func.grants.len(), 1, "Function grant should remain intact");
+
+        let enum_type = schema.enums.get("app.status").unwrap();
+        assert_eq!(enum_type.grants.len(), 1, "Enum grant should remain intact");
+    }
+
+    #[test]
+    fn cross_file_three_way_grant_revoke() {
+        let temp = TempDir::new().unwrap();
+
+        fs::write(
+            temp.path().join("01_tables.sql"),
+            r#"
+            CREATE TABLE orders (id INTEGER PRIMARY KEY);
+        "#,
+        )
+        .unwrap();
+
+        fs::write(
+            temp.path().join("02_grants.sql"),
+            r#"
+            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE orders TO app_role;
+        "#,
+        )
+        .unwrap();
+
+        fs::write(
+            temp.path().join("03_revokes.sql"),
+            r#"
+            REVOKE DELETE ON TABLE orders FROM app_role;
+        "#,
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", temp.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        let table = schema.tables.get("public.orders").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        let grant = &table.grants[0];
+        assert_eq!(grant.grantee, "app_role");
+        assert!(grant.privileges.contains(&crate::model::Privilege::Select));
+        assert!(grant.privileges.contains(&crate::model::Privilege::Insert));
+        assert!(grant.privileges.contains(&crate::model::Privilege::Update));
+        assert!(
+            !grant.privileges.contains(&crate::model::Privilege::Delete),
+            "DELETE should have been revoked in three-file scenario"
+        );
+    }
+
+    #[test]
+    fn cross_file_domain_grant() {
+        let temp = TempDir::new().unwrap();
+
+        fs::write(
+            temp.path().join("01_domains.sql"),
+            r#"
+            CREATE DOMAIN "app"."email" AS TEXT CHECK (VALUE ~ '^.+@.+$');
+        "#,
+        )
+        .unwrap();
+
+        fs::write(
+            temp.path().join("02_grants.sql"),
+            r#"
+            GRANT USAGE ON TYPE "app"."email" TO api_user;
+        "#,
+        )
+        .unwrap();
+
+        let sources = vec![format!("{}/*.sql", temp.path().display())];
+        let schema = load_schema_sources(&sources).unwrap();
+
+        let domain = schema.domains.get("app.email").unwrap();
+        assert_eq!(
+            domain.grants.len(),
+            1,
+            "Domain should have 1 grant from separate file"
+        );
+        assert_eq!(domain.grants[0].grantee, "api_user");
+        assert!(domain.grants[0]
+            .privileges
+            .contains(&crate::model::Privilege::Usage));
     }
 }
