@@ -8,10 +8,14 @@ use thiserror::Error;
 /// Returns the URL unchanged if no password is present.
 pub fn sanitize_url(url: &str) -> String {
     if let Some(at_position) = url.find('@') {
-        if let Some(colon_position) = url[..at_position].rfind(':') {
-            let prefix = &url[..colon_position + 1];
-            let suffix = &url[at_position..];
-            return format!("{prefix}****{suffix}");
+        let search_start = url.find("://").map(|pos| pos + 3).unwrap_or(0);
+        if search_start < at_position {
+            if let Some(colon_offset) = url[search_start..at_position].rfind(':') {
+                let colon_position = search_start + colon_offset;
+                let prefix = &url[..colon_position + 1];
+                let suffix = &url[at_position..];
+                return format!("{prefix}****{suffix}");
+            }
         }
     }
     url.to_string()
@@ -20,7 +24,12 @@ pub fn sanitize_url(url: &str) -> String {
 /// Extracts the password from a PostgreSQL connection URL, if present.
 fn extract_password(url: &str) -> Option<String> {
     let at_position = url.find('@')?;
-    let colon_position = url[..at_position].rfind(':')?;
+    let search_start = url.find("://").map(|pos| pos + 3).unwrap_or(0);
+    if search_start >= at_position {
+        return None;
+    }
+    let colon_position = url[search_start..at_position].rfind(':')?;
+    let colon_position = search_start + colon_position;
     let password = &url[colon_position + 1..at_position];
     if password.is_empty() {
         return None;
@@ -30,11 +39,39 @@ fn extract_password(url: &str) -> Option<String> {
 
 /// Scrubs credentials from an error message by replacing any occurrence of the
 /// password (extracted from the connection URL) with `****`.
+/// Skips scrubbing for passwords shorter than 3 characters to avoid garbling
+/// unrelated text (the URL itself is still sanitized by `sanitize_url`).
 pub fn sanitize_connection_error(connection_url: &str, error_message: &str) -> String {
     match extract_password(connection_url) {
-        Some(password) => error_message.replace(&password, "****"),
-        None => error_message.to_string(),
+        Some(password) if password.len() >= 3 => {
+            let mut result = error_message.replace(&password, "****");
+            let decoded = simple_percent_decode(&password);
+            if decoded != password {
+                result = result.replace(&decoded, "****");
+            }
+            result
+        }
+        _ => error_message.to_string(),
     }
+}
+
+/// Decodes percent-encoded bytes in a string (e.g., `%40` → `@`).
+fn simple_percent_decode(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
+                result.push(byte as char);
+                i += 3;
+                continue;
+            }
+        }
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    result
 }
 
 pub fn normalize_sql_whitespace(sql: &str) -> String {
@@ -1669,6 +1706,14 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_url_user_without_password() {
+        assert_eq!(
+            sanitize_url("postgres://user@host/db"),
+            "postgres://user@host/db"
+        );
+    }
+
+    #[test]
     fn sanitize_connection_error_scrubs_password_from_message() {
         let url = "postgres://user:s3cret_p4ss@host:5432/db";
         let error = "error connecting to server at host:5432: password authentication failed for user \"user\" (password was s3cret_p4ss)";
@@ -1689,6 +1734,25 @@ mod tests {
         let url = "postgres://user:@host/db";
         let error = "connection refused";
         assert_eq!(sanitize_connection_error(url, error), "connection refused");
+    }
+
+    #[test]
+    fn sanitize_connection_error_short_password_skips_scrubbing() {
+        let url = "postgres://user:db@host:5432/mydb";
+        let error = "connection to database failed";
+        assert_eq!(
+            sanitize_connection_error(url, error),
+            "connection to database failed"
+        );
+    }
+
+    #[test]
+    fn sanitize_connection_error_url_encoded_password() {
+        let url = "postgres://user:p%40ss%3Aword@host:5432/db";
+        let error = "authentication failed with password p@ss:word";
+        let sanitized = sanitize_connection_error(url, error);
+        assert!(!sanitized.contains("p@ss:word"));
+        assert!(sanitized.contains("****"));
     }
 }
 

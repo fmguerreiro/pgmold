@@ -1,6 +1,5 @@
 use crate::baseline::unsupported::UnsupportedObject;
 use crate::model::Schema;
-use crate::util::sanitize_url;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -69,10 +68,7 @@ pub fn generate_text_report(report: &BaselineReport) -> String {
     let mut output = String::new();
 
     output.push_str("=== pgmold baseline ===\n");
-    output.push_str(&format!(
-        "Database: {}\n",
-        sanitize_url(&report.database_url)
-    ));
+    output.push_str(&format!("Database: {}\n", report.database_url));
     output.push_str(&format!("Schemas: {}\n", report.target_schemas.join(", ")));
     output.push('\n');
 
@@ -173,7 +169,7 @@ mod tests {
 
     fn sample_report() -> BaselineReport {
         BaselineReport {
-            database_url: "postgres://user:pass@localhost:5432/db".into(),
+            database_url: "postgres://user:****@localhost:5432/db".into(),
             target_schemas: vec!["public".into()],
             output_path: "schema.sql".into(),
             object_counts: ObjectCounts {
@@ -254,12 +250,21 @@ mod tests {
     }
 
     #[test]
-    fn text_report_sanitizes_password() {
+    fn text_report_displays_sanitized_url() {
         let report = sample_report();
         let text = generate_text_report(&report);
 
-        assert!(!text.contains("pass"));
         assert!(text.contains("****"));
+        assert!(!text.contains("password"));
+    }
+
+    #[test]
+    fn json_report_does_not_leak_credentials() {
+        let report = sample_report();
+        let json = generate_json_report(&report);
+
+        assert!(!json.contains("password"));
+        assert!(json.contains("****"));
     }
 
     #[test]
@@ -293,18 +298,5 @@ mod tests {
         assert!(json.contains("\"round_trip_ok\": true"));
         assert!(json.contains("\"zero_diff_ok\": true"));
         assert!(json.contains("\"fingerprint\": \"abc123def456\""));
-    }
-
-    #[test]
-    fn sanitize_url_with_password() {
-        assert_eq!(
-            sanitize_url("postgres://user:secret@host/db"),
-            "postgres://user:****@host/db"
-        );
-    }
-
-    #[test]
-    fn sanitize_url_without_password() {
-        assert_eq!(sanitize_url("postgres://host/db"), "postgres://host/db");
     }
 }

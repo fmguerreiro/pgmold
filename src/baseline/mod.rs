@@ -6,7 +6,7 @@ use crate::dump::generate_dump;
 use crate::parser::parse_sql_string;
 use crate::pg::connection::PgConnection;
 use crate::pg::introspect::introspect_schema;
-use crate::util::{Result, SchemaError};
+use crate::util::{sanitize_url, Result, SchemaError};
 
 pub use report::{generate_json_report, generate_text_report, BaselineReport, ObjectCounts};
 pub use unsupported::{detect_unsupported_objects, UnsupportedObject};
@@ -47,7 +47,7 @@ pub async fn run_baseline(
     let warnings = detect_unsupported_objects(connection, target_schemas).await?;
 
     let report = BaselineReport {
-        database_url: database_url.to_string(),
+        database_url: sanitize_url(database_url),
         target_schemas: target_schemas.to_vec(),
         output_path: output_path.to_string(),
         object_counts: ObjectCounts::from_schema(&introspected),
