@@ -13,7 +13,11 @@ fn find_password_span(url: &str) -> Option<(usize, usize)> {
         return None;
     }
     let colon_offset = url[search_start..at_position].rfind(':')?;
-    Some((search_start + colon_offset, at_position))
+    let colon_position = search_start + colon_offset;
+    if colon_position + 1 == at_position {
+        return None;
+    }
+    Some((colon_position, at_position))
 }
 
 /// Replaces the password portion of a PostgreSQL connection URL with `****`.
@@ -30,11 +34,7 @@ pub fn sanitize_url(url: &str) -> String {
 /// Extracts the password from a PostgreSQL connection URL, if present.
 fn extract_password(url: &str) -> Option<String> {
     let (colon_position, at_position) = find_password_span(url)?;
-    let password = &url[colon_position + 1..at_position];
-    if password.is_empty() {
-        return None;
-    }
-    Some(password.to_string())
+    Some(url[colon_position + 1..at_position].to_string())
 }
 
 /// Scrubs credentials from an error message by replacing any occurrence of the
@@ -56,22 +56,23 @@ pub fn sanitize_connection_error(connection_url: &str, error_message: &str) -> S
 }
 
 /// Decodes percent-encoded bytes in a string (e.g., `%40` → `@`).
+/// Collects raw bytes first then converts to UTF-8 to handle multi-byte sequences.
 fn simple_percent_decode(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
+    let mut raw_bytes = Vec::with_capacity(input.len());
     let bytes = input.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             if let Ok(byte) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
-                result.push(char::from(byte));
+                raw_bytes.push(byte);
                 i += 3;
                 continue;
             }
         }
-        result.push(char::from(bytes[i]));
+        raw_bytes.push(bytes[i]);
         i += 1;
     }
-    result
+    String::from_utf8(raw_bytes).unwrap_or_else(|_| input.to_string())
 }
 
 pub fn normalize_sql_whitespace(sql: &str) -> String {
@@ -1755,6 +1756,37 @@ mod tests {
             sanitize_connection_error(url, error),
             "authentication failed with password ****"
         );
+    }
+
+    #[test]
+    fn sanitize_url_empty_password() {
+        assert_eq!(
+            sanitize_url("postgres://user:@host/db"),
+            "postgres://user:@host/db"
+        );
+    }
+
+    #[test]
+    fn sanitize_url_postgresql_scheme() {
+        assert_eq!(
+            sanitize_url("postgresql://user:secret@host:5432/db"),
+            "postgresql://user:****@host:5432/db"
+        );
+    }
+
+    #[test]
+    fn sanitize_connection_error_password_appears_multiple_times() {
+        let url = "postgres://user:hunter2@host/db";
+        let error = "failed at hunter2: invalid hunter2 token";
+        assert_eq!(
+            sanitize_connection_error(url, error),
+            "failed at ****: invalid **** token"
+        );
+    }
+
+    #[test]
+    fn simple_percent_decode_multibyte_utf8() {
+        assert_eq!(super::simple_percent_decode("%C3%A9"), "\u{00e9}");
     }
 }
 
