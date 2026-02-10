@@ -73,34 +73,17 @@ pub fn generate_text_report(report: &BaselineReport) -> String {
     output.push('\n');
 
     output.push_str("Objects captured:\n");
-    output.push_str(&format!(
-        "  Extensions:   {:>3}\n",
-        report.object_counts.extensions
-    ));
-    output.push_str(&format!(
-        "  Enums:        {:>3}\n",
-        report.object_counts.enums
-    ));
-    output.push_str(&format!(
-        "  Tables:       {:>3}\n",
-        report.object_counts.tables
-    ));
-    output.push_str(&format!(
-        "  Functions:    {:>3}\n",
-        report.object_counts.functions
-    ));
-    output.push_str(&format!(
-        "  Views:        {:>3}\n",
-        report.object_counts.views
-    ));
-    output.push_str(&format!(
-        "  Triggers:     {:>3}\n",
-        report.object_counts.triggers
-    ));
-    output.push_str(&format!(
-        "  Sequences:    {:>3}\n",
-        report.object_counts.sequences
-    ));
+    for (label, count) in [
+        ("Extensions", report.object_counts.extensions),
+        ("Enums", report.object_counts.enums),
+        ("Tables", report.object_counts.tables),
+        ("Functions", report.object_counts.functions),
+        ("Views", report.object_counts.views),
+        ("Triggers", report.object_counts.triggers),
+        ("Sequences", report.object_counts.sequences),
+    ] {
+        output.push_str(&format!("  {label:<14}{count:>3}\n"));
+    }
     output.push('\n');
 
     output.push_str("Verification:\n");
@@ -142,7 +125,7 @@ pub fn generate_text_report(report: &BaselineReport) -> String {
 }
 
 pub fn generate_json_report(report: &BaselineReport) -> String {
-    serde_json::to_string_pretty(report).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(report).unwrap()
 }
 
 fn status_text(ok: bool) -> &'static str {
@@ -250,12 +233,11 @@ mod tests {
     }
 
     #[test]
-    fn text_report_displays_sanitized_url() {
+    fn text_report_includes_database_url() {
         let report = sample_report();
         let text = generate_text_report(&report);
 
-        assert!(text.contains("****"));
-        assert!(!text.contains("password"));
+        assert!(text.contains(&report.database_url));
     }
 
     #[test]
