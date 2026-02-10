@@ -692,16 +692,19 @@ async fn introspect_all_columns(
             atttypmod,
         );
 
-        result.entry(qualified_name(&table_schema, &table_name)).or_default().insert(
-            name.clone(),
-            Column {
-                name,
-                data_type: pg_type,
-                nullable: is_nullable == "YES",
-                default: column_default,
-                comment: None,
-            },
-        );
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .insert(
+                name.clone(),
+                Column {
+                    name,
+                    data_type: pg_type,
+                    nullable: is_nullable == "YES",
+                    default: column_default,
+                    comment: None,
+                },
+            );
     }
 
     Ok(result)
@@ -779,7 +782,10 @@ async fn introspect_all_primary_keys(
         let table_schema: String = row.get("table_schema");
         let table_name: String = row.get("table_name");
         let columns: Vec<String> = row.get("columns");
-        result.insert(qualified_name(&table_schema, &table_name), PrimaryKey { columns });
+        result.insert(
+            qualified_name(&table_schema, &table_name),
+            PrimaryKey { columns },
+        );
     }
 
     Ok(result)
@@ -835,13 +841,16 @@ async fn introspect_all_indexes(
             _ => IndexType::BTree,
         };
 
-        result.entry(qualified_name(&table_schema, &table_name)).or_default().push(Index {
-            name,
-            columns,
-            unique,
-            index_type,
-            predicate,
-        });
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(Index {
+                name,
+                columns,
+                unique,
+                index_type,
+                predicate,
+            });
     }
 
     Ok(result)
@@ -895,15 +904,18 @@ async fn introspect_all_foreign_keys(
         let confdeltype: i8 = row.get::<i8, _>("confdeltype");
         let confupdtype: i8 = row.get::<i8, _>("confupdtype");
 
-        result.entry(qualified_name(&table_schema, &table_name)).or_default().push(ForeignKey {
-            name,
-            columns,
-            referenced_table,
-            referenced_schema,
-            referenced_columns,
-            on_delete: map_referential_action(pg_char(confdeltype)),
-            on_update: map_referential_action(pg_char(confupdtype)),
-        });
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(ForeignKey {
+                name,
+                columns,
+                referenced_table,
+                referenced_schema,
+                referenced_columns,
+                on_delete: map_referential_action(pg_char(confdeltype)),
+                on_update: map_referential_action(pg_char(confupdtype)),
+            });
     }
 
     Ok(result)
@@ -1050,15 +1062,18 @@ async fn introspect_all_policies(
             roles
         };
 
-        result.entry(qualified_name(&table_schema, &table_name)).or_default().push(Policy {
-            name,
-            table: table_name,
-            table_schema,
-            command: map_policy_command(pg_char(command)),
-            roles,
-            using_expr,
-            check_expr,
-        });
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(Policy {
+                name,
+                table: table_name,
+                table_schema,
+                command: map_policy_command(pg_char(command)),
+                roles,
+                using_expr,
+                check_expr,
+            });
     }
 
     Ok(result)
@@ -1806,7 +1821,13 @@ async fn introspect_schema_grants(
         let is_grantable: bool = row.get("is_grantable");
 
         if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            accumulate_grant(&mut grants_by_schema, schema_name, grantee, is_grantable, privilege);
+            accumulate_grant(
+                &mut grants_by_schema,
+                schema_name,
+                grantee,
+                is_grantable,
+                privilege,
+            );
         }
     }
 
