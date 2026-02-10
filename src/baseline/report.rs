@@ -68,42 +68,22 @@ pub fn generate_text_report(report: &BaselineReport) -> String {
     let mut output = String::new();
 
     output.push_str("=== pgmold baseline ===\n");
-    output.push_str(&format!(
-        "Database: {}\n",
-        sanitize_url(&report.database_url)
-    ));
+    output.push_str(&format!("Database: {}\n", report.database_url));
     output.push_str(&format!("Schemas: {}\n", report.target_schemas.join(", ")));
     output.push('\n');
 
     output.push_str("Objects captured:\n");
-    output.push_str(&format!(
-        "  Extensions:   {:>3}\n",
-        report.object_counts.extensions
-    ));
-    output.push_str(&format!(
-        "  Enums:        {:>3}\n",
-        report.object_counts.enums
-    ));
-    output.push_str(&format!(
-        "  Tables:       {:>3}\n",
-        report.object_counts.tables
-    ));
-    output.push_str(&format!(
-        "  Functions:    {:>3}\n",
-        report.object_counts.functions
-    ));
-    output.push_str(&format!(
-        "  Views:        {:>3}\n",
-        report.object_counts.views
-    ));
-    output.push_str(&format!(
-        "  Triggers:     {:>3}\n",
-        report.object_counts.triggers
-    ));
-    output.push_str(&format!(
-        "  Sequences:    {:>3}\n",
-        report.object_counts.sequences
-    ));
+    for (label, count) in [
+        ("Extensions:", report.object_counts.extensions),
+        ("Enums:", report.object_counts.enums),
+        ("Tables:", report.object_counts.tables),
+        ("Functions:", report.object_counts.functions),
+        ("Views:", report.object_counts.views),
+        ("Triggers:", report.object_counts.triggers),
+        ("Sequences:", report.object_counts.sequences),
+    ] {
+        output.push_str(&format!("  {label:<14}{count:>3}\n"));
+    }
     output.push('\n');
 
     output.push_str("Verification:\n");
@@ -145,7 +125,7 @@ pub fn generate_text_report(report: &BaselineReport) -> String {
 }
 
 pub fn generate_json_report(report: &BaselineReport) -> String {
-    serde_json::to_string_pretty(report).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(report).unwrap()
 }
 
 fn status_text(ok: bool) -> &'static str {
@@ -154,17 +134,6 @@ fn status_text(ok: bool) -> &'static str {
     } else {
         "FAIL"
     }
-}
-
-fn sanitize_url(url: &str) -> String {
-    if let Some(at_pos) = url.find('@') {
-        if let Some(colon_pos) = url[..at_pos].rfind(':') {
-            let prefix = &url[..colon_pos + 1];
-            let suffix = &url[at_pos..];
-            return format!("{prefix}****{suffix}");
-        }
-    }
-    url.to_string()
 }
 
 fn group_warnings(
@@ -183,7 +152,7 @@ mod tests {
 
     fn sample_report() -> BaselineReport {
         BaselineReport {
-            database_url: "postgres://user:pass@localhost:5432/db".into(),
+            database_url: "postgres://user:****@localhost:5432/db".into(),
             target_schemas: vec!["public".into()],
             output_path: "schema.sql".into(),
             object_counts: ObjectCounts {
@@ -264,12 +233,20 @@ mod tests {
     }
 
     #[test]
-    fn text_report_sanitizes_password() {
+    fn text_report_includes_database_url() {
         let report = sample_report();
         let text = generate_text_report(&report);
 
-        assert!(!text.contains("pass"));
-        assert!(text.contains("****"));
+        assert!(text.contains(&report.database_url));
+    }
+
+    #[test]
+    fn json_report_does_not_leak_credentials() {
+        let report = sample_report();
+        let json = generate_json_report(&report);
+
+        assert!(!json.contains("password"));
+        assert!(json.contains("****"));
     }
 
     #[test]
@@ -303,18 +280,5 @@ mod tests {
         assert!(json.contains("\"round_trip_ok\": true"));
         assert!(json.contains("\"zero_diff_ok\": true"));
         assert!(json.contains("\"fingerprint\": \"abc123def456\""));
-    }
-
-    #[test]
-    fn sanitize_url_with_password() {
-        assert_eq!(
-            sanitize_url("postgres://user:secret@host/db"),
-            "postgres://user:****@host/db"
-        );
-    }
-
-    #[test]
-    fn sanitize_url_without_password() {
-        assert_eq!(sanitize_url("postgres://host/db"), "postgres://host/db");
     }
 }

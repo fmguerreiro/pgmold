@@ -4,6 +4,77 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use thiserror::Error;
 
+/// Returns (colon_position, at_position) for the password span in a connection URL.
+/// The password occupies `url[colon_position+1..at_position]`.
+fn find_password_span(url: &str) -> Option<(usize, usize)> {
+    let at_position = url.find('@')?;
+    let search_start = url.find("://").map(|position| position + 3).unwrap_or(0);
+    if search_start >= at_position {
+        return None;
+    }
+    let colon_offset = url[search_start..at_position].rfind(':')?;
+    let colon_position = search_start + colon_offset;
+    if colon_position + 1 == at_position {
+        return None;
+    }
+    Some((colon_position, at_position))
+}
+
+/// Replaces the password portion of a PostgreSQL connection URL with `****`.
+/// Returns the URL unchanged if no password is present.
+pub fn sanitize_url(url: &str) -> String {
+    match find_password_span(url) {
+        Some((colon_position, at_position)) => {
+            format!("{}****{}", &url[..colon_position + 1], &url[at_position..])
+        }
+        None => url.to_string(),
+    }
+}
+
+/// Extracts the password from a PostgreSQL connection URL, if present.
+fn extract_password(url: &str) -> Option<String> {
+    let (colon_position, at_position) = find_password_span(url)?;
+    Some(url[colon_position + 1..at_position].to_string())
+}
+
+/// Scrubs credentials from an error message by replacing any occurrence of the
+/// password (extracted from the connection URL) with `****`.
+/// Skips scrubbing for passwords shorter than 3 characters to avoid garbling
+/// unrelated text (the URL itself is still sanitized by `sanitize_url`).
+pub fn sanitize_connection_error(connection_url: &str, error_message: &str) -> String {
+    match extract_password(connection_url) {
+        Some(password) if password.len() >= 3 => {
+            let mut result = error_message.replace(&password, "****");
+            let decoded = simple_percent_decode(&password);
+            if decoded != password {
+                result = result.replace(&decoded, "****");
+            }
+            result
+        }
+        _ => error_message.to_string(),
+    }
+}
+
+/// Decodes percent-encoded bytes in a string (e.g., `%40` → `@`).
+/// Collects raw bytes first then converts to UTF-8 to handle multi-byte sequences.
+fn simple_percent_decode(input: &str) -> String {
+    let mut raw_bytes = Vec::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
+                raw_bytes.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        raw_bytes.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(raw_bytes).unwrap_or_else(|_| input.to_string())
+}
+
 pub fn normalize_sql_whitespace(sql: &str) -> String {
     let re = Regex::new(r"\s+").unwrap();
     re.replace_all(sql.trim(), " ").to_string()
@@ -1604,6 +1675,118 @@ mod tests {
             expressions_semantically_equal(schema_expr, db_expr),
             "Complex policy EXISTS with nested JOINs should match.\nSchema: {schema_expr}\nDB: {db_expr}"
         );
+    }
+
+    #[test]
+    fn sanitize_url_replaces_password() {
+        assert_eq!(
+            sanitize_url("postgres://user:secret@host/db"),
+            "postgres://user:****@host/db"
+        );
+    }
+
+    #[test]
+    fn sanitize_url_with_port() {
+        assert_eq!(
+            sanitize_url("postgres://user:secret@host:5432/db"),
+            "postgres://user:****@host:5432/db"
+        );
+    }
+
+    #[test]
+    fn sanitize_url_without_password() {
+        assert_eq!(sanitize_url("postgres://host/db"), "postgres://host/db");
+    }
+
+    #[test]
+    fn sanitize_url_without_at_sign() {
+        assert_eq!(
+            sanitize_url("postgres://localhost/db"),
+            "postgres://localhost/db"
+        );
+    }
+
+    #[test]
+    fn sanitize_url_user_without_password() {
+        assert_eq!(
+            sanitize_url("postgres://user@host/db"),
+            "postgres://user@host/db"
+        );
+    }
+
+    #[test]
+    fn sanitize_connection_error_scrubs_password_from_message() {
+        let url = "postgres://user:s3cret_p4ss@host:5432/db";
+        let error = "error connecting to server at host:5432: password authentication failed for user \"user\" (password was s3cret_p4ss)";
+        assert_eq!(
+            sanitize_connection_error(url, error),
+            "error connecting to server at host:5432: password authentication failed for user \"user\" (password was ****)"
+        );
+    }
+
+    #[test]
+    fn sanitize_connection_error_no_password_in_url() {
+        let url = "postgres://host/db";
+        let error = "connection refused";
+        assert_eq!(sanitize_connection_error(url, error), "connection refused");
+    }
+
+    #[test]
+    fn sanitize_connection_error_empty_password() {
+        let url = "postgres://user:@host/db";
+        let error = "connection refused";
+        assert_eq!(sanitize_connection_error(url, error), "connection refused");
+    }
+
+    #[test]
+    fn sanitize_connection_error_short_password_skips_scrubbing() {
+        let url = "postgres://user:db@host:5432/mydb";
+        let error = "connection to database failed";
+        assert_eq!(
+            sanitize_connection_error(url, error),
+            "connection to database failed"
+        );
+    }
+
+    #[test]
+    fn sanitize_connection_error_url_encoded_password() {
+        let url = "postgres://user:p%40ss%3Aword@host:5432/db";
+        let error = "authentication failed with password p@ss:word";
+        assert_eq!(
+            sanitize_connection_error(url, error),
+            "authentication failed with password ****"
+        );
+    }
+
+    #[test]
+    fn sanitize_url_empty_password() {
+        assert_eq!(
+            sanitize_url("postgres://user:@host/db"),
+            "postgres://user:@host/db"
+        );
+    }
+
+    #[test]
+    fn sanitize_url_postgresql_scheme() {
+        assert_eq!(
+            sanitize_url("postgresql://user:secret@host:5432/db"),
+            "postgresql://user:****@host:5432/db"
+        );
+    }
+
+    #[test]
+    fn sanitize_connection_error_password_appears_multiple_times() {
+        let url = "postgres://user:hunter2@host/db";
+        let error = "failed at hunter2: invalid hunter2 token";
+        assert_eq!(
+            sanitize_connection_error(url, error),
+            "failed at ****: invalid **** token"
+        );
+    }
+
+    #[test]
+    fn simple_percent_decode_multibyte_utf8() {
+        assert_eq!(super::simple_percent_decode("%C3%A9"), "\u{00e9}");
     }
 }
 
