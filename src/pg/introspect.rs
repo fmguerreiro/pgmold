@@ -88,7 +88,7 @@ pub async fn introspect_schema(
     let mut all_foreign_keys = introspect_all_foreign_keys(connection, target_schemas).await?;
     let mut all_check_constraints =
         introspect_all_check_constraints(connection, target_schemas).await?;
-    let all_rls = introspect_all_rls(connection, target_schemas).await?;
+    let mut all_rls = introspect_all_rls(connection, target_schemas).await?;
     let mut all_policies = introspect_all_policies(connection, target_schemas).await?;
 
     for (qualified_name, table) in &mut schema.tables {
@@ -108,7 +108,7 @@ pub async fn introspect_schema(
             check_constraints.sort();
             table.check_constraints = check_constraints;
         }
-        if let Some(&rls) = all_rls.get(qualified_name) {
+        if let Some(rls) = all_rls.remove(qualified_name) {
             table.row_level_security = rls;
         }
         if let Some(mut policies) = all_policies.remove(qualified_name) {
@@ -236,8 +236,7 @@ async fn introspect_enums(
             owner: Some(owner),
             grants: Vec::new(),
         };
-        let qualified_name = format!("{schema}.{name}");
-        enums.insert(qualified_name, enum_type);
+        enums.insert(qualified_name(&schema, &name), enum_type);
     }
 
     Ok(enums)
@@ -326,8 +325,7 @@ async fn introspect_domains(
             owner: Some(owner),
             grants: Vec::new(),
         };
-        let qualified_name = format!("{schema}.{name}");
-        domains.insert(qualified_name, domain);
+        domains.insert(qualified_name(&schema, &name), domain);
     }
 
     Ok(domains)
@@ -435,8 +433,7 @@ async fn introspect_tables(
             owner: Some(owner),
             grants: Vec::new(),
         };
-        let qualified_name = format!("{schema}.{name}");
-        tables.insert(qualified_name, table);
+        tables.insert(qualified_name(&schema, &name), table);
     }
 
     Ok(tables)
@@ -490,8 +487,7 @@ async fn introspect_partition_keys(
             expressions: Vec::new(),
         };
 
-        let qualified_name = format!("{schema}.{name}");
-        partition_keys.insert(qualified_name, partition_key);
+        partition_keys.insert(qualified_name(&schema, &name), partition_key);
     }
 
     Ok(partition_keys)
@@ -549,8 +545,7 @@ async fn introspect_partitions(
             owner: Some(owner),
         };
 
-        let qualified_name = format!("{schema}.{name}");
-        partitions.insert(qualified_name, partition);
+        partitions.insert(qualified_name(&schema, &name), partition);
     }
 
     Ok(partitions)
@@ -697,8 +692,7 @@ async fn introspect_all_columns(
             atttypmod,
         );
 
-        let qualified_name = format!("{table_schema}.{table_name}");
-        result.entry(qualified_name).or_default().insert(
+        result.entry(qualified_name(&table_schema, &table_name)).or_default().insert(
             name.clone(),
             Column {
                 name,
@@ -785,8 +779,7 @@ async fn introspect_all_primary_keys(
         let table_schema: String = row.get("table_schema");
         let table_name: String = row.get("table_name");
         let columns: Vec<String> = row.get("columns");
-        let qualified_name = format!("{table_schema}.{table_name}");
-        result.insert(qualified_name, PrimaryKey { columns });
+        result.insert(qualified_name(&table_schema, &table_name), PrimaryKey { columns });
     }
 
     Ok(result)
@@ -842,8 +835,7 @@ async fn introspect_all_indexes(
             _ => IndexType::BTree,
         };
 
-        let qualified_name = format!("{table_schema}.{table_name}");
-        result.entry(qualified_name).or_default().push(Index {
+        result.entry(qualified_name(&table_schema, &table_name)).or_default().push(Index {
             name,
             columns,
             unique,
@@ -903,15 +895,14 @@ async fn introspect_all_foreign_keys(
         let confdeltype: i8 = row.get::<i8, _>("confdeltype");
         let confupdtype: i8 = row.get::<i8, _>("confupdtype");
 
-        let qualified_name = format!("{table_schema}.{table_name}");
-        result.entry(qualified_name).or_default().push(ForeignKey {
+        result.entry(qualified_name(&table_schema, &table_name)).or_default().push(ForeignKey {
             name,
             columns,
             referenced_table,
             referenced_schema,
             referenced_columns,
-            on_delete: map_referential_action(confdeltype as u8 as char),
-            on_update: map_referential_action(confupdtype as u8 as char),
+            on_delete: map_referential_action(pg_char(confdeltype)),
+            on_update: map_referential_action(pg_char(confupdtype)),
         });
     }
 
@@ -956,14 +947,17 @@ async fn introspect_all_check_constraints(
             .map(|s| s.to_string())
             .unwrap_or(definition);
 
-        let qualified_name = format!("{table_schema}.{table_name}");
         result
-            .entry(qualified_name)
+            .entry(qualified_name(&table_schema, &table_name))
             .or_default()
             .push(CheckConstraint { name, expression });
     }
 
     Ok(result)
+}
+
+fn pg_char(value: i8) -> char {
+    value as u8 as char
 }
 
 fn map_referential_action(action: char) -> ReferentialAction {
@@ -1004,8 +998,7 @@ async fn introspect_all_rls(
         let table_schema: String = row.get("table_schema");
         let table_name: String = row.get("table_name");
         let rls: bool = row.get("relrowsecurity");
-        let qualified_name = format!("{table_schema}.{table_name}");
-        result.insert(qualified_name, rls);
+        result.insert(qualified_name(&table_schema, &table_name), rls);
     }
 
     Ok(result)
@@ -1032,6 +1025,8 @@ async fn introspect_all_policies(
         JOIN pg_class c ON pol.polrelid = c.oid
         JOIN pg_namespace n ON c.relnamespace = n.oid
         WHERE n.nspname = ANY($1::text[])
+          AND c.relkind IN ('r', 'p')
+          AND c.relispartition = false
         "#,
     )
     .bind(target_schemas)
@@ -1055,12 +1050,11 @@ async fn introspect_all_policies(
             roles
         };
 
-        let qualified_name = format!("{table_schema}.{table_name}");
-        result.entry(qualified_name).or_default().push(Policy {
+        result.entry(qualified_name(&table_schema, &table_name)).or_default().push(Policy {
             name,
             table: table_name,
             table_schema,
-            command: map_policy_command(command as u8 as char),
+            command: map_policy_command(pg_char(command)),
             roles,
             using_expr,
             check_expr,
@@ -1077,7 +1071,7 @@ fn map_policy_command(cmd: char) -> PolicyCommand {
         'a' => PolicyCommand::Insert,
         'w' => PolicyCommand::Update,
         'd' => PolicyCommand::Delete,
-        _ => PolicyCommand::All,
+        _ => panic!("Unknown policy command code from PostgreSQL: '{cmd}'"),
     }
 }
 
@@ -1129,7 +1123,7 @@ async fn introspect_functions(
         let volatility_char: i8 = row.get::<i8, _>("volatility");
         let security_definer: bool = row.get("security_definer");
 
-        let volatility = match volatility_char as u8 as char {
+        let volatility = match pg_char(volatility_char) {
             'i' => Volatility::Immutable,
             's' => Volatility::Stable,
             _ => Volatility::Volatile,
@@ -1275,8 +1269,7 @@ async fn introspect_views(
             owner: Some(owner),
             grants: Vec::new(),
         };
-        let qualified_name = format!("{schema}.{name}");
-        views.insert(qualified_name, view);
+        views.insert(qualified_name(&schema, &name), view);
     }
 
     let materialized_views = sqlx::query(
@@ -1314,8 +1307,7 @@ async fn introspect_views(
             owner: Some(owner),
             grants: Vec::new(),
         };
-        let qualified_name = format!("{schema}.{name}");
-        views.insert(qualified_name, view);
+        views.insert(qualified_name(&schema, &name), view);
     }
 
     Ok(views)
@@ -1407,7 +1399,7 @@ async fn introspect_triggers(
         let when_clause =
             extract_when_clause(&trigger_def).map(|w| crate::util::normalize_type_casts(&w));
 
-        let enabled = match tgenabled as u8 as char {
+        let enabled = match pg_char(tgenabled) {
             'D' => TriggerEnabled::Disabled,
             'R' => TriggerEnabled::Replica,
             'A' => TriggerEnabled::Always,
@@ -1548,9 +1540,9 @@ async fn introspect_sequences(
             _ => panic!("Unknown sequence data type from PostgreSQL: '{data_type}'"),
         };
 
-        let qualified_name = format!("{schema}.{name}");
+        let key = qualified_name(&schema, &name);
         sequences.insert(
-            qualified_name,
+            key,
             Sequence {
                 name,
                 schema,
@@ -1569,6 +1561,40 @@ async fn introspect_sequences(
     }
 
     Ok(sequences)
+}
+
+fn accumulate_grant(
+    map: &mut BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>>,
+    key: String,
+    grantee: String,
+    is_grantable: bool,
+    privilege: Privilege,
+) {
+    map.entry(key)
+        .or_default()
+        .entry((grantee, is_grantable))
+        .or_default()
+        .insert(privilege);
+}
+
+fn collect_grants(
+    accumulated: BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>>,
+) -> BTreeMap<String, Vec<Grant>> {
+    accumulated
+        .into_iter()
+        .map(|(key, grants_map)| {
+            let mut grants: Vec<Grant> = grants_map
+                .into_iter()
+                .map(|((grantee, with_grant_option), privileges)| Grant {
+                    grantee,
+                    privileges,
+                    with_grant_option,
+                })
+                .collect();
+            grants.sort();
+            (key, grants)
+        })
+        .collect()
 }
 
 fn privilege_from_pg_string(s: &str) -> Option<Privilege> {
@@ -1626,31 +1652,17 @@ async fn introspect_table_view_grants(
         let is_grantable: bool = row.get("is_grantable");
 
         if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            let qualified_name = format!("{schema_name}.{object_name}");
-            grants_by_object
-                .entry(qualified_name)
-                .or_default()
-                .entry((grantee, is_grantable))
-                .or_default()
-                .insert(privilege);
-        }
-    }
-
-    let mut result = BTreeMap::new();
-    for (qualified_name, grants_map) in grants_by_object {
-        let mut grants_vec = Vec::new();
-        for ((grantee, with_grant_option), privileges) in grants_map {
-            grants_vec.push(Grant {
+            accumulate_grant(
+                &mut grants_by_object,
+                qualified_name(&schema_name, &object_name),
                 grantee,
-                privileges,
-                with_grant_option,
-            });
+                is_grantable,
+                privilege,
+            );
         }
-        grants_vec.sort();
-        result.insert(qualified_name, grants_vec);
     }
 
-    Ok(result)
+    Ok(collect_grants(grants_by_object))
 }
 
 async fn introspect_sequence_grants(
@@ -1692,31 +1704,17 @@ async fn introspect_sequence_grants(
         let is_grantable: bool = row.get("is_grantable");
 
         if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            let qualified_name = format!("{schema_name}.{object_name}");
-            grants_by_object
-                .entry(qualified_name)
-                .or_default()
-                .entry((grantee, is_grantable))
-                .or_default()
-                .insert(privilege);
-        }
-    }
-
-    let mut result = BTreeMap::new();
-    for (qualified_name, grants_map) in grants_by_object {
-        let mut grants_vec = Vec::new();
-        for ((grantee, with_grant_option), privileges) in grants_map {
-            grants_vec.push(Grant {
+            accumulate_grant(
+                &mut grants_by_object,
+                qualified_name(&schema_name, &object_name),
                 grantee,
-                privileges,
-                with_grant_option,
-            });
+                is_grantable,
+                privilege,
+            );
         }
-        grants_vec.sort();
-        result.insert(qualified_name, grants_vec);
     }
 
-    Ok(result)
+    Ok(collect_grants(grants_by_object))
 }
 
 async fn introspect_function_grants(
@@ -1765,31 +1763,12 @@ async fn introspect_function_grants(
                 .map(|arg| crate::model::normalize_pg_type(&arg.data_type))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let qualified_name = format!("{schema_name}.{function_name}({type_signature})");
-            grants_by_object
-                .entry(qualified_name)
-                .or_default()
-                .entry((grantee, is_grantable))
-                .or_default()
-                .insert(privilege);
+            let key = format!("{schema_name}.{function_name}({type_signature})");
+            accumulate_grant(&mut grants_by_object, key, grantee, is_grantable, privilege);
         }
     }
 
-    let mut result = BTreeMap::new();
-    for (qualified_name, grants_map) in grants_by_object {
-        let mut grants_vec = Vec::new();
-        for ((grantee, with_grant_option), privileges) in grants_map {
-            grants_vec.push(Grant {
-                grantee,
-                privileges,
-                with_grant_option,
-            });
-        }
-        grants_vec.sort();
-        result.insert(qualified_name, grants_vec);
-    }
-
-    Ok(result)
+    Ok(collect_grants(grants_by_object))
 }
 
 async fn introspect_schema_grants(
@@ -1827,30 +1806,11 @@ async fn introspect_schema_grants(
         let is_grantable: bool = row.get("is_grantable");
 
         if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            grants_by_schema
-                .entry(schema_name)
-                .or_default()
-                .entry((grantee, is_grantable))
-                .or_default()
-                .insert(privilege);
+            accumulate_grant(&mut grants_by_schema, schema_name, grantee, is_grantable, privilege);
         }
     }
 
-    let mut result = BTreeMap::new();
-    for (schema_name, grants_map) in grants_by_schema {
-        let mut grants_vec = Vec::new();
-        for ((grantee, with_grant_option), privileges) in grants_map {
-            grants_vec.push(Grant {
-                grantee,
-                privileges,
-                with_grant_option,
-            });
-        }
-        grants_vec.sort();
-        result.insert(schema_name, grants_vec);
-    }
-
-    Ok(result)
+    Ok(collect_grants(grants_by_schema))
 }
 
 async fn introspect_type_grants(
@@ -1892,31 +1852,17 @@ async fn introspect_type_grants(
         let is_grantable: bool = row.get("is_grantable");
 
         if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            let qualified_name = format!("{schema_name}.{type_name}");
-            grants_by_type
-                .entry(qualified_name)
-                .or_default()
-                .entry((grantee, is_grantable))
-                .or_default()
-                .insert(privilege);
-        }
-    }
-
-    let mut result = BTreeMap::new();
-    for (qualified_name, grants_map) in grants_by_type {
-        let mut grants_vec = Vec::new();
-        for ((grantee, with_grant_option), privileges) in grants_map {
-            grants_vec.push(Grant {
+            accumulate_grant(
+                &mut grants_by_type,
+                qualified_name(&schema_name, &type_name),
                 grantee,
-                privileges,
-                with_grant_option,
-            });
+                is_grantable,
+                privilege,
+            );
         }
-        grants_vec.sort();
-        result.insert(qualified_name, grants_vec);
     }
 
-    Ok(result)
+    Ok(collect_grants(grants_by_type))
 }
 
 async fn introspect_default_privileges(
@@ -1971,7 +1917,7 @@ async fn introspect_default_privileges(
         let privilege_type: String = row.get("privilege_type");
         let with_grant_option: bool = row.get("with_grant_option");
 
-        let object_type = match object_type_char as u8 as char {
+        let object_type = match pg_char(object_type_char) {
             'r' => DefaultPrivilegeObjectType::Tables,
             'S' => DefaultPrivilegeObjectType::Sequences,
             'f' => DefaultPrivilegeObjectType::Functions,
