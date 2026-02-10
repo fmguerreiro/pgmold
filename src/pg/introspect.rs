@@ -28,7 +28,8 @@ pub async fn introspect_schema(
         introspect_sequences(connection, target_schemas, include_extension_objects).await?;
 
     // Introspect grants for tables and views
-    let table_view_grants = introspect_table_view_grants(connection, target_schemas).await?;
+    let table_view_grants =
+        introspect_relclass_grants(connection, target_schemas, "'r', 'v', 'm'", "grants").await?;
     for (qualified_name, grants) in table_view_grants {
         if let Some(table) = schema.tables.get_mut(&qualified_name) {
             table.grants = grants;
@@ -38,7 +39,8 @@ pub async fn introspect_schema(
     }
 
     // Introspect grants for sequences
-    let sequence_grants = introspect_sequence_grants(connection, target_schemas).await?;
+    let sequence_grants =
+        introspect_relclass_grants(connection, target_schemas, "'S'", "sequence grants").await?;
     for (qualified_name, grants) in sequence_grants {
         if let Some(sequence) = schema.sequences.get_mut(&qualified_name) {
             sequence.grants = grants;
@@ -88,7 +90,6 @@ pub async fn introspect_schema(
     let mut all_foreign_keys = introspect_all_foreign_keys(connection, target_schemas).await?;
     let mut all_check_constraints =
         introspect_all_check_constraints(connection, target_schemas).await?;
-    let mut all_rls = introspect_all_rls(connection, target_schemas).await?;
     let mut all_policies = introspect_all_policies(connection, target_schemas).await?;
 
     for (qualified_name, table) in &mut schema.tables {
@@ -96,25 +97,10 @@ pub async fn introspect_schema(
             table.columns = columns;
         }
         table.primary_key = all_primary_keys.remove(qualified_name);
-        if let Some(mut indexes) = all_indexes.remove(qualified_name) {
-            indexes.sort();
-            table.indexes = indexes;
-        }
-        if let Some(mut foreign_keys) = all_foreign_keys.remove(qualified_name) {
-            foreign_keys.sort();
-            table.foreign_keys = foreign_keys;
-        }
-        if let Some(mut check_constraints) = all_check_constraints.remove(qualified_name) {
-            check_constraints.sort();
-            table.check_constraints = check_constraints;
-        }
-        if let Some(rls) = all_rls.remove(qualified_name) {
-            table.row_level_security = rls;
-        }
-        if let Some(mut policies) = all_policies.remove(qualified_name) {
-            policies.sort();
-            table.policies = policies;
-        }
+        table.indexes = take_sorted(&mut all_indexes, qualified_name);
+        table.foreign_keys = take_sorted(&mut all_foreign_keys, qualified_name);
+        table.check_constraints = take_sorted(&mut all_check_constraints, qualified_name);
+        table.policies = take_sorted(&mut all_policies, qualified_name);
     }
 
     schema.default_privileges = introspect_default_privileges(connection, target_schemas).await?;
@@ -393,7 +379,7 @@ async fn introspect_tables(
 ) -> Result<BTreeMap<String, Table>> {
     let rows = sqlx::query(
         r#"
-        SELECT n.nspname AS table_schema, c.relname AS table_name, r.rolname AS owner
+        SELECT n.nspname AS table_schema, c.relname AS table_name, r.rolname AS owner, c.relrowsecurity
         FROM pg_class c
         JOIN pg_namespace n ON c.relnamespace = n.oid
         JOIN pg_roles r ON c.relowner = r.oid
@@ -418,6 +404,7 @@ async fn introspect_tables(
         let schema: String = row.get("table_schema");
         let name: String = row.get("table_name");
         let owner: String = row.get("owner");
+        let row_level_security: bool = row.get("relrowsecurity");
         let table = Table {
             name: name.clone(),
             schema: schema.clone(),
@@ -427,7 +414,7 @@ async fn introspect_tables(
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
             comment: None,
-            row_level_security: false,
+            row_level_security,
             policies: Vec::new(),
             partition_by: None,
             owner: Some(owner),
@@ -479,7 +466,7 @@ async fn introspect_partition_keys(
 
         // key_def is like "RANGE (logdate)" or "LIST (status)"
         // Extract the columns by parsing the parentheses
-        let columns = parse_partition_key_columns(&key_def);
+        let columns = extract_paren_values(&key_def);
 
         let partition_key = PartitionKey {
             strategy,
@@ -619,21 +606,6 @@ fn extract_paren_values(s: &str) -> Vec<String> {
         if let Some(end) = s.rfind(')') {
             let inner = &s[start + 1..end];
             return inner.split(',').map(|v| v.trim().to_string()).collect();
-        }
-    }
-    Vec::new()
-}
-
-/// Parse column names from a partition key definition like "RANGE (col1, col2)"
-fn parse_partition_key_columns(key_def: &str) -> Vec<String> {
-    // Find content between parentheses
-    if let Some(start) = key_def.find('(') {
-        if let Some(end) = key_def.rfind(')') {
-            let columns_str = &key_def[start + 1..end];
-            return columns_str
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect();
         }
     }
     Vec::new()
@@ -968,6 +940,16 @@ async fn introspect_all_check_constraints(
     Ok(result)
 }
 
+fn take_sorted<T: Ord>(map: &mut BTreeMap<String, Vec<T>>, key: &str) -> Vec<T> {
+    match map.remove(key) {
+        Some(mut values) => {
+            values.sort();
+            values
+        }
+        None => Vec::new(),
+    }
+}
+
 fn pg_char(value: i8) -> char {
     value as u8 as char
 }
@@ -981,39 +963,6 @@ fn map_referential_action(action: char) -> ReferentialAction {
         'd' => ReferentialAction::SetDefault,
         _ => panic!("Unknown referential action code from PostgreSQL: '{action}'"),
     }
-}
-
-async fn introspect_all_rls(
-    connection: &PgConnection,
-    target_schemas: &[String],
-) -> Result<BTreeMap<String, bool>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT
-            n.nspname AS table_schema,
-            c.relname AS table_name,
-            c.relrowsecurity
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = ANY($1::text[])
-          AND c.relkind IN ('r', 'p')
-          AND c.relispartition = false
-        "#,
-    )
-    .bind(target_schemas)
-    .fetch_all(connection.pool())
-    .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch RLS status: {e}")))?;
-
-    let mut result = BTreeMap::new();
-    for row in rows {
-        let table_schema: String = row.get("table_schema");
-        let table_name: String = row.get("table_name");
-        let rls: bool = row.get("relrowsecurity");
-        result.insert(qualified_name(&table_schema, &table_name), rls);
-    }
-
-    Ok(result)
 }
 
 async fn introspect_all_policies(
@@ -1628,11 +1577,13 @@ fn privilege_from_pg_string(s: &str) -> Option<Privilege> {
     }
 }
 
-async fn introspect_table_view_grants(
+async fn introspect_relclass_grants(
     connection: &PgConnection,
     target_schemas: &[String],
+    relkinds: &str,
+    error_context: &str,
 ) -> Result<BTreeMap<String, Vec<Grant>>> {
-    let rows = sqlx::query(
+    let query = format!(
         r#"
         SELECT
             n.nspname AS schema_name,
@@ -1646,67 +1597,17 @@ async fn introspect_table_view_grants(
         FROM pg_class c
         JOIN pg_namespace n ON c.relnamespace = n.oid
         CROSS JOIN LATERAL aclexplode(c.relacl) acl
-        WHERE c.relkind IN ('r', 'v', 'm')
+        WHERE c.relkind IN ({relkinds})
           AND n.nspname = ANY($1::text[])
           AND c.relacl IS NOT NULL
-        "#,
-    )
-    .bind(target_schemas)
-    .fetch_all(connection.pool())
-    .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch grants: {e}")))?;
+        "#
+    );
 
-    let mut grants_by_object: BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>> =
-        BTreeMap::new();
-
-    for row in rows {
-        let schema_name: String = row.get("schema_name");
-        let object_name: String = row.get("object_name");
-        let grantee: String = row.get("grantee");
-        let privilege_type: String = row.get("privilege_type");
-        let is_grantable: bool = row.get("is_grantable");
-
-        if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            accumulate_grant(
-                &mut grants_by_object,
-                qualified_name(&schema_name, &object_name),
-                grantee,
-                is_grantable,
-                privilege,
-            );
-        }
-    }
-
-    Ok(collect_grants(grants_by_object))
-}
-
-async fn introspect_sequence_grants(
-    connection: &PgConnection,
-    target_schemas: &[String],
-) -> Result<BTreeMap<String, Vec<Grant>>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT
-            n.nspname AS schema_name,
-            c.relname AS object_name,
-            CASE
-                WHEN acl.grantee = 0 THEN 'PUBLIC'
-                ELSE pg_get_userbyid(acl.grantee)
-            END AS grantee,
-            acl.privilege_type AS privilege_type,
-            acl.is_grantable AS is_grantable
-        FROM pg_class c
-        JOIN pg_namespace n ON c.relnamespace = n.oid
-        CROSS JOIN LATERAL aclexplode(c.relacl) acl
-        WHERE c.relkind = 'S'
-          AND n.nspname = ANY($1::text[])
-          AND c.relacl IS NOT NULL
-        "#,
-    )
-    .bind(target_schemas)
-    .fetch_all(connection.pool())
-    .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch sequence grants: {e}")))?;
+    let rows = sqlx::query(&query)
+        .bind(target_schemas)
+        .fetch_all(connection.pool())
+        .await
+        .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch {error_context}: {e}")))?;
 
     let mut grants_by_object: BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>> =
         BTreeMap::new();
