@@ -1,5 +1,6 @@
 use crate::baseline::unsupported::UnsupportedObject;
 use crate::model::Schema;
+use crate::util::sanitize_url;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -154,17 +155,6 @@ fn status_text(ok: bool) -> &'static str {
     } else {
         "FAIL"
     }
-}
-
-fn sanitize_url(url: &str) -> String {
-    if let Some(at_pos) = url.find('@') {
-        if let Some(colon_pos) = url[..at_pos].rfind(':') {
-            let prefix = &url[..colon_pos + 1];
-            let suffix = &url[at_pos..];
-            return format!("{prefix}****{suffix}");
-        }
-    }
-    url.to_string()
 }
 
 fn group_warnings(
