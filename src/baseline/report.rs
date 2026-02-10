@@ -74,13 +74,13 @@ pub fn generate_text_report(report: &BaselineReport) -> String {
 
     output.push_str("Objects captured:\n");
     for (label, count) in [
-        ("Extensions", report.object_counts.extensions),
-        ("Enums", report.object_counts.enums),
-        ("Tables", report.object_counts.tables),
-        ("Functions", report.object_counts.functions),
-        ("Views", report.object_counts.views),
-        ("Triggers", report.object_counts.triggers),
-        ("Sequences", report.object_counts.sequences),
+        ("Extensions:", report.object_counts.extensions),
+        ("Enums:", report.object_counts.enums),
+        ("Tables:", report.object_counts.tables),
+        ("Functions:", report.object_counts.functions),
+        ("Views:", report.object_counts.views),
+        ("Triggers:", report.object_counts.triggers),
+        ("Sequences:", report.object_counts.sequences),
     ] {
         output.push_str(&format!("  {label:<14}{count:>3}\n"));
     }
