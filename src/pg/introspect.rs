@@ -82,38 +82,37 @@ pub async fn introspect_schema(
     // Introspect partitions (child tables)
     schema.partitions = introspect_partitions(connection, target_schemas).await?;
 
-    let table_keys: Vec<(String, String)> = schema
-        .tables
-        .values()
-        .map(|t| (t.schema.clone(), t.name.clone()))
-        .collect();
-    for (table_schema, table_name) in table_keys {
-        let columns =
-            introspect_columns(connection, target_schemas, &table_schema, &table_name).await?;
-        let primary_key = introspect_primary_key(connection, &table_schema, &table_name).await?;
-        let mut indexes = introspect_indexes(connection, &table_schema, &table_name).await?;
-        let mut foreign_keys =
-            introspect_foreign_keys(connection, &table_schema, &table_name).await?;
-        let mut check_constraints =
-            introspect_check_constraints(connection, &table_schema, &table_name).await?;
+    let mut all_columns = introspect_all_columns(connection, target_schemas).await?;
+    let mut all_primary_keys = introspect_all_primary_keys(connection, target_schemas).await?;
+    let mut all_indexes = introspect_all_indexes(connection, target_schemas).await?;
+    let mut all_foreign_keys = introspect_all_foreign_keys(connection, target_schemas).await?;
+    let mut all_check_constraints =
+        introspect_all_check_constraints(connection, target_schemas).await?;
+    let mut all_rls = introspect_all_rls(connection, target_schemas).await?;
+    let mut all_policies = introspect_all_policies(connection, target_schemas).await?;
 
-        indexes.sort();
-        foreign_keys.sort();
-        check_constraints.sort();
-
-        let row_level_security =
-            introspect_rls_enabled(connection, &table_schema, &table_name).await?;
-        let mut policies = introspect_policies(connection, &table_schema, &table_name).await?;
-        policies.sort();
-
-        let qualified_name = format!("{table_schema}.{table_name}");
-        if let Some(table) = schema.tables.get_mut(&qualified_name) {
+    for (qualified_name, table) in &mut schema.tables {
+        if let Some(columns) = all_columns.remove(qualified_name) {
             table.columns = columns;
-            table.primary_key = primary_key;
+        }
+        table.primary_key = all_primary_keys.remove(qualified_name);
+        if let Some(mut indexes) = all_indexes.remove(qualified_name) {
+            indexes.sort();
             table.indexes = indexes;
+        }
+        if let Some(mut foreign_keys) = all_foreign_keys.remove(qualified_name) {
+            foreign_keys.sort();
             table.foreign_keys = foreign_keys;
+        }
+        if let Some(mut check_constraints) = all_check_constraints.remove(qualified_name) {
+            check_constraints.sort();
             table.check_constraints = check_constraints;
-            table.row_level_security = row_level_security;
+        }
+        if let Some(rls) = all_rls.remove(qualified_name) {
+            table.row_level_security = rls;
+        }
+        if let Some(mut policies) = all_policies.remove(qualified_name) {
+            policies.sort();
             table.policies = policies;
         }
     }
@@ -237,8 +236,7 @@ async fn introspect_enums(
             owner: Some(owner),
             grants: Vec::new(),
         };
-        let qualified_name = format!("{schema}.{name}");
-        enums.insert(qualified_name, enum_type);
+        enums.insert(qualified_name(&schema, &name), enum_type);
     }
 
     Ok(enums)
@@ -327,8 +325,7 @@ async fn introspect_domains(
             owner: Some(owner),
             grants: Vec::new(),
         };
-        let qualified_name = format!("{schema}.{name}");
-        domains.insert(qualified_name, domain);
+        domains.insert(qualified_name(&schema, &name), domain);
     }
 
     Ok(domains)
@@ -436,8 +433,7 @@ async fn introspect_tables(
             owner: Some(owner),
             grants: Vec::new(),
         };
-        let qualified_name = format!("{schema}.{name}");
-        tables.insert(qualified_name, table);
+        tables.insert(qualified_name(&schema, &name), table);
     }
 
     Ok(tables)
@@ -491,8 +487,7 @@ async fn introspect_partition_keys(
             expressions: Vec::new(),
         };
 
-        let qualified_name = format!("{schema}.{name}");
-        partition_keys.insert(qualified_name, partition_key);
+        partition_keys.insert(qualified_name(&schema, &name), partition_key);
     }
 
     Ok(partition_keys)
@@ -550,8 +545,7 @@ async fn introspect_partitions(
             owner: Some(owner),
         };
 
-        let qualified_name = format!("{schema}.{name}");
-        partitions.insert(qualified_name, partition);
+        partitions.insert(qualified_name(&schema, &name), partition);
     }
 
     Ok(partitions)
@@ -645,15 +639,15 @@ fn parse_partition_key_columns(key_def: &str) -> Vec<String> {
     Vec::new()
 }
 
-async fn introspect_columns(
+async fn introspect_all_columns(
     connection: &PgConnection,
-    _target_schemas: &[String],
-    table_schema: &str,
-    table_name: &str,
-) -> Result<BTreeMap<String, Column>> {
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, BTreeMap<String, Column>>> {
     let rows = sqlx::query(
         r#"
         SELECT
+            c.table_schema,
+            c.table_name,
             c.column_name,
             c.data_type,
             c.character_maximum_length,
@@ -666,18 +660,21 @@ async fn introspect_columns(
         JOIN pg_catalog.pg_class t ON t.relname = c.table_name
         JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace AND n.nspname = c.table_schema
         JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attname = c.column_name
-        WHERE c.table_schema = $1 AND c.table_name = $2
-        ORDER BY c.ordinal_position
+        WHERE c.table_schema = ANY($1::text[])
+          AND t.relkind IN ('r', 'p')
+          AND t.relispartition = false
+        ORDER BY c.table_schema, c.table_name, c.ordinal_position
         "#,
     )
-    .bind(table_schema)
-    .bind(table_name)
+    .bind(target_schemas)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch columns: {e}")))?;
 
-    let mut columns = BTreeMap::new();
+    let mut result: BTreeMap<String, BTreeMap<String, Column>> = BTreeMap::new();
     for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
         let name: String = row.get("column_name");
         let data_type: String = row.get("data_type");
         let char_max_length: Option<i32> = row.get("character_maximum_length");
@@ -695,19 +692,22 @@ async fn introspect_columns(
             atttypmod,
         );
 
-        columns.insert(
-            name.clone(),
-            Column {
-                name,
-                data_type: pg_type,
-                nullable: is_nullable == "YES",
-                default: column_default,
-                comment: None,
-            },
-        );
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .insert(
+                name.clone(),
+                Column {
+                    name,
+                    data_type: pg_type,
+                    nullable: is_nullable == "YES",
+                    default: column_default,
+                    comment: None,
+                },
+            );
     }
 
-    Ok(columns)
+    Ok(result)
 }
 
 fn map_pg_type(
@@ -751,62 +751,82 @@ fn map_pg_type(
     }
 }
 
-async fn introspect_primary_key(
+async fn introspect_all_primary_keys(
     connection: &PgConnection,
-    table_schema: &str,
-    table_name: &str,
-) -> Result<Option<PrimaryKey>> {
-    let row = sqlx::query(
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, PrimaryKey>> {
+    let rows = sqlx::query(
         r#"
-        SELECT array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum)) as columns
+        SELECT
+            n.nspname AS table_schema,
+            c.relname AS table_name,
+            array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum)) as columns
         FROM pg_index i
         JOIN pg_class c ON c.oid = i.indrelid
         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey)
         JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relname = $1 AND n.nspname = $2 AND i.indisprimary
-        GROUP BY i.indexrelid
+        WHERE n.nspname = ANY($1::text[])
+          AND i.indisprimary
+          AND c.relkind IN ('r', 'p')
+          AND c.relispartition = false
+        GROUP BY n.nspname, c.relname, i.indexrelid
         "#,
     )
-    .bind(table_name)
-    .bind(table_schema)
-    .fetch_optional(connection.pool())
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch primary key: {e}")))?;
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch primary keys: {e}")))?;
 
-    Ok(row.map(|r| {
-        let columns: Vec<String> = r.get("columns");
-        PrimaryKey { columns }
-    }))
+    let mut result = BTreeMap::new();
+    for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
+        let columns: Vec<String> = row.get("columns");
+        result.insert(
+            qualified_name(&table_schema, &table_name),
+            PrimaryKey { columns },
+        );
+    }
+
+    Ok(result)
 }
 
-async fn introspect_indexes(
+async fn introspect_all_indexes(
     connection: &PgConnection,
-    table_schema: &str,
-    table_name: &str,
-) -> Result<Vec<Index>> {
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<Index>>> {
     let rows = sqlx::query(
         r#"
-        SELECT i.relname as index_name, ix.indisunique, am.amname,
-               array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
-               pg_get_expr(ix.indpred, ix.indrelid) as predicate
+        SELECT
+            n.nspname AS table_schema,
+            t.relname AS table_name,
+            i.relname as index_name,
+            ix.indisunique,
+            am.amname,
+            array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
+            pg_get_expr(ix.indpred, ix.indrelid) as predicate
         FROM pg_index ix
         JOIN pg_class t ON t.oid = ix.indrelid
         JOIN pg_class i ON i.oid = ix.indexrelid
         JOIN pg_am am ON am.oid = i.relam
         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
         JOIN pg_namespace n ON n.oid = t.relnamespace
-        WHERE t.relname = $1 AND n.nspname = $2 AND NOT ix.indisprimary
-        GROUP BY i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid
+        WHERE n.nspname = ANY($1::text[])
+          AND NOT ix.indisprimary
+          AND t.relkind IN ('r', 'p')
+          AND t.relispartition = false
+        GROUP BY n.nspname, t.relname, i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid
         "#,
     )
-    .bind(table_name)
-    .bind(table_schema)
+    .bind(target_schemas)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch indexes: {e}")))?;
 
-    let mut indexes = Vec::new();
+    let mut result: BTreeMap<String, Vec<Index>> = BTreeMap::new();
     for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
         let name: String = row.get("index_name");
         let unique: bool = row.get("indisunique");
         let am_name: String = row.get("amname");
@@ -821,26 +841,30 @@ async fn introspect_indexes(
             _ => IndexType::BTree,
         };
 
-        indexes.push(Index {
-            name,
-            columns,
-            unique,
-            index_type,
-            predicate,
-        });
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(Index {
+                name,
+                columns,
+                unique,
+                index_type,
+                predicate,
+            });
     }
 
-    Ok(indexes)
+    Ok(result)
 }
 
-async fn introspect_foreign_keys(
+async fn introspect_all_foreign_keys(
     connection: &PgConnection,
-    table_schema: &str,
-    table_name: &str,
-) -> Result<Vec<ForeignKey>> {
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<ForeignKey>>> {
     let rows = sqlx::query(
         r#"
         SELECT
+            n.nspname AS table_schema,
+            class.relname AS table_name,
             con.conname as name,
             ref_class.relname as referenced_table,
             ref_n.nspname as referenced_schema,
@@ -856,18 +880,22 @@ async fn introspect_foreign_keys(
         CROSS JOIN LATERAL unnest(con.conkey, con.confkey) WITH ORDINALITY AS u(attnum, ref_attnum, attposition)
         JOIN pg_attribute att ON att.attrelid = class.oid AND att.attnum = u.attnum
         JOIN pg_attribute ref_att ON ref_att.attrelid = ref_class.oid AND ref_att.attnum = u.ref_attnum
-        WHERE class.relname = $1 AND n.nspname = $2 AND con.contype = 'f'
-        GROUP BY con.conname, ref_class.relname, ref_n.nspname, con.confdeltype, con.confupdtype
+        WHERE n.nspname = ANY($1::text[])
+          AND con.contype = 'f'
+          AND class.relkind IN ('r', 'p')
+          AND class.relispartition = false
+        GROUP BY n.nspname, class.relname, con.conname, ref_class.relname, ref_n.nspname, con.confdeltype, con.confupdtype
         "#,
     )
-    .bind(table_name)
-    .bind(table_schema)
+    .bind(target_schemas)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch foreign keys: {e}")))?;
 
-    let mut foreign_keys = Vec::new();
+    let mut result: BTreeMap<String, Vec<ForeignKey>> = BTreeMap::new();
     for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
         let name: String = row.get("name");
         let referenced_table: String = row.get("referenced_table");
         let referenced_schema: String = row.get("referenced_schema");
@@ -876,58 +904,72 @@ async fn introspect_foreign_keys(
         let confdeltype: i8 = row.get::<i8, _>("confdeltype");
         let confupdtype: i8 = row.get::<i8, _>("confupdtype");
 
-        foreign_keys.push(ForeignKey {
-            name,
-            columns,
-            referenced_table,
-            referenced_schema,
-            referenced_columns,
-            on_delete: map_referential_action(confdeltype as u8 as char),
-            on_update: map_referential_action(confupdtype as u8 as char),
-        });
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(ForeignKey {
+                name,
+                columns,
+                referenced_table,
+                referenced_schema,
+                referenced_columns,
+                on_delete: map_referential_action(pg_char(confdeltype)),
+                on_update: map_referential_action(pg_char(confupdtype)),
+            });
     }
 
-    Ok(foreign_keys)
+    Ok(result)
 }
 
-async fn introspect_check_constraints(
+async fn introspect_all_check_constraints(
     connection: &PgConnection,
-    table_schema: &str,
-    table_name: &str,
-) -> Result<Vec<CheckConstraint>> {
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<CheckConstraint>>> {
     let rows = sqlx::query(
         r#"
         SELECT
+            n.nspname AS table_schema,
+            class.relname AS table_name,
             con.conname as name,
             pg_get_constraintdef(con.oid) as definition
         FROM pg_constraint con
         JOIN pg_class class ON con.conrelid = class.oid
         JOIN pg_namespace n ON n.oid = class.relnamespace
-        WHERE class.relname = $1 AND n.nspname = $2 AND con.contype = 'c'
+        WHERE n.nspname = ANY($1::text[])
+          AND con.contype = 'c'
+          AND class.relkind IN ('r', 'p')
+          AND class.relispartition = false
         "#,
     )
-    .bind(table_name)
-    .bind(table_schema)
+    .bind(target_schemas)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch check constraints: {e}")))?;
 
-    let mut check_constraints = Vec::new();
+    let mut result: BTreeMap<String, Vec<CheckConstraint>> = BTreeMap::new();
     for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
         let name: String = row.get("name");
         let definition: String = row.get("definition");
 
-        // pg_get_constraintdef returns "CHECK ((expression))" - extract the inner expression
         let expression = definition
             .strip_prefix("CHECK (")
             .and_then(|s| s.strip_suffix(")"))
             .map(|s| s.to_string())
             .unwrap_or(definition);
 
-        check_constraints.push(CheckConstraint { name, expression });
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(CheckConstraint { name, expression });
     }
 
-    Ok(check_constraints)
+    Ok(result)
+}
+
+fn pg_char(value: i8) -> char {
+    value as u8 as char
 }
 
 fn map_referential_action(action: char) -> ReferentialAction {
@@ -941,42 +983,48 @@ fn map_referential_action(action: char) -> ReferentialAction {
     }
 }
 
-async fn introspect_rls_enabled(
+async fn introspect_all_rls(
     connection: &PgConnection,
-    table_schema: &str,
-    table_name: &str,
-) -> Result<bool> {
-    let row = sqlx::query(
-        r#"
-        SELECT c.relrowsecurity
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relname = $1 AND n.nspname = $2
-        "#,
-    )
-    .bind(table_name)
-    .bind(table_schema)
-    .fetch_optional(connection.pool())
-    .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch RLS status: {e}")))?;
-
-    let row = row.ok_or_else(|| {
-        SchemaError::DatabaseError(format!(
-            "Table {table_schema}.{table_name} not found in pg_class while checking RLS"
-        ))
-    })?;
-
-    Ok(row.get::<bool, _>("relrowsecurity"))
-}
-
-async fn introspect_policies(
-    connection: &PgConnection,
-    table_schema: &str,
-    table_name: &str,
-) -> Result<Vec<Policy>> {
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, bool>> {
     let rows = sqlx::query(
         r#"
         SELECT
+            n.nspname AS table_schema,
+            c.relname AS table_name,
+            c.relrowsecurity
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = ANY($1::text[])
+          AND c.relkind IN ('r', 'p')
+          AND c.relispartition = false
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch RLS status: {e}")))?;
+
+    let mut result = BTreeMap::new();
+    for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
+        let rls: bool = row.get("relrowsecurity");
+        result.insert(qualified_name(&table_schema, &table_name), rls);
+    }
+
+    Ok(result)
+}
+
+async fn introspect_all_policies(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<Policy>>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS table_schema,
+            c.relname AS table_name,
             pol.polname as name,
             pol.polcmd as command,
             COALESCE(
@@ -988,42 +1036,47 @@ async fn introspect_policies(
         FROM pg_policy pol
         JOIN pg_class c ON pol.polrelid = c.oid
         JOIN pg_namespace n ON c.relnamespace = n.oid
-        WHERE c.relname = $1 AND n.nspname = $2
+        WHERE n.nspname = ANY($1::text[])
+          AND c.relkind IN ('r', 'p')
+          AND c.relispartition = false
         "#,
     )
-    .bind(table_name)
-    .bind(table_schema)
+    .bind(target_schemas)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch policies: {e}")))?;
 
-    let mut policies = Vec::new();
+    let mut result: BTreeMap<String, Vec<Policy>> = BTreeMap::new();
     for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
         let name: String = row.get("name");
         let command: i8 = row.get::<i8, _>("command");
         let roles: Vec<String> = row.get("roles");
         let using_expr: Option<String> = row.get("using_expr");
         let check_expr: Option<String> = row.get("check_expr");
 
-        // PostgreSQL stores empty polroles array when policy applies to PUBLIC
         let roles = if roles.is_empty() {
             vec!["public".to_string()]
         } else {
             roles
         };
 
-        policies.push(Policy {
-            name,
-            table: table_name.to_string(),
-            table_schema: table_schema.to_string(),
-            command: map_policy_command(command as u8 as char),
-            roles,
-            using_expr,
-            check_expr,
-        });
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(Policy {
+                name,
+                table: table_name,
+                table_schema,
+                command: map_policy_command(pg_char(command)),
+                roles,
+                using_expr,
+                check_expr,
+            });
     }
 
-    Ok(policies)
+    Ok(result)
 }
 
 fn map_policy_command(cmd: char) -> PolicyCommand {
@@ -1033,7 +1086,7 @@ fn map_policy_command(cmd: char) -> PolicyCommand {
         'a' => PolicyCommand::Insert,
         'w' => PolicyCommand::Update,
         'd' => PolicyCommand::Delete,
-        _ => PolicyCommand::All,
+        _ => panic!("Unknown policy command code from PostgreSQL: '{cmd}'"),
     }
 }
 
@@ -1085,7 +1138,7 @@ async fn introspect_functions(
         let volatility_char: i8 = row.get::<i8, _>("volatility");
         let security_definer: bool = row.get("security_definer");
 
-        let volatility = match volatility_char as u8 as char {
+        let volatility = match pg_char(volatility_char) {
             'i' => Volatility::Immutable,
             's' => Volatility::Stable,
             _ => Volatility::Volatile,
@@ -1231,8 +1284,7 @@ async fn introspect_views(
             owner: Some(owner),
             grants: Vec::new(),
         };
-        let qualified_name = format!("{schema}.{name}");
-        views.insert(qualified_name, view);
+        views.insert(qualified_name(&schema, &name), view);
     }
 
     let materialized_views = sqlx::query(
@@ -1270,8 +1322,7 @@ async fn introspect_views(
             owner: Some(owner),
             grants: Vec::new(),
         };
-        let qualified_name = format!("{schema}.{name}");
-        views.insert(qualified_name, view);
+        views.insert(qualified_name(&schema, &name), view);
     }
 
     Ok(views)
@@ -1363,7 +1414,7 @@ async fn introspect_triggers(
         let when_clause =
             extract_when_clause(&trigger_def).map(|w| crate::util::normalize_type_casts(&w));
 
-        let enabled = match tgenabled as u8 as char {
+        let enabled = match pg_char(tgenabled) {
             'D' => TriggerEnabled::Disabled,
             'R' => TriggerEnabled::Replica,
             'A' => TriggerEnabled::Always,
@@ -1504,9 +1555,9 @@ async fn introspect_sequences(
             _ => panic!("Unknown sequence data type from PostgreSQL: '{data_type}'"),
         };
 
-        let qualified_name = format!("{schema}.{name}");
+        let key = qualified_name(&schema, &name);
         sequences.insert(
-            qualified_name,
+            key,
             Sequence {
                 name,
                 schema,
@@ -1525,6 +1576,40 @@ async fn introspect_sequences(
     }
 
     Ok(sequences)
+}
+
+fn accumulate_grant(
+    map: &mut BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>>,
+    key: String,
+    grantee: String,
+    is_grantable: bool,
+    privilege: Privilege,
+) {
+    map.entry(key)
+        .or_default()
+        .entry((grantee, is_grantable))
+        .or_default()
+        .insert(privilege);
+}
+
+fn collect_grants(
+    accumulated: BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>>,
+) -> BTreeMap<String, Vec<Grant>> {
+    accumulated
+        .into_iter()
+        .map(|(key, grants_map)| {
+            let mut grants: Vec<Grant> = grants_map
+                .into_iter()
+                .map(|((grantee, with_grant_option), privileges)| Grant {
+                    grantee,
+                    privileges,
+                    with_grant_option,
+                })
+                .collect();
+            grants.sort();
+            (key, grants)
+        })
+        .collect()
 }
 
 fn privilege_from_pg_string(s: &str) -> Option<Privilege> {
@@ -1582,31 +1667,17 @@ async fn introspect_table_view_grants(
         let is_grantable: bool = row.get("is_grantable");
 
         if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            let qualified_name = format!("{schema_name}.{object_name}");
-            grants_by_object
-                .entry(qualified_name)
-                .or_default()
-                .entry((grantee, is_grantable))
-                .or_default()
-                .insert(privilege);
-        }
-    }
-
-    let mut result = BTreeMap::new();
-    for (qualified_name, grants_map) in grants_by_object {
-        let mut grants_vec = Vec::new();
-        for ((grantee, with_grant_option), privileges) in grants_map {
-            grants_vec.push(Grant {
+            accumulate_grant(
+                &mut grants_by_object,
+                qualified_name(&schema_name, &object_name),
                 grantee,
-                privileges,
-                with_grant_option,
-            });
+                is_grantable,
+                privilege,
+            );
         }
-        grants_vec.sort();
-        result.insert(qualified_name, grants_vec);
     }
 
-    Ok(result)
+    Ok(collect_grants(grants_by_object))
 }
 
 async fn introspect_sequence_grants(
@@ -1648,31 +1719,17 @@ async fn introspect_sequence_grants(
         let is_grantable: bool = row.get("is_grantable");
 
         if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            let qualified_name = format!("{schema_name}.{object_name}");
-            grants_by_object
-                .entry(qualified_name)
-                .or_default()
-                .entry((grantee, is_grantable))
-                .or_default()
-                .insert(privilege);
-        }
-    }
-
-    let mut result = BTreeMap::new();
-    for (qualified_name, grants_map) in grants_by_object {
-        let mut grants_vec = Vec::new();
-        for ((grantee, with_grant_option), privileges) in grants_map {
-            grants_vec.push(Grant {
+            accumulate_grant(
+                &mut grants_by_object,
+                qualified_name(&schema_name, &object_name),
                 grantee,
-                privileges,
-                with_grant_option,
-            });
+                is_grantable,
+                privilege,
+            );
         }
-        grants_vec.sort();
-        result.insert(qualified_name, grants_vec);
     }
 
-    Ok(result)
+    Ok(collect_grants(grants_by_object))
 }
 
 async fn introspect_function_grants(
@@ -1721,31 +1778,12 @@ async fn introspect_function_grants(
                 .map(|arg| crate::model::normalize_pg_type(&arg.data_type))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let qualified_name = format!("{schema_name}.{function_name}({type_signature})");
-            grants_by_object
-                .entry(qualified_name)
-                .or_default()
-                .entry((grantee, is_grantable))
-                .or_default()
-                .insert(privilege);
+            let key = format!("{schema_name}.{function_name}({type_signature})");
+            accumulate_grant(&mut grants_by_object, key, grantee, is_grantable, privilege);
         }
     }
 
-    let mut result = BTreeMap::new();
-    for (qualified_name, grants_map) in grants_by_object {
-        let mut grants_vec = Vec::new();
-        for ((grantee, with_grant_option), privileges) in grants_map {
-            grants_vec.push(Grant {
-                grantee,
-                privileges,
-                with_grant_option,
-            });
-        }
-        grants_vec.sort();
-        result.insert(qualified_name, grants_vec);
-    }
-
-    Ok(result)
+    Ok(collect_grants(grants_by_object))
 }
 
 async fn introspect_schema_grants(
@@ -1783,30 +1821,17 @@ async fn introspect_schema_grants(
         let is_grantable: bool = row.get("is_grantable");
 
         if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            grants_by_schema
-                .entry(schema_name)
-                .or_default()
-                .entry((grantee, is_grantable))
-                .or_default()
-                .insert(privilege);
-        }
-    }
-
-    let mut result = BTreeMap::new();
-    for (schema_name, grants_map) in grants_by_schema {
-        let mut grants_vec = Vec::new();
-        for ((grantee, with_grant_option), privileges) in grants_map {
-            grants_vec.push(Grant {
+            accumulate_grant(
+                &mut grants_by_schema,
+                schema_name,
                 grantee,
-                privileges,
-                with_grant_option,
-            });
+                is_grantable,
+                privilege,
+            );
         }
-        grants_vec.sort();
-        result.insert(schema_name, grants_vec);
     }
 
-    Ok(result)
+    Ok(collect_grants(grants_by_schema))
 }
 
 async fn introspect_type_grants(
@@ -1848,31 +1873,17 @@ async fn introspect_type_grants(
         let is_grantable: bool = row.get("is_grantable");
 
         if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            let qualified_name = format!("{schema_name}.{type_name}");
-            grants_by_type
-                .entry(qualified_name)
-                .or_default()
-                .entry((grantee, is_grantable))
-                .or_default()
-                .insert(privilege);
-        }
-    }
-
-    let mut result = BTreeMap::new();
-    for (qualified_name, grants_map) in grants_by_type {
-        let mut grants_vec = Vec::new();
-        for ((grantee, with_grant_option), privileges) in grants_map {
-            grants_vec.push(Grant {
+            accumulate_grant(
+                &mut grants_by_type,
+                qualified_name(&schema_name, &type_name),
                 grantee,
-                privileges,
-                with_grant_option,
-            });
+                is_grantable,
+                privilege,
+            );
         }
-        grants_vec.sort();
-        result.insert(qualified_name, grants_vec);
     }
 
-    Ok(result)
+    Ok(collect_grants(grants_by_type))
 }
 
 async fn introspect_default_privileges(
@@ -1927,7 +1938,7 @@ async fn introspect_default_privileges(
         let privilege_type: String = row.get("privilege_type");
         let with_grant_option: bool = row.get("with_grant_option");
 
-        let object_type = match object_type_char as u8 as char {
+        let object_type = match pg_char(object_type_char) {
             'r' => DefaultPrivilegeObjectType::Tables,
             'S' => DefaultPrivilegeObjectType::Sequences,
             'f' => DefaultPrivilegeObjectType::Functions,
