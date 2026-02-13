@@ -1,6 +1,68 @@
 mod common;
 use common::*;
 
+#[test]
+fn parses_returns_setof_simple_type() {
+    let sql = r#"
+        CREATE FUNCTION get_names() RETURNS SETOF text
+        LANGUAGE sql
+        AS $$ SELECT name FROM users $$;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema.functions.get("public.get_names()").unwrap();
+    assert_eq!(func.return_type, "setof text");
+}
+
+#[test]
+fn parses_returns_setof_schema_qualified_type() {
+    let sql = r#"
+        CREATE SCHEMA mrv;
+        CREATE FUNCTION mrv.get_all() RETURNS SETOF mrv."Table"
+        LANGUAGE sql
+        AS $$ SELECT * FROM mrv."Table" $$;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema.functions.get(r#"mrv.get_all()"#).unwrap();
+    assert_eq!(func.return_type, r#"setof mrv."table""#);
+}
+
+#[tokio::test]
+async fn setof_function_round_trip() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let setup_sql = r#"
+        CREATE FUNCTION get_table_names() RETURNS SETOF text
+        LANGUAGE sql
+        AS $$ SELECT tablename::text FROM pg_tables $$;
+    "#;
+
+    sqlx::query(setup_sql)
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let db_func = db_schema
+        .functions
+        .get("public.get_table_names()")
+        .unwrap();
+    assert_eq!(db_func.return_type, "setof text");
+
+    let parsed_sql = format!(
+        "CREATE FUNCTION get_table_names() RETURNS SETOF text LANGUAGE sql AS $$ {} $$;",
+        db_func.body
+    );
+    let parsed_schema = parse_sql_string(&parsed_sql).unwrap();
+    let parsed_func = parsed_schema
+        .functions
+        .get("public.get_table_names()")
+        .unwrap();
+    assert_eq!(parsed_func.return_type, db_func.return_type);
+}
+
 #[tokio::test]
 async fn introspects_function_config_params() {
     let (_container, url) = setup_postgres().await;
