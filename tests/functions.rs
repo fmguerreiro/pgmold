@@ -45,10 +45,7 @@ async fn setof_function_round_trip() {
     let db_schema = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
-    let db_func = db_schema
-        .functions
-        .get("public.get_table_names()")
-        .unwrap();
+    let db_func = db_schema.functions.get("public.get_table_names()").unwrap();
     assert_eq!(db_func.return_type, "setof text");
 
     let parsed_sql = format!(
