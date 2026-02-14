@@ -111,9 +111,24 @@ pub fn compute_diff_with_flags(
 
     let affected_tables = tables_with_type_changes(&ops);
     ops.extend(generate_fk_ops_for_type_changes(&ops, from, to));
-    ops.extend(generate_policy_ops_for_type_changes(&ops, from, to, &affected_tables));
-    ops.extend(generate_trigger_ops_for_type_changes(&ops, from, to, &affected_tables));
-    ops.extend(generate_view_ops_for_type_changes(&ops, from, to, &affected_tables));
+    ops.extend(generate_policy_ops_for_type_changes(
+        &ops,
+        from,
+        to,
+        &affected_tables,
+    ));
+    ops.extend(generate_trigger_ops_for_type_changes(
+        &ops,
+        from,
+        to,
+        &affected_tables,
+    ));
+    ops.extend(generate_view_ops_for_type_changes(
+        &ops,
+        from,
+        to,
+        &affected_tables,
+    ));
 
     // Drop/recreate policies that reference functions being dropped
     let (policy_ops, policies_to_filter) = generate_policy_ops_for_function_changes(&ops, from, to);

@@ -362,10 +362,7 @@ pub(super) fn generate_policy_ops_for_function_changes(
 }
 
 /// Check if a policy references any of the given functions in its USING or WITH CHECK expressions.
-fn policy_references_functions(
-    policy: &Policy,
-    function_names: &HashSet<String>,
-) -> bool {
+fn policy_references_functions(policy: &Policy, function_names: &HashSet<String>) -> bool {
     let policy_func_refs = extract_function_references_from_policy(policy);
     policy_func_refs.iter().any(|policy_ref| {
         function_names
