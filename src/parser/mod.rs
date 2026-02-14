@@ -4221,8 +4221,12 @@ CREATE TABLE "mrv"."Cultivation" (
         assert!(!items_table.grants.is_empty());
         assert_eq!(orders_table.grants[0].grantee, "service_role");
         assert_eq!(items_table.grants[0].grantee, "service_role");
-        assert!(orders_table.grants[0].privileges.contains(&Privilege::Select));
-        assert!(orders_table.grants[0].privileges.contains(&Privilege::Insert));
+        assert!(orders_table.grants[0]
+            .privileges
+            .contains(&Privilege::Select));
+        assert!(orders_table.grants[0]
+            .privileges
+            .contains(&Privilege::Insert));
     }
 
     #[test]
