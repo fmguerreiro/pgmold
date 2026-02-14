@@ -7,7 +7,8 @@ pub use dependencies::{
 pub use loader::load_schema_sources;
 
 use crate::model::*;
-use crate::util::{Result, SchemaError};
+use crate::util::{normalize_sql_whitespace, normalize_type_casts, Result, SchemaError};
+use regex::Regex;
 use sqlparser::ast::{
     ColumnDef, ColumnOption, DataType, Expr, ForValues, PartitionBoundValue, SequenceOptions,
     Statement, TableConstraint,
@@ -16,8 +17,6 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-
-use crate::util::{normalize_sql_whitespace, normalize_type_casts};
 
 fn normalize_expr(expr: &str) -> String {
     normalize_type_casts(expr)
@@ -84,50 +83,78 @@ pub fn parse_sql_file(path: &str) -> Result<Schema> {
     parse_sql_string(&content)
 }
 
-/// Preprocess SQL to remove/normalize syntax not supported by sqlparser 0.52
+/// Strip `DO $tag$ ... $tag$;` anonymous PL/pgSQL blocks.
+/// Scans for dollar-quoted boundaries manually since the bodies can contain semicolons.
+fn strip_do_blocks(sql: &str) -> String {
+    let do_start_re = Regex::new(r"(?i)\bDO\s+(?:LANGUAGE\s+\w+\s+)?(\$[^$]*\$)").unwrap();
+
+    let mut result = String::with_capacity(sql.len());
+    let mut pos = 0;
+
+    while pos < sql.len() {
+        let Some(tag_capture) = do_start_re.captures(&sql[pos..]) else {
+            result.push_str(&sql[pos..]);
+            break;
+        };
+
+        let full_match = tag_capture.get(0).unwrap();
+        result.push_str(&sql[pos..pos + full_match.start()]);
+
+        let tag = tag_capture.get(1).unwrap().as_str();
+        let after_open_tag = pos + full_match.end();
+
+        if let Some(close_offset) = sql[after_open_tag..].find(tag) {
+            let after_close = after_open_tag + close_offset + tag.len();
+            let rest = sql[after_close..].trim_start();
+            if let Some(stripped) = rest.strip_prefix(';') {
+                pos = sql.len() - stripped.len();
+            } else {
+                pos = after_close;
+            }
+        } else {
+            // No closing tag found -- leave as-is (will error during parse)
+            result.push_str(&sql[pos..pos + full_match.end()]);
+            pos += full_match.end();
+        }
+    }
+
+    result
+}
+
+/// Remove/normalize syntax not supported by sqlparser 0.52.
+/// Statements stripped here are either unsupported or parsed separately via regex
+/// (GRANT, REVOKE, ALTER DEFAULT PRIVILEGES, OWNER TO, COMMENT ON, DO blocks).
 fn preprocess_sql(sql: &str) -> String {
-    use regex::Regex;
-    // Match SET search_path until newline or AS keyword
-    let set_search_path_re =
-        Regex::new(r"(?i)\bSET\s+search_path\s+TO\s+'[^']*'(?:\s*,\s*'[^']*')*").unwrap();
-    // Remove ALTER FUNCTION statements (sqlparser doesn't support them, but we'll parse OWNER TO separately)
-    let alter_function_re = Regex::new(r"(?i)ALTER\s+FUNCTION\s+[^;]+;").unwrap();
-    // Remove ALTER TABLE ... OWNER TO statements (sqlparser doesn't support OWNER TO for tables)
-    let alter_table_owner_re =
-        Regex::new(r"(?i)ALTER\s+TABLE\s+[^;]+\s+OWNER\s+TO\s+[^;]+;").unwrap();
-    // Remove ALTER VIEW statements (sqlparser doesn't support them)
-    let alter_view_re = Regex::new(r"(?i)ALTER\s+VIEW\s+[^;]+;").unwrap();
-    // Remove ALTER SEQUENCE statements (sqlparser doesn't support them)
-    let alter_sequence_re = Regex::new(r"(?i)ALTER\s+SEQUENCE\s+[^;]+;").unwrap();
-    // Remove ALTER TYPE statements (sqlparser doesn't fully support them)
-    let alter_type_re = Regex::new(r"(?i)ALTER\s+TYPE\s+[^;]+;").unwrap();
-    // Remove ALTER DOMAIN statements (sqlparser doesn't support them)
-    let alter_domain_re = Regex::new(r"(?i)ALTER\s+DOMAIN\s+[^;]+;").unwrap();
-    // Remove ALTER DEFAULT PRIVILEGES statements (sqlparser doesn't support them, parsed separately)
-    let alter_default_privileges_re =
-        Regex::new(r"(?i)ALTER\s+DEFAULT\s+PRIVILEGES\s+[^;]+;").unwrap();
-    // Remove REVOKE statements (must be before GRANT since REVOKE contains GRANT keyword)
-    let revoke_re = Regex::new(r"(?i)REVOKE\s+[^;]+;").unwrap();
-    // Remove GRANT statements (sqlparser doesn't support them, but we'll parse them separately)
-    let grant_re = Regex::new(r"(?i)GRANT\s+[^;]+;").unwrap();
+    // Strip DO $$ blocks first since their bodies contain semicolons
+    let sql = strip_do_blocks(sql);
 
-    let processed = set_search_path_re.replace_all(sql, "");
-    let processed = alter_function_re.replace_all(&processed, "");
-    let processed = alter_table_owner_re.replace_all(&processed, "");
-    let processed = alter_view_re.replace_all(&processed, "");
-    let processed = alter_sequence_re.replace_all(&processed, "");
-    let processed = alter_type_re.replace_all(&processed, "");
-    let processed = alter_domain_re.replace_all(&processed, "");
-    let processed = alter_default_privileges_re.replace_all(&processed, "");
-    let processed = revoke_re.replace_all(&processed, "");
-    let processed = grant_re.replace_all(&processed, "");
+    // Order matters: ALTER TABLE OWNER TO must precede the generic ALTER patterns,
+    // REVOKE must precede GRANT (REVOKE contains the word GRANT),
+    // and COMMENT ON uses a more specific pattern to handle semicolons inside quotes.
+    let strip_patterns = [
+        r"(?i)\bSET\s+search_path\s+TO\s+'[^']*'(?:\s*,\s*'[^']*')*",
+        r"(?i)ALTER\s+TABLE\s+[^;]+\s+OWNER\s+TO\s+[^;]+;",
+        r"(?i)ALTER\s+FUNCTION\s+[^;]+;",
+        r"(?i)ALTER\s+VIEW\s+[^;]+;",
+        r"(?i)ALTER\s+SEQUENCE\s+[^;]+;",
+        r"(?i)ALTER\s+TYPE\s+[^;]+;",
+        r"(?i)ALTER\s+DOMAIN\s+[^;]+;",
+        r"(?i)ALTER\s+DEFAULT\s+PRIVILEGES\s+[^;]+;",
+        r"(?i)COMMENT\s+ON\s+\w+(?:\s+\w+)*\s+.+?\s+IS\s+(?:'(?:[^']|'')*'|NULL)\s*;",
+        r"(?i)REVOKE\s+[^;]+;",
+        r"(?i)GRANT\s+[^;]+;",
+    ];
 
-    processed.to_string()
+    let mut processed = sql;
+    for pattern in strip_patterns {
+        let regex = Regex::new(pattern).unwrap();
+        processed = regex.replace_all(&processed, "").into_owned();
+    }
+
+    processed
 }
 
 pub fn parse_sql_string(sql: &str) -> Result<Schema> {
-    use regex::Regex;
-
     let preprocessed_sql = preprocess_sql(sql);
     let dialect = PostgreSqlDialect {};
     let statements = Parser::parse_sql(&dialect, &preprocessed_sql)
@@ -989,45 +1016,76 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
     Ok(schema)
 }
 
-/// Parse comma-separated privilege strings into a set of Privilege enums
-fn parse_privileges(privileges_str: &str) -> BTreeSet<Privilege> {
-    use std::collections::BTreeSet;
-
+/// Parse comma-separated privilege strings into a set of Privilege enums.
+/// When `object_type` is provided, `ALL` expands to the correct privileges for that object type.
+fn parse_privileges(privileges_str: &str, object_type: Option<&str>) -> BTreeSet<Privilege> {
     let mut privileges = BTreeSet::new();
     for priv_str in privileges_str.split(',') {
         let priv_trimmed = priv_str.trim().to_uppercase();
         match priv_trimmed.as_str() {
-            "SELECT" => privileges.insert(Privilege::Select),
-            "INSERT" => privileges.insert(Privilege::Insert),
-            "UPDATE" => privileges.insert(Privilege::Update),
-            "DELETE" => privileges.insert(Privilege::Delete),
-            "TRUNCATE" => privileges.insert(Privilege::Truncate),
-            "REFERENCES" => privileges.insert(Privilege::References),
-            "TRIGGER" => privileges.insert(Privilege::Trigger),
-            "USAGE" => privileges.insert(Privilege::Usage),
-            "EXECUTE" => privileges.insert(Privilege::Execute),
-            "CREATE" => privileges.insert(Privilege::Create),
-            "ALL" | "ALL PRIVILEGES" => {
+            "SELECT" => {
                 privileges.insert(Privilege::Select);
-                privileges.insert(Privilege::Insert);
-                privileges.insert(Privilege::Update);
-                privileges.insert(Privilege::Delete);
-                privileges.insert(Privilege::Truncate);
-                privileges.insert(Privilege::References);
-                privileges.insert(Privilege::Trigger);
-                true
             }
+            "INSERT" => {
+                privileges.insert(Privilege::Insert);
+            }
+            "UPDATE" => {
+                privileges.insert(Privilege::Update);
+            }
+            "DELETE" => {
+                privileges.insert(Privilege::Delete);
+            }
+            "TRUNCATE" => {
+                privileges.insert(Privilege::Truncate);
+            }
+            "REFERENCES" => {
+                privileges.insert(Privilege::References);
+            }
+            "TRIGGER" => {
+                privileges.insert(Privilege::Trigger);
+            }
+            "USAGE" => {
+                privileges.insert(Privilege::Usage);
+            }
+            "EXECUTE" => {
+                privileges.insert(Privilege::Execute);
+            }
+            "CREATE" => {
+                privileges.insert(Privilege::Create);
+            }
+            "ALL" | "ALL PRIVILEGES" => match object_type {
+                Some("SCHEMA") => {
+                    privileges.insert(Privilege::Usage);
+                    privileges.insert(Privilege::Create);
+                }
+                Some("SEQUENCE") => {
+                    privileges.insert(Privilege::Usage);
+                    privileges.insert(Privilege::Select);
+                    privileges.insert(Privilege::Update);
+                }
+                Some("FUNCTION") => {
+                    privileges.insert(Privilege::Execute);
+                }
+                Some("TYPE") => {
+                    privileges.insert(Privilege::Usage);
+                }
+                _ => {
+                    privileges.insert(Privilege::Select);
+                    privileges.insert(Privilege::Insert);
+                    privileges.insert(Privilege::Update);
+                    privileges.insert(Privilege::Delete);
+                    privileges.insert(Privilege::Truncate);
+                    privileges.insert(Privilege::References);
+                    privileges.insert(Privilege::Trigger);
+                }
+            },
             _ => continue,
-        };
+        }
     }
     privileges
 }
 
 fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
-    use regex::Regex;
-
-    // Pattern: GRANT privileges ON [object_type] qualified_name TO grantee [WITH GRANT OPTION]
-    // Handle TABLE, VIEW, SEQUENCE, FUNCTION, SCHEMA, TYPE objects
     // Grantee can be: unquoted identifier, "quoted identifier", or PUBLIC
     // Use [^"]+ inside quotes to match any characters (spaces, hyphens, dots, etc.)
     let grant_re = Regex::new(
@@ -1041,7 +1099,8 @@ fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
         let grantee = cap.get(4).unwrap().as_str().trim_matches('"');
         let with_grant_option = cap.get(5).is_some();
 
-        let privileges = parse_privileges(privileges_str);
+        let inferred_type = object_type.as_deref().unwrap_or("TABLE");
+        let privileges = parse_privileges(privileges_str, Some(inferred_type));
         if privileges.is_empty() {
             continue;
         }
@@ -1051,9 +1110,6 @@ fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
             privileges,
             with_grant_option,
         };
-
-        // Determine object type and apply grant (or defer to pending_grants for cross-file resolution)
-        let inferred_type = object_type.as_deref().unwrap_or("TABLE");
         match inferred_type {
             "TABLE" | "VIEW" => {
                 let (obj_schema, obj_name) = parse_object_name(object_name_raw);
@@ -1137,11 +1193,7 @@ fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
 }
 
 fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
-    use regex::Regex;
-
-    // Pattern: REVOKE [GRANT OPTION FOR] privileges ON [object_type] qualified_name FROM grantee;
     // Grantee can be: unquoted identifier, "quoted identifier", or PUBLIC
-    // Use [^"]+ inside quotes to match any characters (spaces, hyphens, dots, etc.)
     let revoke_re = Regex::new(
         r#"(?i)REVOKE\s+(GRANT\s+OPTION\s+FOR\s+)?(.+?)\s+ON\s+(?:(TABLE|VIEW|SEQUENCE|FUNCTION|SCHEMA|TYPE)\s+)?(.+?)\s+FROM\s+("[^"]+"|\w+|PUBLIC)\s*;"#
     ).unwrap();
@@ -1153,13 +1205,11 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
         let object_name_raw = cap.get(4).unwrap().as_str();
         let grantee = cap.get(5).unwrap().as_str().trim_matches('"');
 
-        let privileges = parse_privileges(privileges_str);
+        let inferred_type = object_type.as_deref().unwrap_or("TABLE");
+        let privileges = parse_privileges(privileges_str, Some(inferred_type));
         if privileges.is_empty() {
             continue;
         }
-
-        // Determine object type and apply revoke (or defer to pending_revokes for cross-file resolution)
-        let inferred_type = object_type.as_deref().unwrap_or("TABLE");
         match inferred_type {
             "TABLE" | "VIEW" => {
                 let (obj_schema, obj_name) = parse_object_name(object_name_raw);
@@ -1268,9 +1318,6 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
 }
 
 fn parse_alter_default_privileges(sql: &str, schema: &mut Schema) -> Result<()> {
-    use regex::Regex;
-    use std::collections::BTreeSet;
-
     // Pattern: ALTER DEFAULT PRIVILEGES [FOR ROLE role] [IN SCHEMA schema]
     //          GRANT privileges ON object_type TO grantee [WITH GRANT OPTION]
     let grant_re = Regex::new(
@@ -3935,6 +3982,184 @@ CREATE TABLE "mrv"."Cultivation" (
         assert_eq!(pg_schema.grants.len(), 1);
         assert_eq!(pg_schema.grants[0].grantee, "app_user");
         assert!(pg_schema.grants[0].privileges.contains(&Privilege::Usage));
+    }
+
+    #[test]
+    fn grant_all_on_schema_expands_to_usage_create() {
+        let sql = r#"
+            CREATE SCHEMA app;
+            GRANT ALL ON SCHEMA app TO admin_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let pg_schema = schema.schemas.get("app").unwrap();
+        assert_eq!(pg_schema.grants.len(), 1);
+        assert_eq!(pg_schema.grants[0].grantee, "admin_user");
+        assert!(pg_schema.grants[0].privileges.contains(&Privilege::Usage));
+        assert!(pg_schema.grants[0].privileges.contains(&Privilege::Create));
+        assert_eq!(pg_schema.grants[0].privileges.len(), 2);
+    }
+
+    #[test]
+    fn grant_all_on_sequence_expands_to_usage_select_update() {
+        let sql = r#"
+            CREATE SEQUENCE counter_seq;
+            GRANT ALL ON SEQUENCE counter_seq TO app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let seq = schema.sequences.get("public.counter_seq").unwrap();
+        assert_eq!(seq.grants.len(), 1);
+        assert!(seq.grants[0].privileges.contains(&Privilege::Usage));
+        assert!(seq.grants[0].privileges.contains(&Privilege::Select));
+        assert!(seq.grants[0].privileges.contains(&Privilege::Update));
+        assert_eq!(seq.grants[0].privileges.len(), 3);
+    }
+
+    #[test]
+    fn grant_all_on_function_expands_to_execute() {
+        let sql = r#"
+            CREATE FUNCTION add(a integer, b integer) RETURNS integer LANGUAGE sql AS $$ SELECT a + b $$;
+            GRANT ALL ON FUNCTION add(integer, integer) TO app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let func = schema
+            .functions
+            .get("public.add(integer, integer)")
+            .unwrap();
+        assert_eq!(func.grants.len(), 1);
+        assert!(func.grants[0].privileges.contains(&Privilege::Execute));
+        assert_eq!(func.grants[0].privileges.len(), 1);
+    }
+
+    #[test]
+    fn grant_all_on_type_expands_to_usage() {
+        let sql = r#"
+            CREATE TYPE status AS ENUM ('active', 'inactive');
+            GRANT ALL ON TYPE status TO app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let enum_type = schema.enums.get("public.status").unwrap();
+        assert_eq!(enum_type.grants.len(), 1);
+        assert!(enum_type.grants[0].privileges.contains(&Privilege::Usage));
+        assert_eq!(enum_type.grants[0].privileges.len(), 1);
+    }
+
+    #[test]
+    fn grant_all_on_table_expands_to_table_privileges() {
+        let sql = r#"
+            CREATE TABLE items (id INTEGER PRIMARY KEY);
+            GRANT ALL ON TABLE items TO app_user;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        let table = schema.tables.get("public.items").unwrap();
+        assert_eq!(table.grants.len(), 1);
+        assert_eq!(table.grants[0].privileges.len(), 7);
+        assert!(table.grants[0].privileges.contains(&Privilege::Select));
+        assert!(table.grants[0].privileges.contains(&Privilege::Insert));
+        assert!(table.grants[0].privileges.contains(&Privilege::Update));
+        assert!(table.grants[0].privileges.contains(&Privilege::Delete));
+        assert!(table.grants[0].privileges.contains(&Privilege::Truncate));
+        assert!(table.grants[0].privileges.contains(&Privilege::References));
+        assert!(table.grants[0].privileges.contains(&Privilege::Trigger));
+    }
+
+    #[test]
+    fn do_blocks_stripped_during_parse() {
+        let sql = r#"
+            DO $$
+            BEGIN
+                EXECUTE format('GRANT ALL ON SCHEMA public TO %I', current_user);
+            END $$;
+
+            CREATE TABLE users (id INTEGER PRIMARY KEY);
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        assert!(schema.tables.contains_key("public.users"));
+    }
+
+    #[test]
+    fn do_blocks_with_custom_tag_stripped() {
+        let sql = r#"
+            DO $do$
+            BEGIN
+                RAISE NOTICE 'hello';
+            END $do$;
+
+            CREATE TABLE items (id INTEGER PRIMARY KEY);
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        assert!(schema.tables.contains_key("public.items"));
+    }
+
+    #[test]
+    fn multiple_do_blocks_stripped() {
+        let sql = r#"
+            DO $$ BEGIN EXECUTE 'SELECT 1'; END $$;
+            CREATE TABLE t1 (id INTEGER PRIMARY KEY);
+            DO $$ BEGIN EXECUTE 'SELECT 2'; END $$;
+            CREATE TABLE t2 (id INTEGER PRIMARY KEY);
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        assert!(schema.tables.contains_key("public.t1"));
+        assert!(schema.tables.contains_key("public.t2"));
+    }
+
+    #[test]
+    fn do_blocks_with_language_stripped() {
+        let sql = r#"
+            DO LANGUAGE plpgsql $$
+            BEGIN
+                RAISE NOTICE 'test';
+            END $$;
+
+            CREATE TABLE t (id INTEGER PRIMARY KEY);
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        assert!(schema.tables.contains_key("public.t"));
+    }
+
+    #[test]
+    fn comment_on_with_semicolons_in_text_stripped() {
+        let sql = r#"
+            CREATE FUNCTION foo() RETURNS void LANGUAGE sql AS $$ SELECT 1; $$;
+            COMMENT ON FUNCTION foo() IS 'Returns a; b; c';
+            CREATE TABLE t (id INTEGER PRIMARY KEY);
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        assert!(schema.tables.contains_key("public.t"));
+        assert!(schema.functions.contains_key("public.foo()"));
+    }
+
+    #[test]
+    fn comment_on_function_stripped_during_parse() {
+        let sql = r#"
+            CREATE FUNCTION add(a integer, b integer) RETURNS integer LANGUAGE sql AS $$ SELECT a + b $$;
+            COMMENT ON FUNCTION add(integer, integer) IS 'Adds two numbers';
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        assert!(schema
+            .functions
+            .contains_key("public.add(integer, integer)"));
+    }
+
+    #[test]
+    fn comment_on_type_stripped_during_parse() {
+        let sql = r#"
+            CREATE TYPE status AS ENUM ('active', 'inactive');
+            COMMENT ON TYPE status IS 'Status enum';
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        assert!(schema.enums.contains_key("public.status"));
+    }
+
+    #[test]
+    fn comment_on_schema_stripped_during_parse() {
+        let sql = r#"
+            CREATE SCHEMA myschema;
+            COMMENT ON SCHEMA myschema IS 'My schema description';
+            CREATE TABLE myschema.items (id INTEGER PRIMARY KEY);
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+        assert!(schema.tables.contains_key("myschema.items"));
     }
 
     #[test]
