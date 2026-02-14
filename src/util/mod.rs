@@ -908,7 +908,7 @@ fn normalize_table_with_joins(
         alias,
     } = &twj.relation
     {
-        if alias.is_none() && !inner_twj.joins.is_empty() {
+        if alias.is_none() {
             // Recursively normalize the inner TableWithJoins first
             let normalized_inner = normalize_table_with_joins(inner_twj);
 
@@ -2241,5 +2241,64 @@ GROUP BY t.id, t.name"#;
     assert!(
         views_semantically_equal(schema_form, db_form),
         "Full issue #40 view should be semantically equal despite PostgreSQL normalization"
+    );
+}
+
+#[test]
+fn expressions_equal_with_anyarray_operator() {
+    // Bug: PostgreSQL normalizes = ANY(ARRAY[...]) differently
+    // pg_get_expr returns: (column = ANY (ARRAY['val1'::text, 'val2'::text]))
+    // Original DDL:        column = ANY(ARRAY['val1', 'val2'])
+    let db_form = "(status = ANY (ARRAY['active'::text, 'pending'::text]))";
+    let schema_form = "status = ANY(ARRAY['active', 'pending'])";
+    assert!(
+        expressions_semantically_equal(db_form, schema_form),
+        "= ANY(ARRAY[...]) with ::text casts should equal version without casts"
+    );
+}
+
+#[test]
+fn expressions_equal_with_nested_function_parens() {
+    // Bug: pg_get_expr adds extra parens around function calls in complex expressions
+    // pg_get_expr returns: ((auth.uid() = user_id) OR (role = 'admin'::text))
+    // Original DDL:        (auth.uid() = user_id OR role = 'admin')
+    let db_form = "((auth.uid() = user_id) OR (role = 'admin'::text))";
+    let schema_form = "(auth.uid() = user_id OR role = 'admin')";
+    assert!(
+        expressions_semantically_equal(db_form, schema_form),
+        "Extra parens around OR operands should normalize away"
+    );
+}
+
+#[test]
+fn expressions_equal_with_exists_subquery_parens() {
+    // pg_get_expr wraps EXISTS in outer parens and adds parens in WHERE
+    let db_form = "(EXISTS (SELECT 1 FROM memberships m WHERE (m.user_id = users.id)))";
+    let schema_form = "EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = users.id)";
+    assert!(
+        expressions_semantically_equal(db_form, schema_form),
+        "EXISTS with extra parens should normalize"
+    );
+}
+
+#[test]
+fn expressions_equal_with_pg_function_cast() {
+    // pg_get_expr adds explicit casts to function calls
+    let db_form = "((auth.uid())::text = (user_id)::text)";
+    let schema_form = "auth.uid() = user_id";
+    assert!(
+        expressions_semantically_equal(db_form, schema_form),
+        "::text casts on both sides should be stripped"
+    );
+}
+
+#[test]
+fn expressions_equal_with_text_literal_cast() {
+    // pg_get_expr adds ::text to string literals
+    let db_form = "(role() = 'admin'::text)";
+    let schema_form = "role() = 'admin'";
+    assert!(
+        expressions_semantically_equal(db_form, schema_form),
+        "::text on string literal should be stripped"
     );
 }

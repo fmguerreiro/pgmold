@@ -293,3 +293,88 @@ pub(super) fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<Migrati
 
     ops
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeSet, HashSet};
+
+    use crate::diff::GrantObjectKind;
+    use crate::model::{Grant, Privilege};
+
+    use super::diff_grants_for_object;
+
+    #[test]
+    fn owner_grants_in_db_cause_spurious_revoke() {
+        let owner_grant = Grant {
+            grantee: "postgres".to_string(),
+            privileges: BTreeSet::from([
+                Privilege::Select,
+                Privilege::Insert,
+                Privilege::Update,
+                Privilege::Delete,
+            ]),
+            with_grant_option: false,
+        };
+        let app_grant = Grant {
+            grantee: "app_user".to_string(),
+            privileges: BTreeSet::from([Privilege::Select]),
+            with_grant_option: false,
+        };
+
+        let from_grants = vec![owner_grant, app_grant.clone()];
+        let to_grants = vec![app_grant];
+
+        let ops = diff_grants_for_object(
+            &from_grants,
+            &to_grants,
+            GrantObjectKind::Table,
+            "public",
+            "users",
+            None,
+            &HashSet::new(),
+        );
+
+        assert!(
+            !ops.is_empty(),
+            "Without owner filtering, spurious REVOKE ops should be generated"
+        );
+    }
+
+    #[test]
+    fn excluded_owner_role_prevents_spurious_revoke() {
+        let owner_grant = Grant {
+            grantee: "postgres".to_string(),
+            privileges: BTreeSet::from([
+                Privilege::Select,
+                Privilege::Insert,
+                Privilege::Update,
+                Privilege::Delete,
+            ]),
+            with_grant_option: false,
+        };
+        let app_grant = Grant {
+            grantee: "app_user".to_string(),
+            privileges: BTreeSet::from([Privilege::Select]),
+            with_grant_option: false,
+        };
+
+        let from_grants = vec![owner_grant, app_grant.clone()];
+        let to_grants = vec![app_grant];
+
+        let excluded = HashSet::from(["postgres".to_string()]);
+        let ops = diff_grants_for_object(
+            &from_grants,
+            &to_grants,
+            GrantObjectKind::Table,
+            "public",
+            "users",
+            None,
+            &excluded,
+        );
+
+        assert!(
+            ops.is_empty(),
+            "Owner role should be filtered out, leaving no diff"
+        );
+    }
+}

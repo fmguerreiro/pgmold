@@ -529,9 +529,13 @@ async fn introspect_partitions(
         let name: String = row.get("name");
         let parent_schema: String = row.get("parent_schema");
         let parent_name: String = row.get("parent_name");
-        let bound_expr: String = row.get("partition_bound");
+        let bound_expr: Option<String> = row.get("partition_bound");
         let owner: String = row.get("owner");
 
+        let bound_expr = match bound_expr {
+            Some(expr) => expr,
+            None => continue,
+        };
         let bound = parse_partition_bound(&bound_expr);
 
         let partition = Partition {
@@ -1649,6 +1653,7 @@ async fn introspect_table_view_grants(
         WHERE c.relkind IN ('r', 'v', 'm')
           AND n.nspname = ANY($1::text[])
           AND c.relacl IS NOT NULL
+          AND acl.grantee != c.relowner
         "#,
     )
     .bind(target_schemas)
@@ -1701,6 +1706,7 @@ async fn introspect_sequence_grants(
         WHERE c.relkind = 'S'
           AND n.nspname = ANY($1::text[])
           AND c.relacl IS NOT NULL
+          AND acl.grantee != c.relowner
         "#,
     )
     .bind(target_schemas)
@@ -1753,6 +1759,7 @@ async fn introspect_function_grants(
         CROSS JOIN LATERAL aclexplode(p.proacl) AS acl
         WHERE n.nspname = ANY($1::text[])
           AND p.proacl IS NOT NULL
+          AND acl.grantee != p.proowner
         "#,
     )
     .bind(target_schemas)
@@ -1804,6 +1811,7 @@ async fn introspect_schema_grants(
         CROSS JOIN LATERAL aclexplode(n.nspacl) AS acl
         WHERE n.nspname = ANY($1::text[])
           AND n.nspacl IS NOT NULL
+          AND acl.grantee != n.nspowner
         "#,
     )
     .bind(target_schemas)
@@ -1855,6 +1863,7 @@ async fn introspect_type_grants(
         WHERE n.nspname = ANY($1::text[])
           AND t.typtype IN ('e', 'd')
           AND t.typacl IS NOT NULL
+          AND acl.grantee != t.typowner
         "#,
     )
     .bind(target_schemas)
