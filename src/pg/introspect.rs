@@ -529,9 +529,13 @@ async fn introspect_partitions(
         let name: String = row.get("name");
         let parent_schema: String = row.get("parent_schema");
         let parent_name: String = row.get("parent_name");
-        let bound_expr: String = row.get("partition_bound");
+        let bound_expr: Option<String> = row.get("partition_bound");
         let owner: String = row.get("owner");
 
+        let bound_expr = match bound_expr {
+            Some(expr) => expr,
+            None => continue,
+        };
         let bound = parse_partition_bound(&bound_expr);
 
         let partition = Partition {
