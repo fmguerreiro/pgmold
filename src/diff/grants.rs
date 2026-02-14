@@ -1,5 +1,6 @@
-use crate::model::{Grant, Privilege, Schema};
 use std::collections::{BTreeMap, HashSet};
+
+use crate::model::{DefaultPrivilege, Grant, Privilege, Schema};
 
 use super::{GrantObjectKind, MigrationOp};
 
@@ -165,8 +166,6 @@ pub(super) fn create_grants_for_new_object(
 }
 
 pub(super) fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
-    use crate::model::DefaultPrivilege;
-
     let mut ops = Vec::new();
 
     type DpKey = (String, Option<String>, String, String);

@@ -1,5 +1,7 @@
-use crate::model::{parse_qualified_name, qualified_name, EnumType, Schema, Sequence, Trigger};
 use std::collections::HashSet;
+
+use crate::model::{parse_qualified_name, qualified_name, EnumType, Schema, Sequence, Trigger};
+use crate::util::optional_expressions_equal;
 
 use super::grants::{create_grants_for_new_object, diff_grants_for_object};
 use super::{
@@ -179,7 +181,7 @@ pub(super) fn diff_domains(
     for (name, to_domain) in &to.domains {
         if let Some(from_domain) = from.domains.get(name) {
             let mut changes = DomainChanges::default();
-            if !crate::util::optional_expressions_equal(&from_domain.default, &to_domain.default) {
+            if !optional_expressions_equal(&from_domain.default, &to_domain.default) {
                 changes.default = Some(to_domain.default.clone());
             }
             if from_domain.not_null != to_domain.not_null {
@@ -574,7 +576,7 @@ fn triggers_equal_except_enabled(from: &Trigger, to: &Trigger) -> bool {
         && from.events == to.events
         && from.update_columns == to.update_columns
         && from.for_each_row == to.for_each_row
-        && crate::util::optional_expressions_equal(&from.when_clause, &to.when_clause)
+        && optional_expressions_equal(&from.when_clause, &to.when_clause)
         && from.function_schema == to.function_schema
         && from.function_name == to.function_name
         && from.function_args == to.function_args

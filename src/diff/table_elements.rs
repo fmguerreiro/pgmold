@@ -1,5 +1,7 @@
-use super::{ColumnChanges, MigrationOp, PolicyChanges};
 use crate::model::{qualified_name, Column, Index, Policy, Table};
+use crate::util::optional_expressions_equal;
+
+use super::{ColumnChanges, MigrationOp, PolicyChanges};
 
 pub(super) fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
@@ -39,8 +41,6 @@ pub(super) fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<Migratio
 }
 
 pub(super) fn compute_column_changes(from: &Column, to: &Column) -> ColumnChanges {
-    use crate::util::optional_expressions_equal;
-
     ColumnChanges {
         data_type: if from.data_type != to.data_type {
             Some(to.data_type.clone())
@@ -98,7 +98,7 @@ pub(super) fn indexes_semantically_equal(from: &Index, to: &Index) -> bool {
         && from.columns == to.columns
         && from.unique == to.unique
         && from.index_type == to.index_type
-        && crate::util::optional_expressions_equal(&from.predicate, &to.predicate)
+        && optional_expressions_equal(&from.predicate, &to.predicate)
 }
 
 pub(super) fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
@@ -232,7 +232,7 @@ pub(super) fn diff_rls(from_table: &Table, to_table: &Table) -> Vec<MigrationOp>
         });
     } else if from_table.row_level_security && !to_table.row_level_security {
         ops.push(MigrationOp::DisableRls {
-            table: qualified_name(&to_table.schema, &to_table.name),
+            table: qualified_table_name,
         });
     }
 
@@ -274,8 +274,6 @@ pub(super) fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<Migrati
 }
 
 pub(super) fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
-    use crate::util::optional_expressions_equal;
-
     PolicyChanges {
         roles: if from.roles != to.roles {
             Some(to.roles.clone())
