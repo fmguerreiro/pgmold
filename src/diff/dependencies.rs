@@ -1,5 +1,7 @@
-use crate::model::{qualified_name, Schema};
 use std::collections::HashSet;
+
+use crate::model::{parse_qualified_name, qualified_name, Policy, Schema};
+use crate::parser::{extract_function_references, extract_table_references};
 
 use super::MigrationOp;
 
@@ -113,10 +115,10 @@ pub(super) fn generate_policy_ops_for_type_changes(
     ops: &[MigrationOp],
     from: &Schema,
     to: &Schema,
+    affected_tables: &HashSet<String>,
 ) -> Vec<MigrationOp> {
     let mut additional_ops = Vec::new();
 
-    let affected_tables = tables_with_type_changes(ops);
     if affected_tables.is_empty() {
         return additional_ops;
     }
@@ -132,7 +134,7 @@ pub(super) fn generate_policy_ops_for_type_changes(
         })
         .collect();
 
-    for table_name in &affected_tables {
+    for table_name in affected_tables {
         if let Some(from_table) = from.tables.get(table_name) {
             for policy in &from_table.policies {
                 let qualified_table = qualified_name(&from_table.schema, &from_table.name);
@@ -170,10 +172,10 @@ pub(super) fn generate_trigger_ops_for_type_changes(
     ops: &[MigrationOp],
     from: &Schema,
     to: &Schema,
+    affected_tables: &HashSet<String>,
 ) -> Vec<MigrationOp> {
     let mut additional_ops = Vec::new();
 
-    let affected_tables = tables_with_type_changes(ops);
     if affected_tables.is_empty() {
         return additional_ops;
     }
@@ -194,13 +196,8 @@ pub(super) fn generate_trigger_ops_for_type_changes(
         })
         .collect();
 
-    for table_name in &affected_tables {
-        let parts: Vec<&str> = table_name.split('.').collect();
-        let (table_schema, table_only_name) = if parts.len() == 2 {
-            (parts[0], parts[1])
-        } else {
-            ("public", table_name.as_str())
-        };
+    for table_name in affected_tables {
+        let (table_schema, table_only_name) = parse_qualified_name(table_name);
 
         for trigger in from.triggers.values() {
             if trigger.target_schema == table_schema && trigger.target_name == table_only_name {
@@ -242,12 +239,10 @@ pub(super) fn generate_view_ops_for_type_changes(
     ops: &[MigrationOp],
     from: &Schema,
     to: &Schema,
+    affected_tables: &HashSet<String>,
 ) -> Vec<MigrationOp> {
-    use crate::parser::extract_table_references;
-
     let mut additional_ops = Vec::new();
 
-    let affected_tables = tables_with_type_changes(ops);
     if affected_tables.is_empty() {
         return additional_ops;
     }
@@ -368,7 +363,7 @@ pub(super) fn generate_policy_ops_for_function_changes(
 
 /// Check if a policy references any of the given functions in its USING or WITH CHECK expressions.
 fn policy_references_functions(
-    policy: &crate::model::Policy,
+    policy: &Policy,
     function_names: &HashSet<String>,
 ) -> bool {
     let policy_func_refs = extract_function_references_from_policy(policy);
@@ -380,9 +375,7 @@ fn policy_references_functions(
 }
 
 /// Extract function references from a policy's USING and WITH CHECK expressions.
-fn extract_function_references_from_policy(policy: &crate::model::Policy) -> HashSet<String> {
-    use crate::parser::extract_function_references;
-
+fn extract_function_references_from_policy(policy: &Policy) -> HashSet<String> {
     let mut refs = HashSet::new();
 
     if let Some(ref using_expr) = policy.using_expr {

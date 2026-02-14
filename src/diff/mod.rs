@@ -5,8 +5,9 @@ pub mod planner;
 mod table_elements;
 mod types;
 
-use crate::model::{qualified_name, Schema};
 use std::collections::HashSet;
+
+use crate::model::{qualified_name, Schema};
 pub use types::{
     ColumnChanges, DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp, OwnerObjectKind,
     PolicyChanges, SequenceChanges,
@@ -15,7 +16,7 @@ pub use types::{
 use dependencies::{
     generate_fk_ops_for_type_changes, generate_policy_ops_for_function_changes,
     generate_policy_ops_for_type_changes, generate_trigger_ops_for_type_changes,
-    generate_view_ops_for_type_changes,
+    generate_view_ops_for_type_changes, tables_with_type_changes,
 };
 use grants::diff_default_privileges;
 use objects::{
@@ -108,11 +109,11 @@ pub fn compute_diff_with_flags(
         }
     }
 
-    // Drop/recreate dependent objects before ALTER COLUMN TYPE
+    let affected_tables = tables_with_type_changes(&ops);
     ops.extend(generate_fk_ops_for_type_changes(&ops, from, to));
-    ops.extend(generate_policy_ops_for_type_changes(&ops, from, to));
-    ops.extend(generate_trigger_ops_for_type_changes(&ops, from, to));
-    ops.extend(generate_view_ops_for_type_changes(&ops, from, to));
+    ops.extend(generate_policy_ops_for_type_changes(&ops, from, to, &affected_tables));
+    ops.extend(generate_trigger_ops_for_type_changes(&ops, from, to, &affected_tables));
+    ops.extend(generate_view_ops_for_type_changes(&ops, from, to, &affected_tables));
 
     // Drop/recreate policies that reference functions being dropped
     let (policy_ops, policies_to_filter) = generate_policy_ops_for_function_changes(&ops, from, to);
@@ -135,8 +136,9 @@ pub fn compute_diff_with_flags(
 
 #[cfg(test)]
 pub(super) mod test_helpers {
-    use crate::model::{Column, PgType, Schema, Table};
     use std::collections::BTreeMap;
+
+    use crate::model::{Column, PgType, Schema, Table};
 
     pub fn empty_schema() -> Schema {
         Schema::new()
