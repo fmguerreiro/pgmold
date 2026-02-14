@@ -1649,6 +1649,7 @@ async fn introspect_table_view_grants(
         WHERE c.relkind IN ('r', 'v', 'm')
           AND n.nspname = ANY($1::text[])
           AND c.relacl IS NOT NULL
+          AND acl.grantee != c.relowner
         "#,
     )
     .bind(target_schemas)
@@ -1701,6 +1702,7 @@ async fn introspect_sequence_grants(
         WHERE c.relkind = 'S'
           AND n.nspname = ANY($1::text[])
           AND c.relacl IS NOT NULL
+          AND acl.grantee != c.relowner
         "#,
     )
     .bind(target_schemas)
@@ -1753,6 +1755,7 @@ async fn introspect_function_grants(
         CROSS JOIN LATERAL aclexplode(p.proacl) AS acl
         WHERE n.nspname = ANY($1::text[])
           AND p.proacl IS NOT NULL
+          AND acl.grantee != p.proowner
         "#,
     )
     .bind(target_schemas)
@@ -1804,6 +1807,7 @@ async fn introspect_schema_grants(
         CROSS JOIN LATERAL aclexplode(n.nspacl) AS acl
         WHERE n.nspname = ANY($1::text[])
           AND n.nspacl IS NOT NULL
+          AND acl.grantee != n.nspowner
         "#,
     )
     .bind(target_schemas)
@@ -1855,6 +1859,7 @@ async fn introspect_type_grants(
         WHERE n.nspname = ANY($1::text[])
           AND t.typtype IN ('e', 'd')
           AND t.typacl IS NOT NULL
+          AND acl.grantee != t.typowner
         "#,
     )
     .bind(target_schemas)

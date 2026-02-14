@@ -1085,7 +1085,99 @@ fn parse_privileges(privileges_str: &str, object_type: Option<&str>) -> BTreeSet
     privileges
 }
 
+/// Parses `GRANT ... ON ALL TABLES/SEQUENCES/FUNCTIONS IN SCHEMA x TO role` and expands
+/// to per-object grants for all matching objects already in the schema.
+fn parse_grant_all_in_schema(sql: &str, schema: &mut Schema) {
+    let re = Regex::new(
+        r#"(?i)GRANT\s+(.+?)\s+ON\s+ALL\s+(TABLES|SEQUENCES|FUNCTIONS)\s+IN\s+SCHEMA\s+("[^"]+"|\w+)\s+TO\s+("[^"]+"|\w+|PUBLIC)\s*(WITH\s+GRANT\s+OPTION)?\s*;"#
+    ).unwrap();
+
+    for cap in re.captures_iter(sql) {
+        let privileges_str = cap.get(1).unwrap().as_str();
+        let object_kind = cap.get(2).unwrap().as_str().to_uppercase();
+        let schema_name = cap.get(3).unwrap().as_str().trim_matches('"');
+        let grantee = cap.get(4).unwrap().as_str().trim_matches('"');
+        let with_grant_option = cap.get(5).is_some();
+
+        let inferred_type = match object_kind.as_str() {
+            "TABLES" => "TABLE",
+            "SEQUENCES" => "SEQUENCE",
+            "FUNCTIONS" => "FUNCTION",
+            _ => continue,
+        };
+
+        let privileges = parse_privileges(privileges_str, Some(inferred_type));
+        if privileges.is_empty() {
+            continue;
+        }
+
+        let grant = Grant {
+            grantee: grantee.to_string(),
+            privileges,
+            with_grant_option,
+        };
+
+        match object_kind.as_str() {
+            "TABLES" => {
+                let keys: Vec<String> = schema
+                    .tables
+                    .iter()
+                    .filter(|(_, t)| t.schema == schema_name)
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                for key in keys {
+                    if let Some(table) = schema.tables.get_mut(&key) {
+                        table.grants.push(grant.clone());
+                    }
+                }
+                // PostgreSQL includes views in ALL TABLES
+                let view_keys: Vec<String> = schema
+                    .views
+                    .iter()
+                    .filter(|(_, v)| v.schema == schema_name)
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                for key in view_keys {
+                    if let Some(view) = schema.views.get_mut(&key) {
+                        view.grants.push(grant.clone());
+                    }
+                }
+            }
+            "SEQUENCES" => {
+                let keys: Vec<String> = schema
+                    .sequences
+                    .iter()
+                    .filter(|(_, s)| s.schema == schema_name)
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                for key in keys {
+                    if let Some(seq) = schema.sequences.get_mut(&key) {
+                        seq.grants.push(grant.clone());
+                    }
+                }
+            }
+            "FUNCTIONS" => {
+                let keys: Vec<String> = schema
+                    .functions
+                    .iter()
+                    .filter(|(_, f)| f.schema == schema_name)
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                for key in keys {
+                    if let Some(func) = schema.functions.get_mut(&key) {
+                        func.grants.push(grant.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
+    // Handle GRANT ... ON ALL TABLES/SEQUENCES/FUNCTIONS IN SCHEMA before individual grants
+    parse_grant_all_in_schema(sql, schema);
+
     // Grantee can be: unquoted identifier, "quoted identifier", or PUBLIC
     // Use [^"]+ inside quotes to match any characters (spaces, hyphens, dots, etc.)
     let grant_re = Regex::new(
@@ -1098,6 +1190,11 @@ fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
         let object_name_raw = cap.get(3).unwrap().as_str();
         let grantee = cap.get(4).unwrap().as_str().trim_matches('"');
         let with_grant_option = cap.get(5).is_some();
+
+        // Skip "ALL TABLES/SEQUENCES/FUNCTIONS IN SCHEMA" — handled by parse_grant_all_in_schema
+        if object_name_raw.to_uppercase().starts_with("ALL ") {
+            continue;
+        }
 
         let inferred_type = object_type.as_deref().unwrap_or("TABLE");
         let privileges = parse_privileges(privileges_str, Some(inferred_type));
@@ -1204,6 +1301,11 @@ fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
         let object_type = cap.get(3).map(|m| m.as_str().to_uppercase());
         let object_name_raw = cap.get(4).unwrap().as_str();
         let grantee = cap.get(5).unwrap().as_str().trim_matches('"');
+
+        // Skip "ALL TABLES/SEQUENCES/FUNCTIONS IN SCHEMA" — not supported for REVOKE expansion
+        if object_name_raw.to_uppercase().starts_with("ALL ") {
+            continue;
+        }
 
         let inferred_type = object_type.as_deref().unwrap_or("TABLE");
         let privileges = parse_privileges(privileges_str, Some(inferred_type));
@@ -1718,11 +1820,19 @@ fn parse_column_with_serial(
             SequenceDataType::BigInt => Some(9223372036854775807),
         };
 
+        // PostgreSQL omits the "public." prefix in nextval defaults for the public schema.
+        // Match that behavior so parsed defaults match introspected defaults.
+        let nextval_ref = if table_schema == "public" {
+            seq_name.clone()
+        } else {
+            seq_qualified.clone()
+        };
+
         let column = Column {
             name: col_name.clone(),
             data_type: pg_type,
             nullable,
-            default: Some(format!("nextval('{seq_qualified}'::regclass)")),
+            default: Some(format!("nextval('{nextval_ref}'::regclass)")),
             comment: None,
         };
 
@@ -2901,7 +3011,7 @@ CREATE TRIGGER bad_trigger
         assert_eq!(id_col.data_type, PgType::Integer);
         assert_eq!(
             id_col.default,
-            Some("nextval('public.users_id_seq'::regclass)".to_string())
+            Some("nextval('users_id_seq'::regclass)".to_string())
         );
 
         // Sequence should exist
@@ -2923,7 +3033,7 @@ CREATE TRIGGER bad_trigger
         let col = table.columns.get("id").unwrap();
         assert_eq!(
             col.default,
-            Some("nextval('public.test_id_seq'::regclass)".to_string())
+            Some("nextval('test_id_seq'::regclass)".to_string())
         );
     }
 
@@ -2971,6 +3081,39 @@ CREATE TRIGGER bad_trigger
         assert_eq!(seq.schema, "auth");
         let owner = seq.owned_by.as_ref().unwrap();
         assert_eq!(owner.table_schema, "auth");
+    }
+
+    #[test]
+    fn serial_default_omits_public_schema_prefix() {
+        // Bug: Parser creates nextval('public.users_id_seq'::regclass) but PostgreSQL
+        // information_schema returns nextval('users_id_seq'::regclass) for public schema.
+        let sql = "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT);";
+        let schema = parse_sql_string(sql).unwrap();
+
+        let table = schema.tables.get("public.users").unwrap();
+        let id_col = table.columns.get("id").unwrap();
+
+        // Should NOT have 'public.' prefix for public schema
+        assert_eq!(
+            id_col.default,
+            Some("nextval('users_id_seq'::regclass)".to_string())
+        );
+    }
+
+    #[test]
+    fn serial_default_keeps_non_public_schema_prefix() {
+        // For non-public schemas, the schema prefix SHOULD be kept
+        let sql = "CREATE TABLE auth.users (id SERIAL PRIMARY KEY, name TEXT);";
+        let schema = parse_sql_string(sql).unwrap();
+
+        let table = schema.tables.get("auth.users").unwrap();
+        let id_col = table.columns.get("id").unwrap();
+
+        // Should KEEP 'auth.' prefix for non-public schema
+        assert_eq!(
+            id_col.default,
+            Some("nextval('auth.users_id_seq'::regclass)".to_string())
+        );
     }
 
     #[test]
@@ -4060,6 +4203,44 @@ CREATE TABLE "mrv"."Cultivation" (
         assert!(table.grants[0].privileges.contains(&Privilege::Truncate));
         assert!(table.grants[0].privileges.contains(&Privilege::References));
         assert!(table.grants[0].privileges.contains(&Privilege::Trigger));
+    }
+
+    #[test]
+    fn parse_grant_all_on_all_tables_in_schema() {
+        let sql = r#"
+            CREATE TABLE mrv.orders (id INTEGER PRIMARY KEY);
+            CREATE TABLE mrv.items (id INTEGER PRIMARY KEY);
+            GRANT ALL ON ALL TABLES IN SCHEMA "mrv" TO service_role;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+
+        let orders_table = schema.tables.get("mrv.orders").unwrap();
+        let items_table = schema.tables.get("mrv.items").unwrap();
+
+        assert!(!orders_table.grants.is_empty());
+        assert!(!items_table.grants.is_empty());
+        assert_eq!(orders_table.grants[0].grantee, "service_role");
+        assert_eq!(items_table.grants[0].grantee, "service_role");
+        assert!(orders_table.grants[0].privileges.contains(&Privilege::Select));
+        assert!(orders_table.grants[0].privileges.contains(&Privilege::Insert));
+    }
+
+    #[test]
+    fn grant_all_on_all_tables_includes_views() {
+        let sql = r#"
+            CREATE TABLE mrv.orders (id INTEGER PRIMARY KEY);
+            CREATE VIEW mrv.summary AS SELECT count(*) FROM mrv.orders;
+            GRANT ALL ON ALL TABLES IN SCHEMA "mrv" TO service_role;
+        "#;
+        let schema = parse_sql_string(sql).unwrap();
+
+        let table = schema.tables.get("mrv.orders").unwrap();
+        let view = schema.views.get("mrv.summary").unwrap();
+
+        assert!(!table.grants.is_empty());
+        assert!(!view.grants.is_empty());
+        assert_eq!(view.grants[0].grantee, "service_role");
+        assert!(view.grants[0].privileges.contains(&Privilege::Select));
     }
 
     #[test]
