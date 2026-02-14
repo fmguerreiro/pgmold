@@ -5072,4 +5072,21 @@ DROP SCHEMA staging;
         assert!(!schema.schemas.contains_key("staging"));
         assert!(schema.schemas.contains_key("production"));
     }
+
+    #[test]
+    fn dml_statements_skipped_gracefully() {
+        let sql = r#"
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE
+);
+INSERT INTO users (email) VALUES ('test@example.com') ON CONFLICT DO NOTHING;
+INSERT INTO users (email) VALUES ('a@b.com')
+    ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email;
+UPDATE users SET email = 'bob@example.com' WHERE id = 1;
+DELETE FROM users WHERE id = 1;
+"#;
+        let schema = parse_sql_string(sql).unwrap();
+        assert!(schema.tables.contains_key("public.users"));
+    }
 }
