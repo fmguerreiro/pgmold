@@ -1,5 +1,5 @@
 use crate::diff::{compute_diff, planner::plan_migration, MigrationOp};
-use crate::lint::{has_errors, lint_migration_plan, LintOptions, LintResult};
+use crate::lint::{lint_migration_plan, LintOptions, LintResult};
 use crate::parser::load_schema_sources;
 use crate::pg::connection::PgConnection;
 use crate::pg::introspect::introspect_schema;
@@ -39,13 +39,17 @@ pub async fn apply_migration(
     };
     let lint_results = lint_migration_plan(&ops, &lint_options);
 
-    if has_errors(&lint_results) {
-        return Ok(ApplyResult {
-            operations: ops,
-            sql_statements: Vec::new(),
-            lint_results,
-            applied: false,
-        });
+    let error_messages: Vec<String> = lint_results
+        .iter()
+        .filter(|r| matches!(r.severity, crate::lint::LintSeverity::Error))
+        .map(|r| format!("[{}] {}", r.rule, r.message))
+        .collect();
+    if !error_messages.is_empty() {
+        return Err(SchemaError::LintError(format!(
+            "Migration blocked by {} lint error(s):\n{}",
+            error_messages.len(),
+            error_messages.join("\n")
+        )));
     }
 
     let sql = generate_sql(&ops);

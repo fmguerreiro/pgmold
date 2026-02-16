@@ -584,9 +584,12 @@ pub async fn run() -> Result<()> {
                 );
             }
 
-            if has_errors(&lint_results) {
-                println!("\nMigration blocked due to lint errors.");
-                return Ok(());
+            let error_count = lint_results
+                .iter()
+                .filter(|r| matches!(r.severity, LintSeverity::Error))
+                .count();
+            if error_count > 0 {
+                return Err(anyhow!("Migration blocked by {error_count} lint error(s)"));
             }
 
             if let Some(validate_db_url) = &validate {
