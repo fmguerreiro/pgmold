@@ -972,6 +972,22 @@ async fn introspect_all_check_constraints(
     Ok(result)
 }
 
+/// Normalize a proconfig value from PostgreSQL's GUC format to valid SQL.
+///
+/// PostgreSQL stores `SET search_path = ''` as `search_path=""` in proconfig.
+/// The `""` is PostgreSQL's GUC representation of an empty string — but in SQL,
+/// `""` is a zero-length delimited identifier (invalid). Convert double-quoted
+/// GUC values to single-quoted SQL string literals so they match what the SQL
+/// parser produces from schema files.
+fn normalize_proconfig_value(value: &str) -> String {
+    if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+        let inner = &value[1..value.len() - 1];
+        format!("'{inner}'")
+    } else {
+        value.to_string()
+    }
+}
+
 fn pg_char(value: i8) -> char {
     value as u8 as char
 }
@@ -1163,7 +1179,9 @@ async fn introspect_functions(
             .map(|param| {
                 let parts: Vec<&str> = param.splitn(2, '=').collect();
                 if parts.len() == 2 {
-                    Ok((parts[0].to_string(), parts[1].to_string()))
+                    let key = parts[0].to_string();
+                    let value = normalize_proconfig_value(parts[1]);
+                    Ok((key, value))
                 } else {
                     Err(SchemaError::DatabaseError(format!(
                         "Malformed config parameter in function {schema}.{name}: '{param}'"
@@ -2033,5 +2051,28 @@ mod tests {
         );
         assert_eq!(privilege_from_pg_string("CREATE"), Some(Privilege::Create));
         assert_eq!(privilege_from_pg_string("UNKNOWN"), None);
+    }
+
+    #[test]
+    fn normalize_proconfig_empty_string() {
+        assert_eq!(normalize_proconfig_value(r#""""#), "''");
+    }
+
+    #[test]
+    fn normalize_proconfig_quoted_value() {
+        assert_eq!(
+            normalize_proconfig_value(r#""pg_temp, public""#),
+            "'pg_temp, public'"
+        );
+    }
+
+    #[test]
+    fn normalize_proconfig_unquoted_value() {
+        assert_eq!(normalize_proconfig_value("off"), "off");
+    }
+
+    #[test]
+    fn normalize_proconfig_single_quoted_passthrough() {
+        assert_eq!(normalize_proconfig_value("'64MB'"), "'64MB'");
     }
 }
