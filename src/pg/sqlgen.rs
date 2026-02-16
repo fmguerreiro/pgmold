@@ -2635,6 +2635,32 @@ mod tests {
     }
 
     #[test]
+    fn generate_function_ddl_with_empty_search_path() {
+        use crate::model::{Function, SecurityType, Volatility};
+
+        let func = Function {
+            name: "secure_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "void".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN END;".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Definer,
+            config_params: vec![("search_path".to_string(), "''".to_string())],
+            owner: None,
+            grants: Vec::new(),
+        };
+
+        let ddl = generate_create_function(&func);
+
+        assert!(
+            ddl.contains("SET search_path = ''"),
+            "Expected SET search_path = '' in: {ddl}"
+        );
+    }
+
+    #[test]
     fn generate_function_ddl_with_multiple_config_params() {
         use crate::model::{Function, SecurityType, Volatility};
 
