@@ -173,19 +173,22 @@ impl Filter {
             return true;
         }
 
-        // Check if include_types contains only nested types
-        let has_only_nested =
-            !self.include_types.is_empty() && self.include_types.iter().all(|t| t.is_nested());
+        let has_only_nested = self.include_types.iter().all(|t| t.is_nested());
 
-        // Include Tables when any nested type is in include_types
-        // (nested types like Policies, Indexes, etc. are stored inside tables)
         if obj_type == ObjectType::Tables && has_only_nested {
             return true;
         }
 
-        // If include_types has only nested types, include only those specific nested types
-        // If include_types has top-level types, all nested types are included by default
         if obj_type.is_nested() && !has_only_nested {
+            return true;
+        }
+
+        // Tables ↔ Partitions are co-dependent: partitions reference parent tables,
+        // and partitioned tables are useless without their children
+        if obj_type == ObjectType::Partitions && self.include_types.contains(&ObjectType::Tables) {
+            return true;
+        }
+        if obj_type == ObjectType::Tables && self.include_types.contains(&ObjectType::Partitions) {
             return true;
         }
 
@@ -1556,5 +1559,93 @@ mod tests {
             .exclude_types
             .contains(&ObjectType::DefaultPrivileges));
         assert!(!filter.should_include_type(ObjectType::DefaultPrivileges));
+    }
+
+    #[test]
+    fn include_types_tables_implies_partitions() {
+        let filter = Filter::new(&[], &[], &[ObjectType::Tables], &[]).unwrap();
+        assert!(filter.should_include_type(ObjectType::Tables));
+        assert!(filter.should_include_type(ObjectType::Partitions));
+    }
+
+    #[test]
+    fn include_types_tables_partitions_excluded_explicitly() {
+        let filter =
+            Filter::new(&[], &[], &[ObjectType::Tables], &[ObjectType::Partitions]).unwrap();
+        assert!(filter.should_include_type(ObjectType::Tables));
+        assert!(!filter.should_include_type(ObjectType::Partitions));
+    }
+
+    #[test]
+    fn include_types_without_tables_excludes_partitions() {
+        let filter = Filter::new(&[], &[], &[ObjectType::Functions], &[]).unwrap();
+        assert!(!filter.should_include_type(ObjectType::Tables));
+        assert!(!filter.should_include_type(ObjectType::Partitions));
+    }
+
+    #[test]
+    fn include_types_partitions_implies_tables() {
+        let filter = Filter::new(&[], &[], &[ObjectType::Partitions], &[]).unwrap();
+        assert!(filter.should_include_type(ObjectType::Partitions));
+        assert!(filter.should_include_type(ObjectType::Tables));
+    }
+
+    #[test]
+    fn filter_schema_include_types_tables_preserves_partitions() {
+        let mut schema = Schema::default();
+        schema.tables.insert(
+            "public.orders".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "orders".to_string(),
+                columns: BTreeMap::new(),
+                indexes: vec![],
+                primary_key: None,
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                comment: None,
+                row_level_security: false,
+                policies: vec![],
+                partition_by: None,
+                owner: None,
+                grants: Vec::new(),
+            },
+        );
+        schema.partitions.insert(
+            "public.orders_2024".to_string(),
+            Partition {
+                schema: "public".to_string(),
+                name: "orders_2024".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "orders".to_string(),
+                bound: PartitionBound::Default,
+                indexes: vec![],
+                check_constraints: vec![],
+                owner: None,
+            },
+        );
+        schema.functions.insert(
+            "public.some_fn".to_string(),
+            Function {
+                name: "some_fn".to_string(),
+                schema: "public".to_string(),
+                arguments: vec![],
+                return_type: "void".to_string(),
+                language: "sql".to_string(),
+                body: "SELECT 1".to_string(),
+                volatility: Volatility::Volatile,
+                security: SecurityType::Invoker,
+                config_params: vec![],
+                owner: None,
+                grants: Vec::new(),
+            },
+        );
+
+        let filter = Filter::new(&[], &[], &[ObjectType::Tables], &[]).unwrap();
+        let filtered = filter_schema(&schema, &filter);
+
+        assert_eq!(filtered.tables.len(), 1);
+        assert_eq!(filtered.partitions.len(), 1);
+        assert_eq!(filtered.functions.len(), 0);
     }
 }
