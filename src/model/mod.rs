@@ -2357,7 +2357,8 @@ fn function_returns_table_type_alias_normalization() {
         name: "example_func".to_string(),
         schema: "public".to_string(),
         arguments: vec![],
-        return_type: "table(id uuid, croptype text, totalyield float8, farmercount int)".to_string(),
+        return_type: "table(id uuid, croptype text, totalyield float8, farmercount int)"
+            .to_string(),
         language: "plpgsql".to_string(),
         body: "BEGIN END;".to_string(),
         volatility: Volatility::Stable,
@@ -2371,7 +2372,9 @@ fn function_returns_table_type_alias_normalization() {
         name: "example_func".to_string(),
         schema: "public".to_string(),
         arguments: vec![],
-        return_type: "TABLE(id uuid, croptype text, totalyield double precision, farmercount integer)".to_string(),
+        return_type:
+            "TABLE(id uuid, croptype text, totalyield double precision, farmercount integer)"
+                .to_string(),
         language: "plpgsql".to_string(),
         body: "BEGIN END;".to_string(),
         volatility: Volatility::Stable,
