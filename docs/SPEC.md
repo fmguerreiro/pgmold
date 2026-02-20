@@ -236,12 +236,14 @@ enum Commands {
         database: Option<String>,
     },
 
-    /// Monitor for drift
-    Monitor {
-        #[arg(long)]
+    /// Detect schema drift
+    Drift {
+        #[arg(long, short = 's')]
         schema: String,
-        #[arg(long)]
+        #[arg(long, short = 'd')]
         database: String,
+        #[arg(long, short = 'j')]
+        json: bool,
     },
 }
 
@@ -266,8 +268,8 @@ pub async fn run() -> Result<()> {
             println!("Lint: {} (db={:?})", schema, database);
             Ok(())
         }
-        Commands::Monitor { schema, database } => {
-            println!("Monitor: {} -> {}", schema, database);
+        Commands::Drift { schema, database, json } => {
+            println!("Drift: {} -> {} (json={})", schema, database, json);
             Ok(())
         }
     }
@@ -939,6 +941,9 @@ async fn parse_source(source: &str) -> Result<Schema> {
     } else if source.starts_with("db:") {
         let conn = PgConnection::new(&source[3..]).await?;
         introspect_schema(&conn).await
+    } else if source.starts_with("postgres://") || source.starts_with("postgresql://") {
+        let conn = PgConnection::new(source).await?;
+        introspect_schema(&conn).await
     } else {
         Err(anyhow!("Unknown source: {}", source))
     }
@@ -952,7 +957,7 @@ async fn parse_source(source: &str) -> Result<Schema> {
 - [ ] `plan` shows SQL
 - [ ] `apply` executes or dry-runs
 - [ ] `lint` shows errors/warnings
-- [ ] `monitor` detects drift
+- [ ] `drift` detects drift
 
 ---
 
@@ -982,7 +987,7 @@ async fn parse_source(source: &str) -> Result<Schema> {
 4. **Drift Detection**
    - Apply schema
    - Manually ALTER TABLE
-   - Monitor should detect drift
+   - `drift` should detect drift
 
 ### Setup with testcontainers
 
