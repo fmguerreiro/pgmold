@@ -398,7 +398,7 @@ impl Function {
         self.name == other.name
             && self.schema == other.schema
             && args_equal
-            && self.return_type == other.return_type
+            && normalize_return_type(&self.return_type) == normalize_return_type(&other.return_type)
             && self.language == other.language
             && self.volatility == other.volatility
             && self.security == other.security
@@ -428,6 +428,14 @@ impl Function {
 
         false
     }
+}
+
+/// Normalizes a function return type for comparison.
+/// Strips double-quotes from identifiers to handle the difference between
+/// sqlparser's quoted output and pg_get_function_result's unquoted output.
+/// e.g., `table("userid" uuid, "firstname" text)` → `table(userid uuid, firstname text)`
+fn normalize_return_type(return_type: &str) -> String {
+    return_type.replace('"', "")
 }
 
 fn normalize_sql_body(body: &str) -> String {
@@ -2254,5 +2262,47 @@ fn function_semantically_equals_handles_null_type_cast() {
     assert!(
         from_file.semantically_equals(&from_db),
         "Function defaults NULL vs NULL::uuid should be semantically equal"
+    );
+}
+
+// --- #58: RETURNS TABLE column name casing ---
+
+#[test]
+fn function_returns_table_case_insensitive_comparison() {
+    // pg_get_function_result lowercases column names and drops quotes in RETURNS TABLE.
+    // After normalize_pg_type:
+    //   Schema: table("userid" uuid, "firstname" text) — quotes preserved by sqlparser
+    //   DB:     table(userid uuid, firstname text)     — no quotes from pg_get_function_result
+    let from_schema = Function {
+        name: "example_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type: "table(\"userid\" uuid, \"firstname\" text)".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN RETURN QUERY SELECT gen_random_uuid(), 'test'::text; END;".to_string(),
+        volatility: Volatility::Stable,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    let from_db = Function {
+        name: "example_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type: "table(userid uuid, firstname text)".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN RETURN QUERY SELECT gen_random_uuid(), 'test'::text; END;".to_string(),
+        volatility: Volatility::Stable,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    assert!(
+        from_schema.semantically_equals(&from_db),
+        "RETURNS TABLE column names with/without quotes should be equal after normalization"
     );
 }
