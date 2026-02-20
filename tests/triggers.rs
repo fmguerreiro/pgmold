@@ -153,3 +153,79 @@ async fn trigger_round_trip_no_diff() {
         "Should have no trigger diff after apply. Got: {trigger_ops:?}"
     );
 }
+
+#[tokio::test]
+async fn inherited_partition_trigger_no_phantom_drop() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let schema_sql = r#"
+        CREATE TABLE measurement (
+            id INT NOT NULL,
+            recorded_at DATE NOT NULL,
+            value DECIMAL(10,2)
+        ) PARTITION BY RANGE (recorded_at);
+
+        CREATE TABLE measurement_2024 PARTITION OF measurement
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+
+        CREATE TABLE measurement_2025 PARTITION OF measurement
+            FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+
+        CREATE FUNCTION audit_measurement() RETURNS TRIGGER
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            RETURN NEW;
+        END;
+        $$;
+
+        CREATE TRIGGER measurement_audit
+            AFTER INSERT ON measurement
+            FOR EACH ROW
+            EXECUTE FUNCTION audit_measurement();
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Failed to execute: {stmt}\nError: {e}"));
+    }
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    assert!(
+        db_schema
+            .triggers
+            .contains_key("public.measurement.measurement_audit"),
+        "Parent trigger should still be introspected"
+    );
+    assert_eq!(
+        db_schema.triggers.len(),
+        1,
+        "Only the parent trigger should be introspected, not inherited copies on partitions"
+    );
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let trigger_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateTrigger(_) | MigrationOp::DropTrigger { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        trigger_ops.is_empty(),
+        "Inherited partition triggers should not cause phantom diffs. Got: {trigger_ops:?}"
+    );
+}

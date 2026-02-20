@@ -1381,6 +1381,7 @@ async fn introspect_triggers(
         JOIN pg_proc p ON t.tgfoid = p.oid
         JOIN pg_namespace pns ON p.pronamespace = pns.oid
         WHERE NOT t.tgisinternal
+          AND t.tgparentid = 0
           AND ns.nspname = ANY($1::text[])
           AND ($2::boolean OR NOT EXISTS (
               SELECT 1 FROM pg_depend d
