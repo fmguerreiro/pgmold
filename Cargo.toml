@@ -7,11 +7,12 @@ name = "pgmold"
 version = "0.24.5"
 edition = "2021"
 exclude = [".auto-claude/", ".auto-claude-security.json", ".claude_settings.json"]
-description = "PostgreSQL schema-as-code management tool"
+description = "PostgreSQL schema-as-code library and CLI. Parse SQL, diff schemas, generate migrations."
 license = "MIT"
 repository = "https://github.com/fmguerreiro/pgmold"
-keywords = ["postgresql", "schema", "migrations", "database", "cli"]
-categories = ["command-line-utilities", "database"]
+readme = "README.md"
+keywords = ["postgresql", "schema", "migrations", "database", "diff"]
+categories = ["database", "command-line-utilities", "development-tools"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
