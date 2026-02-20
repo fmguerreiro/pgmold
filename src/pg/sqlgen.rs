@@ -229,7 +229,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         MigrationOp::DropPolicy { table, name } => {
             let (schema, table_name) = parse_qualified_name(table);
             vec![format!(
-                "DROP POLICY {} ON {};",
+                "DROP POLICY IF EXISTS {} ON {};",
                 quote_ident(name),
                 quote_qualified(&schema, &table_name)
             )]
@@ -3484,6 +3484,21 @@ mod tests {
         assert_eq!(
             sql[0],
             "REVOKE USAGE ON DOMAIN \"public\".\"email\" FROM app_user;"
+        );
+    }
+
+    #[test]
+    fn drop_policy_uses_if_exists() {
+        let ops = vec![MigrationOp::DropPolicy {
+            table: "mrv.Season".to_string(),
+            name: "season_owner_update".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            r#"DROP POLICY IF EXISTS "season_owner_update" ON "mrv"."Season";"#
         );
     }
 }
