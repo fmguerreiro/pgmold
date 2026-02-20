@@ -398,7 +398,7 @@ impl Function {
         self.name == other.name
             && self.schema == other.schema
             && args_equal
-            && self.return_type == other.return_type
+            && normalize_return_type(&self.return_type) == normalize_return_type(&other.return_type)
             && self.language == other.language
             && self.volatility == other.volatility
             && self.security == other.security
@@ -428,6 +428,56 @@ impl Function {
 
         false
     }
+}
+
+/// Normalizes a function return type for comparison.
+/// Strips double-quotes, lowercases, and normalizes type aliases within RETURNS TABLE.
+/// e.g., `table("userid" uuid, "croptype" text, "totalyield" float8)`
+///     → `table(userid uuid, croptype text, totalyield double precision)`
+fn normalize_return_type(return_type: &str) -> String {
+    let unquoted = return_type.replace('"', "");
+    let lower = unquoted.to_lowercase();
+
+    if !lower.starts_with("table(") {
+        return normalize_pg_type(&lower);
+    }
+
+    debug_assert!(lower.ends_with(')'), "expected closing ')' in: {lower}");
+    let inner = &lower["table(".len()..lower.len() - 1];
+    let normalized_cols: Vec<String> = split_top_level_commas(inner)
+        .iter()
+        .map(|col| {
+            let parts: Vec<&str> = col.trim().splitn(2, ' ').collect();
+            if parts.len() == 2 {
+                format!("{} {}", parts[0], normalize_pg_type(parts[1].trim()))
+            } else {
+                col.trim().to_string()
+            }
+        })
+        .collect();
+
+    format!("table({})", normalized_cols.join(", "))
+}
+
+/// Splits on commas that are not inside parentheses.
+/// Handles types like `numeric(10,2)` without breaking on the inner comma.
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
 }
 
 fn normalize_sql_body(body: &str) -> String {
@@ -2254,5 +2304,160 @@ fn function_semantically_equals_handles_null_type_cast() {
     assert!(
         from_file.semantically_equals(&from_db),
         "Function defaults NULL vs NULL::uuid should be semantically equal"
+    );
+}
+
+// --- #58: RETURNS TABLE column name casing ---
+
+#[test]
+fn function_returns_table_case_insensitive_comparison() {
+    // pg_get_function_result lowercases column names and drops quotes in RETURNS TABLE.
+    // After normalize_pg_type:
+    //   Schema: table("userid" uuid, "firstname" text) — quotes preserved by sqlparser
+    //   DB:     table(userid uuid, firstname text)     — no quotes from pg_get_function_result
+    let from_schema = Function {
+        name: "example_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type: "table(\"userid\" uuid, \"firstname\" text)".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN RETURN QUERY SELECT gen_random_uuid(), 'test'::text; END;".to_string(),
+        volatility: Volatility::Stable,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    let from_db = Function {
+        name: "example_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type: "table(userid uuid, firstname text)".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN RETURN QUERY SELECT gen_random_uuid(), 'test'::text; END;".to_string(),
+        volatility: Volatility::Stable,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    assert!(
+        from_schema.semantically_equals(&from_db),
+        "RETURNS TABLE column names with/without quotes should be equal after normalization"
+    );
+}
+
+#[test]
+fn function_returns_table_type_alias_normalization() {
+    // pg_get_function_result returns canonical type names (double precision, integer)
+    // but schema SQL uses aliases (float8, int)
+    let from_schema = Function {
+        name: "example_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type: "table(id uuid, croptype text, totalyield float8, farmercount int)"
+            .to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Stable,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    let from_db = Function {
+        name: "example_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type:
+            "TABLE(id uuid, croptype text, totalyield double precision, farmercount integer)"
+                .to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Stable,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    assert!(
+        from_schema.semantically_equals(&from_db),
+        "RETURNS TABLE type aliases should be normalized for comparison"
+    );
+}
+
+#[test]
+fn function_returns_table_parameterized_types() {
+    let from_schema = Function {
+        name: "example_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type: "table(amount numeric(10,2), name text)".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Stable,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    let from_db = Function {
+        name: "example_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type: "TABLE(amount numeric(10,2), name text)".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Stable,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    assert!(
+        from_schema.semantically_equals(&from_db),
+        "RETURNS TABLE with parameterized types like numeric(10,2) should not break on inner comma"
+    );
+}
+
+#[test]
+fn function_returns_table_multiword_type_aliases() {
+    let from_schema = Function {
+        name: "example_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type: "table(created_at timestamptz, active bool)".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Stable,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    let from_db = Function {
+        name: "example_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type: "TABLE(created_at timestamp with time zone, active boolean)".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Stable,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    assert!(
+        from_schema.semantically_equals(&from_db),
+        "RETURNS TABLE with multi-word type aliases (timestamptz, bool) should normalize"
     );
 }

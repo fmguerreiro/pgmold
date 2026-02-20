@@ -22,6 +22,7 @@ pub enum ObjectType {
     ForeignKeys,
     CheckConstraints,
     DefaultPrivileges,
+    Grants,
 }
 
 impl FromStr for ObjectType {
@@ -44,8 +45,9 @@ impl FromStr for ObjectType {
             "foreignkeys" => Ok(ObjectType::ForeignKeys),
             "checkconstraints" => Ok(ObjectType::CheckConstraints),
             "defaultprivileges" => Ok(ObjectType::DefaultPrivileges),
+            "grants" => Ok(ObjectType::Grants),
             _ => Err(format!(
-                "Invalid object type '{s}'. Valid types: schemas, extensions, tables, enums, domains, functions, views, triggers, sequences, partitions, policies, indexes, foreignkeys, checkconstraints, defaultprivileges"
+                "Invalid object type '{s}'. Valid types: schemas, extensions, tables, enums, domains, functions, views, triggers, sequences, partitions, policies, indexes, foreignkeys, checkconstraints, defaultprivileges, grants"
             )),
         }
     }
@@ -69,6 +71,7 @@ impl fmt::Display for ObjectType {
             ObjectType::ForeignKeys => "foreignkeys",
             ObjectType::CheckConstraints => "checkconstraints",
             ObjectType::DefaultPrivileges => "defaultprivileges",
+            ObjectType::Grants => "grants",
         };
         write!(f, "{s}")
     }
@@ -210,6 +213,9 @@ fn filter_table(table: &crate::model::Table, filter: &Filter) -> crate::model::T
     if !filter.should_include_type(ObjectType::CheckConstraints) {
         result.check_constraints = vec![];
     }
+    if !filter.should_include_type(ObjectType::Grants) {
+        result.grants = vec![];
+    }
     result
 }
 
@@ -226,8 +232,26 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         }
     }
 
+    let strip_grants = !filter.should_include_type(ObjectType::Grants);
+
+    let mut functions = filter_field(&schema.functions, filter, ObjectType::Functions);
+    let mut views = filter_field(&schema.views, filter, ObjectType::Views);
+    let mut sequences = filter_field(&schema.sequences, filter, ObjectType::Sequences);
+    let mut enums = filter_field(&schema.enums, filter, ObjectType::Enums);
+    let mut domains = filter_field(&schema.domains, filter, ObjectType::Domains);
+    let mut schemas = filter_field(&schema.schemas, filter, ObjectType::Schemas);
+
+    if strip_grants {
+        strip_grants_from_values(&mut functions);
+        strip_grants_from_values(&mut views);
+        strip_grants_from_values(&mut sequences);
+        strip_grants_from_values(&mut enums);
+        strip_grants_from_values(&mut domains);
+        strip_grants_from_values(&mut schemas);
+    }
+
     Schema {
-        schemas: filter_field(&schema.schemas, filter, ObjectType::Schemas),
+        schemas,
         extensions: filter_field(&schema.extensions, filter, ObjectType::Extensions),
         tables: if filter.should_include_type(ObjectType::Tables) {
             schema
@@ -239,12 +263,12 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         } else {
             BTreeMap::new()
         },
-        enums: filter_field(&schema.enums, filter, ObjectType::Enums),
-        domains: filter_field(&schema.domains, filter, ObjectType::Domains),
-        functions: filter_field(&schema.functions, filter, ObjectType::Functions),
-        views: filter_field(&schema.views, filter, ObjectType::Views),
+        enums,
+        domains,
+        functions,
+        views,
         triggers: filter_field(&schema.triggers, filter, ObjectType::Triggers),
-        sequences: filter_field(&schema.sequences, filter, ObjectType::Sequences),
+        sequences,
         partitions: filter_field(&schema.partitions, filter, ObjectType::Partitions),
         pending_policies: Vec::new(),
         pending_owners: Vec::new(),
@@ -329,6 +353,35 @@ impl HasName for crate::model::Extension {
 impl HasName for crate::model::PgSchema {
     fn name(&self) -> &str {
         &self.name
+    }
+}
+
+trait HasGrants {
+    fn clear_grants(&mut self);
+}
+
+macro_rules! impl_has_grants {
+    ($($type:ty),+) => {
+        $(impl HasGrants for $type {
+            fn clear_grants(&mut self) {
+                self.grants = vec![];
+            }
+        })+
+    };
+}
+
+impl_has_grants!(
+    crate::model::Function,
+    crate::model::View,
+    crate::model::Sequence,
+    crate::model::EnumType,
+    crate::model::Domain,
+    crate::model::PgSchema
+);
+
+fn strip_grants_from_values<T: HasGrants>(map: &mut BTreeMap<String, T>) {
+    for value in map.values_mut() {
+        value.clear_grants();
     }
 }
 
@@ -1647,5 +1700,95 @@ mod tests {
         assert_eq!(filtered.tables.len(), 1);
         assert_eq!(filtered.partitions.len(), 1);
         assert_eq!(filtered.functions.len(), 0);
+    }
+
+    #[test]
+    fn grants_is_valid_object_type() {
+        let result = "grants".parse::<ObjectType>();
+        assert!(
+            result.is_ok(),
+            "\"grants\" should be a valid ObjectType, got error: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn grants_excluded_strips_grants_from_tables() {
+        use crate::model::{Grant, Privilege};
+        use std::collections::BTreeSet;
+
+        let mut schema = Schema::default();
+        let table = Table {
+            schema: "public".to_string(),
+            name: "users".to_string(),
+            columns: BTreeMap::new(),
+            indexes: vec![],
+            primary_key: None,
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            comment: None,
+            row_level_security: false,
+            policies: vec![],
+            partition_by: None,
+            owner: None,
+            grants: vec![Grant {
+                grantee: "authenticated".to_string(),
+                privileges: BTreeSet::from([Privilege::Select]),
+                with_grant_option: false,
+            }],
+        };
+        schema
+            .tables
+            .insert("public.users".to_string(), table.clone());
+
+        let filter = Filter::new(&[], &[], &[], &[ObjectType::Grants]).unwrap();
+        let filtered = filter_schema(&schema, &filter);
+
+        let filtered_table = filtered.tables.get("public.users").unwrap();
+        assert_eq!(
+            filtered_table.grants.len(),
+            0,
+            "Grants should be stripped when ObjectType::Grants is excluded"
+        );
+    }
+
+    #[test]
+    fn include_types_tables_without_grants_excludes_grants() {
+        use crate::model::{Grant, Privilege};
+        use std::collections::BTreeSet;
+
+        let mut schema = Schema::default();
+        schema.tables.insert(
+            "public.users".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: vec![],
+                primary_key: None,
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                comment: None,
+                row_level_security: false,
+                policies: vec![],
+                partition_by: None,
+                owner: None,
+                grants: vec![Grant {
+                    grantee: "authenticated".to_string(),
+                    privileges: BTreeSet::from([Privilege::Select]),
+                    with_grant_option: false,
+                }],
+            },
+        );
+
+        let filter = Filter::new(&[], &[], &[ObjectType::Tables], &[]).unwrap();
+        let filtered = filter_schema(&schema, &filter);
+
+        let filtered_table = filtered.tables.get("public.users").unwrap();
+        assert_eq!(
+            filtered_table.grants.len(),
+            0,
+            "Grants should not be included when not in --include-types"
+        );
     }
 }
