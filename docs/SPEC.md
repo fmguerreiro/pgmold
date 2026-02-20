@@ -210,17 +210,17 @@ enum Commands {
 
     /// Generate migration plan
     Plan {
-        #[arg(long)]
+        #[arg(long, short = 's')]
         schema: String,
-        #[arg(long)]
+        #[arg(long, short = 'd')]
         database: String,
     },
 
     /// Apply migrations
     Apply {
-        #[arg(long)]
+        #[arg(long, short = 's')]
         schema: String,
-        #[arg(long)]
+        #[arg(long, short = 'd')]
         database: String,
         #[arg(long)]
         dry_run: bool,
@@ -230,18 +230,20 @@ enum Commands {
 
     /// Lint schema or migration plan
     Lint {
-        #[arg(long)]
+        #[arg(long, short = 's')]
         schema: String,
-        #[arg(long)]
+        #[arg(long, short = 'd')]
         database: Option<String>,
     },
 
-    /// Monitor for drift
-    Monitor {
-        #[arg(long)]
+    /// Detect schema drift
+    Drift {
+        #[arg(long, short = 's')]
         schema: String,
-        #[arg(long)]
+        #[arg(long, short = 'd')]
         database: String,
+        #[arg(long, short = 'j')]
+        json: bool,
     },
 }
 
@@ -266,8 +268,8 @@ pub async fn run() -> Result<()> {
             println!("Lint: {} (db={:?})", schema, database);
             Ok(())
         }
-        Commands::Monitor { schema, database } => {
-            println!("Monitor: {} -> {}", schema, database);
+        Commands::Drift { schema, database, json } => {
+            println!("Drift: {} -> {} (json={})", schema, database, json);
             Ok(())
         }
     }
@@ -927,8 +929,10 @@ async fn handle_diff(from: String, to: String) -> Result<()> {
     let to_schema = parse_source(&to).await?;
     let ops = compute_diff(&from_schema, &to_schema);
 
-    for op in &ops {
-        println!("{:?}", op);
+    let planned = plan_migration(ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        println!("{stmt}");
     }
     Ok(())
 }
@@ -938,6 +942,9 @@ async fn parse_source(source: &str) -> Result<Schema> {
         parse_sql_file(&source[4..])
     } else if source.starts_with("db:") {
         let conn = PgConnection::new(&source[3..]).await?;
+        introspect_schema(&conn).await
+    } else if source.starts_with("postgres://") || source.starts_with("postgresql://") {
+        let conn = PgConnection::new(source).await?;
         introspect_schema(&conn).await
     } else {
         Err(anyhow!("Unknown source: {}", source))
@@ -952,7 +959,7 @@ async fn parse_source(source: &str) -> Result<Schema> {
 - [ ] `plan` shows SQL
 - [ ] `apply` executes or dry-runs
 - [ ] `lint` shows errors/warnings
-- [ ] `monitor` detects drift
+- [ ] `drift` detects drift
 
 ---
 
@@ -982,7 +989,7 @@ async fn parse_source(source: &str) -> Result<Schema> {
 4. **Drift Detection**
    - Apply schema
    - Manually ALTER TABLE
-   - Monitor should detect drift
+   - `drift` should detect drift
 
 ### Setup with testcontainers
 

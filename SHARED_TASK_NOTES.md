@@ -11,8 +11,8 @@ Drizzle support is implemented. Prisma support is still pending.
 
 **Usage:**
 ```bash
-pgmold plan --schema drizzle:drizzle.config.ts --database db:postgres://localhost/db
-pgmold plan --schema sql:schema.sql --schema drizzle:drizzle.config.ts --database db:postgres://localhost/db
+pgmold plan -s drizzle:drizzle.config.ts -d postgres://localhost/db
+pgmold plan -s sql:schema.sql -s drizzle:drizzle.config.ts -d postgres://localhost/db
 ```
 
 ## Next Steps for pgmold-60
