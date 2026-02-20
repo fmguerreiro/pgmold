@@ -549,6 +549,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 ..
             }) => {
                 let ext_name = name.to_string().trim_matches('"').to_string();
+                if ext_name == "plpgsql" {
+                    continue;
+                }
                 let ext = Extension {
                     name: ext_name.clone(),
                     version: version
@@ -877,6 +880,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             Statement::DropExtension(sqlparser::ast::DropExtension { names, .. }) => {
                 for name in names {
                     let ext_name = name.to_string().trim_matches('"').to_string();
+                    if ext_name == "plpgsql" {
+                        continue;
+                    }
                     schema.extensions.remove(&ext_name);
                 }
             }
@@ -2287,6 +2293,21 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
         let uuid_ext = &schema.extensions["uuid-ossp"];
         assert_eq!(uuid_ext.name, "uuid-ossp");
+    }
+
+    #[test]
+    fn plpgsql_extension_skipped_during_parse() {
+        let sql = r#"
+CREATE EXTENSION IF NOT EXISTS plpgsql;
+CREATE EXTENSION IF NOT EXISTS "plpgsql";
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+"#;
+
+        let schema = parse_sql_string(sql).expect("Should parse");
+
+        assert_eq!(schema.extensions.len(), 1);
+        assert!(schema.extensions.contains_key("uuid-ossp"));
+        assert!(!schema.extensions.contains_key("plpgsql"));
     }
 
     #[test]
