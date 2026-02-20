@@ -9,7 +9,7 @@ use pgmold::diff::{compute_diff, planner::plan_migration};
 use pgmold::drift::detect_drift;
 use pgmold::dump::{generate_dump, generate_split_dump};
 use pgmold::expand_contract::expand_operations;
-use pgmold::filter::{filter_schema, Filter, ObjectType};
+use pgmold::filter::{filter_by_target_schemas, filter_schema, Filter, ObjectType};
 use pgmold::lint::locks::detect_lock_hazards;
 use pgmold::lint::{has_errors, lint_migration_plan, LintOptions, LintSeverity};
 use pgmold::migrate::{find_next_migration_number, generate_migration_filename};
@@ -323,6 +323,7 @@ pub async fn run() -> Result<()> {
                 .collect();
 
             let target = load_schema(&schema)?;
+            let target = filter_by_target_schemas(&target, &target_schemas);
             let filtered_target = filter_schema(&target, &filter);
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
@@ -552,6 +553,7 @@ pub async fn run() -> Result<()> {
                 .map_err(|e| anyhow!("{e}"))?;
 
             let target = load_schema(&schema)?;
+            let target = filter_by_target_schemas(&target, &target_schemas);
             let filtered_target = filter_schema(&target, &filter);
             let db_schema =
                 introspect_schema(&connection, &target_schemas, include_extension_objects)
@@ -700,6 +702,7 @@ Successfully applied {total} statements."
             target_schemas,
         } => {
             let target = load_schema(&schema)?;
+            let target = filter_by_target_schemas(&target, &target_schemas);
 
             let ops = if let Some(db_source) = database {
                 let db_url = parse_db_source(&db_source)?;
@@ -745,6 +748,7 @@ Successfully applied {total} statements."
                 .map_err(|e| anyhow!("{e}"))?;
 
             let target = load_schema(&schema)?;
+            let target = filter_by_target_schemas(&target, &target_schemas);
             let current = introspect_schema(&connection, &target_schemas, false)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
@@ -912,6 +916,7 @@ Successfully applied {total} statements."
                 manage_grants,
             } => {
                 let target = load_schema(&schema)?;
+                let target = filter_by_target_schemas(&target, &target_schemas);
                 let db_url = parse_db_source(&database)?;
                 let connection = PgConnection::new(&db_url)
                     .await

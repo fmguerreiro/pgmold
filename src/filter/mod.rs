@@ -282,6 +282,68 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
     }
 }
 
+pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> Schema {
+    if target_schemas.is_empty() {
+        return schema.clone();
+    }
+
+    debug_assert!(
+        schema.pending_policies.is_empty(),
+        "filter_by_target_schemas called on unfinalized schema with pending policies"
+    );
+    debug_assert!(
+        schema.pending_owners.is_empty(),
+        "filter_by_target_schemas called on unfinalized schema with pending owners"
+    );
+    debug_assert!(
+        schema.pending_grants.is_empty(),
+        "filter_by_target_schemas called on unfinalized schema with pending grants"
+    );
+    debug_assert!(
+        schema.pending_revokes.is_empty(),
+        "filter_by_target_schemas called on unfinalized schema with pending revokes"
+    );
+
+    let allowed: HashSet<&str> = target_schemas.iter().map(|s| s.as_str()).collect();
+
+    fn retain_by_schema<V: Clone>(
+        map: &BTreeMap<String, V>,
+        allowed: &HashSet<&str>,
+        get_schema: fn(&V) -> &str,
+    ) -> BTreeMap<String, V> {
+        map.iter()
+            .filter(|(_, v)| allowed.contains(get_schema(v)))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    Schema {
+        schemas: retain_by_schema(&schema.schemas, &allowed, |s| &s.name),
+        extensions: schema.extensions.clone(),
+        tables: retain_by_schema(&schema.tables, &allowed, |t| &t.schema),
+        enums: retain_by_schema(&schema.enums, &allowed, |e| &e.schema),
+        domains: retain_by_schema(&schema.domains, &allowed, |d| &d.schema),
+        functions: retain_by_schema(&schema.functions, &allowed, |f| &f.schema),
+        views: retain_by_schema(&schema.views, &allowed, |v| &v.schema),
+        triggers: retain_by_schema(&schema.triggers, &allowed, |t| &t.target_schema),
+        sequences: retain_by_schema(&schema.sequences, &allowed, |s| &s.schema),
+        partitions: retain_by_schema(&schema.partitions, &allowed, |p| &p.schema),
+        default_privileges: schema
+            .default_privileges
+            .iter()
+            .filter(|dp| match &dp.schema {
+                Some(s) => allowed.contains(s.as_str()),
+                None => true,
+            })
+            .cloned()
+            .collect(),
+        pending_policies: Vec::new(),
+        pending_owners: Vec::new(),
+        pending_grants: Vec::new(),
+        pending_revokes: Vec::new(),
+    }
+}
+
 fn filter_map<T>(map: &BTreeMap<String, T>, filter: &Filter) -> BTreeMap<String, T>
 where
     T: Clone + HasName,
@@ -389,10 +451,12 @@ fn strip_grants_from_values<T: HasGrants>(map: &mut BTreeMap<String, T>) {
 mod tests {
     use super::*;
     use crate::model::{
-        Domain, EnumType, Extension, Function, Partition, PartitionBound, PgType, SecurityType,
-        Sequence, SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent, TriggerTiming,
-        View, Volatility,
+        DefaultPrivilege, DefaultPrivilegeObjectType, Domain, EnumType, Extension, Function,
+        Partition, PartitionBound, PgSchema, PgType, Privilege, SecurityType, Sequence,
+        SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, View,
+        Volatility,
     };
+    use std::collections::BTreeSet;
 
     #[test]
     fn empty_filter_returns_clone() {
@@ -1789,6 +1853,337 @@ mod tests {
             filtered_table.grants.len(),
             0,
             "Grants should not be included when not in --include-types"
+        );
+    }
+
+    fn make_table(schema: &str, name: &str) -> Table {
+        Table {
+            schema: schema.to_string(),
+            name: name.to_string(),
+            columns: BTreeMap::new(),
+            indexes: vec![],
+            primary_key: None,
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            comment: None,
+            row_level_security: false,
+            policies: vec![],
+            partition_by: None,
+            owner: None,
+            grants: Vec::new(),
+        }
+    }
+
+    fn make_function(schema: &str, name: &str) -> Function {
+        Function {
+            name: name.to_string(),
+            schema: schema.to_string(),
+            arguments: vec![],
+            return_type: "void".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        }
+    }
+
+    fn make_view(schema: &str, name: &str) -> View {
+        View {
+            name: name.to_string(),
+            schema: schema.to_string(),
+            query: "SELECT 1".to_string(),
+            materialized: false,
+            owner: None,
+            grants: Vec::new(),
+        }
+    }
+
+    fn make_enum(schema: &str, name: &str) -> EnumType {
+        EnumType {
+            schema: schema.to_string(),
+            name: name.to_string(),
+            values: vec!["a".to_string()],
+            owner: None,
+            grants: Vec::new(),
+        }
+    }
+
+    fn make_sequence(schema: &str, name: &str) -> Sequence {
+        Sequence {
+            name: name.to_string(),
+            schema: schema.to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: None,
+            max_value: None,
+            cycle: false,
+            cache: None,
+            owned_by: None,
+            owner: None,
+            grants: Vec::new(),
+        }
+    }
+
+    fn make_trigger(target_schema: &str, target_name: &str, name: &str) -> Trigger {
+        Trigger {
+            name: name.to_string(),
+            target_schema: target_schema.to_string(),
+            target_name: target_name.to_string(),
+            timing: TriggerTiming::Before,
+            events: vec![TriggerEvent::Insert],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "audit_fn".to_string(),
+            function_args: vec![],
+            enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
+        }
+    }
+
+    fn make_domain(schema: &str, name: &str) -> Domain {
+        Domain {
+            schema: schema.to_string(),
+            name: name.to_string(),
+            data_type: PgType::Text,
+            default: None,
+            not_null: false,
+            collation: None,
+            check_constraints: vec![],
+            owner: None,
+            grants: Vec::new(),
+        }
+    }
+
+    fn make_partition(
+        schema: &str,
+        name: &str,
+        parent_schema: &str,
+        parent_name: &str,
+    ) -> Partition {
+        Partition {
+            schema: schema.to_string(),
+            name: name.to_string(),
+            parent_schema: parent_schema.to_string(),
+            parent_name: parent_name.to_string(),
+            bound: PartitionBound::Default,
+            indexes: vec![],
+            check_constraints: vec![],
+            owner: None,
+        }
+    }
+
+    #[test]
+    fn filter_by_target_schemas_keeps_only_target_schema_objects() {
+        let mut schema = Schema::default();
+        schema
+            .tables
+            .insert("public.users".to_string(), make_table("public", "users"));
+        schema
+            .tables
+            .insert("audit.log".to_string(), make_table("audit", "log"));
+        schema
+            .functions
+            .insert("public.my_fn".to_string(), make_function("public", "my_fn"));
+        schema
+            .functions
+            .insert("audit.track".to_string(), make_function("audit", "track"));
+        schema
+            .views
+            .insert("public.my_view".to_string(), make_view("public", "my_view"));
+        schema
+            .views
+            .insert("audit.recent".to_string(), make_view("audit", "recent"));
+        schema
+            .enums
+            .insert("public.status".to_string(), make_enum("public", "status"));
+        schema
+            .enums
+            .insert("audit.level".to_string(), make_enum("audit", "level"));
+        schema
+            .domains
+            .insert("public.email".to_string(), make_domain("public", "email"));
+        schema.domains.insert(
+            "audit.severity".to_string(),
+            make_domain("audit", "severity"),
+        );
+        schema.sequences.insert(
+            "public.user_seq".to_string(),
+            make_sequence("public", "user_seq"),
+        );
+        schema.sequences.insert(
+            "audit.log_seq".to_string(),
+            make_sequence("audit", "log_seq"),
+        );
+        schema.triggers.insert(
+            "public.users.audit_trigger".to_string(),
+            make_trigger("public", "users", "audit_trigger"),
+        );
+        schema.triggers.insert(
+            "audit.log.log_trigger".to_string(),
+            make_trigger("audit", "log", "log_trigger"),
+        );
+        schema.partitions.insert(
+            "public.users_2024".to_string(),
+            make_partition("public", "users_2024", "public", "users"),
+        );
+        schema.partitions.insert(
+            "audit.log_2024".to_string(),
+            make_partition("audit", "log_2024", "audit", "log"),
+        );
+        schema.schemas.insert(
+            "public".to_string(),
+            PgSchema {
+                name: "public".to_string(),
+                grants: vec![],
+            },
+        );
+        schema.schemas.insert(
+            "audit".to_string(),
+            PgSchema {
+                name: "audit".to_string(),
+                grants: vec![],
+            },
+        );
+
+        let target_schemas = vec!["public".to_string()];
+        let filtered = filter_by_target_schemas(&schema, &target_schemas);
+
+        assert_eq!(filtered.tables.len(), 1);
+        assert!(filtered.tables.contains_key("public.users"));
+        assert_eq!(filtered.functions.len(), 1);
+        assert!(filtered.functions.contains_key("public.my_fn"));
+        assert_eq!(filtered.views.len(), 1);
+        assert!(filtered.views.contains_key("public.my_view"));
+        assert_eq!(filtered.enums.len(), 1);
+        assert!(filtered.enums.contains_key("public.status"));
+        assert_eq!(filtered.domains.len(), 1);
+        assert!(filtered.domains.contains_key("public.email"));
+        assert_eq!(filtered.sequences.len(), 1);
+        assert!(filtered.sequences.contains_key("public.user_seq"));
+        assert_eq!(filtered.triggers.len(), 1);
+        assert!(filtered.triggers.contains_key("public.users.audit_trigger"));
+        assert_eq!(filtered.partitions.len(), 1);
+        assert!(filtered.partitions.contains_key("public.users_2024"));
+        assert_eq!(filtered.schemas.len(), 1);
+        assert!(filtered.schemas.contains_key("public"));
+    }
+
+    #[test]
+    fn filter_by_target_schemas_multiple_schemas() {
+        let mut schema = Schema::default();
+        schema
+            .tables
+            .insert("public.users".to_string(), make_table("public", "users"));
+        schema
+            .tables
+            .insert("auth.sessions".to_string(), make_table("auth", "sessions"));
+        schema
+            .tables
+            .insert("audit.log".to_string(), make_table("audit", "log"));
+
+        let target_schemas = vec!["public".to_string(), "auth".to_string()];
+        let filtered = filter_by_target_schemas(&schema, &target_schemas);
+
+        assert_eq!(filtered.tables.len(), 2);
+        assert!(filtered.tables.contains_key("public.users"));
+        assert!(filtered.tables.contains_key("auth.sessions"));
+        assert!(!filtered.tables.contains_key("audit.log"));
+    }
+
+    #[test]
+    fn filter_by_target_schemas_empty_keeps_everything() {
+        let mut schema = Schema::default();
+        schema
+            .tables
+            .insert("public.users".to_string(), make_table("public", "users"));
+        schema
+            .tables
+            .insert("audit.log".to_string(), make_table("audit", "log"));
+
+        let target_schemas: Vec<String> = vec![];
+        let filtered = filter_by_target_schemas(&schema, &target_schemas);
+
+        assert_eq!(filtered.tables.len(), 2);
+    }
+
+    #[test]
+    fn filter_by_target_schemas_preserves_extensions() {
+        let mut schema = Schema::default();
+        schema
+            .tables
+            .insert("audit.log".to_string(), make_table("audit", "log"));
+        schema.extensions.insert(
+            "uuid-ossp".to_string(),
+            Extension {
+                name: "uuid-ossp".to_string(),
+                version: None,
+                schema: None,
+            },
+        );
+        schema.extensions.insert(
+            "pgcrypto".to_string(),
+            Extension {
+                name: "pgcrypto".to_string(),
+                version: None,
+                schema: Some("public".to_string()),
+            },
+        );
+
+        let target_schemas = vec!["public".to_string()];
+        let filtered = filter_by_target_schemas(&schema, &target_schemas);
+
+        assert_eq!(
+            filtered.extensions.len(),
+            2,
+            "Extensions should be preserved regardless of target schemas"
+        );
+        assert_eq!(filtered.tables.len(), 0);
+    }
+
+    #[test]
+    fn filter_by_target_schemas_filters_default_privileges() {
+        let mut schema = Schema::default();
+        schema.default_privileges = vec![
+            DefaultPrivilege {
+                target_role: "admin".to_string(),
+                schema: Some("public".to_string()),
+                object_type: DefaultPrivilegeObjectType::Tables,
+                grantee: "app".to_string(),
+                privileges: BTreeSet::from([Privilege::Select]),
+                with_grant_option: false,
+            },
+            DefaultPrivilege {
+                target_role: "admin".to_string(),
+                schema: Some("audit".to_string()),
+                object_type: DefaultPrivilegeObjectType::Tables,
+                grantee: "app".to_string(),
+                privileges: BTreeSet::from([Privilege::Select]),
+                with_grant_option: false,
+            },
+            DefaultPrivilege {
+                target_role: "admin".to_string(),
+                schema: None,
+                object_type: DefaultPrivilegeObjectType::Tables,
+                grantee: "app".to_string(),
+                privileges: BTreeSet::from([Privilege::Select]),
+                with_grant_option: false,
+            },
+        ];
+
+        let target_schemas = vec!["public".to_string()];
+        let filtered = filter_by_target_schemas(&schema, &target_schemas);
+
+        assert_eq!(
+            filtered.default_privileges.len(),
+            2,
+            "Should keep public + global default privileges"
         );
     }
 }
