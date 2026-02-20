@@ -210,17 +210,17 @@ enum Commands {
 
     /// Generate migration plan
     Plan {
-        #[arg(long)]
+        #[arg(long, short = 's')]
         schema: String,
-        #[arg(long)]
+        #[arg(long, short = 'd')]
         database: String,
     },
 
     /// Apply migrations
     Apply {
-        #[arg(long)]
+        #[arg(long, short = 's')]
         schema: String,
-        #[arg(long)]
+        #[arg(long, short = 'd')]
         database: String,
         #[arg(long)]
         dry_run: bool,
@@ -230,9 +230,9 @@ enum Commands {
 
     /// Lint schema or migration plan
     Lint {
-        #[arg(long)]
+        #[arg(long, short = 's')]
         schema: String,
-        #[arg(long)]
+        #[arg(long, short = 'd')]
         database: Option<String>,
     },
 
@@ -929,8 +929,10 @@ async fn handle_diff(from: String, to: String) -> Result<()> {
     let to_schema = parse_source(&to).await?;
     let ops = compute_diff(&from_schema, &to_schema);
 
-    for op in &ops {
-        println!("{:?}", op);
+    let planned = plan_migration(ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        println!("{stmt}");
     }
     Ok(())
 }

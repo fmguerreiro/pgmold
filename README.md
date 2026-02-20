@@ -69,7 +69,7 @@ ALTER TABLE users ADD COLUMN email TEXT NOT NULL;
 cargo install pgmold
 ```
 
-For the latest version with partitioned table support (until the sqlparser fork is merged upstream):
+For the latest version from source:
 
 ```bash
 cargo install --git https://github.com/fmguerreiro/pgmold
@@ -150,11 +150,11 @@ schema/
     └── triggers.sql    # stored procedures
 ```
 
-Duplicate definitions (same table/enum/function in multiple files) will error immediately with clear file locations.
+Duplicate definitions across files produce an error with file locations.
 
 ### Filtering Objects
 
-Filter which objects to include in comparisons using name patterns or object types.
+Filter by name patterns or object types.
 
 **Filter by name pattern:**
 ```bash
@@ -204,7 +204,7 @@ Available object types:
 
 ### Extension Objects
 
-By default, pgmold automatically excludes objects owned by extensions (e.g., PostGIS functions, pg_trgm operators). This prevents extension-provided objects from appearing in diffs.
+By default, pgmold excludes objects owned by extensions (e.g., PostGIS functions, pg_trgm operators) from diffs.
 
 ```bash
 # Include extension objects if needed (e.g., for full database dumps)
@@ -213,7 +213,7 @@ pgmold dump -d postgres://localhost/mydb --include-extension-objects -o full_sch
 
 ### Adopting pgmold in an Existing Project
 
-If you have a live database with existing schema (and possibly a migration-based workflow), use `pgmold dump` to create a baseline:
+Use `pgmold dump` to create a baseline from a live database:
 
 ```bash
 # Export current database schema to SQL files
@@ -228,7 +228,7 @@ pgmold dump -d postgres://localhost/mydb --split -o schema/
 
 The `--split` option creates separate files for extensions, types, sequences, tables, functions, views, triggers, and policies.
 
-This exports your live database schema as SQL DDL. Now your schema files match the database exactly, and `pgmold plan` will show 0 operations.
+After this, your schema files match the database exactly and `pgmold plan` shows zero operations.
 
 #### Workflow After Baseline
 
@@ -238,7 +238,7 @@ This exports your live database schema as SQL DDL. Now your schema files match t
 
 #### Integrating with Existing Migration Systems
 
-pgmold is declarative (like Terraform) - it computes diffs and applies directly rather than generating numbered migration files. If you need to maintain compatibility with an existing migration system:
+pgmold is declarative -- it computes diffs and applies directly. To maintain compatibility with an existing migration system:
 
 ```bash
 # Generate a numbered migration file automatically
@@ -250,16 +250,14 @@ pgmold migrate \
 # Creates: migrations/0044_add_email_column.sql
 
 # Or manually capture output
-pgmold diff --from sql:schema/ --to sql:current.sql > migrations/0044_my_change.sql
+pgmold diff --from sql:current.sql --to sql:schema/ > migrations/0044_my_change.sql
 ```
 
-The `migrate` command auto-detects the next migration number by scanning existing files.
-
-This lets you use pgmold for diffing while keeping your existing migration runner.
+The `migrate` command auto-detects the next migration number. Use pgmold for diffing while keeping your existing migration runner.
 
 ### CI Integration
 
-pgmold includes a GitHub Action for detecting schema drift in CI/CD pipelines. This catches when manual database changes drift from your schema files.
+pgmold includes a GitHub Action for detecting schema drift in CI/CD pipelines.
 
 #### GitHub Action Usage
 
@@ -274,7 +272,7 @@ pgmold includes a GitHub Action for detecting schema drift in CI/CD pipelines. T
 ```
 
 **Inputs:**
-- `schema` (required): Path to schema SQL file(s). Can be a single file or multiple files (space-separated).
+- `schema` (required): Path to schema SQL file(s), space-separated for multiple.
 - `database` (required): PostgreSQL connection string.
 - `target-schemas` (optional): Comma-separated list of schemas to introspect. Default: `public`.
 - `version` (optional): pgmold version to install. Default: `latest`.
@@ -330,7 +328,7 @@ pgmold drift -s sql:schema/ -d postgres://localhost/mydb -j
 # }
 ```
 
-The drift detection compares SHA256 fingerprints of normalized schemas. Any difference (new tables, altered columns, changed indexes) triggers drift.
+Drift detection compares SHA256 fingerprints of normalized schemas. Any difference triggers drift.
 
 ## Terraform Provider
 
@@ -361,7 +359,7 @@ resource "pgmold_schema" "app" {
 }
 ```
 
-When you change `schema.sql`, Terraform will diff against the live database and apply only the necessary migrations.
+Terraform diffs against the live database and applies only necessary migrations on changes.
 
 ### Attributes
 
@@ -395,13 +393,10 @@ resource "pgmold_migration" "app" {
 
 By default, pgmold blocks destructive operations:
 
-- `DROP TABLE` requires `--allow-destructive`
-- `DROP COLUMN` requires `--allow-destructive`
-- `DROP ENUM` requires `--allow-destructive`
-- Type narrowing produces warnings
-- `SET NOT NULL` produces warnings (may fail on existing NULLs)
+- `DROP TABLE`, `DROP COLUMN`, `DROP ENUM` require `--allow-destructive`
+- Type narrowing and `SET NOT NULL` produce warnings
 
-Set `PGMOLD_PROD=1` to enable production mode, which blocks table drops entirely.
+Set `PGMOLD_PROD=1` for production mode, which blocks table drops entirely.
 
 ## Comparison with Other Tools
 
@@ -437,10 +432,10 @@ Traditional tools where you write numbered migration files manually.
 
 ### When to Choose pgmold
 
-- **Pure SQL schemas** without learning HCL or DSLs
-- **PostgreSQL-only** projects where deep PG integration matters
-- **Single binary** with no runtime dependencies (Rust, no JVM/Go required)
-- **CI/CD drift detection** to catch manual schema changes
+- **Pure SQL schemas** -- no HCL or DSLs to learn
+- **PostgreSQL-only** projects needing deep PG integration
+- **Single binary** -- no JVM/Go runtime required
+- **CI/CD drift detection**
 - **Safety-first** workflows with destructive operation guardrails
 - **RLS policies** as first-class citizens
 
