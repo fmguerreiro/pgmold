@@ -1443,12 +1443,7 @@ mod tests {
 
     #[test]
     fn dump_accepts_bare_postgres_url() {
-        let args = Cli::parse_from([
-            "pgmold",
-            "dump",
-            "--database",
-            "postgres://localhost/db",
-        ]);
+        let args = Cli::parse_from(["pgmold", "dump", "--database", "postgres://localhost/db"]);
 
         if let Commands::Dump { database, .. } = args.command {
             assert_eq!(database, "postgres://localhost/db");
