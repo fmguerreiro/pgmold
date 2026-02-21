@@ -2,8 +2,8 @@ use crate::model::*;
 use crate::pg::sqlgen::strip_ident_quotes;
 use crate::util::{Result, SchemaError};
 use sqlparser::ast::{
-    ArgMode as SqlArgMode, CreateFunctionBody, DataType, FunctionBehavior, FunctionSecurity,
-    FunctionDefinitionSetParam, FunctionSetValue, Ident, OperateFunctionArg,
+    ArgMode as SqlArgMode, CreateFunctionBody, DataType, FunctionBehavior,
+    FunctionDefinitionSetParam, FunctionSecurity, FunctionSetValue, Ident, OperateFunctionArg,
 };
 
 /// Strips dollar-quote delimiters from a function body.
@@ -92,10 +92,7 @@ pub(crate) fn parse_create_function(
                         None => ArgMode::In,
                     };
                     FunctionArg {
-                        name: arg
-                            .name
-                            .as_ref()
-                            .map(|n| strip_ident_quotes(&n.value)),
+                        name: arg.name.as_ref().map(|n| strip_ident_quotes(&n.value)),
                         data_type: normalize_pg_type(&arg.data_type.to_string()),
                         mode,
                         default: arg

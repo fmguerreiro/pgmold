@@ -1,9 +1,8 @@
 use crate::model::*;
 use crate::util::Result;
 use sqlparser::ast::{
-    ColumnDef, ColumnOption, DataType, Expr, FunctionArg as SqlFunctionArg,
-    FunctionArgExpr, FunctionArguments, ReferentialAction as SqlReferentialAction,
-    TableConstraint,
+    ColumnDef, ColumnOption, DataType, Expr, FunctionArg as SqlFunctionArg, FunctionArgExpr,
+    FunctionArguments, ReferentialAction as SqlReferentialAction, TableConstraint,
 };
 use std::collections::BTreeMap;
 
@@ -250,9 +249,7 @@ pub(crate) fn detect_serial_type(dt: &DataType) -> Option<SequenceDataType> {
     }
 }
 
-pub(crate) fn parse_referential_action(
-    action: &Option<SqlReferentialAction>,
-) -> ReferentialAction {
+pub(crate) fn parse_referential_action(action: &Option<SqlReferentialAction>) -> ReferentialAction {
     match action {
         Some(SqlReferentialAction::NoAction) => ReferentialAction::NoAction,
         Some(SqlReferentialAction::Restrict) => ReferentialAction::Restrict,
@@ -279,9 +276,9 @@ fn parse_partition_by(expr: &Expr) -> Option<PartitionKey> {
                     .args
                     .iter()
                     .filter_map(|arg| match arg {
-                        SqlFunctionArg::Unnamed(FunctionArgExpr::Expr(
-                            Expr::Identifier(ident),
-                        )) => Some(ident.value.clone()),
+                        SqlFunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Identifier(ident))) => {
+                            Some(ident.value.clone())
+                        }
                         SqlFunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {
                             Some(expr.to_string())
                         }

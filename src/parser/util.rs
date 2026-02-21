@@ -22,9 +22,7 @@ pub(crate) fn extract_qualified_name(name: &ObjectName) -> (String, String) {
     }
 }
 
-pub(crate) fn parse_policy_command(
-    cmd: &Option<CreatePolicyCommand>,
-) -> PolicyCommand {
+pub(crate) fn parse_policy_command(cmd: &Option<CreatePolicyCommand>) -> PolicyCommand {
     match cmd {
         Some(CreatePolicyCommand::All) => PolicyCommand::All,
         Some(CreatePolicyCommand::Select) => PolicyCommand::Select,
@@ -84,9 +82,7 @@ pub(crate) fn parse_data_type(dt: &DataType) -> Result<PgType> {
         DataType::Text => Ok(PgType::Text),
         DataType::Boolean => Ok(PgType::Boolean),
         DataType::Timestamp(_, tz) => {
-            if *tz == TimezoneInfo::WithTimeZone
-                || *tz == TimezoneInfo::Tz
-            {
+            if *tz == TimezoneInfo::WithTimeZone || *tz == TimezoneInfo::Tz {
                 Ok(PgType::TimestampTz)
             } else {
                 Ok(PgType::Timestamp)

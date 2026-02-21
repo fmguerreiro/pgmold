@@ -22,16 +22,17 @@ use crate::util::{normalize_sql_whitespace, Result, SchemaError};
 use sqlparser::ast::{
     AlterTable, AlterTableOperation, CreateDomain, CreateExtension, CreateFunction, CreateTrigger,
     CreateView, DropDomain, DropExtension, DropFunction, DropTrigger, ObjectType,
-    RenameTableNameKind, SchemaName, Statement, TableConstraint,
-    TriggerEvent as SqlTriggerEvent, TriggerPeriod, TriggerReferencingType,
-    UserDefinedTypeRepresentation,
+    RenameTableNameKind, SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent,
+    TriggerPeriod, TriggerReferencingType, UserDefinedTypeRepresentation,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use std::fs;
 
 use self::functions::parse_create_function;
-use self::grants::{parse_alter_default_privileges, parse_grant_statements, parse_revoke_statements};
+use self::grants::{
+    parse_alter_default_privileges, parse_grant_statements, parse_revoke_statements,
+};
 use self::ownership::parse_owner_statements;
 use self::preprocess::preprocess_sql;
 use self::sequences::parse_create_sequence;
@@ -151,9 +152,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         let parsed_roles: Vec<String> = to
                             .iter()
                             .flat_map(|owners| {
-                                owners
-                                    .iter()
-                                    .map(|o| strip_ident_quotes(&o.to_string()))
+                                owners.iter().map(|o| strip_ident_quotes(&o.to_string()))
                             })
                             .collect();
                         if parsed_roles.is_empty() {
@@ -198,27 +197,21 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 trigger.enabled = TriggerEnabled::Disabled;
                             }
                         }
-                        AlterTableOperation::EnableReplicaTrigger {
-                            name: trig_name,
-                        } => {
+                        AlterTableOperation::EnableReplicaTrigger { name: trig_name } => {
                             let trigger_key =
                                 format!("{}.{}.{}", tbl_schema, tbl_name, trig_name.value);
                             if let Some(trigger) = schema.triggers.get_mut(&trigger_key) {
                                 trigger.enabled = TriggerEnabled::Replica;
                             }
                         }
-                        AlterTableOperation::EnableAlwaysTrigger {
-                            name: trig_name,
-                        } => {
+                        AlterTableOperation::EnableAlwaysTrigger { name: trig_name } => {
                             let trigger_key =
                                 format!("{}.{}.{}", tbl_schema, tbl_name, trig_name.value);
                             if let Some(trigger) = schema.triggers.get_mut(&trigger_key) {
                                 trigger.enabled = TriggerEnabled::Always;
                             }
                         }
-                        AlterTableOperation::AddConstraint {
-                            constraint, ..
-                        } => {
+                        AlterTableOperation::AddConstraint { constraint, .. } => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 if let TableConstraint::ForeignKey(fk) = constraint {
                                     let fk_name = fk
@@ -302,9 +295,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 }
                             }
                         }
-                        AlterTableOperation::DropColumn {
-                            column_names, ..
-                        } => {
+                        AlterTableOperation::DropColumn { column_names, .. } => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 let names_to_drop: Vec<String> = column_names
                                     .iter()
@@ -317,8 +308,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         }
                         AlterTableOperation::RenameTable { table_name } => {
                             let new_name = match table_name {
-                                RenameTableNameKind::As(obj)
-                                | RenameTableNameKind::To(obj) => {
+                                RenameTableNameKind::As(obj) | RenameTableNameKind::To(obj) => {
                                     let (new_schema, new_tbl) = extract_qualified_name(&obj);
                                     let effective_schema = if obj.0.len() == 1 {
                                         tbl_schema.clone()
@@ -350,10 +340,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 }
                             }
                         }
-                        AlterTableOperation::RenameConstraint {
-                            old_name,
-                            new_name,
-                        } => {
+                        AlterTableOperation::RenameConstraint { old_name, new_name } => {
                             let old_constraint_name = old_name.value.trim_matches('"').to_string();
                             let new_constraint_name = new_name.value.trim_matches('"').to_string();
 

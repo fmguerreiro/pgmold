@@ -2664,8 +2664,7 @@ DROP EXTENSION pgcrypto;
 
     assert!(!schema.extensions.contains_key("pgcrypto"));
     assert!(
-        schema.extensions.contains_key("uuid_ossp")
-            || schema.extensions.contains_key("uuid-ossp")
+        schema.extensions.contains_key("uuid_ossp") || schema.extensions.contains_key("uuid-ossp")
     );
 }
 
