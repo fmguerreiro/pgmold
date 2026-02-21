@@ -1,6 +1,10 @@
 use crate::model::*;
 use crate::pg::sqlgen::strip_ident_quotes;
 use crate::util::{Result, SchemaError};
+use sqlparser::ast::{
+    ArgMode as SqlArgMode, CreateFunctionBody, DataType, FunctionBehavior, FunctionSecurity,
+    FunctionDefinitionSetParam, FunctionSetValue, Ident, OperateFunctionArg,
+};
 
 /// Strips dollar-quote delimiters from a function body.
 /// Handles both `$$...$$` and `$tag$...$tag$` formats.
@@ -27,13 +31,13 @@ fn strip_dollar_quotes(body: &str) -> String {
 pub(crate) fn parse_create_function(
     schema: &str,
     name: &str,
-    args: Option<&[sqlparser::ast::OperateFunctionArg]>,
-    return_type: Option<&sqlparser::ast::DataType>,
-    function_body: Option<&sqlparser::ast::CreateFunctionBody>,
-    language: Option<&sqlparser::ast::Ident>,
-    behavior: Option<&sqlparser::ast::FunctionBehavior>,
-    security: Option<&sqlparser::ast::FunctionSecurity>,
-    set_params: &[sqlparser::ast::FunctionDefinitionSetParam],
+    args: Option<&[OperateFunctionArg]>,
+    return_type: Option<&DataType>,
+    function_body: Option<&CreateFunctionBody>,
+    language: Option<&Ident>,
+    behavior: Option<&FunctionBehavior>,
+    security: Option<&FunctionSecurity>,
+    set_params: &[FunctionDefinitionSetParam],
 ) -> Result<Function> {
     let return_type_str = return_type
         .map(|rt| normalize_pg_type(&rt.to_string()))
@@ -49,12 +53,12 @@ pub(crate) fn parse_create_function(
 
     let body = function_body
         .map(|fb| match fb {
-            sqlparser::ast::CreateFunctionBody::AsBeforeOptions { body, .. } => body.to_string(),
-            sqlparser::ast::CreateFunctionBody::AsAfterOptions(expr) => expr.to_string(),
-            sqlparser::ast::CreateFunctionBody::Return(expr) => expr.to_string(),
-            sqlparser::ast::CreateFunctionBody::AsBeginEnd(stmts) => stmts.to_string(),
-            sqlparser::ast::CreateFunctionBody::AsReturnExpr(expr) => expr.to_string(),
-            sqlparser::ast::CreateFunctionBody::AsReturnSelect(sel) => sel.to_string(),
+            CreateFunctionBody::AsBeforeOptions { body, .. } => body.to_string(),
+            CreateFunctionBody::AsAfterOptions(expr) => expr.to_string(),
+            CreateFunctionBody::Return(expr) => expr.to_string(),
+            CreateFunctionBody::AsBeginEnd(stmts) => stmts.to_string(),
+            CreateFunctionBody::AsReturnExpr(expr) => expr.to_string(),
+            CreateFunctionBody::AsReturnSelect(sel) => sel.to_string(),
         })
         .map(|b| strip_dollar_quotes(&b).trim().to_string())
         .ok_or_else(|| {
@@ -63,16 +67,16 @@ pub(crate) fn parse_create_function(
 
     let volatility = behavior
         .map(|b| match b {
-            sqlparser::ast::FunctionBehavior::Immutable => Volatility::Immutable,
-            sqlparser::ast::FunctionBehavior::Stable => Volatility::Stable,
-            sqlparser::ast::FunctionBehavior::Volatile => Volatility::Volatile,
+            FunctionBehavior::Immutable => Volatility::Immutable,
+            FunctionBehavior::Stable => Volatility::Stable,
+            FunctionBehavior::Volatile => Volatility::Volatile,
         })
         .unwrap_or_default();
 
     let security_type = security
         .map(|s| match s {
-            sqlparser::ast::FunctionSecurity::Definer => SecurityType::Definer,
-            sqlparser::ast::FunctionSecurity::Invoker => SecurityType::Invoker,
+            FunctionSecurity::Definer => SecurityType::Definer,
+            FunctionSecurity::Invoker => SecurityType::Invoker,
         })
         .unwrap_or_default();
 
@@ -82,9 +86,9 @@ pub(crate) fn parse_create_function(
                 .iter()
                 .map(|arg| {
                     let mode = match arg.mode {
-                        Some(sqlparser::ast::ArgMode::In) => ArgMode::In,
-                        Some(sqlparser::ast::ArgMode::Out) => ArgMode::Out,
-                        Some(sqlparser::ast::ArgMode::InOut) => ArgMode::InOut,
+                        Some(SqlArgMode::In) => ArgMode::In,
+                        Some(SqlArgMode::Out) => ArgMode::Out,
+                        Some(SqlArgMode::InOut) => ArgMode::InOut,
                         None => ArgMode::In,
                     };
                     FunctionArg {
@@ -109,12 +113,12 @@ pub(crate) fn parse_create_function(
         .map(|param| {
             let key = param.name.to_string().to_lowercase();
             let value = match &param.value {
-                sqlparser::ast::FunctionSetValue::Values(exprs) => exprs
+                FunctionSetValue::Values(exprs) => exprs
                     .iter()
                     .map(|e| e.to_string())
                     .collect::<Vec<_>>()
                     .join(", "),
-                sqlparser::ast::FunctionSetValue::FromCurrent => "FROM CURRENT".to_string(),
+                FunctionSetValue::FromCurrent => "FROM CURRENT".to_string(),
             };
             (key, value)
         })

@@ -1,13 +1,13 @@
 use crate::model::*;
 use crate::util::Result;
-use sqlparser::ast::{DataType, Expr, SequenceOptions};
+use sqlparser::ast::{DataType, Expr, ObjectName, SequenceOptions, UnaryOperator, Value};
 
 pub(crate) fn parse_create_sequence(
     schema: &str,
     name: &str,
     data_type: Option<&DataType>,
     sequence_options: &[SequenceOptions],
-    owned_by: Option<&sqlparser::ast::ObjectName>,
+    owned_by: Option<&ObjectName>,
 ) -> Result<Sequence> {
     let seq_data_type = data_type
         .map(|dt| match dt {
@@ -127,14 +127,14 @@ pub(crate) fn parse_create_sequence(
 fn extract_i64_from_expr(expr: &Expr) -> Option<i64> {
     match expr {
         Expr::Value(value_with_span) => {
-            if let sqlparser::ast::Value::Number(n, _) = &value_with_span.value {
+            if let Value::Number(n, _) = &value_with_span.value {
                 n.parse::<i64>().ok()
             } else {
                 None
             }
         }
         Expr::UnaryOp { op, expr } => {
-            if matches!(op, sqlparser::ast::UnaryOperator::Minus) {
+            if matches!(op, UnaryOperator::Minus) {
                 extract_i64_from_expr(expr).map(|n| -n)
             } else {
                 None

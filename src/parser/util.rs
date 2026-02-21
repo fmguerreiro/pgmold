@@ -1,12 +1,15 @@
 use crate::model::*;
 use crate::util::{normalize_type_casts, Result, SchemaError};
-use sqlparser::ast::{DataType, ForValues, PartitionBoundValue};
+use sqlparser::ast::{
+    CharacterLength, CreatePolicyCommand, DataType, ForValues, ObjectName, PartitionBoundValue,
+    TimezoneInfo,
+};
 
 pub(crate) fn normalize_expr(expr: &str) -> String {
     normalize_type_casts(expr)
 }
 
-pub(crate) fn extract_qualified_name(name: &sqlparser::ast::ObjectName) -> (String, String) {
+pub(crate) fn extract_qualified_name(name: &ObjectName) -> (String, String) {
     let parts: Vec<String> = name
         .0
         .iter()
@@ -20,14 +23,14 @@ pub(crate) fn extract_qualified_name(name: &sqlparser::ast::ObjectName) -> (Stri
 }
 
 pub(crate) fn parse_policy_command(
-    cmd: &Option<sqlparser::ast::CreatePolicyCommand>,
+    cmd: &Option<CreatePolicyCommand>,
 ) -> PolicyCommand {
     match cmd {
-        Some(sqlparser::ast::CreatePolicyCommand::All) => PolicyCommand::All,
-        Some(sqlparser::ast::CreatePolicyCommand::Select) => PolicyCommand::Select,
-        Some(sqlparser::ast::CreatePolicyCommand::Insert) => PolicyCommand::Insert,
-        Some(sqlparser::ast::CreatePolicyCommand::Update) => PolicyCommand::Update,
-        Some(sqlparser::ast::CreatePolicyCommand::Delete) => PolicyCommand::Delete,
+        Some(CreatePolicyCommand::All) => PolicyCommand::All,
+        Some(CreatePolicyCommand::Select) => PolicyCommand::Select,
+        Some(CreatePolicyCommand::Insert) => PolicyCommand::Insert,
+        Some(CreatePolicyCommand::Update) => PolicyCommand::Update,
+        Some(CreatePolicyCommand::Delete) => PolicyCommand::Delete,
         None => PolicyCommand::All,
     }
 }
@@ -55,7 +58,7 @@ pub(crate) fn parse_for_values(for_values: &Option<ForValues>) -> Result<Partiti
     }
 }
 
-pub(crate) fn partition_bound_value_to_string(v: &PartitionBoundValue) -> String {
+fn partition_bound_value_to_string(v: &PartitionBoundValue) -> String {
     match v {
         PartitionBoundValue::Expr(e) => normalize_expr(&e.to_string()),
         PartitionBoundValue::MinValue => "MINVALUE".to_string(),
@@ -73,18 +76,16 @@ pub(crate) fn parse_data_type(dt: &DataType) -> Result<PgType> {
         DataType::Numeric(_) | DataType::Decimal(_) => Ok(PgType::Named("numeric".to_string())),
         DataType::Varchar(len) => {
             let size = len.as_ref().and_then(|l| match l {
-                sqlparser::ast::CharacterLength::IntegerLength { length, .. } => {
-                    Some(*length as u32)
-                }
-                sqlparser::ast::CharacterLength::Max => None,
+                CharacterLength::IntegerLength { length, .. } => Some(*length as u32),
+                CharacterLength::Max => None,
             });
             Ok(PgType::Varchar(size))
         }
         DataType::Text => Ok(PgType::Text),
         DataType::Boolean => Ok(PgType::Boolean),
         DataType::Timestamp(_, tz) => {
-            if *tz == sqlparser::ast::TimezoneInfo::WithTimeZone
-                || *tz == sqlparser::ast::TimezoneInfo::Tz
+            if *tz == TimezoneInfo::WithTimeZone
+                || *tz == TimezoneInfo::Tz
             {
                 Ok(PgType::TimestampTz)
             } else {

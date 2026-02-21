@@ -2,7 +2,7 @@ use regex::Regex;
 
 /// Strip `DO $tag$ ... $tag$;` anonymous PL/pgSQL blocks.
 /// Scans for dollar-quoted boundaries manually since the bodies can contain semicolons.
-pub(crate) fn strip_do_blocks(sql: &str) -> String {
+fn strip_do_blocks(sql: &str) -> String {
     let do_start_re = Regex::new(r"(?i)\bDO\s+(?:LANGUAGE\s+\w+\s+)?(\$[^$]*\$)").unwrap();
 
     let mut result = String::with_capacity(sql.len());

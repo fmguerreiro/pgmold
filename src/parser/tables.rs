@@ -1,6 +1,10 @@
 use crate::model::*;
 use crate::util::Result;
-use sqlparser::ast::{ColumnDef, ColumnOption, DataType, Expr, TableConstraint};
+use sqlparser::ast::{
+    ColumnDef, ColumnOption, DataType, Expr, FunctionArg as SqlFunctionArg,
+    FunctionArgExpr, FunctionArguments, ReferentialAction as SqlReferentialAction,
+    TableConstraint,
+};
 use std::collections::BTreeMap;
 
 use super::util::{extract_qualified_name, normalize_expr, parse_data_type};
@@ -247,22 +251,19 @@ pub(crate) fn detect_serial_type(dt: &DataType) -> Option<SequenceDataType> {
 }
 
 pub(crate) fn parse_referential_action(
-    action: &Option<sqlparser::ast::ReferentialAction>,
+    action: &Option<SqlReferentialAction>,
 ) -> ReferentialAction {
     match action {
-        Some(sqlparser::ast::ReferentialAction::NoAction) => ReferentialAction::NoAction,
-        Some(sqlparser::ast::ReferentialAction::Restrict) => ReferentialAction::Restrict,
-        Some(sqlparser::ast::ReferentialAction::Cascade) => ReferentialAction::Cascade,
-        Some(sqlparser::ast::ReferentialAction::SetNull) => ReferentialAction::SetNull,
-        Some(sqlparser::ast::ReferentialAction::SetDefault) => ReferentialAction::SetDefault,
+        Some(SqlReferentialAction::NoAction) => ReferentialAction::NoAction,
+        Some(SqlReferentialAction::Restrict) => ReferentialAction::Restrict,
+        Some(SqlReferentialAction::Cascade) => ReferentialAction::Cascade,
+        Some(SqlReferentialAction::SetNull) => ReferentialAction::SetNull,
+        Some(SqlReferentialAction::SetDefault) => ReferentialAction::SetDefault,
         None => ReferentialAction::NoAction,
     }
 }
 
-/// Parse partition_by expression from sqlparser into our PartitionKey model.
-/// sqlparser parses `PARTITION BY RANGE (col1, col2)` as a function call expression
-/// where the function name is RANGE/LIST/HASH and the arguments are the columns.
-pub(crate) fn parse_partition_by(expr: &Expr) -> Option<PartitionKey> {
+fn parse_partition_by(expr: &Expr) -> Option<PartitionKey> {
     match expr {
         Expr::Function(func) => {
             let strategy_name = func.name.to_string().to_uppercase();
@@ -274,16 +275,16 @@ pub(crate) fn parse_partition_by(expr: &Expr) -> Option<PartitionKey> {
             };
 
             let columns: Vec<String> = match &func.args {
-                sqlparser::ast::FunctionArguments::List(args) => args
+                FunctionArguments::List(args) => args
                     .args
                     .iter()
                     .filter_map(|arg| match arg {
-                        sqlparser::ast::FunctionArg::Unnamed(
-                            sqlparser::ast::FunctionArgExpr::Expr(Expr::Identifier(ident)),
-                        ) => Some(ident.value.clone()),
-                        sqlparser::ast::FunctionArg::Unnamed(
-                            sqlparser::ast::FunctionArgExpr::Expr(expr),
-                        ) => Some(expr.to_string()),
+                        SqlFunctionArg::Unnamed(FunctionArgExpr::Expr(
+                            Expr::Identifier(ident),
+                        )) => Some(ident.value.clone()),
+                        SqlFunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {
+                            Some(expr.to_string())
+                        }
                         _ => None,
                     })
                     .collect(),

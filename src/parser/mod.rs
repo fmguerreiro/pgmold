@@ -19,7 +19,13 @@ pub use loader::load_schema_sources;
 use crate::model::*;
 use crate::pg::sqlgen::strip_ident_quotes;
 use crate::util::{normalize_sql_whitespace, Result, SchemaError};
-use sqlparser::ast::{Statement, TableConstraint};
+use sqlparser::ast::{
+    AlterTable, AlterTableOperation, CreateDomain, CreateExtension, CreateFunction, CreateTrigger,
+    CreateView, DropDomain, DropExtension, DropFunction, DropTrigger, ObjectType,
+    RenameTableNameKind, SchemaName, Statement, TableConstraint,
+    TriggerEvent as SqlTriggerEvent, TriggerPeriod, TriggerReferencingType,
+    UserDefinedTypeRepresentation,
+};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use std::fs;
@@ -109,7 +115,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             }
             Statement::CreateType {
                 name,
-                representation: Some(sqlparser::ast::UserDefinedTypeRepresentation::Enum { labels }),
+                representation: Some(UserDefinedTypeRepresentation::Enum { labels }),
                 ..
             } => {
                 let (enum_schema, enum_name) = extract_qualified_name(&name);
@@ -161,38 +167,38 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 };
                 schema.pending_policies.push(policy);
             }
-            Statement::AlterTable(sqlparser::ast::AlterTable {
+            Statement::AlterTable(AlterTable {
                 name, operations, ..
             }) => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(&name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
                 for op in operations {
                     match op {
-                        sqlparser::ast::AlterTableOperation::EnableRowLevelSecurity => {
+                        AlterTableOperation::EnableRowLevelSecurity => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 table.row_level_security = true;
                             }
                         }
-                        sqlparser::ast::AlterTableOperation::DisableRowLevelSecurity => {
+                        AlterTableOperation::DisableRowLevelSecurity => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 table.row_level_security = false;
                             }
                         }
-                        sqlparser::ast::AlterTableOperation::EnableTrigger { name: trig_name } => {
+                        AlterTableOperation::EnableTrigger { name: trig_name } => {
                             let trigger_key =
                                 format!("{}.{}.{}", tbl_schema, tbl_name, trig_name.value);
                             if let Some(trigger) = schema.triggers.get_mut(&trigger_key) {
                                 trigger.enabled = TriggerEnabled::Origin;
                             }
                         }
-                        sqlparser::ast::AlterTableOperation::DisableTrigger { name: trig_name } => {
+                        AlterTableOperation::DisableTrigger { name: trig_name } => {
                             let trigger_key =
                                 format!("{}.{}.{}", tbl_schema, tbl_name, trig_name.value);
                             if let Some(trigger) = schema.triggers.get_mut(&trigger_key) {
                                 trigger.enabled = TriggerEnabled::Disabled;
                             }
                         }
-                        sqlparser::ast::AlterTableOperation::EnableReplicaTrigger {
+                        AlterTableOperation::EnableReplicaTrigger {
                             name: trig_name,
                         } => {
                             let trigger_key =
@@ -201,7 +207,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 trigger.enabled = TriggerEnabled::Replica;
                             }
                         }
-                        sqlparser::ast::AlterTableOperation::EnableAlwaysTrigger {
+                        AlterTableOperation::EnableAlwaysTrigger {
                             name: trig_name,
                         } => {
                             let trigger_key =
@@ -210,7 +216,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 trigger.enabled = TriggerEnabled::Always;
                             }
                         }
-                        sqlparser::ast::AlterTableOperation::AddConstraint {
+                        AlterTableOperation::AddConstraint {
                             constraint, ..
                         } => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
@@ -285,7 +291,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 }
                             }
                         }
-                        sqlparser::ast::AlterTableOperation::AddColumn { column_def, .. } => {
+                        AlterTableOperation::AddColumn { column_def, .. } => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 let (column, seq_opt) =
                                     parse_column_with_serial(&tbl_schema, &tbl_name, &column_def)?;
@@ -296,7 +302,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 }
                             }
                         }
-                        sqlparser::ast::AlterTableOperation::DropColumn {
+                        AlterTableOperation::DropColumn {
                             column_names, ..
                         } => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
@@ -309,10 +315,10 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                     .retain(|name, _| !names_to_drop.contains(name));
                             }
                         }
-                        sqlparser::ast::AlterTableOperation::RenameTable { table_name } => {
+                        AlterTableOperation::RenameTable { table_name } => {
                             let new_name = match table_name {
-                                sqlparser::ast::RenameTableNameKind::As(obj)
-                                | sqlparser::ast::RenameTableNameKind::To(obj) => {
+                                RenameTableNameKind::As(obj)
+                                | RenameTableNameKind::To(obj) => {
                                     let (new_schema, new_tbl) = extract_qualified_name(&obj);
                                     let effective_schema = if obj.0.len() == 1 {
                                         tbl_schema.clone()
@@ -330,7 +336,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 schema.tables.insert(new_key, table);
                             }
                         }
-                        sqlparser::ast::AlterTableOperation::RenameColumn {
+                        AlterTableOperation::RenameColumn {
                             old_column_name,
                             new_column_name,
                         } => {
@@ -344,7 +350,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 }
                             }
                         }
-                        sqlparser::ast::AlterTableOperation::RenameConstraint {
+                        AlterTableOperation::RenameConstraint {
                             old_name,
                             new_name,
                         } => {
@@ -375,7 +381,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     }
                 }
             }
-            Statement::CreateFunction(sqlparser::ast::CreateFunction {
+            Statement::CreateFunction(CreateFunction {
                 name,
                 args,
                 return_type,
@@ -401,7 +407,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 let key = qualified_name(&func_schema, &func.signature());
                 schema.functions.insert(key, func);
             }
-            Statement::CreateView(sqlparser::ast::CreateView {
+            Statement::CreateView(CreateView {
                 name,
                 query,
                 materialized,
@@ -419,7 +425,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 let key = qualified_name(&view_schema, &view_name);
                 schema.views.insert(key, view);
             }
-            Statement::CreateExtension(sqlparser::ast::CreateExtension {
+            Statement::CreateExtension(CreateExtension {
                 name,
                 version,
                 schema: ext_schema,
@@ -441,7 +447,6 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 schema.extensions.insert(ext_name, ext);
             }
             Statement::CreateSchema { schema_name, .. } => {
-                use sqlparser::ast::SchemaName;
                 let name = match &schema_name {
                     SchemaName::Simple(obj) => obj.to_string().trim_matches('"').to_string(),
                     SchemaName::UnnamedAuthorization(ident) => {
@@ -459,7 +464,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     },
                 );
             }
-            Statement::CreateDomain(sqlparser::ast::CreateDomain {
+            Statement::CreateDomain(CreateDomain {
                 name,
                 data_type,
                 collation,
@@ -503,7 +508,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 let key = qualified_name(&domain_schema, &domain_name);
                 schema.domains.insert(key, domain);
             }
-            Statement::CreateTrigger(sqlparser::ast::CreateTrigger {
+            Statement::CreateTrigger(CreateTrigger {
                 name,
                 period,
                 events,
@@ -524,10 +529,10 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 let (func_schema, func_name) = extract_qualified_name(&exec.func_desc.name);
 
                 let timing = match period {
-                    Some(sqlparser::ast::TriggerPeriod::Before) => TriggerTiming::Before,
-                    Some(sqlparser::ast::TriggerPeriod::After) => TriggerTiming::After,
-                    Some(sqlparser::ast::TriggerPeriod::InsteadOf) => TriggerTiming::InsteadOf,
-                    Some(sqlparser::ast::TriggerPeriod::For) => TriggerTiming::Before,
+                    Some(TriggerPeriod::Before) => TriggerTiming::Before,
+                    Some(TriggerPeriod::After) => TriggerTiming::After,
+                    Some(TriggerPeriod::InsteadOf) => TriggerTiming::InsteadOf,
+                    Some(TriggerPeriod::For) => TriggerTiming::Before,
                     None => TriggerTiming::Before,
                 };
 
@@ -536,17 +541,17 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
 
                 for event in &events {
                     match event {
-                        sqlparser::ast::TriggerEvent::Insert => {
+                        SqlTriggerEvent::Insert => {
                             trigger_events.push(TriggerEvent::Insert);
                         }
-                        sqlparser::ast::TriggerEvent::Update(cols) => {
+                        SqlTriggerEvent::Update(cols) => {
                             trigger_events.push(TriggerEvent::Update);
                             update_columns.extend(cols.iter().map(|c| c.to_string()));
                         }
-                        sqlparser::ast::TriggerEvent::Delete => {
+                        SqlTriggerEvent::Delete => {
                             trigger_events.push(TriggerEvent::Delete);
                         }
-                        sqlparser::ast::TriggerEvent::Truncate => {
+                        SqlTriggerEvent::Truncate => {
                             trigger_events.push(TriggerEvent::Truncate);
                         }
                     }
@@ -556,10 +561,10 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 let mut new_table_name = None;
                 for tr in &referencing {
                     match tr.refer_type {
-                        sqlparser::ast::TriggerReferencingType::OldTable => {
+                        TriggerReferencingType::OldTable => {
                             old_table_name = Some(tr.transition_relation_name.to_string());
                         }
-                        sqlparser::ast::TriggerReferencingType::NewTable => {
+                        TriggerReferencingType::NewTable => {
                             new_table_name = Some(tr.transition_relation_name.to_string());
                         }
                     }
@@ -661,7 +666,6 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             Statement::Drop {
                 object_type, names, ..
             } => {
-                use sqlparser::ast::ObjectType;
                 for name in names {
                     let (obj_schema, obj_name) = extract_qualified_name(&name);
                     let key = qualified_name(&obj_schema, &obj_name);
@@ -695,7 +699,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     }
                 }
             }
-            Statement::DropFunction(sqlparser::ast::DropFunction { func_desc, .. }) => {
+            Statement::DropFunction(DropFunction { func_desc, .. }) => {
                 for desc in func_desc {
                     let (func_schema, func_name) = extract_qualified_name(&desc.name);
                     let args_str = desc
@@ -716,12 +720,12 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     schema.functions.remove(&key);
                 }
             }
-            Statement::DropDomain(sqlparser::ast::DropDomain { name, .. }) => {
+            Statement::DropDomain(DropDomain { name, .. }) => {
                 let (domain_schema, domain_name) = extract_qualified_name(&name);
                 let key = qualified_name(&domain_schema, &domain_name);
                 schema.domains.remove(&key);
             }
-            Statement::DropTrigger(sqlparser::ast::DropTrigger {
+            Statement::DropTrigger(DropTrigger {
                 trigger_name,
                 table_name: Some(ref tbl),
                 ..
@@ -735,7 +739,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 );
                 schema.triggers.remove(&trigger_key);
             }
-            Statement::DropTrigger(sqlparser::ast::DropTrigger { .. }) => {}
+            Statement::DropTrigger(DropTrigger { .. }) => {}
             Statement::DropPolicy {
                 name, table_name, ..
             } => {
@@ -750,7 +754,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     !(p.table_schema == tbl_schema && p.table == tbl_name && p.name == policy_name)
                 });
             }
-            Statement::DropExtension(sqlparser::ast::DropExtension { names, .. }) => {
+            Statement::DropExtension(DropExtension { names, .. }) => {
                 for name in names {
                     let ext_name = name.to_string().trim_matches('"').to_string();
                     if ext_name == "plpgsql" {
