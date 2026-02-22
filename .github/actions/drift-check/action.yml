@@ -105,11 +105,13 @@ runs:
     - name: Get latest release version
       shell: bash
       id: version
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
       run: |
-        if [[ "${{ inputs.version }}" == "latest" ]]; then
+        if [[ "$INPUT_VERSION" == "latest" ]]; then
           VERSION=$(curl -s https://api.github.com/repos/fmguerreiro/pgmold/releases/latest | jq -r .tag_name)
         else
-          VERSION="${{ inputs.version }}"
+          VERSION="$INPUT_VERSION"
         fi
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -133,10 +135,14 @@ runs:
 
     - name: Validate inputs
       shell: bash
+      env:
+        INPUT_DATABASE: ${{ inputs.database }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_DRIFT_CHECK: ${{ inputs.drift-check }}
       run: |
-        DATABASE="${{ inputs.database }}"
-        BASELINE="${{ inputs.baseline }}"
-        DRIFT_CHECK="${{ inputs.drift-check }}"
+        DATABASE="$INPUT_DATABASE"
+        BASELINE="$INPUT_BASELINE"
+        DRIFT_CHECK="$INPUT_DRIFT_CHECK"
 
         if [[ -z "$DATABASE" && -z "$BASELINE" ]]; then
           echo "::error::Either 'database' or 'baseline' input must be provided."
@@ -150,28 +156,28 @@ runs:
     - name: Run migration plan
       shell: bash
       id: plan
+      env:
+        INPUT_SCHEMA: ${{ inputs.schema }}
+        INPUT_DATABASE: ${{ inputs.database }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_TARGET_SCHEMAS: ${{ inputs.target-schemas }}
       run: |
-        SCHEMA_SOURCES="${{ inputs.schema }}"
-        DATABASE="${{ inputs.database }}"
-        BASELINE="${{ inputs.baseline }}"
-        TARGET_SCHEMAS="${{ inputs.target-schemas }}"
-
-        SCHEMA_ARGS=""
-        for source in $SCHEMA_SOURCES; do
-          SCHEMA_ARGS="$SCHEMA_ARGS --schema $source"
+        SCHEMA_ARGS=()
+        for source in $INPUT_SCHEMA; do
+          SCHEMA_ARGS+=(--schema "$source")
         done
 
-        if [[ -n "$DATABASE" ]]; then
+        if [[ -n "$INPUT_DATABASE" ]]; then
           echo "Running migration plan against database..."
-          OUTPUT=$(pgmold plan $SCHEMA_ARGS \
-            --database "$DATABASE" \
-            --target-schemas "$TARGET_SCHEMAS" \
+          OUTPUT=$(pgmold plan "${SCHEMA_ARGS[@]}" \
+            --database "$INPUT_DATABASE" \
+            --target-schemas "$INPUT_TARGET_SCHEMAS" \
             --json)
         else
-          FIRST_SCHEMA=$(echo "$SCHEMA_SOURCES" | awk '{print $1}')
+          FIRST_SCHEMA=$(echo "$INPUT_SCHEMA" | awk '{print $1}')
           echo "Running SQL-to-SQL diff (baseline mode)..."
           OUTPUT=$(pgmold diff \
-            --from "$BASELINE" \
+            --from "$INPUT_BASELINE" \
             --to "$FIRST_SCHEMA" \
             --json)
         fi
@@ -182,30 +188,32 @@ runs:
         echo "statement-count=$STATEMENT_COUNT" >> "$GITHUB_OUTPUT"
         echo "has-destructive=$HAS_DESTRUCTIVE" >> "$GITHUB_OUTPUT"
 
+        DELIMITER="pgmold_$(openssl rand -hex 8)"
         {
-          echo 'plan-json<<EOF'
+          echo "plan-json<<$DELIMITER"
           echo "$OUTPUT"
-          echo 'EOF'
+          echo "$DELIMITER"
         } >> "$GITHUB_OUTPUT"
 
     - name: Run drift detection
       shell: bash
       id: drift
       if: ${{ inputs.drift-check == 'true' && inputs.database != '' }}
+      env:
+        INPUT_SCHEMA: ${{ inputs.schema }}
+        INPUT_DATABASE: ${{ inputs.database }}
+        INPUT_TARGET_SCHEMAS: ${{ inputs.target-schemas }}
+        INPUT_FAIL_ON_DRIFT: ${{ inputs.fail-on-drift }}
       run: |
-        SCHEMA_SOURCES="${{ inputs.schema }}"
-        DATABASE="${{ inputs.database }}"
-        TARGET_SCHEMAS="${{ inputs.target-schemas }}"
-
-        SCHEMA_ARGS=""
-        for source in $SCHEMA_SOURCES; do
-          SCHEMA_ARGS="$SCHEMA_ARGS --schema $source"
+        SCHEMA_ARGS=()
+        for source in $INPUT_SCHEMA; do
+          SCHEMA_ARGS+=(--schema "$source")
         done
 
         echo "Running drift detection..."
-        OUTPUT=$(pgmold drift $SCHEMA_ARGS \
-          --database "$DATABASE" \
-          --target-schemas "$TARGET_SCHEMAS" \
+        OUTPUT=$(pgmold drift "${SCHEMA_ARGS[@]}" \
+          --database "$INPUT_DATABASE" \
+          --target-schemas "$INPUT_TARGET_SCHEMAS" \
           --json)
 
         echo "Drift detection complete."
@@ -218,13 +226,14 @@ runs:
         echo "expected-fingerprint=$EXPECTED_FP" >> "$GITHUB_OUTPUT"
         echo "actual-fingerprint=$ACTUAL_FP" >> "$GITHUB_OUTPUT"
 
+        DELIMITER="pgmold_$(openssl rand -hex 8)"
         {
-          echo 'report<<EOF'
+          echo "report<<$DELIMITER"
           echo "$OUTPUT"
-          echo 'EOF'
+          echo "$DELIMITER"
         } >> "$GITHUB_OUTPUT"
 
-        if [[ "$HAS_DRIFT" == "true" && "${{ inputs.fail-on-drift }}" == "true" ]]; then
+        if [[ "$HAS_DRIFT" == "true" && "$INPUT_FAIL_ON_DRIFT" == "true" ]]; then
           DIFF_COUNT=$(echo "$OUTPUT" | jq '.differences | length')
           echo "::error::Schema drift detected! Expected: $EXPECTED_FP, Actual: $ACTUAL_FP ($DIFF_COUNT differences)"
           exit 1
@@ -263,6 +272,19 @@ runs:
             echo "## pgmold Migration Plan"
             echo ""
             echo "No schema changes detected."
+
+            if [[ -n "$HAS_DRIFT" ]]; then
+              echo ""
+              echo "### Drift Status"
+              if [[ "$HAS_DRIFT" == "true" ]]; then
+                local diff_count
+                diff_count=$(echo "$DRIFT_REPORT" | jq '.differences | length')
+                echo "Drift detected ($diff_count differences)"
+              else
+                echo "No drift detected"
+              fi
+            fi
+
             echo ""
             echo "---"
             echo "*Generated by [pgmold](https://github.com/fmguerreiro/pgmold)*"
@@ -333,7 +355,6 @@ runs:
         }
 
         COMMENT_BODY=$(build_comment)
-        MARKER="<!-- pgmold-ci-comment -->"
 
         EXISTING_COMMENT_ID=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
           --jq '.[] | select(.body | startswith("<!-- pgmold-ci-comment -->")) | .id' \
