@@ -5,11 +5,11 @@ use sqlparser::ast::{
     TimezoneInfo,
 };
 
-pub(crate) fn normalize_expr(expr: &str) -> String {
+pub(super) fn normalize_expr(expr: &str) -> String {
     normalize_type_casts(expr)
 }
 
-pub(crate) fn extract_qualified_name(name: &ObjectName) -> (String, String) {
+pub(super) fn extract_qualified_name(name: &ObjectName) -> (String, String) {
     let parts: Vec<String> = name
         .0
         .iter()
@@ -22,7 +22,7 @@ pub(crate) fn extract_qualified_name(name: &ObjectName) -> (String, String) {
     }
 }
 
-pub(crate) fn parse_policy_command(cmd: &Option<CreatePolicyCommand>) -> PolicyCommand {
+pub(super) fn parse_policy_command(cmd: &Option<CreatePolicyCommand>) -> PolicyCommand {
     match cmd {
         Some(CreatePolicyCommand::All) => PolicyCommand::All,
         Some(CreatePolicyCommand::Select) => PolicyCommand::Select,
@@ -33,7 +33,7 @@ pub(crate) fn parse_policy_command(cmd: &Option<CreatePolicyCommand>) -> PolicyC
     }
 }
 
-pub(crate) fn parse_for_values(for_values: &Option<ForValues>) -> Result<PartitionBound> {
+pub(super) fn parse_for_values(for_values: &Option<ForValues>) -> Result<PartitionBound> {
     match for_values {
         Some(ForValues::In(values)) => Ok(PartitionBound::List {
             values: values
@@ -64,7 +64,7 @@ fn partition_bound_value_to_string(v: &PartitionBoundValue) -> String {
     }
 }
 
-pub(crate) fn parse_data_type(dt: &DataType) -> Result<PgType> {
+pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
     match dt {
         DataType::Integer(_) | DataType::Int(_) => Ok(PgType::Integer),
         DataType::BigInt(_) => Ok(PgType::BigInt),

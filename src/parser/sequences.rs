@@ -2,7 +2,7 @@ use crate::model::*;
 use crate::util::Result;
 use sqlparser::ast::{DataType, Expr, ObjectName, SequenceOptions, UnaryOperator, Value};
 
-pub(crate) fn parse_create_sequence(
+pub(super) fn parse_create_sequence(
     schema: &str,
     name: &str,
     data_type: Option<&DataType>,
@@ -70,54 +70,42 @@ pub(crate) fn parse_create_sequence(
         }
     });
 
-    let final_increment = increment.or(Some(1));
-    let inc = final_increment.unwrap_or(1);
-    let is_ascending = inc > 0;
+    let increment = increment.or(Some(1));
+    let is_ascending = increment.unwrap_or(1) > 0;
+    let cache = cache.or(Some(1));
 
-    let final_cache = cache.or(Some(1));
-
-    let final_min_value = min_value.or({
-        if is_ascending {
-            Some(1)
-        } else {
-            match seq_data_type {
-                SequenceDataType::SmallInt => Some(-32768),
-                SequenceDataType::Integer => Some(-2147483648),
-                SequenceDataType::BigInt => Some(-9223372036854775808),
-            }
+    let min_value = min_value.or(if is_ascending {
+        Some(1)
+    } else {
+        match seq_data_type {
+            SequenceDataType::SmallInt => Some(-32768),
+            SequenceDataType::Integer => Some(-2147483648),
+            SequenceDataType::BigInt => Some(-9223372036854775808),
         }
     });
 
-    let final_max_value = max_value.or({
-        if is_ascending {
-            match seq_data_type {
-                SequenceDataType::SmallInt => Some(32767),
-                SequenceDataType::Integer => Some(2147483647),
-                SequenceDataType::BigInt => Some(9223372036854775807),
-            }
-        } else {
-            Some(-1)
+    let max_value = max_value.or(if is_ascending {
+        match seq_data_type {
+            SequenceDataType::SmallInt => Some(32767),
+            SequenceDataType::Integer => Some(2147483647),
+            SequenceDataType::BigInt => Some(9223372036854775807),
         }
+    } else {
+        Some(-1)
     });
 
-    let final_start = start.or({
-        if is_ascending {
-            final_min_value
-        } else {
-            final_max_value
-        }
-    });
+    let start = start.or(if is_ascending { min_value } else { max_value });
 
     Ok(Sequence {
         name: name.to_string(),
         schema: schema.to_string(),
         data_type: seq_data_type,
-        start: final_start,
-        increment: final_increment,
-        min_value: final_min_value,
-        max_value: final_max_value,
+        start,
+        increment,
+        min_value,
+        max_value,
         cycle,
-        cache: final_cache,
+        cache,
         owned_by: owned_by_parsed,
         owner: None,
         grants: Vec::new(),

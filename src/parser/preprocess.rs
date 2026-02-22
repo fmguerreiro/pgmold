@@ -1,7 +1,5 @@
 use regex::Regex;
 
-/// Strip `DO $tag$ ... $tag$;` anonymous PL/pgSQL blocks.
-/// Scans for dollar-quoted boundaries manually since the bodies can contain semicolons.
 fn strip_do_blocks(sql: &str) -> String {
     let do_start_re = Regex::new(r"(?i)\bDO\s+(?:LANGUAGE\s+\w+\s+)?(\$[^$]*\$)").unwrap();
 
@@ -37,10 +35,10 @@ fn strip_do_blocks(sql: &str) -> String {
     result
 }
 
-/// Remove/normalize syntax not supported by sqlparser 0.52.
-/// Statements stripped here are either unsupported or parsed separately via regex
+/// Strips syntax not supported by sqlparser 0.52.
+/// Statements stripped here are parsed separately via regex
 /// (GRANT, REVOKE, ALTER DEFAULT PRIVILEGES, OWNER TO, COMMENT ON, DO blocks).
-pub(crate) fn preprocess_sql(sql: &str) -> String {
+pub(super) fn preprocess_sql(sql: &str) -> String {
     let sql = strip_do_blocks(sql);
 
     let strip_patterns = [

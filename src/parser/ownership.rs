@@ -1,7 +1,7 @@
 use crate::model::*;
 use regex::Regex;
 
-pub(crate) fn parse_owner_statements(sql: &str, schema: &mut Schema) {
+pub(super) fn parse_owner_statements(sql: &str, schema: &mut Schema) {
     let alter_function_owner_re = Regex::new(
         r#"(?i)ALTER\s+FUNCTION\s+(?:["']?([^"'\s(]+)["']?\.)?["']?([^"'\s(]+)["']?\s*\(([^)]*)\)\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
     ).unwrap();

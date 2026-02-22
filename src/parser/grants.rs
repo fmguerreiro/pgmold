@@ -156,7 +156,7 @@ fn parse_grant_all_in_schema(sql: &str, schema: &mut Schema) {
     }
 }
 
-pub(crate) fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
+pub(super) fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<()> {
     parse_grant_all_in_schema(sql, schema);
 
     let grant_re = Regex::new(
@@ -267,7 +267,7 @@ pub(crate) fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<(
     Ok(())
 }
 
-pub(crate) fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
+pub(super) fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<()> {
     let revoke_re = Regex::new(
         r#"(?i)REVOKE\s+(GRANT\s+OPTION\s+FOR\s+)?(.+?)\s+ON\s+(?:(TABLE|VIEW|SEQUENCE|FUNCTION|SCHEMA|TYPE)\s+)?(.+?)\s+FROM\s+("[^"]+"|\w+|PUBLIC)\s*;"#
     ).unwrap();
@@ -395,7 +395,7 @@ pub(crate) fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<
     Ok(())
 }
 
-pub(crate) fn parse_alter_default_privileges(sql: &str, schema: &mut Schema) -> Result<()> {
+pub(super) fn parse_alter_default_privileges(sql: &str, schema: &mut Schema) -> Result<()> {
     let grant_re = Regex::new(
         r"(?is)ALTER\s+DEFAULT\s+PRIVILEGES\s+(?:FOR\s+ROLE\s+(\w+)\s+)?(?:IN\s+SCHEMA\s+(\w+)\s+)?GRANT\s+(.+?)\s+ON\s+(TABLES|SEQUENCES|FUNCTIONS|ROUTINES|TYPES|SCHEMAS)\s+TO\s+(\w+|PUBLIC)\s*(WITH\s+GRANT\s+OPTION)?\s*;"
     ).unwrap();

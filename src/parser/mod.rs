@@ -29,15 +29,13 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use std::fs;
 
-use self::functions::parse_create_function;
-use self::grants::{
-    parse_alter_default_privileges, parse_grant_statements, parse_revoke_statements,
-};
-use self::ownership::parse_owner_statements;
-use self::preprocess::preprocess_sql;
-use self::sequences::parse_create_sequence;
-use self::tables::{parse_column_with_serial, parse_create_table, parse_referential_action};
-use self::util::{
+use functions::parse_create_function;
+use grants::{parse_alter_default_privileges, parse_grant_statements, parse_revoke_statements};
+use ownership::parse_owner_statements;
+use preprocess::preprocess_sql;
+use sequences::parse_create_sequence;
+use tables::{parse_column_with_serial, parse_create_table, parse_referential_action};
+use util::{
     extract_qualified_name, normalize_expr, parse_data_type, parse_for_values, parse_policy_command,
 };
 

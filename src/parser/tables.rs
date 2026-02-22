@@ -8,12 +8,12 @@ use std::collections::BTreeMap;
 
 use super::util::{extract_qualified_name, normalize_expr, parse_data_type};
 
-pub(crate) struct ParsedTable {
-    pub(crate) table: Table,
-    pub(crate) sequences: Vec<Sequence>,
+pub(super) struct ParsedTable {
+    pub(super) table: Table,
+    pub(super) sequences: Vec<Sequence>,
 }
 
-pub(crate) fn parse_create_table(
+pub(super) fn parse_create_table(
     schema: &str,
     name: &str,
     columns: &[ColumnDef],
@@ -152,7 +152,7 @@ pub(crate) fn parse_create_table(
     Ok(ParsedTable { table, sequences })
 }
 
-pub(crate) fn parse_column_with_serial(
+pub(super) fn parse_column_with_serial(
     table_schema: &str,
     table_name: &str,
     col_def: &ColumnDef,
@@ -235,7 +235,7 @@ pub(crate) fn parse_column_with_serial(
     }
 }
 
-pub(crate) fn detect_serial_type(dt: &DataType) -> Option<SequenceDataType> {
+pub(super) fn detect_serial_type(dt: &DataType) -> Option<SequenceDataType> {
     if let DataType::Custom(name, _) = dt {
         let type_name = name.to_string().to_lowercase();
         match type_name.as_str() {
@@ -249,7 +249,7 @@ pub(crate) fn detect_serial_type(dt: &DataType) -> Option<SequenceDataType> {
     }
 }
 
-pub(crate) fn parse_referential_action(action: &Option<SqlReferentialAction>) -> ReferentialAction {
+pub(super) fn parse_referential_action(action: &Option<SqlReferentialAction>) -> ReferentialAction {
     match action {
         Some(SqlReferentialAction::NoAction) => ReferentialAction::NoAction,
         Some(SqlReferentialAction::Restrict) => ReferentialAction::Restrict,

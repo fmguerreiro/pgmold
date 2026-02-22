@@ -6,8 +6,6 @@ use sqlparser::ast::{
     FunctionDefinitionSetParam, FunctionSecurity, FunctionSetValue, Ident, OperateFunctionArg,
 };
 
-/// Strips dollar-quote delimiters from a function body.
-/// Handles both `$$...$$` and `$tag$...$tag$` formats.
 fn strip_dollar_quotes(body: &str) -> String {
     let trimmed = body.trim();
 
@@ -28,7 +26,7 @@ fn strip_dollar_quotes(body: &str) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn parse_create_function(
+pub(super) fn parse_create_function(
     schema: &str,
     name: &str,
     args: Option<&[OperateFunctionArg]>,
