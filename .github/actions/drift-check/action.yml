@@ -117,14 +117,14 @@ runs:
 
     - name: Download and install pgmold
       shell: bash
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+        TARGET: ${{ steps.platform.outputs.target }}
       run: |
-        VERSION="${{ steps.version.outputs.version }}"
-        TARGET="${{ steps.platform.outputs.target }}"
-
         DOWNLOAD_URL="https://github.com/fmguerreiro/pgmold/releases/download/${VERSION}/pgmold-${TARGET}.tar.gz"
 
         echo "Downloading pgmold ${VERSION} for ${TARGET}..."
-        curl -L -o pgmold.tar.gz "$DOWNLOAD_URL"
+        curl --fail -L -o pgmold.tar.gz "$DOWNLOAD_URL"
 
         tar xzf pgmold.tar.gz
         chmod +x pgmold
@@ -360,15 +360,15 @@ runs:
           --jq '.[] | select(.body | startswith("<!-- pgmold-ci-comment -->")) | .id' \
           | head -n1)
 
+        PAYLOAD=$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')
+
         if [[ -n "$EXISTING_COMMENT_ID" ]]; then
-          gh api "repos/$REPO/issues/comments/$EXISTING_COMMENT_ID" \
-            -X PATCH \
-            -f body="$COMMENT_BODY"
+          echo "$PAYLOAD" | gh api "repos/$REPO/issues/comments/$EXISTING_COMMENT_ID" \
+            -X PATCH --input -
           echo "comment-id=$EXISTING_COMMENT_ID" >> "$GITHUB_OUTPUT"
         else
-          CREATED=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
-            -X POST \
-            -f body="$COMMENT_BODY")
+          CREATED=$(echo "$PAYLOAD" | gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+            -X POST --input -)
           COMMENT_ID=$(echo "$CREATED" | jq -r '.id')
           echo "comment-id=$COMMENT_ID" >> "$GITHUB_OUTPUT"
         fi
