@@ -107,11 +107,17 @@ runs:
       id: version
       env:
         INPUT_VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ inputs.github-token }}
       run: |
         if [[ "$INPUT_VERSION" == "latest" ]]; then
-          VERSION=$(curl -s https://api.github.com/repos/fmguerreiro/pgmold/releases/latest | jq -r .tag_name)
+          VERSION=$(gh api repos/fmguerreiro/pgmold/releases/latest --jq '.tag_name')
         else
           VERSION="$INPUT_VERSION"
+        fi
+
+        if [[ -z "$VERSION" ]]; then
+          echo "::error::Could not resolve pgmold version (got empty string)"
+          exit 1
         fi
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -121,10 +127,9 @@ runs:
         VERSION: ${{ steps.version.outputs.version }}
         TARGET: ${{ steps.platform.outputs.target }}
       run: |
-        DOWNLOAD_URL="https://github.com/fmguerreiro/pgmold/releases/download/${VERSION}/pgmold-${TARGET}.tar.gz"
-
         echo "Downloading pgmold ${VERSION} for ${TARGET}..."
-        curl --fail -L -o pgmold.tar.gz "$DOWNLOAD_URL"
+        curl --fail -L -o pgmold.tar.gz \
+          "https://github.com/fmguerreiro/pgmold/releases/download/${VERSION}/pgmold-${TARGET}.tar.gz"
 
         tar xzf pgmold.tar.gz
         chmod +x pgmold
@@ -140,16 +145,12 @@ runs:
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_DRIFT_CHECK: ${{ inputs.drift-check }}
       run: |
-        DATABASE="$INPUT_DATABASE"
-        BASELINE="$INPUT_BASELINE"
-        DRIFT_CHECK="$INPUT_DRIFT_CHECK"
-
-        if [[ -z "$DATABASE" && -z "$BASELINE" ]]; then
+        if [[ -z "$INPUT_DATABASE" && -z "$INPUT_BASELINE" ]]; then
           echo "::error::Either 'database' or 'baseline' input must be provided."
           exit 1
         fi
 
-        if [[ "$DRIFT_CHECK" == "true" && -z "$DATABASE" ]]; then
+        if [[ "$INPUT_DRIFT_CHECK" == "true" && -z "$INPUT_DATABASE" ]]; then
           echo "::warning::drift-check is enabled but no 'database' input was provided — skipping drift detection."
         fi
 
@@ -162,10 +163,12 @@ runs:
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_TARGET_SCHEMAS: ${{ inputs.target-schemas }}
       run: |
+        set -f
         SCHEMA_ARGS=()
         for source in $INPUT_SCHEMA; do
           SCHEMA_ARGS+=(--schema "$source")
         done
+        set +f
 
         if [[ -n "$INPUT_DATABASE" ]]; then
           echo "Running migration plan against database..."
@@ -174,11 +177,14 @@ runs:
             --target-schemas "$INPUT_TARGET_SCHEMAS" \
             --json)
         else
-          FIRST_SCHEMA=$(echo "$INPUT_SCHEMA" | awk '{print $1}')
           echo "Running SQL-to-SQL diff (baseline mode)..."
+          SCHEMA_FIRST="${INPUT_SCHEMA%% *}"
+          if [[ "$INPUT_SCHEMA" != "$SCHEMA_FIRST" ]]; then
+            echo "::warning::baseline mode only supports a single schema source; ignoring all but '$SCHEMA_FIRST'"
+          fi
           OUTPUT=$(pgmold diff \
             --from "$INPUT_BASELINE" \
-            --to "$FIRST_SCHEMA" \
+            --to "$SCHEMA_FIRST" \
             --json)
         fi
 
@@ -205,18 +211,27 @@ runs:
         INPUT_TARGET_SCHEMAS: ${{ inputs.target-schemas }}
         INPUT_FAIL_ON_DRIFT: ${{ inputs.fail-on-drift }}
       run: |
+        set -f
         SCHEMA_ARGS=()
         for source in $INPUT_SCHEMA; do
           SCHEMA_ARGS+=(--schema "$source")
         done
+        set +f
 
         echo "Running drift detection..."
+        set +e
         OUTPUT=$(pgmold drift "${SCHEMA_ARGS[@]}" \
           --database "$INPUT_DATABASE" \
           --target-schemas "$INPUT_TARGET_SCHEMAS" \
-          --json)
+          --json 2>&1)
+        DRIFT_EXIT=$?
+        set -e
 
-        echo "Drift detection complete."
+        if ! echo "$OUTPUT" | jq empty 2>/dev/null; then
+          echo "::error::pgmold drift produced non-JSON output (exit $DRIFT_EXIT):"
+          echo "$OUTPUT"
+          exit 1
+        fi
 
         HAS_DRIFT=$(echo "$OUTPUT" | jq -r '.has_drift')
         EXPECTED_FP=$(echo "$OUTPUT" | jq -r '.expected_fingerprint')
@@ -233,6 +248,11 @@ runs:
           echo "$DELIMITER"
         } >> "$GITHUB_OUTPUT"
 
+        if [[ "$DRIFT_EXIT" -ne 0 && "$HAS_DRIFT" != "true" ]]; then
+          echo "::error::pgmold drift failed with exit code $DRIFT_EXIT"
+          exit "$DRIFT_EXIT"
+        fi
+
         if [[ "$HAS_DRIFT" == "true" && "$INPUT_FAIL_ON_DRIFT" == "true" ]]; then
           DIFF_COUNT=$(echo "$OUTPUT" | jq '.differences | length')
           echo "::error::Schema drift detected! Expected: $EXPECTED_FP, Actual: $ACTUAL_FP ($DIFF_COUNT differences)"
@@ -245,6 +265,10 @@ runs:
       env:
         PLAN_JSON: ${{ steps.plan.outputs.plan-json }}
       run: |
+        if [[ -z "$PLAN_JSON" ]]; then
+          echo "::warning::PLAN_JSON is empty, skipping destructive operation warnings"
+          exit 0
+        fi
         echo "$PLAN_JSON" | jq -r '.operations[] | select(startswith("Drop"))' | while IFS= read -r statement; do
           echo "::warning::Destructive operation: $statement"
         done
@@ -263,31 +287,42 @@ runs:
         REPO: ${{ github.repository }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: |
+        emit_drift_status() {
+          if [[ -z "$HAS_DRIFT" ]]; then return; fi
+          echo ""
+          echo "### Drift Status"
+          if [[ "$HAS_DRIFT" == "true" ]]; then
+            local diff_count
+            diff_count=$(echo "$DRIFT_REPORT" | jq '.differences | length')
+            echo "Drift detected ($diff_count differences)"
+          else
+            echo "No drift detected"
+          fi
+        }
+
+        emit_footer() {
+          echo ""
+          echo "---"
+          echo "*Generated by [pgmold](https://github.com/fmguerreiro/pgmold)*"
+        }
+
         build_comment() {
           local stmt_count="$STATEMENT_COUNT"
-          local has_dest="$HAS_DESTRUCTIVE"
+
+          echo "<!-- pgmold-ci-comment -->"
+          echo "## pgmold Migration Plan"
+          echo ""
 
           if [[ "$stmt_count" == "0" || -z "$stmt_count" ]]; then
-            echo "<!-- pgmold-ci-comment -->"
-            echo "## pgmold Migration Plan"
-            echo ""
             echo "No schema changes detected."
+            emit_drift_status
+            emit_footer
+            return
+          fi
 
-            if [[ -n "$HAS_DRIFT" ]]; then
-              echo ""
-              echo "### Drift Status"
-              if [[ "$HAS_DRIFT" == "true" ]]; then
-                local diff_count
-                diff_count=$(echo "$DRIFT_REPORT" | jq '.differences | length')
-                echo "Drift detected ($diff_count differences)"
-              else
-                echo "No drift detected"
-              fi
-            fi
-
-            echo ""
-            echo "---"
-            echo "*Generated by [pgmold](https://github.com/fmguerreiro/pgmold)*"
+          if [[ -z "$PLAN_JSON" ]]; then
+            echo "Plan output unavailable (may have been truncated)."
+            emit_footer
             return
           fi
 
@@ -299,16 +334,13 @@ runs:
             dest_display="**$dest_count**"
           fi
 
-          echo "<!-- pgmold-ci-comment -->"
-          echo "## pgmold Migration Plan"
-          echo ""
           echo "### Summary"
           echo "| Metric | Value |"
           echo "|--------|-------|"
           echo "| Statements | $stmt_count |"
           echo "| Destructive operations | $dest_display |"
 
-          if [[ "$has_dest" == "true" ]]; then
+          if [[ "$HAS_DESTRUCTIVE" == "true" ]]; then
             echo ""
             echo "### Destructive Operations"
             echo "> **Warning:** This migration contains destructive operations that require \`--allow-destructive\`."
@@ -337,21 +369,8 @@ runs:
           echo ""
           echo "</details>"
 
-          if [[ -n "$HAS_DRIFT" ]]; then
-            echo ""
-            echo "### Drift Status"
-            if [[ "$HAS_DRIFT" == "true" ]]; then
-              local diff_count
-              diff_count=$(echo "$DRIFT_REPORT" | jq '.differences | length')
-              echo "Drift detected ($diff_count differences)"
-            else
-              echo "No drift detected"
-            fi
-          fi
-
-          echo ""
-          echo "---"
-          echo "*Generated by [pgmold](https://github.com/fmguerreiro/pgmold)*"
+          emit_drift_status
+          emit_footer
         }
 
         COMMENT_BODY=$(build_comment)
@@ -386,13 +405,11 @@ runs:
         LABEL_COLOR="5319e7"
 
         if [[ "$STATEMENT_COUNT" -gt 0 ]]; then
-          if ! gh api "repos/$REPO/labels/$LABEL" &>/dev/null; then
-            gh api "repos/$REPO/labels" \
-              -X POST \
-              -f name="$LABEL" \
-              -f color="$LABEL_COLOR" \
-              -f description="Pull request modifies database schema"
-          fi
+          gh api "repos/$REPO/labels" \
+            -X POST \
+            -f name="$LABEL" \
+            -f color="$LABEL_COLOR" \
+            -f description="Pull request modifies database schema" 2>/dev/null || true
           gh api "repos/$REPO/issues/$PR_NUMBER/labels" \
             -X POST \
             -f "labels[]=$LABEL"

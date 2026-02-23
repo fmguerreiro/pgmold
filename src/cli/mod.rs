@@ -292,11 +292,12 @@ pub async fn run() -> Result<()> {
             let sql = generate_sql(&ops);
 
             if json {
+                let statement_count = sql.len();
                 let output = PlanOutput {
                     operations: ops.iter().map(|op| format!("{op:?}")).collect(),
-                    statements: sql.clone(),
+                    statements: sql,
                     lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
-                    statement_count: sql.len(),
+                    statement_count,
                     validated: None,
                     idempotent: None,
                     residual_ops_count: None,
@@ -499,11 +500,12 @@ pub async fn run() -> Result<()> {
                 let sql = generate_sql(&ops);
 
                 if json {
+                    let statement_count = sql.len();
                     let output = PlanOutput {
                         operations: ops.iter().map(|op| format!("{op:?}")).collect(),
-                        statements: sql.clone(),
+                        statements: sql,
                         lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
-                        statement_count: sql.len(),
+                        statement_count,
                         validated: validation_info.as_ref().map(|v| v.success),
                         idempotent: validation_info.as_ref().map(|v| v.idempotent),
                         residual_ops_count: validation_info.as_ref().map(|v| v.residual_ops.len()),
