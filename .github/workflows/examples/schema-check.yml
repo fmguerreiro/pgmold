@@ -1,0 +1,38 @@
+# Example workflow for pgmold CI action
+# Copy to .github/workflows/schema-check.yml and customize
+name: Schema Check
+
+on:
+  pull_request:
+
+jobs:
+  schema-ci:
+    name: Schema CI
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Full CI with live database
+      - uses: fmguerreiro/pgmold/.github/actions/drift-check@main
+        with:
+          schema: sql:schema.sql
+          database: db:${{ secrets.DATABASE_URL }}
+          target-schemas: public
+
+      # SQL-to-SQL diff (no database needed)
+      # - uses: fmguerreiro/pgmold/.github/actions/drift-check@main
+      #   with:
+      #     schema: sql:schema.sql
+      #     baseline: sql:baseline.sql
+      #     drift-check: 'false'
+
+      # Drift only, no PR comment
+      # - uses: fmguerreiro/pgmold/.github/actions/drift-check@main
+      #   with:
+      #     schema: sql:schema.sql
+      #     database: db:${{ secrets.DATABASE_URL }}
+      #     plan-comment: 'false'
+      #     auto-label: 'false'

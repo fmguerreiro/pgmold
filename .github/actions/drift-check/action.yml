@@ -1,26 +1,45 @@
-name: 'pgmold Drift Check'
-description: 'Detect PostgreSQL schema drift using pgmold'
+name: 'pgmold CI'
+description: 'PostgreSQL schema CI — migration plans, drift detection, PR comments, and auto-labeling'
 author: 'fmguerreiro'
 
 inputs:
   schema:
-    description: 'Path to schema SQL file(s). Can be a single file or multiple files (space-separated).'
+    description: 'Schema source(s), space-separated (e.g. sql:schema.sql or drizzle:drizzle.config.ts)'
     required: true
   database:
-    description: 'PostgreSQL connection string (e.g., postgres://user:pass@host:5432/dbname)'
-    required: true
+    description: 'PostgreSQL connection string (e.g. db:postgres://user:pass@host:5432/dbname)'
+    required: false
+  baseline:
+    description: 'sql:path/to/baseline.sql for SQL-to-SQL diff mode (no live database required)'
+    required: false
   target-schemas:
-    description: 'Comma-separated list of schemas to introspect (default: public)'
+    description: 'Comma-separated list of PostgreSQL schemas to introspect'
     required: false
     default: 'public'
   version:
-    description: 'pgmold version to install (default: latest)'
+    description: 'pgmold version to install'
     required: false
     default: 'latest'
   fail-on-drift:
-    description: 'Whether to fail the action if drift is detected (default: true)'
+    description: 'Fail the action if drift is detected'
     required: false
     default: 'true'
+  plan-comment:
+    description: 'Post migration plan as a PR comment'
+    required: false
+    default: 'true'
+  drift-check:
+    description: 'Run drift detection against the live database'
+    required: false
+    default: 'true'
+  auto-label:
+    description: 'Add database-schema label to the PR when schema changes are detected'
+    required: false
+    default: 'true'
+  github-token:
+    description: 'GitHub token for API calls (PR comments, labels)'
+    required: false
+    default: ${{ github.token }}
 
 outputs:
   has-drift:
@@ -35,6 +54,18 @@ outputs:
   report:
     description: 'Full JSON drift report'
     value: ${{ steps.drift.outputs.report }}
+  plan-json:
+    description: 'Full plan JSON output'
+    value: ${{ steps.plan.outputs.plan-json }}
+  statement-count:
+    description: 'Number of SQL statements in the migration plan'
+    value: ${{ steps.plan.outputs.statement-count }}
+  has-destructive:
+    description: 'Whether the plan contains destructive operations'
+    value: ${{ steps.plan.outputs.has-destructive }}
+  comment-id:
+    description: 'ID of the PR comment that was posted or updated'
+    value: ${{ steps.comment.outputs.comment-id }}
 
 runs:
   using: 'composite'
@@ -69,77 +100,304 @@ runs:
           exit 1
         fi
 
-        echo "target=$TARGET" >> $GITHUB_OUTPUT
+        echo "target=$TARGET" >> "$GITHUB_OUTPUT"
 
     - name: Get latest release version
       shell: bash
       id: version
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
       run: |
-        if [[ "${{ inputs.version }}" == "latest" ]]; then
+        if [[ "$INPUT_VERSION" == "latest" ]]; then
           VERSION=$(curl -s https://api.github.com/repos/fmguerreiro/pgmold/releases/latest | jq -r .tag_name)
         else
-          VERSION="${{ inputs.version }}"
+          VERSION="$INPUT_VERSION"
         fi
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
     - name: Download and install pgmold
       shell: bash
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+        TARGET: ${{ steps.platform.outputs.target }}
       run: |
-        VERSION="${{ steps.version.outputs.version }}"
-        TARGET="${{ steps.platform.outputs.target }}"
-
         DOWNLOAD_URL="https://github.com/fmguerreiro/pgmold/releases/download/${VERSION}/pgmold-${TARGET}.tar.gz"
 
         echo "Downloading pgmold ${VERSION} for ${TARGET}..."
-        curl -L -o pgmold.tar.gz "$DOWNLOAD_URL"
+        curl --fail -L -o pgmold.tar.gz "$DOWNLOAD_URL"
 
         tar xzf pgmold.tar.gz
         chmod +x pgmold
 
         mkdir -p "$HOME/.local/bin"
         mv pgmold "$HOME/.local/bin/"
-        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Validate inputs
+      shell: bash
+      env:
+        INPUT_DATABASE: ${{ inputs.database }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_DRIFT_CHECK: ${{ inputs.drift-check }}
+      run: |
+        DATABASE="$INPUT_DATABASE"
+        BASELINE="$INPUT_BASELINE"
+        DRIFT_CHECK="$INPUT_DRIFT_CHECK"
+
+        if [[ -z "$DATABASE" && -z "$BASELINE" ]]; then
+          echo "::error::Either 'database' or 'baseline' input must be provided."
+          exit 1
+        fi
+
+        if [[ "$DRIFT_CHECK" == "true" && -z "$DATABASE" ]]; then
+          echo "::warning::drift-check is enabled but no 'database' input was provided — skipping drift detection."
+        fi
+
+    - name: Run migration plan
+      shell: bash
+      id: plan
+      env:
+        INPUT_SCHEMA: ${{ inputs.schema }}
+        INPUT_DATABASE: ${{ inputs.database }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_TARGET_SCHEMAS: ${{ inputs.target-schemas }}
+      run: |
+        SCHEMA_ARGS=()
+        for source in $INPUT_SCHEMA; do
+          SCHEMA_ARGS+=(--schema "$source")
+        done
+
+        if [[ -n "$INPUT_DATABASE" ]]; then
+          echo "Running migration plan against database..."
+          OUTPUT=$(pgmold plan "${SCHEMA_ARGS[@]}" \
+            --database "$INPUT_DATABASE" \
+            --target-schemas "$INPUT_TARGET_SCHEMAS" \
+            --json)
+        else
+          FIRST_SCHEMA=$(echo "$INPUT_SCHEMA" | awk '{print $1}')
+          echo "Running SQL-to-SQL diff (baseline mode)..."
+          OUTPUT=$(pgmold diff \
+            --from "$INPUT_BASELINE" \
+            --to "$FIRST_SCHEMA" \
+            --json)
+        fi
+
+        STATEMENT_COUNT=$(echo "$OUTPUT" | jq -r '.statement_count // 0')
+        HAS_DESTRUCTIVE=$(echo "$OUTPUT" | jq -r '[.operations[] | select(startswith("Drop"))] | length > 0')
+
+        echo "statement-count=$STATEMENT_COUNT" >> "$GITHUB_OUTPUT"
+        echo "has-destructive=$HAS_DESTRUCTIVE" >> "$GITHUB_OUTPUT"
+
+        DELIMITER="pgmold_$(openssl rand -hex 8)"
+        {
+          echo "plan-json<<$DELIMITER"
+          echo "$OUTPUT"
+          echo "$DELIMITER"
+        } >> "$GITHUB_OUTPUT"
 
     - name: Run drift detection
       shell: bash
       id: drift
+      if: ${{ inputs.drift-check == 'true' && inputs.database != '' }}
+      env:
+        INPUT_SCHEMA: ${{ inputs.schema }}
+        INPUT_DATABASE: ${{ inputs.database }}
+        INPUT_TARGET_SCHEMAS: ${{ inputs.target-schemas }}
+        INPUT_FAIL_ON_DRIFT: ${{ inputs.fail-on-drift }}
       run: |
-        SCHEMA_FILES="${{ inputs.schema }}"
-        DATABASE_URL="${{ inputs.database }}"
-        TARGET_SCHEMAS="${{ inputs.target-schemas }}"
-
-        SCHEMA_ARGS=""
-        for file in $SCHEMA_FILES; do
-          SCHEMA_ARGS="$SCHEMA_ARGS --schema $file"
+        SCHEMA_ARGS=()
+        for source in $INPUT_SCHEMA; do
+          SCHEMA_ARGS+=(--schema "$source")
         done
 
         echo "Running drift detection..."
-        OUTPUT=$(pgmold drift $SCHEMA_ARGS \
-          --database "$DATABASE_URL" \
-          --target-schemas "$TARGET_SCHEMAS" \
+        OUTPUT=$(pgmold drift "${SCHEMA_ARGS[@]}" \
+          --database "$INPUT_DATABASE" \
+          --target-schemas "$INPUT_TARGET_SCHEMAS" \
           --json)
 
         echo "Drift detection complete."
-        echo "$OUTPUT" | jq .
 
-        HAS_DRIFT=$(echo "$OUTPUT" | jq -r .has_drift)
-        EXPECTED_FP=$(echo "$OUTPUT" | jq -r .expected_fingerprint)
-        ACTUAL_FP=$(echo "$OUTPUT" | jq -r .actual_fingerprint)
+        HAS_DRIFT=$(echo "$OUTPUT" | jq -r '.has_drift')
+        EXPECTED_FP=$(echo "$OUTPUT" | jq -r '.expected_fingerprint')
+        ACTUAL_FP=$(echo "$OUTPUT" | jq -r '.actual_fingerprint')
 
-        echo "has-drift=$HAS_DRIFT" >> $GITHUB_OUTPUT
-        echo "expected-fingerprint=$EXPECTED_FP" >> $GITHUB_OUTPUT
-        echo "actual-fingerprint=$ACTUAL_FP" >> $GITHUB_OUTPUT
+        echo "has-drift=$HAS_DRIFT" >> "$GITHUB_OUTPUT"
+        echo "expected-fingerprint=$EXPECTED_FP" >> "$GITHUB_OUTPUT"
+        echo "actual-fingerprint=$ACTUAL_FP" >> "$GITHUB_OUTPUT"
 
+        DELIMITER="pgmold_$(openssl rand -hex 8)"
         {
-          echo 'report<<EOF'
+          echo "report<<$DELIMITER"
           echo "$OUTPUT"
-          echo EOF
-        } >> $GITHUB_OUTPUT
+          echo "$DELIMITER"
+        } >> "$GITHUB_OUTPUT"
 
-        if [[ "$HAS_DRIFT" == "true" && "${{ inputs.fail-on-drift }}" == "true" ]]; then
+        if [[ "$HAS_DRIFT" == "true" && "$INPUT_FAIL_ON_DRIFT" == "true" ]]; then
           DIFF_COUNT=$(echo "$OUTPUT" | jq '.differences | length')
           echo "::error::Schema drift detected! Expected: $EXPECTED_FP, Actual: $ACTUAL_FP ($DIFF_COUNT differences)"
           exit 1
+        fi
+
+    - name: Emit destructive operation warnings
+      shell: bash
+      if: ${{ steps.plan.outputs.has-destructive == 'true' }}
+      env:
+        PLAN_JSON: ${{ steps.plan.outputs.plan-json }}
+      run: |
+        echo "$PLAN_JSON" | jq -r '.operations[] | select(startswith("Drop"))' | while IFS= read -r statement; do
+          echo "::warning::Destructive operation: $statement"
+        done
+
+    - name: Post PR comment
+      shell: bash
+      id: comment
+      if: ${{ inputs.plan-comment == 'true' && github.event_name == 'pull_request' }}
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PLAN_JSON: ${{ steps.plan.outputs.plan-json }}
+        STATEMENT_COUNT: ${{ steps.plan.outputs.statement-count }}
+        HAS_DESTRUCTIVE: ${{ steps.plan.outputs.has-destructive }}
+        HAS_DRIFT: ${{ steps.drift.outputs.has-drift }}
+        DRIFT_REPORT: ${{ steps.drift.outputs.report }}
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        build_comment() {
+          local stmt_count="$STATEMENT_COUNT"
+          local has_dest="$HAS_DESTRUCTIVE"
+
+          if [[ "$stmt_count" == "0" || -z "$stmt_count" ]]; then
+            echo "<!-- pgmold-ci-comment -->"
+            echo "## pgmold Migration Plan"
+            echo ""
+            echo "No schema changes detected."
+
+            if [[ -n "$HAS_DRIFT" ]]; then
+              echo ""
+              echo "### Drift Status"
+              if [[ "$HAS_DRIFT" == "true" ]]; then
+                local diff_count
+                diff_count=$(echo "$DRIFT_REPORT" | jq '.differences | length')
+                echo "Drift detected ($diff_count differences)"
+              else
+                echo "No drift detected"
+              fi
+            fi
+
+            echo ""
+            echo "---"
+            echo "*Generated by [pgmold](https://github.com/fmguerreiro/pgmold)*"
+            return
+          fi
+
+          local dest_count
+          dest_count=$(echo "$PLAN_JSON" | jq -r '[.operations[] | select(startswith("Drop"))] | length')
+
+          local dest_display="$dest_count"
+          if [[ "$dest_count" -gt 0 ]]; then
+            dest_display="**$dest_count**"
+          fi
+
+          echo "<!-- pgmold-ci-comment -->"
+          echo "## pgmold Migration Plan"
+          echo ""
+          echo "### Summary"
+          echo "| Metric | Value |"
+          echo "|--------|-------|"
+          echo "| Statements | $stmt_count |"
+          echo "| Destructive operations | $dest_display |"
+
+          if [[ "$has_dest" == "true" ]]; then
+            echo ""
+            echo "### Destructive Operations"
+            echo "> **Warning:** This migration contains destructive operations that require \`--allow-destructive\`."
+            echo "$PLAN_JSON" | jq -r '.operations[] | select(startswith("Drop"))' | while IFS= read -r op; do
+              echo "- \`$op\`"
+            done
+          fi
+
+          local lock_warnings
+          lock_warnings=$(echo "$PLAN_JSON" | jq -r '.lock_warnings // [] | .[]' 2>/dev/null)
+          if [[ -n "$lock_warnings" ]]; then
+            echo ""
+            echo "### Lock Warnings"
+            echo "$lock_warnings" | while IFS= read -r warning; do
+              echo "- $warning"
+            done
+          fi
+
+          echo ""
+          echo "### Migration SQL"
+          echo "<details><summary>Click to expand ($stmt_count statements)</summary>"
+          echo ""
+          echo '```sql'
+          echo "$PLAN_JSON" | jq -r '.statements // [] | .[]'
+          echo '```'
+          echo ""
+          echo "</details>"
+
+          if [[ -n "$HAS_DRIFT" ]]; then
+            echo ""
+            echo "### Drift Status"
+            if [[ "$HAS_DRIFT" == "true" ]]; then
+              local diff_count
+              diff_count=$(echo "$DRIFT_REPORT" | jq '.differences | length')
+              echo "Drift detected ($diff_count differences)"
+            else
+              echo "No drift detected"
+            fi
+          fi
+
+          echo ""
+          echo "---"
+          echo "*Generated by [pgmold](https://github.com/fmguerreiro/pgmold)*"
+        }
+
+        COMMENT_BODY=$(build_comment)
+
+        EXISTING_COMMENT_ID=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+          --jq '.[] | select(.body | startswith("<!-- pgmold-ci-comment -->")) | .id' \
+          | head -n1)
+
+        PAYLOAD=$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')
+
+        if [[ -n "$EXISTING_COMMENT_ID" ]]; then
+          echo "$PAYLOAD" | gh api "repos/$REPO/issues/comments/$EXISTING_COMMENT_ID" \
+            -X PATCH --input -
+          echo "comment-id=$EXISTING_COMMENT_ID" >> "$GITHUB_OUTPUT"
+        else
+          CREATED=$(echo "$PAYLOAD" | gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+            -X POST --input -)
+          COMMENT_ID=$(echo "$CREATED" | jq -r '.id')
+          echo "comment-id=$COMMENT_ID" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Auto-label PR
+      shell: bash
+      if: ${{ inputs.auto-label == 'true' && github.event_name == 'pull_request' }}
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        STATEMENT_COUNT: ${{ steps.plan.outputs.statement-count }}
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        LABEL="database-schema"
+        LABEL_COLOR="5319e7"
+
+        if [[ "$STATEMENT_COUNT" -gt 0 ]]; then
+          if ! gh api "repos/$REPO/labels/$LABEL" &>/dev/null; then
+            gh api "repos/$REPO/labels" \
+              -X POST \
+              -f name="$LABEL" \
+              -f color="$LABEL_COLOR" \
+              -f description="Pull request modifies database schema"
+          fi
+          gh api "repos/$REPO/issues/$PR_NUMBER/labels" \
+            -X POST \
+            -f "labels[]=$LABEL"
+        else
+          gh api "repos/$REPO/issues/$PR_NUMBER/labels/$LABEL" -X DELETE &>/dev/null || true
         fi
 
 branding:

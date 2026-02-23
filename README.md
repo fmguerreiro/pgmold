@@ -100,6 +100,9 @@ pgmold apply -s sql:schema.sql -d postgres://localhost/mydb
 # Diff two SQL schema files (outputs migration SQL)
 pgmold diff --from sql:old.sql --to sql:new.sql
 
+# Diff with JSON output for CI
+pgmold diff --from sql:old.sql --to sql:new.sql --json
+
 # Generate migration plan
 pgmold plan -s sql:schema.sql -d postgres://localhost/mydb
 
@@ -257,57 +260,44 @@ The `migrate` command auto-detects the next migration number. Use pgmold for dif
 
 ### CI Integration
 
-pgmold includes a GitHub Action for detecting schema drift in CI/CD pipelines.
+pgmold includes a GitHub Action for schema CI: migration plan comments, drift detection, PR auto-labeling, and warning annotations.
 
 #### GitHub Action Usage
 
 ```yaml
-- name: Check for schema drift
-  uses: fmguerreiro/pgmold/.github/actions/drift-check@main
+- uses: fmguerreiro/pgmold/.github/actions/drift-check@main
   with:
-    schema: 'sql:schema/'
-    database: ${{ secrets.DATABASE_URL }}
-    target-schemas: 'public,auth'
-    fail-on-drift: 'true'
+    schema: sql:schema/
+    database: db:${{ secrets.DATABASE_URL }}
+    target-schemas: public,auth
 ```
 
-**Inputs:**
-- `schema` (required): Path to schema SQL file(s), space-separated for multiple.
-- `database` (required): PostgreSQL connection string.
-- `target-schemas` (optional): Comma-separated list of schemas to introspect. Default: `public`.
-- `version` (optional): pgmold version to install. Default: `latest`.
-- `fail-on-drift` (optional): Whether to fail the action if drift is detected. Default: `true`.
+The action runs in two modes:
+
+- **Live database mode**: Requires `database`. Generates a migration plan, posts it as a PR comment, and optionally checks for drift.
+- **SQL-to-SQL baseline mode**: Requires `baseline`. Diffs `schema` against a baseline SQL file — no live database needed.
+
+**Key inputs:**
+- `schema` (required): Schema source(s), space-separated.
+- `database`: PostgreSQL connection string. Required unless `baseline` is set.
+- `baseline`: `sql:path/to/baseline.sql` for SQL-to-SQL diff mode.
+- `target-schemas`: Comma-separated PostgreSQL schemas. Default: `public`.
+- `fail-on-drift`: Fail if drift detected. Default: `true`.
+- `plan-comment`: Post migration plan as a PR comment. Default: `true`.
+- `drift-check`: Run drift detection. Default: `true`.
+- `auto-label`: Add `database-schema` label to the PR when schema changes are detected. Default: `true`.
 
 **Outputs:**
 - `has-drift`: Whether drift was detected (true/false).
 - `expected-fingerprint`: Expected schema fingerprint from SQL files.
 - `actual-fingerprint`: Actual schema fingerprint from database.
 - `report`: Full JSON drift report.
+- `plan-json`: Full plan JSON output.
+- `statement-count`: Number of SQL statements in the migration plan.
+- `has-destructive`: Whether the plan contains destructive operations.
+- `comment-id`: ID of the PR comment posted or updated.
 
-#### Example Workflow
-
-See `.github/workflows/drift-check-example.yml.example` for a complete example. Basic usage:
-
-```yaml
-name: Schema Drift Check
-
-on:
-  schedule:
-    - cron: '0 8 * * *'  # Daily at 8am UTC
-  workflow_dispatch:
-
-jobs:
-  drift-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Check for schema drift
-        uses: fmguerreiro/pgmold/.github/actions/drift-check@main
-        with:
-          schema: 'sql:schema/'
-          database: ${{ secrets.DATABASE_URL }}
-```
+See `.github/actions/drift-check/README.md` for full documentation and `.github/workflows/examples/schema-check.yml` for a complete example.
 
 #### CLI Drift Detection
 
@@ -315,17 +305,17 @@ For local or custom CI environments, use the `drift` command directly:
 
 ```bash
 # Get JSON report with exit code 1 if drift detected
-pgmold drift -s sql:schema/ -d postgres://localhost/mydb -j
+pgmold drift -s sql:schema/ -d postgres://localhost/mydb --json
+```
 
-# Example output:
-# {
-#   "has_drift": true,
-#   "expected_fingerprint": "abc123...",
-#   "actual_fingerprint": "def456...",
-#   "differences": [
-#     "Table users has extra column in database: last_login TIMESTAMP"
-#   ]
-# }
+Output:
+```json
+{
+  "has_drift": true,
+  "expected_fingerprint": "abc123...",
+  "actual_fingerprint": "def456...",
+  "differences": ["AddColumn { schema: \"public\", table: \"users\", ... }"]
+}
 ```
 
 Drift detection compares SHA256 fingerprints of normalized schemas. Any difference triggers drift.

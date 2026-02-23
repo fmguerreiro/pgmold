@@ -132,6 +132,9 @@ enum Commands {
         /// Target schema to compare to (e.g., sql:new.sql, drizzle:config.ts)
         #[arg(long)]
         to: String,
+        /// Output diff as JSON for CI integration
+        #[arg(long, short = 'j')]
+        json: bool,
     },
 
     /// Generate migration plan from schema source against a live database
@@ -281,13 +284,27 @@ pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Diff { from, to } => {
+        Commands::Diff { from, to, json } => {
             let from_schema = load_schema(&[from])?;
             let to_schema = load_schema(&[to])?;
             let ops = plan_migration(compute_diff(&from_schema, &to_schema));
+            let lock_warnings = detect_lock_hazards(&ops);
             let sql = generate_sql(&ops);
 
-            if sql.is_empty() {
+            if json {
+                let output = PlanOutput {
+                    operations: ops.iter().map(|op| format!("{op:?}")).collect(),
+                    statements: sql.clone(),
+                    lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
+                    statement_count: sql.len(),
+                    validated: None,
+                    idempotent: None,
+                    residual_ops_count: None,
+                };
+                let json_output = serde_json::to_string_pretty(&output)
+                    .map_err(|e| anyhow!("Failed to serialize diff output to JSON: {e}"))?;
+                println!("{json_output}");
+            } else if sql.is_empty() {
                 println!("No differences found.");
             } else {
                 println!("Migration plan ({} statements):", sql.len());
@@ -1449,6 +1466,62 @@ mod tests {
             assert_eq!(database, "postgres://localhost/db");
         } else {
             panic!("Expected Dump command");
+        }
+    }
+
+    #[test]
+    fn diff_parses_json_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "diff",
+            "--from",
+            "sql:old.sql",
+            "--to",
+            "sql:new.sql",
+            "--json",
+        ]);
+
+        if let Commands::Diff { json, .. } = args.command {
+            assert!(json);
+        } else {
+            panic!("Expected Diff command");
+        }
+    }
+
+    #[test]
+    fn diff_json_flag_defaults_false() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "diff",
+            "--from",
+            "sql:old.sql",
+            "--to",
+            "sql:new.sql",
+        ]);
+
+        if let Commands::Diff { json, .. } = args.command {
+            assert!(!json);
+        } else {
+            panic!("Expected Diff command");
+        }
+    }
+
+    #[test]
+    fn diff_parses_short_json_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "diff",
+            "--from",
+            "sql:old.sql",
+            "--to",
+            "sql:new.sql",
+            "-j",
+        ]);
+
+        if let Commands::Diff { json, .. } = args.command {
+            assert!(json);
+        } else {
+            panic!("Expected Diff command");
         }
     }
 
