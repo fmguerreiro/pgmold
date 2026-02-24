@@ -745,6 +745,7 @@ fn format_pg_type(pg_type: &PgType) -> String {
         PgType::Jsonb => "JSONB".to_string(),
         PgType::Vector(Some(dim)) => format!("vector({dim})"),
         PgType::Vector(None) => "vector".to_string(),
+        PgType::Array(inner) => format!("{}[]", format_pg_type(inner)),
         PgType::CustomEnum(name) => {
             let (schema, enum_name) = parse_qualified_name(name);
             quote_qualified(&schema, &enum_name)

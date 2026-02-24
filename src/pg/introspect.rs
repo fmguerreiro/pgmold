@@ -694,7 +694,7 @@ async fn introspect_all_columns(
             &udt_schema,
             &udt_name,
             atttypmod,
-        );
+        )?;
 
         result
             .entry(qualified_name(&table_schema, &table_name))
@@ -720,23 +720,23 @@ fn map_pg_type(
     udt_schema: &str,
     udt_name: &str,
     atttypmod: i32,
-) -> PgType {
+) -> Result<PgType> {
     match data_type {
-        "integer" => PgType::Integer,
-        "bigint" => PgType::BigInt,
-        "smallint" => PgType::SmallInt,
-        "real" => PgType::Real,
-        "double precision" => PgType::DoublePrecision,
-        "numeric" => PgType::Named("numeric".to_string()),
-        "character varying" => PgType::Varchar(char_max_length.map(|l| l as u32)),
-        "text" => PgType::Text,
-        "boolean" => PgType::Boolean,
-        "timestamp with time zone" => PgType::TimestampTz,
-        "timestamp without time zone" => PgType::Timestamp,
-        "date" => PgType::Date,
-        "uuid" => PgType::Uuid,
-        "json" => PgType::Json,
-        "jsonb" => PgType::Jsonb,
+        "integer" => Ok(PgType::Integer),
+        "bigint" => Ok(PgType::BigInt),
+        "smallint" => Ok(PgType::SmallInt),
+        "real" => Ok(PgType::Real),
+        "double precision" => Ok(PgType::DoublePrecision),
+        "numeric" => Ok(PgType::Named("numeric".to_string())),
+        "character varying" => Ok(PgType::Varchar(char_max_length.map(|l| l as u32))),
+        "text" => Ok(PgType::Text),
+        "boolean" => Ok(PgType::Boolean),
+        "timestamp with time zone" => Ok(PgType::TimestampTz),
+        "timestamp without time zone" => Ok(PgType::Timestamp),
+        "date" => Ok(PgType::Date),
+        "uuid" => Ok(PgType::Uuid),
+        "json" => Ok(PgType::Json),
+        "jsonb" => Ok(PgType::Jsonb),
         "USER-DEFINED" => {
             if udt_name == "vector" {
                 // pgvector stores dimension directly in atttypmod
@@ -746,12 +746,37 @@ fn map_pg_type(
                 } else {
                     None
                 };
-                PgType::Vector(dimension)
+                Ok(PgType::Vector(dimension))
             } else {
-                PgType::CustomEnum(format!("{udt_schema}.{udt_name}"))
+                Ok(PgType::CustomEnum(format!("{udt_schema}.{udt_name}")))
             }
         }
-        _ => PgType::Text,
+        "ARRAY" => {
+            // PostgreSQL array types have udt_name prefixed with underscore (e.g., "_bool", "_int4")
+            let base_udt = udt_name.strip_prefix('_').unwrap_or(udt_name);
+            let element_type = match base_udt {
+                "bool" => PgType::Boolean,
+                "int4" | "int" => PgType::Integer,
+                "int8" => PgType::BigInt,
+                "int2" => PgType::SmallInt,
+                "float4" => PgType::Real,
+                "float8" => PgType::DoublePrecision,
+                "text" => PgType::Text,
+                "varchar" => PgType::Varchar(None),
+                "uuid" => PgType::Uuid,
+                "timestamptz" => PgType::TimestampTz,
+                "timestamp" => PgType::Timestamp,
+                "date" => PgType::Date,
+                "json" => PgType::Json,
+                "jsonb" => PgType::Jsonb,
+                "numeric" => PgType::Named("numeric".to_string()),
+                _ => PgType::Named(base_udt.to_string()),
+            };
+            Ok(PgType::Array(Box::new(element_type)))
+        }
+        other => Err(SchemaError::ParseError(
+            format!("unsupported column type from database: {other} (udt_name: {udt_name})"),
+        )),
     }
 }
 

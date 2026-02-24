@@ -1,8 +1,8 @@
 use crate::model::*;
 use crate::util::{normalize_type_casts, Result, SchemaError};
 use sqlparser::ast::{
-    CharacterLength, CreatePolicyCommand, DataType, ForValues, ObjectName, PartitionBoundValue,
-    TimezoneInfo,
+    ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, ForValues, ObjectName,
+    PartitionBoundValue, TimezoneInfo,
 };
 
 pub(super) fn normalize_expr(expr: &str) -> String {
@@ -113,6 +113,17 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
             };
             Ok(PgType::CustomEnum(qualified))
         }
-        _ => Ok(PgType::Text),
+        DataType::Array(elem_type_def) => {
+            let inner = match elem_type_def {
+                ArrayElemTypeDef::SquareBracket(inner_dt, _)
+                | ArrayElemTypeDef::AngleBracket(inner_dt)
+                | ArrayElemTypeDef::Parenthesis(inner_dt) => parse_data_type(inner_dt)?,
+                ArrayElemTypeDef::None => PgType::Text,
+            };
+            Ok(PgType::Array(Box::new(inner)))
+        }
+        other => Err(SchemaError::ParseError(
+            format!("unsupported column type: {other:?}"),
+        )),
     }
 }
