@@ -253,7 +253,7 @@ async fn introspect_domains(
             n.nspname AS schema_name,
             t.typname AS domain_name,
             bt.typname AS base_type,
-            bt.typcategory AS base_category,
+            bt.typcategory::text AS base_category,
             t.typnotnull AS not_null,
             pg_get_expr(t.typdefaultbin, 0) AS default_expr,
             r.rolname AS owner
