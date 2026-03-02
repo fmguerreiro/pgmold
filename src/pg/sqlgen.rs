@@ -745,6 +745,7 @@ fn format_pg_type(pg_type: &PgType) -> String {
         PgType::Jsonb => "JSONB".to_string(),
         PgType::Vector(Some(dim)) => format!("vector({dim})"),
         PgType::Vector(None) => "vector".to_string(),
+        PgType::Array(inner) => format!("{}[]", format_pg_type(inner)),
         PgType::CustomEnum(name) => {
             let (schema, enum_name) = parse_qualified_name(name);
             quote_qualified(&schema, &enum_name)
@@ -3499,6 +3500,69 @@ mod tests {
         assert_eq!(
             sql[0],
             r#"DROP POLICY IF EXISTS "season_owner_update" ON "mrv"."Season";"#
+        );
+    }
+
+    #[test]
+    fn add_boolean_array_column() {
+        let ops = vec![MigrationOp::AddColumn {
+            table: "public.settings".to_string(),
+            column: Column {
+                name: "flags".to_string(),
+                data_type: PgType::Array(Box::new(PgType::Boolean)),
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"settings\" ADD COLUMN \"flags\" BOOLEAN[] NOT NULL;"
+        );
+    }
+
+    #[test]
+    fn add_varchar_array_column() {
+        let ops = vec![MigrationOp::AddColumn {
+            table: "public.data".to_string(),
+            column: Column {
+                name: "names".to_string(),
+                data_type: PgType::Array(Box::new(PgType::Varchar(Some(100)))),
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"data\" ADD COLUMN \"names\" VARCHAR(100)[];"
+        );
+    }
+
+    #[test]
+    fn add_integer_array_column() {
+        let ops = vec![MigrationOp::AddColumn {
+            table: "public.data".to_string(),
+            column: Column {
+                name: "scores".to_string(),
+                data_type: PgType::Array(Box::new(PgType::Integer)),
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"data\" ADD COLUMN \"scores\" INTEGER[];"
         );
     }
 }

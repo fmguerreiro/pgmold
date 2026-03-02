@@ -150,6 +150,7 @@ pub enum PgType {
     Json,
     Jsonb,
     Vector(Option<u32>),
+    Array(Box<PgType>),
     CustomEnum(String),
     Named(String),
 }

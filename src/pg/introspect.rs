@@ -253,6 +253,7 @@ async fn introspect_domains(
             n.nspname AS schema_name,
             t.typname AS domain_name,
             bt.typname AS base_type,
+            bt.typcategory AS base_category,
             t.typnotnull AS not_null,
             pg_get_expr(t.typdefaultbin, 0) AS default_expr,
             r.rolname AS owner
@@ -280,6 +281,7 @@ async fn introspect_domains(
         let schema: String = row.get("schema_name");
         let name: String = row.get("domain_name");
         let base_type: String = row.get("base_type");
+        let base_category: String = row.get("base_category");
         let not_null: bool = row.get("not_null");
         let default_expr: Option<String> = row
             .get::<Option<String>, &str>("default_expr")
@@ -288,28 +290,38 @@ async fn introspect_domains(
 
         let check_constraints = introspect_domain_constraints(connection, &schema, &name).await?;
 
-        let data_type = match base_type.as_str() {
-            "integer" | "int4" => PgType::Integer,
-            "bigint" | "int8" => PgType::BigInt,
-            "smallint" | "int2" => PgType::SmallInt,
-            "real" | "float4" => PgType::Real,
-            "double precision" | "float8" => PgType::DoublePrecision,
-            "numeric" => PgType::Named("numeric".to_string()),
-            "text" => PgType::Text,
-            "boolean" | "bool" => PgType::Boolean,
-            "timestamp" => PgType::Timestamp,
-            "timestamp with time zone" | "timestamptz" => PgType::TimestampTz,
-            "date" => PgType::Date,
-            "uuid" => PgType::Uuid,
-            "json" => PgType::Json,
-            "jsonb" => PgType::Jsonb,
-            "character varying" | "varchar" => PgType::Varchar(None),
-            _ => {
-                let qualified = format!("public.{base_type}");
-                if base_type.contains('.') {
-                    PgType::Named(base_type)
-                } else {
-                    PgType::CustomEnum(qualified)
+        let data_type = if base_category == "A" {
+            let base_udt = base_type.strip_prefix('_').ok_or_else(|| {
+                SchemaError::ParseError(format!(
+                    "expected array base_type to start with '_', got: {base_type}"
+                ))
+            })?;
+            let element_type = map_domain_element_type(base_udt, &schema);
+            PgType::Array(Box::new(element_type))
+        } else {
+            match base_type.as_str() {
+                "integer" | "int4" => PgType::Integer,
+                "bigint" | "int8" => PgType::BigInt,
+                "smallint" | "int2" => PgType::SmallInt,
+                "real" | "float4" => PgType::Real,
+                "double precision" | "float8" => PgType::DoublePrecision,
+                "numeric" => PgType::Named("numeric".to_string()),
+                "text" => PgType::Text,
+                "boolean" | "bool" => PgType::Boolean,
+                "timestamp" => PgType::Timestamp,
+                "timestamp with time zone" | "timestamptz" => PgType::TimestampTz,
+                "date" => PgType::Date,
+                "uuid" => PgType::Uuid,
+                "json" => PgType::Json,
+                "jsonb" => PgType::Jsonb,
+                "character varying" | "varchar" => PgType::Varchar(None),
+                _ => {
+                    let qualified = format!("public.{base_type}");
+                    if base_type.contains('.') {
+                        PgType::Named(base_type)
+                    } else {
+                        PgType::CustomEnum(qualified)
+                    }
                 }
             }
         };
@@ -694,7 +706,7 @@ async fn introspect_all_columns(
             &udt_schema,
             &udt_name,
             atttypmod,
-        );
+        )?;
 
         result
             .entry(qualified_name(&table_schema, &table_name))
@@ -720,23 +732,23 @@ fn map_pg_type(
     udt_schema: &str,
     udt_name: &str,
     atttypmod: i32,
-) -> PgType {
+) -> Result<PgType> {
     match data_type {
-        "integer" => PgType::Integer,
-        "bigint" => PgType::BigInt,
-        "smallint" => PgType::SmallInt,
-        "real" => PgType::Real,
-        "double precision" => PgType::DoublePrecision,
-        "numeric" => PgType::Named("numeric".to_string()),
-        "character varying" => PgType::Varchar(char_max_length.map(|l| l as u32)),
-        "text" => PgType::Text,
-        "boolean" => PgType::Boolean,
-        "timestamp with time zone" => PgType::TimestampTz,
-        "timestamp without time zone" => PgType::Timestamp,
-        "date" => PgType::Date,
-        "uuid" => PgType::Uuid,
-        "json" => PgType::Json,
-        "jsonb" => PgType::Jsonb,
+        "integer" => Ok(PgType::Integer),
+        "bigint" => Ok(PgType::BigInt),
+        "smallint" => Ok(PgType::SmallInt),
+        "real" => Ok(PgType::Real),
+        "double precision" => Ok(PgType::DoublePrecision),
+        "numeric" => Ok(PgType::Named("numeric".to_string())),
+        "character varying" => Ok(PgType::Varchar(char_max_length.map(|l| l as u32))),
+        "text" => Ok(PgType::Text),
+        "boolean" => Ok(PgType::Boolean),
+        "timestamp with time zone" => Ok(PgType::TimestampTz),
+        "timestamp without time zone" => Ok(PgType::Timestamp),
+        "date" => Ok(PgType::Date),
+        "uuid" => Ok(PgType::Uuid),
+        "json" => Ok(PgType::Json),
+        "jsonb" => Ok(PgType::Jsonb),
         "USER-DEFINED" => {
             if udt_name == "vector" {
                 // pgvector stores dimension directly in atttypmod
@@ -746,12 +758,69 @@ fn map_pg_type(
                 } else {
                     None
                 };
-                PgType::Vector(dimension)
+                Ok(PgType::Vector(dimension))
             } else {
-                PgType::CustomEnum(format!("{udt_schema}.{udt_name}"))
+                Ok(PgType::CustomEnum(format!("{udt_schema}.{udt_name}")))
             }
         }
-        _ => PgType::Text,
+        "ARRAY" => {
+            // PostgreSQL array types have udt_name prefixed with underscore (e.g., "_bool", "_int4")
+            let base_udt = udt_name.strip_prefix('_').ok_or_else(|| {
+                SchemaError::ParseError(format!(
+                    "expected array udt_name to start with '_', got: {udt_name}"
+                ))
+            })?;
+            let element_type = match base_udt {
+                "bool" => PgType::Boolean,
+                "int4" | "int" => PgType::Integer,
+                "int8" => PgType::BigInt,
+                "int2" => PgType::SmallInt,
+                "float4" => PgType::Real,
+                "float8" => PgType::DoublePrecision,
+                "text" => PgType::Text,
+                "varchar" => {
+                    let length = if atttypmod > 0 {
+                        Some((atttypmod - 4) as u32)
+                    } else {
+                        None
+                    };
+                    PgType::Varchar(length)
+                }
+                "uuid" => PgType::Uuid,
+                "timestamptz" => PgType::TimestampTz,
+                "timestamp" => PgType::Timestamp,
+                "date" => PgType::Date,
+                "json" => PgType::Json,
+                "jsonb" => PgType::Jsonb,
+                "numeric" => PgType::Named("numeric".to_string()),
+                _ => PgType::CustomEnum(format!("{udt_schema}.{base_udt}")),
+            };
+            Ok(PgType::Array(Box::new(element_type)))
+        }
+        other => Err(SchemaError::ParseError(format!(
+            "unsupported column type from database: {other} (udt_name: {udt_name})"
+        ))),
+    }
+}
+
+fn map_domain_element_type(base_udt: &str, domain_schema: &str) -> PgType {
+    match base_udt {
+        "bool" => PgType::Boolean,
+        "int4" | "int" => PgType::Integer,
+        "int8" => PgType::BigInt,
+        "int2" => PgType::SmallInt,
+        "float4" => PgType::Real,
+        "float8" => PgType::DoublePrecision,
+        "text" => PgType::Text,
+        "varchar" => PgType::Varchar(None),
+        "uuid" => PgType::Uuid,
+        "timestamptz" => PgType::TimestampTz,
+        "timestamp" => PgType::Timestamp,
+        "date" => PgType::Date,
+        "json" => PgType::Json,
+        "jsonb" => PgType::Jsonb,
+        "numeric" => PgType::Named("numeric".to_string()),
+        _ => PgType::CustomEnum(format!("{domain_schema}.{base_udt}")),
     }
 }
 

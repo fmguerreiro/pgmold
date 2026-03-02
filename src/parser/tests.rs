@@ -2834,3 +2834,87 @@ DELETE FROM users WHERE id = 1;
     let schema = parse_sql_string(sql).unwrap();
     assert!(schema.tables.contains_key("public.users"));
 }
+
+#[test]
+fn parse_boolean_array_column() {
+    let sql = r#"
+CREATE TABLE settings (
+    id BIGINT NOT NULL PRIMARY KEY,
+    flags BOOLEAN[] NOT NULL
+);
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.settings").unwrap();
+    let flags_col = table.columns.get("flags").unwrap();
+    assert_eq!(
+        flags_col.data_type,
+        PgType::Array(Box::new(PgType::Boolean))
+    );
+    assert!(!flags_col.nullable);
+}
+
+#[test]
+fn parse_integer_array_column() {
+    let sql = "CREATE TABLE data (id BIGINT PRIMARY KEY, scores INTEGER[]);";
+    let schema = parse_sql_string(sql).unwrap();
+    let col = schema.tables["public.data"].columns.get("scores").unwrap();
+    assert_eq!(col.data_type, PgType::Array(Box::new(PgType::Integer)));
+}
+
+#[test]
+fn parse_text_array_column() {
+    let sql = "CREATE TABLE data (id BIGINT PRIMARY KEY, tags TEXT[]);";
+    let schema = parse_sql_string(sql).unwrap();
+    let col = schema.tables["public.data"].columns.get("tags").unwrap();
+    assert_eq!(col.data_type, PgType::Array(Box::new(PgType::Text)));
+}
+
+#[test]
+fn parse_uuid_array_column() {
+    let sql = "CREATE TABLE data (id BIGINT PRIMARY KEY, refs UUID[]);";
+    let schema = parse_sql_string(sql).unwrap();
+    let col = schema.tables["public.data"].columns.get("refs").unwrap();
+    assert_eq!(col.data_type, PgType::Array(Box::new(PgType::Uuid)));
+}
+
+#[test]
+fn parse_varchar_array_column() {
+    let sql = "CREATE TABLE data (id BIGINT PRIMARY KEY, names VARCHAR(100)[]);";
+    let schema = parse_sql_string(sql).unwrap();
+    let col = schema.tables["public.data"].columns.get("names").unwrap();
+    assert_eq!(
+        col.data_type,
+        PgType::Array(Box::new(PgType::Varchar(Some(100))))
+    );
+}
+
+#[test]
+fn parse_jsonb_array_column() {
+    let sql = "CREATE TABLE data (id BIGINT PRIMARY KEY, metadata JSONB[]);";
+    let schema = parse_sql_string(sql).unwrap();
+    let col = schema.tables["public.data"]
+        .columns
+        .get("metadata")
+        .unwrap();
+    assert_eq!(col.data_type, PgType::Array(Box::new(PgType::Jsonb)));
+}
+
+#[test]
+fn parse_timestamptz_array_column() {
+    let sql = "CREATE TABLE data (id BIGINT PRIMARY KEY, timestamps TIMESTAMP WITH TIME ZONE[]);";
+    let schema = parse_sql_string(sql).unwrap();
+    let col = schema.tables["public.data"]
+        .columns
+        .get("timestamps")
+        .unwrap();
+    assert_eq!(col.data_type, PgType::Array(Box::new(PgType::TimestampTz)));
+}
+
+#[test]
+fn parse_unsupported_type_returns_error() {
+    let sql = "CREATE TABLE data (id BIGINT PRIMARY KEY, col BYTEA);";
+    let result = parse_sql_string(sql);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("unsupported column type"));
+}
