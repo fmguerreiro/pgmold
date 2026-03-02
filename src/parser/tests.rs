@@ -2932,10 +2932,7 @@ CREATE TABLE connections (
         table.columns.get("network").unwrap().data_type,
         PgType::Cidr
     );
-    assert_eq!(
-        table.columns.get("mac").unwrap().data_type,
-        PgType::Macaddr
-    );
+    assert_eq!(table.columns.get("mac").unwrap().data_type, PgType::Macaddr);
     assert_eq!(
         table.columns.get("mac8").unwrap().data_type,
         PgType::Macaddr8
