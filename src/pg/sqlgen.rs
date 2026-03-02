@@ -3502,4 +3502,67 @@ mod tests {
             r#"DROP POLICY IF EXISTS "season_owner_update" ON "mrv"."Season";"#
         );
     }
+
+    #[test]
+    fn add_boolean_array_column() {
+        let ops = vec![MigrationOp::AddColumn {
+            table: "public.settings".to_string(),
+            column: Column {
+                name: "flags".to_string(),
+                data_type: PgType::Array(Box::new(PgType::Boolean)),
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"settings\" ADD COLUMN \"flags\" BOOLEAN[] NOT NULL;"
+        );
+    }
+
+    #[test]
+    fn add_varchar_array_column() {
+        let ops = vec![MigrationOp::AddColumn {
+            table: "public.data".to_string(),
+            column: Column {
+                name: "names".to_string(),
+                data_type: PgType::Array(Box::new(PgType::Varchar(Some(100)))),
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"data\" ADD COLUMN \"names\" VARCHAR(100)[];"
+        );
+    }
+
+    #[test]
+    fn add_integer_array_column() {
+        let ops = vec![MigrationOp::AddColumn {
+            table: "public.data".to_string(),
+            column: Column {
+                name: "scores".to_string(),
+                data_type: PgType::Array(Box::new(PgType::Integer)),
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"data\" ADD COLUMN \"scores\" INTEGER[];"
+        );
+    }
 }

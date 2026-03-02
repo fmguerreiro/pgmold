@@ -118,12 +118,16 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
                 ArrayElemTypeDef::SquareBracket(inner_dt, _)
                 | ArrayElemTypeDef::AngleBracket(inner_dt)
                 | ArrayElemTypeDef::Parenthesis(inner_dt) => parse_data_type(inner_dt)?,
-                ArrayElemTypeDef::None => PgType::Text,
+                ArrayElemTypeDef::None => {
+                    return Err(SchemaError::ParseError(
+                        "ARRAY type without element type specification".into(),
+                    ));
+                }
             };
             Ok(PgType::Array(Box::new(inner)))
         }
-        other => Err(SchemaError::ParseError(
-            format!("unsupported column type: {other:?}"),
-        )),
+        other => Err(SchemaError::ParseError(format!(
+            "unsupported column type: {other:?}"
+        ))),
     }
 }
