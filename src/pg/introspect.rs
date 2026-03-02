@@ -749,6 +749,10 @@ fn map_pg_type(
         "uuid" => Ok(PgType::Uuid),
         "json" => Ok(PgType::Json),
         "jsonb" => Ok(PgType::Jsonb),
+        "inet" => Ok(PgType::Inet),
+        "cidr" => Ok(PgType::Cidr),
+        "macaddr" => Ok(PgType::Macaddr),
+        "macaddr8" => Ok(PgType::Macaddr8),
         "USER-DEFINED" => {
             if udt_name == "vector" {
                 // pgvector stores dimension directly in atttypmod
@@ -793,6 +797,10 @@ fn map_pg_type(
                 "json" => PgType::Json,
                 "jsonb" => PgType::Jsonb,
                 "numeric" => PgType::Named("numeric".to_string()),
+                "inet" => PgType::Inet,
+                "cidr" => PgType::Cidr,
+                "macaddr" => PgType::Macaddr,
+                "macaddr8" => PgType::Macaddr8,
                 _ => PgType::CustomEnum(format!("{udt_schema}.{base_udt}")),
             };
             Ok(PgType::Array(Box::new(element_type)))
@@ -820,6 +828,10 @@ fn map_domain_element_type(base_udt: &str, domain_schema: &str) -> PgType {
         "json" => PgType::Json,
         "jsonb" => PgType::Jsonb,
         "numeric" => PgType::Named("numeric".to_string()),
+        "inet" => PgType::Inet,
+        "cidr" => PgType::Cidr,
+        "macaddr" => PgType::Macaddr,
+        "macaddr8" => PgType::Macaddr8,
         _ => PgType::CustomEnum(format!("{domain_schema}.{base_udt}")),
     }
 }

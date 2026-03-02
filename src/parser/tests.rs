@@ -2911,6 +2911,49 @@ fn parse_timestamptz_array_column() {
 }
 
 #[test]
+fn parse_network_address_types() {
+    let sql = r#"
+CREATE TABLE connections (
+    id BIGINT PRIMARY KEY,
+    ip_address INET NOT NULL,
+    network CIDR,
+    mac MACADDR,
+    mac8 MACADDR8
+);
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.connections").unwrap();
+
+    assert_eq!(
+        table.columns.get("ip_address").unwrap().data_type,
+        PgType::Inet
+    );
+    assert_eq!(
+        table.columns.get("network").unwrap().data_type,
+        PgType::Cidr
+    );
+    assert_eq!(
+        table.columns.get("mac").unwrap().data_type,
+        PgType::Macaddr
+    );
+    assert_eq!(
+        table.columns.get("mac8").unwrap().data_type,
+        PgType::Macaddr8
+    );
+}
+
+#[test]
+fn parse_inet_array_column() {
+    let sql = "CREATE TABLE data (id BIGINT PRIMARY KEY, addresses INET[]);";
+    let schema = parse_sql_string(sql).unwrap();
+    let col = schema.tables["public.data"]
+        .columns
+        .get("addresses")
+        .unwrap();
+    assert_eq!(col.data_type, PgType::Array(Box::new(PgType::Inet)));
+}
+
+#[test]
 fn parse_unsupported_type_returns_error() {
     let sql = "CREATE TABLE data (id BIGINT PRIMARY KEY, col BYTEA);";
     let result = parse_sql_string(sql);
