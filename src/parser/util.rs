@@ -99,11 +99,19 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
                 .map(|part| part.to_string().trim_matches('"').to_string())
                 .collect();
 
-            let type_name = parts.last().map(|s| s.as_str()).unwrap_or("");
+            let type_name_raw = parts.last().map(|s| s.as_str()).unwrap_or("");
+            let type_name_lower = type_name_raw.to_lowercase();
 
-            if type_name == "vector" {
-                let dimension = modifiers.first().and_then(|m| m.parse::<u32>().ok());
-                return Ok(PgType::Vector(dimension));
+            match type_name_lower.as_str() {
+                "vector" => {
+                    let dimension = modifiers.first().and_then(|m| m.parse::<u32>().ok());
+                    return Ok(PgType::Vector(dimension));
+                }
+                "inet" => return Ok(PgType::Inet),
+                "cidr" => return Ok(PgType::Cidr),
+                "macaddr" => return Ok(PgType::Macaddr),
+                "macaddr8" => return Ok(PgType::Macaddr8),
+                _ => {}
             }
 
             let qualified = match parts.as_slice() {
