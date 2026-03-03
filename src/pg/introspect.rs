@@ -1305,10 +1305,9 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
             let arg = arg.trim();
 
             // Split off DEFAULT clause if present (case-insensitive)
-            // Normalize default value to lowercase for consistent comparison
             let (arg_without_default, default) =
                 if let Some(idx) = arg.to_uppercase().find(" DEFAULT ") {
-                    let default_value = arg[idx + 9..].trim().to_lowercase();
+                    let default_value = arg[idx + 9..].trim().to_string();
                     (arg[..idx].trim(), Some(default_value))
                 } else {
                     (arg, None)

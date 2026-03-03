@@ -678,3 +678,79 @@ async fn returns_table_quoted_columns_round_trip() {
         "Should have no function diff after round-trip with quoted TABLE columns, got: {func_ops:?}"
     );
 }
+
+#[tokio::test]
+async fn uppercase_default_string_round_trip() {
+    // Regression test for #77: uppercase DEFAULT string values should not cause perpetual diff
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let schema_sql = r#"
+        CREATE FUNCTION upsert_user(
+            p_user_id uuid,
+            p_role text DEFAULT 'ADMIN',
+            p_id uuid DEFAULT NULL
+        )
+        RETURNS TABLE (id uuid, role text)
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RETURN;
+        END;
+        $$;
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Failed to execute: {stmt}\nError: {e}"));
+    }
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let func_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateFunction(_)
+                    | MigrationOp::AlterFunction { .. }
+                    | MigrationOp::DropFunction { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        func_ops.is_empty(),
+        "Should have no function diff after round-trip with uppercase DEFAULT string, got: {func_ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn uppercase_default_preserves_original_case() {
+    // Verify that DEFAULT 'ADMIN' is preserved as 'ADMIN' in generated SQL,
+    // not silently lowercased to 'admin'
+    let schema_sql = r#"
+        CREATE FUNCTION get_user(
+            p_role text DEFAULT 'ADMIN'
+        ) RETURNS void LANGUAGE plpgsql AS $$ BEGIN END; $$;
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let func = parsed_schema.functions.get("public.get_user(text)").unwrap();
+    assert_eq!(
+        func.arguments[0].default.as_deref(),
+        Some("'ADMIN'"),
+        "Parser should preserve original string literal case"
+    );
+}

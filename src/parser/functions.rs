@@ -96,7 +96,7 @@ pub(super) fn parse_create_function(
                         default: arg
                             .default_expr
                             .as_ref()
-                            .map(|e| e.to_string().to_lowercase()),
+                            .map(|e| e.to_string()),
                     }
                 })
                 .collect()
