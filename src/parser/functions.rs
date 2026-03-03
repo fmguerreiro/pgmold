@@ -93,10 +93,7 @@ pub(super) fn parse_create_function(
                         name: arg.name.as_ref().map(|n| strip_ident_quotes(&n.value)),
                         data_type: normalize_pg_type(&arg.data_type.to_string()),
                         mode,
-                        default: arg
-                            .default_expr
-                            .as_ref()
-                            .map(|e| e.to_string().to_lowercase()),
+                        default: arg.default_expr.as_ref().map(|e| e.to_string()),
                     }
                 })
                 .collect()

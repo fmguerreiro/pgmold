@@ -1294,25 +1294,72 @@ async fn introspect_functions(
     Ok(functions)
 }
 
+/// Splits a function argument list on commas, skipping commas inside
+/// parentheses, square brackets, or single-quoted strings.
+fn split_arguments(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut in_quotes = false;
+    let mut start = 0;
+    for (i, ch) in s.char_indices() {
+        if in_quotes {
+            if ch == '\'' {
+                in_quotes = false;
+            }
+            continue;
+        }
+        match ch {
+            '\'' => in_quotes = true,
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
+}
+
+/// Finds the byte offset of ` DEFAULT ` in an argument string,
+/// skipping occurrences inside single-quoted strings.
+fn find_default_keyword(arg: &str) -> Option<usize> {
+    let upper = arg.to_uppercase();
+    let keyword = " DEFAULT ";
+    let mut in_quotes = false;
+    for (i, ch) in arg.char_indices() {
+        if ch == '\'' {
+            in_quotes = !in_quotes;
+            continue;
+        }
+        if !in_quotes && i + keyword.len() <= upper.len() && &upper[i..i + keyword.len()] == keyword
+        {
+            return Some(i);
+        }
+    }
+    None
+}
+
 fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
     if args_str.is_empty() {
         return Vec::new();
     }
 
-    args_str
-        .split(',')
+    split_arguments(args_str)
+        .iter()
         .map(|arg| {
             let arg = arg.trim();
 
-            // Split off DEFAULT clause if present (case-insensitive)
-            // Normalize default value to lowercase for consistent comparison
-            let (arg_without_default, default) =
-                if let Some(idx) = arg.to_uppercase().find(" DEFAULT ") {
-                    let default_value = arg[idx + 9..].trim().to_lowercase();
-                    (arg[..idx].trim(), Some(default_value))
-                } else {
-                    (arg, None)
-                };
+            // Find the DEFAULT keyword case-insensitively outside of quotes,
+            // then extract the value from the original string to preserve its case.
+            let (arg_without_default, default) = if let Some(idx) = find_default_keyword(arg) {
+                let default_value = arg[idx + 9..].trim().to_string();
+                (arg[..idx].trim(), Some(default_value))
+            } else {
+                (arg, None)
+            };
 
             // Parse mode (IN, OUT, INOUT)
             let (mode, arg_rest) = if let Some(rest) = arg_without_default.strip_prefix("INOUT ") {
@@ -2091,6 +2138,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn split_arguments_handles_commas_in_types() {
+        let args = split_arguments("p_amount numeric(10,2), p_name text");
+        assert_eq!(args, vec!["p_amount numeric(10,2)", " p_name text"]);
+    }
+
+    #[test]
+    fn split_arguments_handles_commas_in_quoted_defaults() {
+        let args = split_arguments("p_list text DEFAULT 'a,b,c'::text, p_id uuid");
+        assert_eq!(
+            args,
+            vec!["p_list text DEFAULT 'a,b,c'::text", " p_id uuid"]
+        );
+    }
+
+    #[test]
+    fn split_arguments_handles_commas_in_array_defaults() {
+        let args = split_arguments("p_ids integer[] DEFAULT ARRAY[1,2,3], p_name text");
+        assert_eq!(
+            args,
+            vec!["p_ids integer[] DEFAULT ARRAY[1,2,3]", " p_name text"]
+        );
+    }
+
+    #[test]
+    fn find_default_keyword_skips_quoted_occurrences() {
+        assert_eq!(
+            find_default_keyword("p_val text DEFAULT 'USE DEFAULT'::text"),
+            Some(10)
+        );
+    }
+
+    #[test]
+    fn find_default_keyword_returns_none_when_absent() {
+        assert_eq!(find_default_keyword("p_name text"), None);
+    }
+
+    #[test]
+    fn parse_function_arguments_with_commas_in_type() {
+        let args = parse_function_arguments("p_amount numeric(10,2), p_name text");
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0].name, Some("p_amount".to_string()));
+        assert_eq!(args[0].data_type, "numeric(10,2)");
+        assert_eq!(args[1].name, Some("p_name".to_string()));
+    }
+
+    #[test]
     fn parse_function_arguments_strips_quotes_from_names() {
         let args = parse_function_arguments("\"p_role_name\" text, \"p_enterprise_id\" uuid");
 
@@ -2106,6 +2199,13 @@ mod tests {
         assert_eq!(args.len(), 2);
         assert_eq!(args[0].name, Some("role_name".to_string()));
         assert_eq!(args[1].name, Some("enterprise_id".to_string()));
+    }
+
+    #[test]
+    fn parse_function_arguments_preserves_uppercase_default() {
+        let args = parse_function_arguments("p_role text DEFAULT 'ADMIN'::text");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].default.as_deref(), Some("'ADMIN'::text"));
     }
 
     #[test]
