@@ -747,7 +747,10 @@ async fn uppercase_default_preserves_original_case() {
     "#;
 
     let parsed_schema = parse_sql_string(schema_sql).unwrap();
-    let func = parsed_schema.functions.get("public.get_user(text)").unwrap();
+    let func = parsed_schema
+        .functions
+        .get("public.get_user(text)")
+        .unwrap();
     assert_eq!(
         func.arguments[0].default.as_deref(),
         Some("'ADMIN'"),
