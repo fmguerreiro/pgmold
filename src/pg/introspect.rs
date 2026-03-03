@@ -1304,7 +1304,8 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
         .map(|arg| {
             let arg = arg.trim();
 
-            // Split off DEFAULT clause if present (case-insensitive)
+            // Find the DEFAULT keyword case-insensitively, then extract
+            // the value from the original string to preserve its case.
             let (arg_without_default, default) =
                 if let Some(idx) = arg.to_uppercase().find(" DEFAULT ") {
                     let default_value = arg[idx + 9..].trim().to_string();
@@ -2105,6 +2106,13 @@ mod tests {
         assert_eq!(args.len(), 2);
         assert_eq!(args[0].name, Some("role_name".to_string()));
         assert_eq!(args[1].name, Some("enterprise_id".to_string()));
+    }
+
+    #[test]
+    fn parse_function_arguments_preserves_uppercase_default() {
+        let args = parse_function_arguments("p_role text DEFAULT 'ADMIN'::text");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].default.as_deref(), Some("'ADMIN'::text"));
     }
 
     #[test]
