@@ -1041,8 +1041,44 @@ impl Function {
 
 /// Normalizes PostgreSQL type aliases to their canonical forms.
 /// This ensures consistent comparison between parsed SQL and introspected schemas.
+///
+/// For `TABLE(...)` return types, quoted column names are preserved verbatim
+/// (they are case-sensitive in PostgreSQL), while type keywords are normalized.
 pub fn normalize_pg_type(type_name: &str) -> String {
-    let lower = type_name.to_lowercase();
+    let trimmed = type_name.trim();
+
+    if trimmed.len() >= 6
+        && trimmed.as_bytes()[..6].eq_ignore_ascii_case(b"table(")
+        && trimmed.ends_with(')')
+    {
+        let inner = &trimmed[6..trimmed.len() - 1];
+        let normalized_cols: Vec<String> = split_top_level_commas(inner)
+            .iter()
+            .map(|col| {
+                let col = col.trim();
+                let (name, rest) = if let Some(stripped) = col.strip_prefix('"') {
+                    let closing = stripped.find('"').map(|i| i + 1);
+                    match closing {
+                        Some(pos) => (col[..pos + 1].to_string(), col[pos + 1..].trim()),
+                        None => return col.to_string(),
+                    }
+                } else {
+                    match col.find(' ') {
+                        Some(pos) => (col[..pos].to_lowercase(), col[pos..].trim()),
+                        None => return col.to_lowercase(),
+                    }
+                };
+                if rest.is_empty() {
+                    name
+                } else {
+                    format!("{} {}", name, normalize_pg_type(rest))
+                }
+            })
+            .collect();
+        return format!("table({})", normalized_cols.join(", "));
+    }
+
+    let lower = trimmed.to_lowercase();
     match lower.as_str() {
         "int" | "int4" => "integer".to_string(),
         "int8" => "bigint".to_string(),
@@ -2464,5 +2500,33 @@ fn function_returns_table_multiword_type_aliases() {
     assert!(
         from_schema.semantically_equals(&from_db),
         "RETURNS TABLE with multi-word type aliases (timestamptz, bool) should normalize"
+    );
+}
+
+#[test]
+fn normalize_pg_type_preserves_quoted_table_column_names() {
+    assert_eq!(
+        normalize_pg_type(r#"TABLE("itemName" text)"#),
+        r#"table("itemName" text)"#
+    );
+    assert_eq!(
+        normalize_pg_type(r#"TABLE("userId" uuid, "itemName" text, "totalCount" float8)"#),
+        r#"table("userId" uuid, "itemName" text, "totalCount" double precision)"#
+    );
+}
+
+#[test]
+fn normalize_pg_type_lowercases_unquoted_table_column_names() {
+    assert_eq!(
+        normalize_pg_type("TABLE(user_id uuid, item_name text)"),
+        "table(user_id uuid, item_name text)"
+    );
+}
+
+#[test]
+fn normalize_pg_type_handles_mixed_quoted_unquoted_table_columns() {
+    assert_eq!(
+        normalize_pg_type(r#"TABLE("mixedCase" int, plain_col bool)"#),
+        r#"table("mixedCase" integer, plain_col boolean)"#
     );
 }

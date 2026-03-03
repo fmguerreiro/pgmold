@@ -608,3 +608,73 @@ async fn function_dependency_ordering_from_scratch() {
         "Should have no function diff after round-trip, got: {func_ops:?}"
     );
 }
+
+#[test]
+fn parses_returns_table_preserves_quoted_column_case() {
+    let sql = r#"
+        CREATE FUNCTION get_summary() RETURNS TABLE("userId" uuid, "displayName" text, "itemCount" integer)
+        LANGUAGE sql
+        AS $$ SELECT id, name, count FROM summary $$;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema.functions.get("public.get_summary()").unwrap();
+    assert_eq!(
+        func.return_type,
+        r#"table("userId" uuid, "displayName" text, "itemCount" integer)"#
+    );
+}
+
+#[tokio::test]
+async fn returns_table_quoted_columns_round_trip() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let schema_sql = r#"
+        CREATE FUNCTION get_summary()
+        RETURNS TABLE("userId" uuid, "displayName" text, "itemCount" integer)
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            "userId" := '00000000-0000-0000-0000-000000000000'::uuid;
+            "displayName" := 'test';
+            "itemCount" := 42;
+            RETURN NEXT;
+        END;
+        $$;
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Failed to execute: {stmt}\nError: {e}"));
+    }
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let func_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateFunction(_)
+                    | MigrationOp::AlterFunction { .. }
+                    | MigrationOp::DropFunction { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        func_ops.is_empty(),
+        "Should have no function diff after round-trip with quoted TABLE columns, got: {func_ops:?}"
+    );
+}
