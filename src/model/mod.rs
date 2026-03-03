@@ -1018,10 +1018,7 @@ impl Function {
 pub fn normalize_pg_type(type_name: &str) -> String {
     let trimmed = type_name.trim();
 
-    if trimmed.len() >= 6
-        && trimmed[..6].eq_ignore_ascii_case("table(")
-        && trimmed.ends_with(')')
-    {
+    if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("table(") && trimmed.ends_with(')') {
         let inner = &trimmed[6..trimmed.len() - 1];
         let normalized_cols: Vec<String> = split_top_level_commas(inner)
             .iter()
