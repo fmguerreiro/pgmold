@@ -403,7 +403,7 @@ impl Function {
         self.name == other.name
             && self.schema == other.schema
             && args_equal
-            && normalize_return_type(&self.return_type) == normalize_return_type(&other.return_type)
+            && normalize_pg_type(&self.return_type) == normalize_pg_type(&other.return_type)
             && self.language == other.language
             && self.volatility == other.volatility
             && self.security == other.security
@@ -433,35 +433,6 @@ impl Function {
 
         false
     }
-}
-
-/// Normalizes a function return type for comparison.
-/// Strips double-quotes, lowercases, and normalizes type aliases within RETURNS TABLE.
-/// e.g., `table("userid" uuid, "croptype" text, "totalyield" float8)`
-///     → `table(userid uuid, croptype text, totalyield double precision)`
-fn normalize_return_type(return_type: &str) -> String {
-    let unquoted = return_type.replace('"', "");
-    let lower = unquoted.to_lowercase();
-
-    if !lower.starts_with("table(") {
-        return normalize_pg_type(&lower);
-    }
-
-    debug_assert!(lower.ends_with(')'), "expected closing ')' in: {lower}");
-    let inner = &lower["table(".len()..lower.len() - 1];
-    let normalized_cols: Vec<String> = split_top_level_commas(inner)
-        .iter()
-        .map(|col| {
-            let parts: Vec<&str> = col.trim().splitn(2, ' ').collect();
-            if parts.len() == 2 {
-                format!("{} {}", parts[0], normalize_pg_type(parts[1].trim()))
-            } else {
-                col.trim().to_string()
-            }
-        })
-        .collect();
-
-    format!("table({})", normalized_cols.join(", "))
 }
 
 /// Splits on commas that are not inside parentheses.
@@ -1041,8 +1012,22 @@ impl Function {
 
 /// Normalizes PostgreSQL type aliases to their canonical forms.
 /// This ensures consistent comparison between parsed SQL and introspected schemas.
+///
+/// For `TABLE(...)` return types, quoted column names are preserved verbatim
+/// (they are case-sensitive in PostgreSQL), while type keywords are normalized.
 pub fn normalize_pg_type(type_name: &str) -> String {
-    let lower = type_name.to_lowercase();
+    let trimmed = type_name.trim();
+
+    if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("table(") && trimmed.ends_with(')') {
+        let inner = &trimmed[6..trimmed.len() - 1];
+        let normalized_cols: Vec<String> = split_top_level_commas(inner)
+            .iter()
+            .map(|col| normalize_table_column(col.trim()))
+            .collect();
+        return format!("table({})", normalized_cols.join(", "));
+    }
+
+    let lower = trimmed.to_lowercase();
     match lower.as_str() {
         "int" | "int4" => "integer".to_string(),
         "int8" => "bigint".to_string(),
@@ -1054,6 +1039,39 @@ pub fn normalize_pg_type(type_name: &str) -> String {
         "timestamptz" => "timestamp with time zone".to_string(),
         "timetz" => "time with time zone".to_string(),
         _ => lower,
+    }
+}
+
+/// Normalizes a single column definition within a `TABLE(...)` return type.
+/// Quoted names (e.g. `"userId"`) are preserved verbatim; unquoted names are lowercased.
+/// The type portion is recursively normalized via `normalize_pg_type`.
+fn normalize_table_column(col: &str) -> String {
+    let (name, rest) = if let Some(stripped) = col.strip_prefix('"') {
+        match stripped.find('"') {
+            Some(closing) => {
+                let end = closing + 2;
+                let inner = &col[1..end - 1];
+                // Strip quotes from all-lowercase names — they're semantically identical
+                // to unquoted in PostgreSQL. Only preserve quotes when mixed-case matters.
+                let name = if inner.chars().any(|c| c.is_ascii_uppercase()) {
+                    col[..end].to_string()
+                } else {
+                    inner.to_string()
+                };
+                (name, col[end..].trim())
+            }
+            None => panic!("unclosed quote in TABLE column: {col}"),
+        }
+    } else {
+        match col.find(' ') {
+            Some(pos) => (col[..pos].to_lowercase(), col[pos..].trim()),
+            None => return col.to_lowercase(),
+        }
+    };
+    if rest.is_empty() {
+        name
+    } else {
+        format!("{} {}", name, normalize_pg_type(rest))
     }
 }
 
@@ -2464,5 +2482,77 @@ fn function_returns_table_multiword_type_aliases() {
     assert!(
         from_schema.semantically_equals(&from_db),
         "RETURNS TABLE with multi-word type aliases (timestamptz, bool) should normalize"
+    );
+}
+
+#[test]
+fn normalize_pg_type_preserves_quoted_table_column_names() {
+    assert_eq!(
+        normalize_pg_type(r#"TABLE("itemName" text)"#),
+        r#"table("itemName" text)"#
+    );
+    assert_eq!(
+        normalize_pg_type(r#"TABLE("userId" uuid, "itemName" text, "totalCount" float8)"#),
+        r#"table("userId" uuid, "itemName" text, "totalCount" double precision)"#
+    );
+}
+
+#[test]
+fn normalize_pg_type_lowercases_unquoted_table_column_names() {
+    assert_eq!(
+        normalize_pg_type("TABLE(user_id uuid, item_name text)"),
+        "table(user_id uuid, item_name text)"
+    );
+}
+
+#[test]
+fn normalize_pg_type_handles_mixed_quoted_unquoted_table_columns() {
+    assert_eq!(
+        normalize_pg_type(r#"TABLE("mixedCase" int, plain_col bool)"#),
+        r#"table("mixedCase" integer, plain_col boolean)"#
+    );
+}
+
+#[test]
+fn normalize_pg_type_strips_quotes_from_lowercase_table_column_names() {
+    assert_eq!(
+        normalize_pg_type(r#"TABLE("userid" uuid, "firstname" text)"#),
+        "table(userid uuid, firstname text)"
+    );
+}
+
+#[test]
+fn function_semantically_not_equals_quoted_vs_unquoted_mixed_case() {
+    let with_quotes = Function {
+        name: "f".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type: r#"table("userId" text)"#.to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Volatile,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    let without_quotes = Function {
+        name: "f".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type: "table(userid text)".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Volatile,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    assert!(
+        !with_quotes.semantically_equals(&without_quotes),
+        r#"TABLE("userId" text) and TABLE(userid text) are different in PostgreSQL"#
     );
 }
