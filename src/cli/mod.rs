@@ -54,6 +54,81 @@ struct DriftOutput {
     differences: Vec<String>,
 }
 
+#[derive(Serialize)]
+struct LintOutput {
+    results: Vec<LintResultOutput>,
+    error_count: usize,
+    warning_count: usize,
+}
+
+#[derive(Serialize)]
+struct LintResultOutput {
+    severity: String,
+    rule: String,
+    message: String,
+}
+
+#[derive(Serialize)]
+struct ApplyOutput {
+    applied: Vec<String>,
+    total: usize,
+    success: bool,
+    dry_run: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    idempotent: Option<bool>,
+    lint_warnings: Vec<String>,
+    lock_warnings: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct MigrateOutput {
+    file_path: Option<String>,
+    statement_count: usize,
+    statements: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct DumpOutput {
+    schemas: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sql: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    files: Option<Vec<String>>,
+}
+
+#[derive(Serialize)]
+struct DescribeOutput {
+    version: String,
+    commands: Vec<CommandDescription>,
+    object_types: Vec<String>,
+    provider_prefixes: Vec<ProviderDescription>,
+    environment_variables: Vec<EnvVarDescription>,
+}
+
+#[derive(Serialize)]
+struct CommandDescription {
+    name: String,
+    description: String,
+    supports_json: bool,
+    requires_database: bool,
+    supports_filters: bool,
+}
+
+#[derive(Serialize)]
+struct ProviderDescription {
+    prefix: String,
+    description: String,
+    example: String,
+}
+
+#[derive(Serialize)]
+struct EnvVarDescription {
+    name: String,
+    description: String,
+}
+
 /// Shared object filtering options
 #[derive(Args)]
 struct FilterArgs {
@@ -143,7 +218,7 @@ enum Commands {
         #[arg(long, short = 's', required = true)]
         schema: Vec<String>,
         /// PostgreSQL connection URL (e.g., postgres://user:pass@host:5432/db or db:postgres://...)
-        #[arg(long, short = 'd')]
+        #[arg(long, short = 'd', env = "PGMOLD_DATABASE_URL")]
         database: String,
         /// Target PostgreSQL schemas to compare (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
@@ -172,7 +247,7 @@ enum Commands {
         #[arg(long, short = 's', required = true)]
         schema: Vec<String>,
         /// PostgreSQL connection URL (e.g., postgres://user:pass@host:5432/db or db:postgres://...)
-        #[arg(long, short = 'd')]
+        #[arg(long, short = 'd', env = "PGMOLD_DATABASE_URL")]
         database: String,
         /// Preview the SQL without executing
         #[arg(long)]
@@ -193,6 +268,9 @@ enum Commands {
         /// Validate migration against a temporary database before applying (e.g., db:postgres://localhost:5433/tempdb)
         #[arg(long)]
         validate: Option<String>,
+        /// Output results as JSON
+        #[arg(long, short = 'j')]
+        json: bool,
     },
 
     /// Lint schema or migration plan for issues
@@ -201,11 +279,14 @@ enum Commands {
         #[arg(long, short = 's', required = true)]
         schema: Vec<String>,
         /// PostgreSQL connection URL to lint against (optional, enables migration-aware linting)
-        #[arg(long, short = 'd')]
+        #[arg(long, short = 'd', env = "PGMOLD_DATABASE_URL")]
         database: Option<String>,
         /// Target PostgreSQL schemas (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
         target_schemas: Vec<String>,
+        /// Output lint results as JSON
+        #[arg(long, short = 'j')]
+        json: bool,
     },
 
     /// Detect schema drift between SQL files and database
@@ -214,7 +295,7 @@ enum Commands {
         #[arg(long, short = 's', required = true)]
         schema: Vec<String>,
         /// PostgreSQL connection URL (e.g., postgres://user:pass@host:5432/db or db:postgres://...)
-        #[arg(long, short = 'd')]
+        #[arg(long, short = 'd', env = "PGMOLD_DATABASE_URL")]
         database: String,
         /// Target PostgreSQL schemas (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
@@ -227,7 +308,7 @@ enum Commands {
     /// Export database schema to SQL DDL
     Dump {
         /// PostgreSQL connection URL (e.g., postgres://user:pass@host:5432/db or db:postgres://...)
-        #[arg(long, short = 'd')]
+        #[arg(long, short = 'd', env = "PGMOLD_DATABASE_URL")]
         database: String,
         /// Schemas to dump (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
@@ -240,6 +321,9 @@ enum Commands {
         split: bool,
         #[command(flatten)]
         filter: FilterArgs,
+        /// Output dump as JSON (includes SQL content and metadata)
+        #[arg(long, short = 'j')]
+        json: bool,
     },
 
     /// Generate a numbered migration file from schema diff
@@ -248,7 +332,7 @@ enum Commands {
         #[arg(long, short = 's', required = true)]
         schema: Vec<String>,
         /// PostgreSQL connection URL (e.g., postgres://user:pass@host:5432/db or db:postgres://...)
-        #[arg(long, short = 'd')]
+        #[arg(long, short = 'd', env = "PGMOLD_DATABASE_URL")]
         database: String,
         /// Directory for migration files
         #[arg(long, short = 'm')]
@@ -261,7 +345,24 @@ enum Commands {
         target_schemas: Vec<String>,
         #[command(flatten)]
         grants: GrantArgs,
+        /// Output result as JSON
+        #[arg(long, short = 'j')]
+        json: bool,
     },
+
+    /// Describe available commands, object types, providers, and filters (for agent introspection)
+    Describe {
+        /// Describe a specific command (e.g., "plan", "apply")
+        #[arg()]
+        command: Option<String>,
+    },
+}
+
+fn print_json(value: &impl Serialize) -> Result<()> {
+    let output = serde_json::to_string_pretty(value)
+        .map_err(|e| anyhow!("Failed to serialize JSON output: {e}"))?;
+    println!("{output}");
+    Ok(())
 }
 
 fn parse_db_source(source: &str) -> Result<String> {
@@ -301,9 +402,7 @@ pub async fn run() -> Result<()> {
                     idempotent: None,
                     residual_ops_count: None,
                 };
-                let json_output = serde_json::to_string_pretty(&output)
-                    .map_err(|e| anyhow!("Failed to serialize diff output to JSON: {e}"))?;
-                println!("{json_output}");
+                print_json(&output)?;
             } else if sql.is_empty() {
                 println!("No differences found.");
             } else {
@@ -445,10 +544,7 @@ pub async fn run() -> Result<()> {
                             statements: contract_sql,
                         },
                     };
-                    let json_output = serde_json::to_string_pretty(&output).map_err(|e| {
-                        anyhow!("Failed to serialize phased plan output to JSON: {e}")
-                    })?;
-                    println!("{json_output}");
+                    print_json(&output)?;
                 } else {
                     let total = phased_plan.expand_ops.len()
                         + phased_plan.backfill_ops.len()
@@ -508,9 +604,7 @@ pub async fn run() -> Result<()> {
                         idempotent: validation_info.as_ref().map(|v| v.idempotent),
                         residual_ops_count: validation_info.as_ref().map(|v| v.residual_ops.len()),
                     };
-                    let json_output = serde_json::to_string_pretty(&output)
-                        .map_err(|e| anyhow!("Failed to serialize plan output to JSON: {e}"))?;
-                    println!("{json_output}");
+                    print_json(&output)?;
                 } else {
                     for warning in &lock_warnings {
                         println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
@@ -542,6 +636,7 @@ pub async fn run() -> Result<()> {
             grants,
             verbose,
             validate,
+            json,
         } => {
             let include_extension_objects = filter.include_extension_objects;
             let filter = filter.to_filter()?;
@@ -577,15 +672,17 @@ pub async fn run() -> Result<()> {
             };
             let lint_results = lint_migration_plan(&ops, &lint_options);
 
-            for lint_result in &lint_results {
-                let severity = match lint_result.severity {
-                    LintSeverity::Error => "ERROR",
-                    LintSeverity::Warning => "WARNING",
-                };
-                println!(
-                    "[{}] {}: {}",
-                    severity, lint_result.rule, lint_result.message
-                );
+            if !json {
+                for lint_result in &lint_results {
+                    let severity = match lint_result.severity {
+                        LintSeverity::Error => "ERROR",
+                        LintSeverity::Warning => "WARNING",
+                    };
+                    println!(
+                        "[{}] {}: {}",
+                        severity, lint_result.rule, lint_result.message
+                    );
+                }
             }
 
             let error_count = lint_results
@@ -593,10 +690,18 @@ pub async fn run() -> Result<()> {
                 .filter(|r| matches!(r.severity, LintSeverity::Error))
                 .count();
             if error_count > 0 {
+                if json {
+                    let error_msg = format!("Migration blocked by {error_count} lint error(s)");
+                    let lint_error_output = serde_json::json!({
+                        "success": false,
+                        "error": error_msg,
+                    });
+                    print_json(&lint_error_output)?;
+                }
                 return Err(anyhow!("Migration blocked by {error_count} lint error(s)"));
             }
 
-            if let Some(validate_db_url) = &validate {
+            let validation_info = if let Some(validate_db_url) = &validate {
                 let validate_url = parse_db_source(validate_db_url)?;
                 let validation_result = validate_migration_on_temp_db(
                     &ops,
@@ -609,16 +714,25 @@ pub async fn run() -> Result<()> {
                 .map_err(|e| anyhow!("Validation failed: {e}"))?;
 
                 if !validation_result.success {
-                    eprintln!("\n\u{274C} Validation failed on temp database:");
-                    for error in &validation_result.execution_errors {
-                        eprintln!("  Statement {}: {}", error.statement_index + 1, error.sql);
-                        eprintln!("    Error: {}", error.error_message);
+                    if !json {
+                        eprintln!("\n\u{274C} Validation failed on temp database:");
+                        for error in &validation_result.execution_errors {
+                            eprintln!("  Statement {}: {}", error.statement_index + 1, error.sql);
+                            eprintln!("    Error: {}", error.error_message);
+                        }
+                    }
+                    if json {
+                        let error_output = serde_json::json!({
+                            "success": false,
+                            "error": format!("Migration validation failed with {} error(s)", validation_result.execution_errors.len())
+                        });
+                        print_json(&error_output)?;
                     }
                     return Err(anyhow!(
                         "Migration validation failed with {} error(s). Apply aborted.",
                         validation_result.execution_errors.len()
                     ));
-                } else if !ops.is_empty() {
+                } else if !ops.is_empty() && !json {
                     println!("\u{2705} Migration validated successfully on temp database");
                     if validation_result.idempotent {
                         println!(
@@ -634,21 +748,38 @@ pub async fn run() -> Result<()> {
                         }
                     }
                 }
-            }
+                Some(validation_result)
+            } else {
+                None
+            };
 
             let lock_warnings = detect_lock_hazards(&ops);
-            for warning in &lock_warnings {
-                println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
+            if !json {
+                for warning in &lock_warnings {
+                    println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
+                }
             }
+
+            let lint_warning_messages: Vec<String> = lint_results
+                .iter()
+                .filter(|r| matches!(r.severity, LintSeverity::Warning))
+                .map(|r| r.message.clone())
+                .collect();
+            let lock_warning_messages: Vec<String> =
+                lock_warnings.iter().map(|w| w.message.clone()).collect();
 
             let sql = generate_sql(&ops);
 
             if sql.is_empty() {
-                println!("No changes to apply.");
+                if !json {
+                    println!("No changes to apply.");
+                }
             } else if dry_run {
-                println!("\nDry run - SQL that would be executed:");
-                for statement in &sql {
-                    println!("{statement}");
+                if !json {
+                    println!("\nDry run - SQL that would be executed:");
+                    for statement in &sql {
+                        println!("{statement}");
+                    }
                 }
             } else {
                 let total = sql.len();
@@ -660,7 +791,7 @@ pub async fn run() -> Result<()> {
 
                 for (i, statement) in sql.iter().enumerate() {
                     let display_num = i + 1;
-                    if verbose {
+                    if verbose && !json {
                         let truncated = if statement.len() > 80 {
                             format!("{}...", &statement[..80])
                         } else {
@@ -672,7 +803,7 @@ pub async fn run() -> Result<()> {
                         .execute(statement.as_str())
                         .await
                         .map_err(|e| anyhow!("Failed to execute SQL: {e}"))?;
-                    if verbose {
+                    if verbose && !json {
                         println!(
                             "[{display_num}/{total}] OK ({} rows affected)",
                             result.rows_affected()
@@ -680,21 +811,35 @@ pub async fn run() -> Result<()> {
                     }
                 }
 
-                if verbose {
+                if verbose && !json {
                     println!("Committing transaction...");
                 }
                 transaction
                     .commit()
                     .await
                     .map_err(|e| anyhow!("Failed to commit transaction: {e}"))?;
-                if verbose {
+                if verbose && !json {
                     println!("Transaction committed.");
                 }
 
-                println!(
-                    "
-Successfully applied {total} statements."
-                );
+                if !json {
+                    println!("\nSuccessfully applied {total} statements.");
+                }
+            }
+
+            if json {
+                let total = sql.len();
+                let output = ApplyOutput {
+                    applied: sql,
+                    total,
+                    success: true,
+                    dry_run,
+                    validated: validation_info.as_ref().map(|v| v.success),
+                    idempotent: validation_info.as_ref().map(|v| v.idempotent),
+                    lint_warnings: lint_warning_messages,
+                    lock_warnings: lock_warning_messages,
+                };
+                print_json(&output)?;
             }
             Ok(())
         }
@@ -702,6 +847,7 @@ Successfully applied {total} statements."
             schema,
             database,
             target_schemas,
+            json,
         } => {
             let target = load_schema(&schema)?;
             let target = filter_by_target_schemas(&target, &target_schemas);
@@ -722,7 +868,33 @@ Successfully applied {total} statements."
             let lint_options = LintOptions::default();
             let results = lint_migration_plan(&ops, &lint_options);
 
-            if results.is_empty() {
+            let error_count = results
+                .iter()
+                .filter(|r| matches!(r.severity, LintSeverity::Error))
+                .count();
+            let warning_count = results
+                .iter()
+                .filter(|r| matches!(r.severity, LintSeverity::Warning))
+                .count();
+
+            if json {
+                let output = LintOutput {
+                    results: results
+                        .iter()
+                        .map(|r| LintResultOutput {
+                            severity: match r.severity {
+                                LintSeverity::Error => "error".to_string(),
+                                LintSeverity::Warning => "warning".to_string(),
+                            },
+                            rule: r.rule.clone(),
+                            message: r.message.clone(),
+                        })
+                        .collect(),
+                    error_count,
+                    warning_count,
+                };
+                print_json(&output)?;
+            } else if results.is_empty() {
                 println!("No lint issues found.");
             } else {
                 for result in &results {
@@ -732,10 +904,10 @@ Successfully applied {total} statements."
                     };
                     println!("[{}] {}: {}", severity, result.rule, result.message);
                 }
+            }
 
-                if has_errors(&results) {
-                    std::process::exit(1);
-                }
+            if has_errors(&results) {
+                return Err(anyhow!("Lint failed with {error_count} error(s)"));
             }
             Ok(())
         }
@@ -765,9 +937,7 @@ Successfully applied {total} statements."
                         .map(|op| format!("{op:?}"))
                         .collect(),
                 };
-                let json_output = serde_json::to_string_pretty(&output)
-                    .map_err(|e| anyhow!("Failed to serialize drift output to JSON: {e}"))?;
-                println!("{json_output}");
+                print_json(&output)?;
             } else if report.has_drift {
                 println!("Drift detected!");
                 println!("Expected fingerprint: {}", report.expected_fingerprint);
@@ -782,7 +952,7 @@ Successfully applied {total} statements."
             }
 
             if report.has_drift {
-                std::process::exit(1);
+                return Err(anyhow!("Schema drift detected"));
             }
             Ok(())
         }
@@ -792,6 +962,7 @@ Successfully applied {total} statements."
             output,
             split,
             filter,
+            json,
         } => {
             let include_extension_objects = filter.include_extension_objects;
             let filter = filter.to_filter()?;
@@ -836,10 +1007,17 @@ Successfully applied {total} statements."
                     let file_path = std::path::Path::new(&dir_path).join(filename);
                     std::fs::write(&file_path, content)
                         .map_err(|e| anyhow!("Failed to write to {}: {e}", file_path.display()))?;
-                    written_files.push(filename);
+                    written_files.push(filename.to_string());
                 }
 
-                if written_files.is_empty() {
+                if json {
+                    let output = DumpOutput {
+                        schemas: target_schemas,
+                        sql: None,
+                        files: Some(written_files),
+                    };
+                    print_json(&output)?;
+                } else if written_files.is_empty() {
                     println!("No schema objects to dump.");
                 } else {
                     println!(
@@ -858,7 +1036,14 @@ Successfully applied {total} statements."
                 );
                 let dump = generate_dump(&schema, Some(&header));
 
-                if let Some(path) = output {
+                if json {
+                    let output = DumpOutput {
+                        schemas: target_schemas,
+                        sql: Some(dump),
+                        files: None,
+                    };
+                    print_json(&output)?;
+                } else if let Some(path) = output {
                     std::fs::write(&path, &dump)
                         .map_err(|e| anyhow!("Failed to write to {path}: {e}"))?;
                     println!("Schema dumped to {path}");
@@ -875,6 +1060,7 @@ Successfully applied {total} statements."
             name,
             target_schemas,
             grants,
+            json,
         } => {
             let target = load_schema(&schema)?;
             let target = filter_by_target_schemas(&target, &target_schemas);
@@ -896,7 +1082,16 @@ Successfully applied {total} statements."
             let sql = generate_sql(&ops);
 
             if sql.is_empty() {
-                println!("No changes to generate - schema is already in sync.");
+                if json {
+                    let output = MigrateOutput {
+                        file_path: None,
+                        statement_count: 0,
+                        statements: vec![],
+                    };
+                    print_json(&output)?;
+                } else {
+                    println!("No changes to generate - schema is already in sync.");
+                }
                 return Ok(());
             }
 
@@ -913,11 +1108,136 @@ Successfully applied {total} statements."
             std::fs::write(&file_path, format!("{content}\n"))
                 .map_err(|e| anyhow!("Failed to write migration file: {e}"))?;
 
-            println!(
-                "Created migration: {} ({} statements)",
-                file_path.display(),
-                sql.len()
-            );
+            if json {
+                let output = MigrateOutput {
+                    file_path: Some(file_path.display().to_string()),
+                    statement_count: sql.len(),
+                    statements: sql,
+                };
+                print_json(&output)?;
+            } else {
+                println!(
+                    "Created migration: {} ({} statements)",
+                    file_path.display(),
+                    sql.len()
+                );
+            }
+            Ok(())
+        }
+        Commands::Describe {
+            command: specific_command,
+        } => {
+            let all_object_types: Vec<String> =
+                ObjectType::all().iter().map(|t| t.to_string()).collect();
+
+            let commands = vec![
+                CommandDescription {
+                    name: "plan".into(),
+                    description:
+                        "Generate migration plan from schema source against a live database".into(),
+                    supports_json: true,
+                    requires_database: true,
+                    supports_filters: true,
+                },
+                CommandDescription {
+                    name: "apply".into(),
+                    description: "Apply migrations to a live database".into(),
+                    supports_json: true,
+                    requires_database: true,
+                    supports_filters: true,
+                },
+                CommandDescription {
+                    name: "diff".into(),
+                    description: "Compare two schemas and show migration SQL".into(),
+                    supports_json: true,
+                    requires_database: false,
+                    supports_filters: false,
+                },
+                CommandDescription {
+                    name: "drift".into(),
+                    description: "Detect schema drift between SQL files and database".into(),
+                    supports_json: true,
+                    requires_database: true,
+                    supports_filters: false,
+                },
+                CommandDescription {
+                    name: "dump".into(),
+                    description: "Export database schema to SQL DDL".into(),
+                    supports_json: true,
+                    requires_database: true,
+                    supports_filters: true,
+                },
+                CommandDescription {
+                    name: "lint".into(),
+                    description: "Lint schema or migration plan for issues".into(),
+                    supports_json: true,
+                    requires_database: false,
+                    supports_filters: false,
+                },
+                CommandDescription {
+                    name: "migrate".into(),
+                    description: "Generate a numbered migration file from schema diff".into(),
+                    supports_json: true,
+                    requires_database: true,
+                    supports_filters: false,
+                },
+                CommandDescription {
+                    name: "describe".into(),
+                    description: "Describe available commands, object types, and providers".into(),
+                    supports_json: true,
+                    requires_database: false,
+                    supports_filters: false,
+                },
+            ];
+
+            let providers = vec![
+                ProviderDescription {
+                    prefix: "sql:".into(),
+                    description: "SQL files, directories, or glob patterns".into(),
+                    example: "sql:schema.sql".into(),
+                },
+                ProviderDescription {
+                    prefix: "drizzle:".into(),
+                    description: "Drizzle ORM config file (runs drizzle-kit export)".into(),
+                    example: "drizzle:drizzle.config.ts".into(),
+                },
+            ];
+
+            let env_vars = vec![
+                EnvVarDescription {
+                    name: "PGMOLD_DATABASE_URL".into(),
+                    description:
+                        "Default database connection URL (fallback when --database is omitted)"
+                            .into(),
+                },
+                EnvVarDescription {
+                    name: "PGMOLD_PROD".into(),
+                    description:
+                        "Set to '1' to enable production safety checks (blocks DROP TABLE)".into(),
+                },
+            ];
+
+            let commands = if let Some(ref cmd_name) = specific_command {
+                let filtered: Vec<_> = commands
+                    .into_iter()
+                    .filter(|c| c.name == *cmd_name)
+                    .collect();
+                if filtered.is_empty() {
+                    return Err(anyhow!("Unknown command: {cmd_name}"));
+                }
+                filtered
+            } else {
+                commands
+            };
+
+            let output = DescribeOutput {
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                commands,
+                object_types: all_object_types,
+                provider_prefixes: providers,
+                environment_variables: env_vars,
+            };
+            print_json(&output)?;
             Ok(())
         }
     }
@@ -1126,6 +1446,43 @@ mod tests {
             assert!(!zero_downtime);
         } else {
             panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn apply_parses_json_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "apply",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--json",
+        ]);
+
+        if let Commands::Apply { json, .. } = args.command {
+            assert!(json);
+        } else {
+            panic!("Expected Apply command");
+        }
+    }
+
+    #[test]
+    fn apply_json_flag_defaults_false() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "apply",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+        ]);
+
+        if let Commands::Apply { json, .. } = args.command {
+            assert!(!json);
+        } else {
+            panic!("Expected Apply command");
         }
     }
 
@@ -1526,6 +1883,19 @@ mod tests {
     }
 
     #[test]
+    fn database_falls_back_to_env_var() {
+        std::env::set_var("PGMOLD_DATABASE_URL", "postgres://env-test/db");
+        let args = Cli::parse_from(["pgmold", "drift", "--schema", "sql:schema.sql"]);
+
+        if let Commands::Drift { database, .. } = args.command {
+            assert_eq!(database, "postgres://env-test/db");
+        } else {
+            panic!("Expected Drift command");
+        }
+        std::env::remove_var("PGMOLD_DATABASE_URL");
+    }
+
+    #[test]
     fn migrate_flattened_no_generate_subcommand() {
         let args = Cli::parse_from([
             "pgmold",
@@ -1554,6 +1924,90 @@ mod tests {
             assert_eq!(name, "add_users");
         } else {
             panic!("Expected Migrate command");
+        }
+    }
+
+    #[test]
+    fn lint_parses_json_flag() {
+        let args = Cli::parse_from(["pgmold", "lint", "--schema", "sql:schema.sql", "--json"]);
+
+        if let Commands::Lint { json, .. } = args.command {
+            assert!(json);
+        } else {
+            panic!("Expected Lint command");
+        }
+    }
+
+    #[test]
+    fn lint_json_flag_defaults_false() {
+        let args = Cli::parse_from(["pgmold", "lint", "--schema", "sql:schema.sql"]);
+
+        if let Commands::Lint { json, .. } = args.command {
+            assert!(!json);
+        } else {
+            panic!("Expected Lint command");
+        }
+    }
+
+    #[test]
+    fn migrate_parses_json_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "migrate",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "postgres://localhost/db",
+            "--migrations",
+            "migrations",
+            "--name",
+            "test_migration",
+            "--json",
+        ]);
+
+        if let Commands::Migrate { json, .. } = args.command {
+            assert!(json);
+        } else {
+            panic!("Expected Migrate command");
+        }
+    }
+
+    #[test]
+    fn dump_parses_json_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "dump",
+            "--database",
+            "db:postgres://localhost/db",
+            "--json",
+        ]);
+
+        if let Commands::Dump { json, .. } = args.command {
+            assert!(json);
+        } else {
+            panic!("Expected Dump command");
+        }
+    }
+
+    #[test]
+    fn describe_command_parses() {
+        let args = Cli::parse_from(["pgmold", "describe"]);
+
+        if let Commands::Describe { command: None } = args.command {
+            // parsed successfully
+        } else {
+            panic!("Expected Describe command with no subcommand");
+        }
+    }
+
+    #[test]
+    fn describe_command_parses_with_command_arg() {
+        let args = Cli::parse_from(["pgmold", "describe", "plan"]);
+
+        if let Commands::Describe { command: Some(cmd) } = args.command {
+            assert_eq!(cmd, "plan");
+        } else {
+            panic!("Expected Describe command with 'plan' arg");
         }
     }
 }
