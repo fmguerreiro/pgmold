@@ -73,6 +73,7 @@ struct ApplyOutput {
     applied: Vec<String>,
     total: usize,
     success: bool,
+    dry_run: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     validated: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -91,7 +92,8 @@ struct MigrateOutput {
 #[derive(Serialize)]
 struct DumpOutput {
     schemas: Vec<String>,
-    sql: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sql: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     files: Option<Vec<String>>,
 }
@@ -356,6 +358,13 @@ enum Commands {
     },
 }
 
+fn print_json(value: &impl Serialize) -> Result<()> {
+    let output = serde_json::to_string_pretty(value)
+        .map_err(|e| anyhow!("Failed to serialize JSON output: {e}"))?;
+    println!("{output}");
+    Ok(())
+}
+
 fn parse_db_source(source: &str) -> Result<String> {
     if let Some(stripped) = source.strip_prefix("db:") {
         Ok(stripped.to_string())
@@ -393,9 +402,7 @@ pub async fn run() -> Result<()> {
                     idempotent: None,
                     residual_ops_count: None,
                 };
-                let json_output = serde_json::to_string_pretty(&output)
-                    .map_err(|e| anyhow!("Failed to serialize diff output to JSON: {e}"))?;
-                println!("{json_output}");
+                print_json(&output)?;
             } else if sql.is_empty() {
                 println!("No differences found.");
             } else {
@@ -537,10 +544,7 @@ pub async fn run() -> Result<()> {
                             statements: contract_sql,
                         },
                     };
-                    let json_output = serde_json::to_string_pretty(&output).map_err(|e| {
-                        anyhow!("Failed to serialize phased plan output to JSON: {e}")
-                    })?;
-                    println!("{json_output}");
+                    print_json(&output)?;
                 } else {
                     let total = phased_plan.expand_ops.len()
                         + phased_plan.backfill_ops.len()
@@ -600,9 +604,7 @@ pub async fn run() -> Result<()> {
                         idempotent: validation_info.as_ref().map(|v| v.idempotent),
                         residual_ops_count: validation_info.as_ref().map(|v| v.residual_ops.len()),
                     };
-                    let json_output = serde_json::to_string_pretty(&output)
-                        .map_err(|e| anyhow!("Failed to serialize plan output to JSON: {e}"))?;
-                    println!("{json_output}");
+                    print_json(&output)?;
                 } else {
                     for warning in &lock_warnings {
                         println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
@@ -694,11 +696,7 @@ pub async fn run() -> Result<()> {
                         "success": false,
                         "error": error_msg,
                     });
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&lint_error_output)
-                            .map_err(|e| anyhow!("Failed to serialize lint error to JSON: {e}"))?
-                    );
+                    print_json(&lint_error_output)?;
                 }
                 return Err(anyhow!("Migration blocked by {error_count} lint error(s)"));
             }
@@ -728,12 +726,7 @@ pub async fn run() -> Result<()> {
                             "success": false,
                             "error": format!("Migration validation failed with {} error(s)", validation_result.execution_errors.len())
                         });
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&error_output).map_err(|e| anyhow!(
-                                "Failed to serialize validation error to JSON: {e}"
-                            ))?
-                        );
+                        print_json(&error_output)?;
                     }
                     return Err(anyhow!(
                         "Migration validation failed with {} error(s). Apply aborted.",
@@ -778,37 +771,11 @@ pub async fn run() -> Result<()> {
             let sql = generate_sql(&ops);
 
             if sql.is_empty() {
-                if json {
-                    let output = ApplyOutput {
-                        applied: vec![],
-                        total: 0,
-                        success: true,
-                        validated: validation_info.as_ref().map(|v| v.success),
-                        idempotent: validation_info.as_ref().map(|v| v.idempotent),
-                        lint_warnings: lint_warning_messages,
-                        lock_warnings: lock_warning_messages,
-                    };
-                    let json_output = serde_json::to_string_pretty(&output)
-                        .map_err(|e| anyhow!("Failed to serialize apply output to JSON: {e}"))?;
-                    println!("{json_output}");
-                } else {
+                if !json {
                     println!("No changes to apply.");
                 }
             } else if dry_run {
-                if json {
-                    let output = ApplyOutput {
-                        applied: sql.clone(),
-                        total: sql.len(),
-                        success: true,
-                        validated: validation_info.as_ref().map(|v| v.success),
-                        idempotent: validation_info.as_ref().map(|v| v.idempotent),
-                        lint_warnings: lint_warning_messages,
-                        lock_warnings: lock_warning_messages,
-                    };
-                    let json_output = serde_json::to_string_pretty(&output)
-                        .map_err(|e| anyhow!("Failed to serialize apply output to JSON: {e}"))?;
-                    println!("{json_output}");
-                } else {
+                if !json {
                     println!("\nDry run - SQL that would be executed:");
                     for statement in &sql {
                         println!("{statement}");
@@ -855,25 +822,24 @@ pub async fn run() -> Result<()> {
                     println!("Transaction committed.");
                 }
 
-                if json {
-                    let output = ApplyOutput {
-                        applied: sql.clone(),
-                        total,
-                        success: true,
-                        validated: validation_info.as_ref().map(|v| v.success),
-                        idempotent: validation_info.as_ref().map(|v| v.idempotent),
-                        lint_warnings: lint_warning_messages,
-                        lock_warnings: lock_warning_messages,
-                    };
-                    let json_output = serde_json::to_string_pretty(&output)
-                        .map_err(|e| anyhow!("Failed to serialize apply output to JSON: {e}"))?;
-                    println!("{json_output}");
-                } else {
-                    println!(
-                        "
-Successfully applied {total} statements."
-                    );
+                if !json {
+                    println!("\nSuccessfully applied {total} statements.");
                 }
+            }
+
+            if json {
+                let total = sql.len();
+                let output = ApplyOutput {
+                    applied: sql,
+                    total,
+                    success: true,
+                    dry_run,
+                    validated: validation_info.as_ref().map(|v| v.success),
+                    idempotent: validation_info.as_ref().map(|v| v.idempotent),
+                    lint_warnings: lint_warning_messages,
+                    lock_warnings: lock_warning_messages,
+                };
+                print_json(&output)?;
             }
             Ok(())
         }
@@ -927,9 +893,7 @@ Successfully applied {total} statements."
                     error_count,
                     warning_count,
                 };
-                let json_output = serde_json::to_string_pretty(&output)
-                    .map_err(|e| anyhow!("Failed to serialize lint output to JSON: {e}"))?;
-                println!("{json_output}");
+                print_json(&output)?;
             } else if results.is_empty() {
                 println!("No lint issues found.");
             } else {
@@ -973,9 +937,7 @@ Successfully applied {total} statements."
                         .map(|op| format!("{op:?}"))
                         .collect(),
                 };
-                let json_output = serde_json::to_string_pretty(&output)
-                    .map_err(|e| anyhow!("Failed to serialize drift output to JSON: {e}"))?;
-                println!("{json_output}");
+                print_json(&output)?;
             } else if report.has_drift {
                 println!("Drift detected!");
                 println!("Expected fingerprint: {}", report.expected_fingerprint);
@@ -1051,12 +1013,10 @@ Successfully applied {total} statements."
                 if json {
                     let output = DumpOutput {
                         schemas: target_schemas,
-                        sql: String::new(),
+                        sql: None,
                         files: Some(written_files),
                     };
-                    let json_output = serde_json::to_string_pretty(&output)
-                        .map_err(|e| anyhow!("Failed to serialize dump output to JSON: {e}"))?;
-                    println!("{json_output}");
+                    print_json(&output)?;
                 } else if written_files.is_empty() {
                     println!("No schema objects to dump.");
                 } else {
@@ -1079,12 +1039,10 @@ Successfully applied {total} statements."
                 if json {
                     let output = DumpOutput {
                         schemas: target_schemas,
-                        sql: dump,
+                        sql: Some(dump),
                         files: None,
                     };
-                    let json_output = serde_json::to_string_pretty(&output)
-                        .map_err(|e| anyhow!("Failed to serialize dump output to JSON: {e}"))?;
-                    println!("{json_output}");
+                    print_json(&output)?;
                 } else if let Some(path) = output {
                     std::fs::write(&path, &dump)
                         .map_err(|e| anyhow!("Failed to write to {path}: {e}"))?;
@@ -1130,9 +1088,7 @@ Successfully applied {total} statements."
                         statement_count: 0,
                         statements: vec![],
                     };
-                    let json_output = serde_json::to_string_pretty(&output)
-                        .map_err(|e| anyhow!("Failed to serialize migrate output to JSON: {e}"))?;
-                    println!("{json_output}");
+                    print_json(&output)?;
                 } else {
                     println!("No changes to generate - schema is already in sync.");
                 }
@@ -1158,9 +1114,7 @@ Successfully applied {total} statements."
                     statement_count: sql.len(),
                     statements: sql,
                 };
-                let json_output = serde_json::to_string_pretty(&output)
-                    .map_err(|e| anyhow!("Failed to serialize migrate output to JSON: {e}"))?;
-                println!("{json_output}");
+                print_json(&output)?;
             } else {
                 println!(
                     "Created migration: {} ({} statements)",
@@ -1173,27 +1127,8 @@ Successfully applied {total} statements."
         Commands::Describe {
             command: specific_command,
         } => {
-            let all_object_types: Vec<String> = vec![
-                "schemas",
-                "extensions",
-                "tables",
-                "enums",
-                "domains",
-                "functions",
-                "views",
-                "triggers",
-                "sequences",
-                "partitions",
-                "policies",
-                "indexes",
-                "foreignkeys",
-                "checkconstraints",
-                "defaultprivileges",
-                "grants",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect();
+            let all_object_types: Vec<String> =
+                ObjectType::all().iter().map(|t| t.to_string()).collect();
 
             let commands = vec![
                 CommandDescription {
@@ -1246,6 +1181,13 @@ Successfully applied {total} statements."
                     requires_database: true,
                     supports_filters: false,
                 },
+                CommandDescription {
+                    name: "describe".into(),
+                    description: "Describe available commands, object types, and providers".into(),
+                    supports_json: true,
+                    requires_database: false,
+                    supports_filters: false,
+                },
             ];
 
             let providers = vec![
@@ -1275,7 +1217,7 @@ Successfully applied {total} statements."
                 },
             ];
 
-            let output = if let Some(ref cmd_name) = specific_command {
+            let commands = if let Some(ref cmd_name) = specific_command {
                 let filtered: Vec<_> = commands
                     .into_iter()
                     .filter(|c| c.name == *cmd_name)
@@ -1283,26 +1225,19 @@ Successfully applied {total} statements."
                 if filtered.is_empty() {
                     return Err(anyhow!("Unknown command: {cmd_name}"));
                 }
-                DescribeOutput {
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                    commands: filtered,
-                    object_types: all_object_types,
-                    provider_prefixes: providers,
-                    environment_variables: env_vars,
-                }
+                filtered
             } else {
-                DescribeOutput {
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                    commands,
-                    object_types: all_object_types,
-                    provider_prefixes: providers,
-                    environment_variables: env_vars,
-                }
+                commands
             };
 
-            let json_output = serde_json::to_string_pretty(&output)
-                .map_err(|e| anyhow!("Failed to serialize describe output: {e}"))?;
-            println!("{json_output}");
+            let output = DescribeOutput {
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                commands,
+                object_types: all_object_types,
+                provider_prefixes: providers,
+                environment_variables: env_vars,
+            };
+            print_json(&output)?;
             Ok(())
         }
     }
