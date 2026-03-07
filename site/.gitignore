@@ -1,5 +1,6 @@
 # build output
 dist/
+public/landing.css
 # generated types
 .astro/
 

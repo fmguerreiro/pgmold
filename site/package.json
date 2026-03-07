@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "build": "astro build",
+    "build:css": "npx @tailwindcss/cli -i src/landing/input.css -o public/landing.css --minify",
+    "build": "npm run build:css && astro build",
     "preview": "astro preview",
     "astro": "astro"
   },
@@ -13,5 +14,9 @@
     "@astrojs/starlight": "^0.37.7",
     "astro": "^5.6.1",
     "sharp": "^0.34.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.2.1",
+    "tailwindcss": "^4.2.1"
   }
 }

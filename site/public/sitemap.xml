@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://pgmold.dev/</loc><priority>1.0</priority></url>
+  <url><loc>https://pgmold.dev/docs/</loc><priority>0.9</priority></url>
+  <url><loc>https://pgmold.dev/docs/getting-started/installation/</loc><priority>0.8</priority></url>
+  <url><loc>https://pgmold.dev/docs/getting-started/quick-start/</loc><priority>0.8</priority></url>
+  <url><loc>https://pgmold.dev/docs/guides/multi-file-schemas/</loc><priority>0.7</priority></url>
+  <url><loc>https://pgmold.dev/docs/guides/filtering/</loc><priority>0.7</priority></url>
+  <url><loc>https://pgmold.dev/docs/guides/adopting/</loc><priority>0.7</priority></url>
+  <url><loc>https://pgmold.dev/docs/guides/ci-cd/</loc><priority>0.7</priority></url>
+  <url><loc>https://pgmold.dev/docs/guides/drizzle/</loc><priority>0.7</priority></url>
+  <url><loc>https://pgmold.dev/docs/guides/safety/</loc><priority>0.7</priority></url>
+  <url><loc>https://pgmold.dev/docs/reference/cli/</loc><priority>0.8</priority></url>
+  <url><loc>https://pgmold.dev/docs/reference/terraform/</loc><priority>0.7</priority></url>
+  <url><loc>https://pgmold.dev/docs/reference/github-action/</loc><priority>0.7</priority></url>
+  <url><loc>https://pgmold.dev/docs/comparisons/overview/</loc><priority>0.6</priority></url>
+</urlset>

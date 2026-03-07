@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+@theme {
+  --color-pg-50: #f0f5ff;
+  --color-pg-100: #e0eaff;
+  --color-pg-200: #c2d5ff;
+  --color-pg-300: #93b4fd;
+  --color-pg-400: #6090fa;
+  --color-pg-500: #336df5;
+  --color-pg-600: #1e4fea;
+  --color-pg-700: #1a3dd6;
+  --color-pg-800: #1c34ad;
+  --color-pg-900: #1c3088;
+  --color-pg-950: #151f53;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
