@@ -54,6 +54,19 @@ struct DriftOutput {
     differences: Vec<String>,
 }
 
+#[derive(Serialize)]
+struct ApplyOutput {
+    applied: Vec<String>,
+    total: usize,
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    idempotent: Option<bool>,
+    lint_warnings: Vec<String>,
+    lock_warnings: Vec<String>,
+}
+
 /// Shared object filtering options
 #[derive(Args)]
 struct FilterArgs {
@@ -193,6 +206,9 @@ enum Commands {
         /// Validate migration against a temporary database before applying (e.g., db:postgres://localhost:5433/tempdb)
         #[arg(long)]
         validate: Option<String>,
+        /// Output results as JSON
+        #[arg(long, short = 'j')]
+        json: bool,
     },
 
     /// Lint schema or migration plan for issues
@@ -542,6 +558,7 @@ pub async fn run() -> Result<()> {
             grants,
             verbose,
             validate,
+            json,
         } => {
             let include_extension_objects = filter.include_extension_objects;
             let filter = filter.to_filter()?;
@@ -577,15 +594,17 @@ pub async fn run() -> Result<()> {
             };
             let lint_results = lint_migration_plan(&ops, &lint_options);
 
-            for lint_result in &lint_results {
-                let severity = match lint_result.severity {
-                    LintSeverity::Error => "ERROR",
-                    LintSeverity::Warning => "WARNING",
-                };
-                println!(
-                    "[{}] {}: {}",
-                    severity, lint_result.rule, lint_result.message
-                );
+            if !json {
+                for lint_result in &lint_results {
+                    let severity = match lint_result.severity {
+                        LintSeverity::Error => "ERROR",
+                        LintSeverity::Warning => "WARNING",
+                    };
+                    println!(
+                        "[{}] {}: {}",
+                        severity, lint_result.rule, lint_result.message
+                    );
+                }
             }
 
             let error_count = lint_results
@@ -593,10 +612,19 @@ pub async fn run() -> Result<()> {
                 .filter(|r| matches!(r.severity, LintSeverity::Error))
                 .count();
             if error_count > 0 {
+                if json {
+                    let error_msg = format!("Migration blocked by {error_count} lint error(s)");
+                    let lint_error_output = serde_json::json!({
+                        "success": false,
+                        "error": error_msg,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&lint_error_output)
+                        .map_err(|e| anyhow!("Failed to serialize lint error to JSON: {e}"))?);
+                }
                 return Err(anyhow!("Migration blocked by {error_count} lint error(s)"));
             }
 
-            if let Some(validate_db_url) = &validate {
+            let validation_info = if let Some(validate_db_url) = &validate {
                 let validate_url = parse_db_source(validate_db_url)?;
                 let validation_result = validate_migration_on_temp_db(
                     &ops,
@@ -609,16 +637,26 @@ pub async fn run() -> Result<()> {
                 .map_err(|e| anyhow!("Validation failed: {e}"))?;
 
                 if !validation_result.success {
-                    eprintln!("\n\u{274C} Validation failed on temp database:");
-                    for error in &validation_result.execution_errors {
-                        eprintln!("  Statement {}: {}", error.statement_index + 1, error.sql);
-                        eprintln!("    Error: {}", error.error_message);
+                    if !json {
+                        eprintln!("\n\u{274C} Validation failed on temp database:");
+                        for error in &validation_result.execution_errors {
+                            eprintln!("  Statement {}: {}", error.statement_index + 1, error.sql);
+                            eprintln!("    Error: {}", error.error_message);
+                        }
+                    }
+                    if json {
+                        let error_output = serde_json::json!({
+                            "success": false,
+                            "error": format!("Migration validation failed with {} error(s)", validation_result.execution_errors.len())
+                        });
+                        println!("{}", serde_json::to_string_pretty(&error_output)
+                            .map_err(|e| anyhow!("Failed to serialize validation error to JSON: {e}"))?);
                     }
                     return Err(anyhow!(
                         "Migration validation failed with {} error(s). Apply aborted.",
                         validation_result.execution_errors.len()
                     ));
-                } else if !ops.is_empty() {
+                } else if !ops.is_empty() && !json {
                     println!("\u{2705} Migration validated successfully on temp database");
                     if validation_result.idempotent {
                         println!(
@@ -634,21 +672,64 @@ pub async fn run() -> Result<()> {
                         }
                     }
                 }
-            }
+                Some(validation_result)
+            } else {
+                None
+            };
 
             let lock_warnings = detect_lock_hazards(&ops);
-            for warning in &lock_warnings {
-                println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
+            if !json {
+                for warning in &lock_warnings {
+                    println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
+                }
             }
+
+            let lint_warning_messages: Vec<String> = lint_results
+                .iter()
+                .filter(|r| matches!(r.severity, LintSeverity::Warning))
+                .map(|r| r.message.clone())
+                .collect();
+            let lock_warning_messages: Vec<String> =
+                lock_warnings.iter().map(|w| w.message.clone()).collect();
 
             let sql = generate_sql(&ops);
 
             if sql.is_empty() {
-                println!("No changes to apply.");
+                if json {
+                    let output = ApplyOutput {
+                        applied: vec![],
+                        total: 0,
+                        success: true,
+                        validated: validation_info.as_ref().map(|v| v.success),
+                        idempotent: validation_info.as_ref().map(|v| v.idempotent),
+                        lint_warnings: lint_warning_messages,
+                        lock_warnings: lock_warning_messages,
+                    };
+                    let json_output = serde_json::to_string_pretty(&output)
+                        .map_err(|e| anyhow!("Failed to serialize apply output to JSON: {e}"))?;
+                    println!("{json_output}");
+                } else {
+                    println!("No changes to apply.");
+                }
             } else if dry_run {
-                println!("\nDry run - SQL that would be executed:");
-                for statement in &sql {
-                    println!("{statement}");
+                if json {
+                    let output = ApplyOutput {
+                        applied: sql.clone(),
+                        total: sql.len(),
+                        success: true,
+                        validated: validation_info.as_ref().map(|v| v.success),
+                        idempotent: validation_info.as_ref().map(|v| v.idempotent),
+                        lint_warnings: lint_warning_messages,
+                        lock_warnings: lock_warning_messages,
+                    };
+                    let json_output = serde_json::to_string_pretty(&output)
+                        .map_err(|e| anyhow!("Failed to serialize apply output to JSON: {e}"))?;
+                    println!("{json_output}");
+                } else {
+                    println!("\nDry run - SQL that would be executed:");
+                    for statement in &sql {
+                        println!("{statement}");
+                    }
                 }
             } else {
                 let total = sql.len();
@@ -660,7 +741,7 @@ pub async fn run() -> Result<()> {
 
                 for (i, statement) in sql.iter().enumerate() {
                     let display_num = i + 1;
-                    if verbose {
+                    if verbose && !json {
                         let truncated = if statement.len() > 80 {
                             format!("{}...", &statement[..80])
                         } else {
@@ -672,7 +753,7 @@ pub async fn run() -> Result<()> {
                         .execute(statement.as_str())
                         .await
                         .map_err(|e| anyhow!("Failed to execute SQL: {e}"))?;
-                    if verbose {
+                    if verbose && !json {
                         println!(
                             "[{display_num}/{total}] OK ({} rows affected)",
                             result.rows_affected()
@@ -680,21 +761,36 @@ pub async fn run() -> Result<()> {
                     }
                 }
 
-                if verbose {
+                if verbose && !json {
                     println!("Committing transaction...");
                 }
                 transaction
                     .commit()
                     .await
                     .map_err(|e| anyhow!("Failed to commit transaction: {e}"))?;
-                if verbose {
+                if verbose && !json {
                     println!("Transaction committed.");
                 }
 
-                println!(
-                    "
+                if json {
+                    let output = ApplyOutput {
+                        applied: sql.clone(),
+                        total,
+                        success: true,
+                        validated: validation_info.as_ref().map(|v| v.success),
+                        idempotent: validation_info.as_ref().map(|v| v.idempotent),
+                        lint_warnings: lint_warning_messages,
+                        lock_warnings: lock_warning_messages,
+                    };
+                    let json_output = serde_json::to_string_pretty(&output)
+                        .map_err(|e| anyhow!("Failed to serialize apply output to JSON: {e}"))?;
+                    println!("{json_output}");
+                } else {
+                    println!(
+                        "
 Successfully applied {total} statements."
-                );
+                    );
+                }
             }
             Ok(())
         }
@@ -1126,6 +1222,43 @@ mod tests {
             assert!(!zero_downtime);
         } else {
             panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn apply_parses_json_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "apply",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--json",
+        ]);
+
+        if let Commands::Apply { json, .. } = args.command {
+            assert!(json);
+        } else {
+            panic!("Expected Apply command");
+        }
+    }
+
+    #[test]
+    fn apply_json_flag_defaults_false() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "apply",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+        ]);
+
+        if let Commands::Apply { json, .. } = args.command {
+            assert!(!json);
+        } else {
+            panic!("Expected Apply command");
         }
     }
 
