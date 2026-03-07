@@ -694,8 +694,11 @@ pub async fn run() -> Result<()> {
                         "success": false,
                         "error": error_msg,
                     });
-                    println!("{}", serde_json::to_string_pretty(&lint_error_output)
-                        .map_err(|e| anyhow!("Failed to serialize lint error to JSON: {e}"))?);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&lint_error_output)
+                            .map_err(|e| anyhow!("Failed to serialize lint error to JSON: {e}"))?
+                    );
                 }
                 return Err(anyhow!("Migration blocked by {error_count} lint error(s)"));
             }
@@ -725,8 +728,12 @@ pub async fn run() -> Result<()> {
                             "success": false,
                             "error": format!("Migration validation failed with {} error(s)", validation_result.execution_errors.len())
                         });
-                        println!("{}", serde_json::to_string_pretty(&error_output)
-                            .map_err(|e| anyhow!("Failed to serialize validation error to JSON: {e}"))?);
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&error_output).map_err(|e| anyhow!(
+                                "Failed to serialize validation error to JSON: {e}"
+                            ))?
+                        );
                     }
                     return Err(anyhow!(
                         "Migration validation failed with {} error(s). Apply aborted.",
@@ -1191,7 +1198,8 @@ Successfully applied {total} statements."
             let commands = vec![
                 CommandDescription {
                     name: "plan".into(),
-                    description: "Generate migration plan from schema source against a live database".into(),
+                    description:
+                        "Generate migration plan from schema source against a live database".into(),
                     supports_json: true,
                     requires_database: true,
                     supports_filters: true,
@@ -1256,11 +1264,14 @@ Successfully applied {total} statements."
             let env_vars = vec![
                 EnvVarDescription {
                     name: "PGMOLD_DATABASE_URL".into(),
-                    description: "Default database connection URL (fallback when --database is omitted)".into(),
+                    description:
+                        "Default database connection URL (fallback when --database is omitted)"
+                            .into(),
                 },
                 EnvVarDescription {
                     name: "PGMOLD_PROD".into(),
-                    description: "Set to '1' to enable production safety checks (blocks DROP TABLE)".into(),
+                    description:
+                        "Set to '1' to enable production safety checks (blocks DROP TABLE)".into(),
                 },
             ];
 
@@ -1939,12 +1950,7 @@ mod tests {
     #[test]
     fn database_falls_back_to_env_var() {
         std::env::set_var("PGMOLD_DATABASE_URL", "postgres://env-test/db");
-        let args = Cli::parse_from([
-            "pgmold",
-            "drift",
-            "--schema",
-            "sql:schema.sql",
-        ]);
+        let args = Cli::parse_from(["pgmold", "drift", "--schema", "sql:schema.sql"]);
 
         if let Commands::Drift { database, .. } = args.command {
             assert_eq!(database, "postgres://env-test/db");
@@ -1988,13 +1994,7 @@ mod tests {
 
     #[test]
     fn lint_parses_json_flag() {
-        let args = Cli::parse_from([
-            "pgmold",
-            "lint",
-            "--schema",
-            "sql:schema.sql",
-            "--json",
-        ]);
+        let args = Cli::parse_from(["pgmold", "lint", "--schema", "sql:schema.sql", "--json"]);
 
         if let Commands::Lint { json, .. } = args.command {
             assert!(json);
@@ -2005,12 +2005,7 @@ mod tests {
 
     #[test]
     fn lint_json_flag_defaults_false() {
-        let args = Cli::parse_from([
-            "pgmold",
-            "lint",
-            "--schema",
-            "sql:schema.sql",
-        ]);
+        let args = Cli::parse_from(["pgmold", "lint", "--schema", "sql:schema.sql"]);
 
         if let Commands::Lint { json, .. } = args.command {
             assert!(!json);
