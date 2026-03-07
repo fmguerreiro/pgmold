@@ -78,6 +78,27 @@ impl fmt::Display for ObjectType {
 }
 
 impl ObjectType {
+    pub fn all() -> &'static [ObjectType] {
+        &[
+            ObjectType::Schemas,
+            ObjectType::Extensions,
+            ObjectType::Tables,
+            ObjectType::Enums,
+            ObjectType::Domains,
+            ObjectType::Functions,
+            ObjectType::Views,
+            ObjectType::Triggers,
+            ObjectType::Sequences,
+            ObjectType::Partitions,
+            ObjectType::Policies,
+            ObjectType::Indexes,
+            ObjectType::ForeignKeys,
+            ObjectType::CheckConstraints,
+            ObjectType::DefaultPrivileges,
+            ObjectType::Grants,
+        ]
+    }
+
     pub fn is_nested(&self) -> bool {
         matches!(
             self,
