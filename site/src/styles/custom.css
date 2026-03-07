@@ -1,19 +1,41 @@
 :root {
-	--sl-color-accent-low: #1c3088;
+	--sl-color-accent-low: #151f53;
 	--sl-color-accent: #336df5;
 	--sl-color-accent-high: #c2d5ff;
-	--sl-color-white: #e0eaff;
-	--sl-color-gray-1: #c2d5ff;
-	--sl-color-gray-2: #93b4fd;
-	--sl-color-gray-3: #6090fa;
-	--sl-color-gray-4: #1c3088;
-	--sl-color-gray-5: #151f53;
-	--sl-color-gray-6: #0d1530;
-	--sl-color-black: #0a0a14;
+	--sl-color-white: #e8e8e8;
+	--sl-color-gray-1: #c9c9c9;
+	--sl-color-gray-2: #a0a0a0;
+	--sl-color-gray-3: #707070;
+	--sl-color-gray-4: #383838;
+	--sl-color-gray-5: #1a1a1a;
+	--sl-color-gray-6: #111111;
+	--sl-color-black: #0a0a0a;
+	--sl-font-system: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 [data-theme='light'] {
 	--sl-color-accent-low: #e0eaff;
 	--sl-color-accent: #1e4fea;
 	--sl-color-accent-high: #151f53;
+	--sl-color-white: #1a1a1a;
+	--sl-color-gray-1: #383838;
+	--sl-color-gray-2: #585858;
+	--sl-color-gray-3: #888888;
+	--sl-color-gray-4: #c0c0c0;
+	--sl-color-gray-5: #f0f0f0;
+	--sl-color-gray-6: #f8f8f8;
+	--sl-color-black: #ffffff;
+}
+
+/* match landing page code block style */
+starlight-tabs,
+.expressive-code {
+	--ec-codeBg: #0d1117;
+	--ec-codeBrdCol: #21262d;
+}
+
+/* sidebar active item uses accent blue */
+nav.sidebar a[aria-current="page"] {
+	color: var(--sl-color-accent);
+	font-weight: 600;
 }
