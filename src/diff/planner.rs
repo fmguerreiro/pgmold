@@ -510,6 +510,7 @@ impl MigrationGraph {
         let domains = self.nodes_matching(|k| matches!(k, OpKey::CreateDomain(_)));
         let sequences = self.nodes_matching(|k| matches!(k, OpKey::CreateSequence(_)));
         let functions = self.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. }));
+        let alter_functions = self.nodes_matching(|k| matches!(k, OpKey::AlterFunction { .. }));
         let tables = self.nodes_matching(|k| matches!(k, OpKey::CreateTable(_)));
         let partitions = self.nodes_matching(|k| matches!(k, OpKey::CreatePartition(_)));
         let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
@@ -571,6 +572,14 @@ impl MigrationGraph {
         self.edges_all_to_all(&domains, &tables);
         self.edges_all_to_all(&domains, &add_columns);
         self.edges_all_to_all(&sequences, &tables);
+
+        // Types before functions (used in RETURNS TABLE, parameters, DECLARE blocks)
+        self.edges_all_to_all(&enums, &functions);
+        self.edges_all_to_all(&domains, &functions);
+        self.edges_all_to_all(&add_enum_values, &functions);
+        self.edges_all_to_all(&enums, &alter_functions);
+        self.edges_all_to_all(&domains, &alter_functions);
+        self.edges_all_to_all(&add_enum_values, &alter_functions);
 
         // Functions before tables (used in defaults/checks)
         self.edges_all_to_all(&functions, &tables);
@@ -2960,6 +2969,147 @@ mod tests {
         assert!(
             middle_pos < top_pos,
             "middle_func must be created before top_func. middle at {middle_pos}, top at {top_pos}. Order: {func_order:?}"
+        );
+    }
+
+    #[test]
+    fn enums_created_before_functions() {
+        let func = Function {
+            name: "get_entities".to_string(),
+            schema: "mrv".to_string(),
+            arguments: vec![],
+            return_type: "TABLE(\"entityType\" mrv.\"EntityType\")".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN END;".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+
+        let ops = vec![
+            MigrationOp::CreateFunction(func),
+            MigrationOp::CreateEnum(EnumType {
+                name: "EntityType".to_string(),
+                schema: "mrv".to_string(),
+                values: vec!["project".to_string(), "field".to_string()],
+                owner: None,
+                grants: Vec::new(),
+            }),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_enum_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateEnum(_)))
+            .unwrap();
+        let create_func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .unwrap();
+
+        assert!(
+            create_enum_pos < create_func_pos,
+            "CreateEnum must come before CreateFunction. ENUM at {create_enum_pos}, FUNC at {create_func_pos}"
+        );
+    }
+
+    #[test]
+    fn domains_created_before_functions() {
+        let func = Function {
+            name: "validate_email".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("input".to_string()),
+                data_type: "email_address".to_string(),
+                mode: ArgMode::In,
+                default: None,
+            }],
+            return_type: "boolean".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN RETURN true; END;".to_string(),
+            volatility: Volatility::Immutable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+
+        let domain = Domain {
+            name: "email_address".to_string(),
+            schema: "public".to_string(),
+            data_type: PgType::Text,
+            default: None,
+            not_null: false,
+            collation: None,
+            check_constraints: vec![],
+            owner: None,
+            grants: vec![],
+        };
+
+        let ops = vec![
+            MigrationOp::CreateFunction(func),
+            MigrationOp::CreateDomain(domain),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_domain_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateDomain(_)))
+            .unwrap();
+        let create_func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .unwrap();
+
+        assert!(
+            create_domain_pos < create_func_pos,
+            "CreateDomain must come before CreateFunction. DOMAIN at {create_domain_pos}, FUNC at {create_func_pos}"
+        );
+    }
+
+    #[test]
+    fn add_enum_value_before_functions() {
+        let func = Function {
+            name: "get_entities".to_string(),
+            schema: "mrv".to_string(),
+            arguments: vec![],
+            return_type: "TABLE(\"entityType\" mrv.\"EntityType\")".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN END;".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+
+        let ops = vec![
+            MigrationOp::CreateFunction(func),
+            MigrationOp::AddEnumValue {
+                enum_name: "mrv.EntityType".to_string(),
+                value: "monitoring_plot".to_string(),
+                position: None,
+            },
+        ];
+
+        let planned = plan_migration(ops);
+
+        let add_enum_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddEnumValue { .. }))
+            .unwrap();
+        let create_func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .unwrap();
+
+        assert!(
+            add_enum_pos < create_func_pos,
+            "AddEnumValue must come before CreateFunction. ENUM at {add_enum_pos}, FUNC at {create_func_pos}"
         );
     }
 }
