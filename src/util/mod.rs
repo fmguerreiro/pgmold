@@ -155,6 +155,57 @@ fn strip_all_nested_function_arg(arg: sqlparser::ast::FunctionArg) -> sqlparser:
     }
 }
 
+/// Normalizes identifier quoting to match PostgreSQL's canonical output.
+/// Strips double-quotes from all-lowercase ASCII identifiers since PostgreSQL
+/// considers them semantically identical to unquoted forms.
+/// NOTE: Does not check for SQL reserved keywords. Safe for type names in
+/// expression comparison, not for SQL generation.
+fn normalize_ident_quoting(ident: sqlparser::ast::Ident) -> sqlparser::ast::Ident {
+    if ident.quote_style == Some('"') {
+        let value = &ident.value;
+        let needs_quotes = value.is_empty()
+            || value.chars().any(|c| c.is_ascii_uppercase())
+            || !value
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+            || value
+                .chars()
+                .any(|c| !c.is_ascii_alphanumeric() && c != '_');
+        if !needs_quotes {
+            return sqlparser::ast::Ident {
+                value: ident.value,
+                quote_style: None,
+                span: ident.span,
+            };
+        }
+    }
+    ident
+}
+
+/// Normalizes quoting in a DataType's identifiers (for schema-qualified enum casts).
+fn normalize_data_type_quoting(data_type: DataType) -> DataType {
+    match data_type {
+        DataType::Custom(name, modifiers) => {
+            let normalized_name = sqlparser::ast::ObjectName(
+                name.0
+                    .into_iter()
+                    .map(|part| match part {
+                        sqlparser::ast::ObjectNamePart::Identifier(ident) => {
+                            sqlparser::ast::ObjectNamePart::Identifier(normalize_ident_quoting(
+                                ident,
+                            ))
+                        }
+                        other => other,
+                    })
+                    .collect(),
+            );
+            DataType::Custom(normalized_name, modifiers)
+        }
+        other => other,
+    }
+}
+
 /// Recursively strips ALL Nested (parenthesized) expressions throughout the AST,
 /// not just the outermost ones. This is needed for normalizing CHECK constraint
 /// expressions where PostgreSQL may add extra parentheses around subexpressions.
@@ -199,7 +250,7 @@ fn strip_all_nested(expr: Expr) -> Expr {
             Expr::Cast {
                 kind,
                 expr: Box::new(stripped_inner),
-                data_type,
+                data_type: normalize_data_type_quoting(data_type),
                 format,
             }
         }
@@ -1597,6 +1648,68 @@ mod tests {
         assert_eq!(
             canon_db, canon_parsed,
             "DB: {canon_db} vs Parsed: {canon_parsed}"
+        );
+    }
+
+    #[test]
+    fn canonicalize_expression_normalizes_schema_quoting_in_enum_cast() {
+        // User writes quoted schema name, PostgreSQL strips quotes from lowercase schema
+        let schema_expr = r#""goalType" = 'TARGET_DURATION'::"mrv"."CarbonPlanGoalType""#;
+        let db_expr = r#""goalType" = 'TARGET_DURATION'::mrv."CarbonPlanGoalType""#;
+
+        let canon_schema = canonicalize_expression(schema_expr);
+        let canon_db = canonicalize_expression(db_expr);
+
+        assert_eq!(
+            canon_schema, canon_db,
+            "Schema: {canon_schema} vs DB: {canon_db}"
+        );
+    }
+
+    #[test]
+    fn canonicalize_expression_preserves_mixed_case_quotes() {
+        // "goalType" must stay quoted (has uppercase), "mrv" should be unquoted
+        let input = r#""goalType" = 'VALUE'::"mrv"."CarbonPlanGoalType""#;
+        let result = canonicalize_expression(input);
+
+        assert!(
+            result.contains(r#""goalType""#),
+            "Mixed-case identifier should stay quoted: {result}"
+        );
+        assert!(
+            !result.contains(r#""mrv""#),
+            "All-lowercase schema should not be quoted: {result}"
+        );
+    }
+
+    #[test]
+    fn canonicalize_expression_normalizes_redundant_lowercase_quotes() {
+        // Both "public" and "users" are all-lowercase, quotes should be stripped
+        let input = r#""col" = 'x'::"public"."my_enum""#;
+        let result = canonicalize_expression(input);
+
+        assert!(
+            !result.contains(r#""public""#),
+            "All-lowercase 'public' should not be quoted: {result}"
+        );
+        assert!(
+            !result.contains(r#""my_enum""#),
+            "All-lowercase 'my_enum' should not be quoted: {result}"
+        );
+    }
+
+    #[test]
+    fn canonicalize_expression_preserves_digit_leading_ident_in_cast() {
+        let ident = sqlparser::ast::Ident {
+            value: "1col".to_string(),
+            quote_style: Some('"'),
+            span: sqlparser::tokenizer::Span::empty(),
+        };
+        let result = normalize_ident_quoting(ident);
+        assert_eq!(
+            result.quote_style,
+            Some('"'),
+            "Digit-leading identifier must stay quoted"
         );
     }
 
