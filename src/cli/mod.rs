@@ -96,6 +96,37 @@ struct DumpOutput {
     files: Option<Vec<String>>,
 }
 
+#[derive(Serialize)]
+struct DescribeOutput {
+    version: String,
+    commands: Vec<CommandDescription>,
+    object_types: Vec<String>,
+    provider_prefixes: Vec<ProviderDescription>,
+    environment_variables: Vec<EnvVarDescription>,
+}
+
+#[derive(Serialize)]
+struct CommandDescription {
+    name: String,
+    description: String,
+    supports_json: bool,
+    requires_database: bool,
+    supports_filters: bool,
+}
+
+#[derive(Serialize)]
+struct ProviderDescription {
+    prefix: String,
+    description: String,
+    example: String,
+}
+
+#[derive(Serialize)]
+struct EnvVarDescription {
+    name: String,
+    description: String,
+}
+
 /// Shared object filtering options
 #[derive(Args)]
 struct FilterArgs {
@@ -315,6 +346,13 @@ enum Commands {
         /// Output result as JSON
         #[arg(long, short = 'j')]
         json: bool,
+    },
+
+    /// Describe available commands, object types, providers, and filters (for agent introspection)
+    Describe {
+        /// Describe a specific command (e.g., "plan", "apply")
+        #[arg()]
+        command: Option<String>,
     },
 }
 
@@ -1125,6 +1163,137 @@ Successfully applied {total} statements."
             }
             Ok(())
         }
+        Commands::Describe {
+            command: specific_command,
+        } => {
+            let all_object_types: Vec<String> = vec![
+                "schemas",
+                "extensions",
+                "tables",
+                "enums",
+                "domains",
+                "functions",
+                "views",
+                "triggers",
+                "sequences",
+                "partitions",
+                "policies",
+                "indexes",
+                "foreignkeys",
+                "checkconstraints",
+                "defaultprivileges",
+                "grants",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+            let commands = vec![
+                CommandDescription {
+                    name: "plan".into(),
+                    description: "Generate migration plan from schema source against a live database".into(),
+                    supports_json: true,
+                    requires_database: true,
+                    supports_filters: true,
+                },
+                CommandDescription {
+                    name: "apply".into(),
+                    description: "Apply migrations to a live database".into(),
+                    supports_json: true,
+                    requires_database: true,
+                    supports_filters: true,
+                },
+                CommandDescription {
+                    name: "diff".into(),
+                    description: "Compare two schemas and show migration SQL".into(),
+                    supports_json: true,
+                    requires_database: false,
+                    supports_filters: false,
+                },
+                CommandDescription {
+                    name: "drift".into(),
+                    description: "Detect schema drift between SQL files and database".into(),
+                    supports_json: true,
+                    requires_database: true,
+                    supports_filters: false,
+                },
+                CommandDescription {
+                    name: "dump".into(),
+                    description: "Export database schema to SQL DDL".into(),
+                    supports_json: true,
+                    requires_database: true,
+                    supports_filters: true,
+                },
+                CommandDescription {
+                    name: "lint".into(),
+                    description: "Lint schema or migration plan for issues".into(),
+                    supports_json: true,
+                    requires_database: false,
+                    supports_filters: false,
+                },
+                CommandDescription {
+                    name: "migrate".into(),
+                    description: "Generate a numbered migration file from schema diff".into(),
+                    supports_json: true,
+                    requires_database: true,
+                    supports_filters: false,
+                },
+            ];
+
+            let providers = vec![
+                ProviderDescription {
+                    prefix: "sql:".into(),
+                    description: "SQL files, directories, or glob patterns".into(),
+                    example: "sql:schema.sql".into(),
+                },
+                ProviderDescription {
+                    prefix: "drizzle:".into(),
+                    description: "Drizzle ORM config file (runs drizzle-kit export)".into(),
+                    example: "drizzle:drizzle.config.ts".into(),
+                },
+            ];
+
+            let env_vars = vec![
+                EnvVarDescription {
+                    name: "PGMOLD_DATABASE_URL".into(),
+                    description: "Default database connection URL (fallback when --database is omitted)".into(),
+                },
+                EnvVarDescription {
+                    name: "PGMOLD_PROD".into(),
+                    description: "Set to '1' to enable production safety checks (blocks DROP TABLE)".into(),
+                },
+            ];
+
+            let output = if let Some(ref cmd_name) = specific_command {
+                let filtered: Vec<_> = commands
+                    .into_iter()
+                    .filter(|c| c.name == *cmd_name)
+                    .collect();
+                if filtered.is_empty() {
+                    return Err(anyhow!("Unknown command: {cmd_name}"));
+                }
+                DescribeOutput {
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    commands: filtered,
+                    object_types: all_object_types,
+                    provider_prefixes: providers,
+                    environment_variables: env_vars,
+                }
+            } else {
+                DescribeOutput {
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    commands,
+                    object_types: all_object_types,
+                    provider_prefixes: providers,
+                    environment_variables: env_vars,
+                }
+            };
+
+            let json_output = serde_json::to_string_pretty(&output)
+                .map_err(|e| anyhow!("Failed to serialize describe output: {e}"))?;
+            println!("{json_output}");
+            Ok(())
+        }
     }
 }
 
@@ -1887,6 +2056,28 @@ mod tests {
             assert!(json);
         } else {
             panic!("Expected Dump command");
+        }
+    }
+
+    #[test]
+    fn describe_command_parses() {
+        let args = Cli::parse_from(["pgmold", "describe"]);
+
+        if let Commands::Describe { command: None } = args.command {
+            // parsed successfully
+        } else {
+            panic!("Expected Describe command with no subcommand");
+        }
+    }
+
+    #[test]
+    fn describe_command_parses_with_command_arg() {
+        let args = Cli::parse_from(["pgmold", "describe", "plan"]);
+
+        if let Commands::Describe { command: Some(cmd) } = args.command {
+            assert_eq!(cmd, "plan");
+        } else {
+            panic!("Expected Describe command with 'plan' arg");
         }
     }
 }
