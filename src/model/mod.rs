@@ -1036,7 +1036,9 @@ pub fn normalize_pg_type(type_name: &str) -> String {
         "float8" => "double precision".to_string(),
         "bool" => "boolean".to_string(),
         "varchar" => "character varying".to_string(),
+        "timestamp" => "timestamp without time zone".to_string(),
         "timestamptz" => "timestamp with time zone".to_string(),
+        "time" => "time without time zone".to_string(),
         "timetz" => "time with time zone".to_string(),
         _ => lower,
     }
@@ -1585,10 +1587,31 @@ mod tests {
         assert_eq!(normalize_pg_type("varchar"), "character varying");
         assert_eq!(normalize_pg_type("timestamptz"), "timestamp with time zone");
         assert_eq!(normalize_pg_type("timetz"), "time with time zone");
+        assert_eq!(normalize_pg_type("timestamp"), "timestamp without time zone");
+        assert_eq!(normalize_pg_type("time"), "time without time zone");
         // Already canonical types should remain unchanged
         assert_eq!(normalize_pg_type("integer"), "integer");
         assert_eq!(normalize_pg_type("text"), "text");
         assert_eq!(normalize_pg_type("uuid"), "uuid");
+        assert_eq!(
+            normalize_pg_type("timestamp without time zone"),
+            "timestamp without time zone"
+        );
+        assert_eq!(
+            normalize_pg_type("time without time zone"),
+            "time without time zone"
+        );
+        // precision-qualified variants pass through unchanged
+        assert_eq!(normalize_pg_type("timestamp(6)"), "timestamp(6)");
+        assert_eq!(
+            normalize_pg_type("timestamp(3) with time zone"),
+            "timestamp(3) with time zone"
+        );
+        assert_eq!(normalize_pg_type("time(6)"), "time(6)");
+        assert_eq!(
+            normalize_pg_type("time(3) with time zone"),
+            "time(3) with time zone"
+        );
     }
 
     #[test]
@@ -2554,5 +2577,113 @@ fn function_semantically_not_equals_quoted_vs_unquoted_mixed_case() {
     assert!(
         !with_quotes.semantically_equals(&without_quotes),
         r#"TABLE("userId" text) and TABLE(userid text) are different in PostgreSQL"#
+    );
+}
+
+#[test]
+fn function_returns_table_timestamp_type_aliases() {
+    use crate::model::{Function, SecurityType, Volatility};
+
+    let from_schema = Function {
+        name: "example_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type:
+            "table(created_at timestamp, updated_at timestamptz, logged_at time, scheduled_at timetz)"
+                .to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Stable,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    let from_db = Function {
+        name: "example_func".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![],
+        return_type:
+            "TABLE(created_at timestamp without time zone, updated_at timestamp with time zone, logged_at time without time zone, scheduled_at time with time zone)"
+                .to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Stable,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    assert!(
+        from_schema.semantically_equals(&from_db),
+        "RETURNS TABLE with timestamp/time aliases should normalize to canonical forms"
+    );
+}
+
+#[test]
+fn function_timestamp_param_no_perpetual_diff() {
+    use crate::model::{ArgMode, Function, FunctionArg, SecurityType, Volatility};
+
+    // Parser normalizes types at parse time (parser/functions.rs:94),
+    // so schema-side args already contain canonical forms
+    let from_schema = Function {
+        name: "log_event".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![
+            FunctionArg {
+                name: Some("event_time".to_string()),
+                data_type: normalize_pg_type("timestamp"),
+                mode: ArgMode::In,
+                default: None,
+            },
+            FunctionArg {
+                name: Some("log_time".to_string()),
+                data_type: normalize_pg_type("time"),
+                mode: ArgMode::In,
+                default: None,
+            },
+        ],
+        return_type: "void".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Volatile,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    let from_db = Function {
+        name: "log_event".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![
+            FunctionArg {
+                name: Some("event_time".to_string()),
+                data_type: "timestamp without time zone".to_string(),
+                mode: ArgMode::In,
+                default: None,
+            },
+            FunctionArg {
+                name: Some("log_time".to_string()),
+                data_type: "time without time zone".to_string(),
+                mode: ArgMode::In,
+                default: None,
+            },
+        ],
+        return_type: "void".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Volatile,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    assert!(
+        from_schema.semantically_equals(&from_db),
+        "Functions with timestamp/time params should match after normalization"
     );
 }
