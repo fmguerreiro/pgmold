@@ -208,16 +208,13 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
             merged.partitions.insert(name, partition);
         }
 
-        // Collect pending policies, owners, grants, and revokes for cross-file resolution
         merged.pending_policies.extend(schema.pending_policies);
         merged.pending_owners.extend(schema.pending_owners);
         merged.pending_grants.extend(schema.pending_grants);
         merged.pending_revokes.extend(schema.pending_revokes);
     }
 
-    // Finalize: associate all pending items with their objects.
-    // This handles policies, ownership, and grants defined in separate files from their objects.
-    merged.finalize().map_err(SchemaError::ParseError)?;
+    merged.pending_policies = merged.finalize_partial();
 
     Ok(merged)
 }
@@ -809,8 +806,9 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
     }
 
     #[test]
-    fn load_errors_on_orphan_policy_in_cross_file() {
-        // Policies referencing non-existent tables should error after merge
+    fn load_defers_orphan_policy_in_cross_file() {
+        // Orphan policies are deferred (kept as pending_policies) so they can be
+        // resolved at the provider level when merging across schema sources.
         let temp = TempDir::new().unwrap();
 
         fs::write(
@@ -821,7 +819,7 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
         )
         .unwrap();
 
-        // Policy references a table that doesn't exist
+        // Policy references a table that doesn't exist in this source
         fs::write(
             temp.path().join("policies.sql"),
             r#"
@@ -831,13 +829,10 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
         .unwrap();
 
         let sources = vec![format!("{}/*.sql", temp.path().display())];
-        let result = load_schema_sources(&sources);
-        assert!(result.is_err(), "Should error on orphan policy");
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("nonexistent_table"),
-            "Error should mention the missing table: {err}"
-        );
+        let result = load_schema_sources(&sources).unwrap();
+        assert_eq!(result.pending_policies.len(), 1);
+        assert_eq!(result.pending_policies[0].name, "orphan_policy");
+        assert_eq!(result.pending_policies[0].table, "nonexistent_table");
     }
 
     #[test]
