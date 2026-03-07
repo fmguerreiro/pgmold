@@ -88,6 +88,14 @@ struct MigrateOutput {
     statements: Vec<String>,
 }
 
+#[derive(Serialize)]
+struct DumpOutput {
+    schemas: Vec<String>,
+    sql: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    files: Option<Vec<String>>,
+}
+
 /// Shared object filtering options
 #[derive(Args)]
 struct FilterArgs {
@@ -280,6 +288,9 @@ enum Commands {
         split: bool,
         #[command(flatten)]
         filter: FilterArgs,
+        /// Output dump as JSON (includes SQL content and metadata)
+        #[arg(long, short = 'j')]
+        json: bool,
     },
 
     /// Generate a numbered migration file from schema diff
@@ -944,6 +955,7 @@ Successfully applied {total} statements."
             output,
             split,
             filter,
+            json,
         } => {
             let include_extension_objects = filter.include_extension_objects;
             let filter = filter.to_filter()?;
@@ -988,10 +1000,19 @@ Successfully applied {total} statements."
                     let file_path = std::path::Path::new(&dir_path).join(filename);
                     std::fs::write(&file_path, content)
                         .map_err(|e| anyhow!("Failed to write to {}: {e}", file_path.display()))?;
-                    written_files.push(filename);
+                    written_files.push(filename.to_string());
                 }
 
-                if written_files.is_empty() {
+                if json {
+                    let output = DumpOutput {
+                        schemas: target_schemas,
+                        sql: String::new(),
+                        files: Some(written_files),
+                    };
+                    let json_output = serde_json::to_string_pretty(&output)
+                        .map_err(|e| anyhow!("Failed to serialize dump output to JSON: {e}"))?;
+                    println!("{json_output}");
+                } else if written_files.is_empty() {
                     println!("No schema objects to dump.");
                 } else {
                     println!(
@@ -1010,7 +1031,16 @@ Successfully applied {total} statements."
                 );
                 let dump = generate_dump(&schema, Some(&header));
 
-                if let Some(path) = output {
+                if json {
+                    let output = DumpOutput {
+                        schemas: target_schemas,
+                        sql: dump,
+                        files: None,
+                    };
+                    let json_output = serde_json::to_string_pretty(&output)
+                        .map_err(|e| anyhow!("Failed to serialize dump output to JSON: {e}"))?;
+                    println!("{json_output}");
+                } else if let Some(path) = output {
                     std::fs::write(&path, &dump)
                         .map_err(|e| anyhow!("Failed to write to {path}: {e}"))?;
                     println!("Schema dumped to {path}");
@@ -1840,6 +1870,23 @@ mod tests {
             assert!(json);
         } else {
             panic!("Expected Migrate command");
+        }
+    }
+
+    #[test]
+    fn dump_parses_json_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "dump",
+            "--database",
+            "db:postgres://localhost/db",
+            "--json",
+        ]);
+
+        if let Commands::Dump { json, .. } = args.command {
+            assert!(json);
+        } else {
+            panic!("Expected Dump command");
         }
     }
 }
