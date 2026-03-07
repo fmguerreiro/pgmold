@@ -32,6 +32,11 @@ jobs:
         working-directory: site
       - run: npm run build
         working-directory: site
+      - name: Assemble site
+        run: |
+          cp site/public/index.html site/dist/index.html
+          cp site/public/logo.png site/dist/logo.png
+          cp site/public/CNAME site/dist/CNAME
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

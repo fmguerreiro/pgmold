@@ -4,6 +4,8 @@ import starlight from '@astrojs/starlight';
 
 export default defineConfig({
 	site: 'https://pgmold.dev',
+	base: '/docs',
+	outDir: './dist/docs',
 	integrations: [
 		starlight({
 			title: 'pgmold',
@@ -15,7 +17,7 @@ export default defineConfig({
 			],
 			customCss: ['./src/styles/custom.css'],
 			sidebar: [
-				{ label: 'Home', link: '/' },
+				{ label: 'Home', link: 'https://pgmold.dev' },
 				{
 					label: 'Getting Started',
 					items: [

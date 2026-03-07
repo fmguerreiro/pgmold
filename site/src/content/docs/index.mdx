@@ -1,75 +1,42 @@
 ---
-title: pgmold
-description: PostgreSQL schema-as-code. Define schemas in native SQL, diff against live databases, apply migrations safely.
-template: splash
-hero:
-  tagline: Define PostgreSQL schemas in native SQL. Diff against live databases. Apply migrations safely. No DSLs, no ORMs, just SQL.
-  image:
-    file: ../../../public/logo.png
-  actions:
-    - text: Get started
-      link: /getting-started/installation/
-      icon: right-arrow
-      variant: primary
-    - text: View on GitHub
-      link: https://github.com/fmguerreiro/pgmold
-      icon: external
-      variant: minimal
+title: Documentation
+description: pgmold documentation — PostgreSQL schema-as-code
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-## How it works
-
-<CardGrid>
-  <Card title="1. Define" icon="pencil">
-    Write your schema in plain SQL files. Tables, indexes, functions, policies — everything in native PostgreSQL DDL.
-  </Card>
-  <Card title="2. Diff" icon="magnifier">
-    pgmold introspects your live database, compares it to your SQL files, and computes the exact delta.
-  </Card>
-  <Card title="3. Apply" icon="rocket">
-    Apply the migration in a single transaction. Destructive operations are blocked unless you explicitly opt in.
-  </Card>
-</CardGrid>
+pgmold is a PostgreSQL schema-as-code tool. Define schemas in native SQL, diff against live databases, and apply migrations safely.
 
 ```bash
-$ pgmold plan -s sql:schema.sql -d postgres://localhost/mydb
+# See what would change
+pgmold plan -s sql:schema.sql -d postgres://localhost/mydb
 
--- Migration Plan (3 operations)
-ALTER TABLE "public"."users" ADD COLUMN "email" TEXT NOT NULL;
-CREATE INDEX "users_email_idx" ON "public"."users" ("email");
-CREATE POLICY "users_read_own" ON "public"."users" FOR SELECT USING (auth.uid() = id);
+# Apply the migration
+pgmold apply -s sql:schema.sql -d postgres://localhost/mydb
 ```
 
-## Features
+## Get started
 
-<CardGrid stagger>
-  <Card title="Native SQL" icon="document">
-    No HCL, no YAML, no DSLs. Write standard PostgreSQL DDL. If Postgres accepts it, pgmold understands it.
-  </Card>
-  <Card title="Drift detection" icon="warning">
-    SHA256 fingerprint comparison catches manual schema changes. Use in CI to prevent drift.
-  </Card>
-  <Card title="Safety linting" icon="approve-check-circle">
-    Destructive operations blocked by default. Lock hazard warnings prevent downtime. Production mode blocks table drops entirely.
-  </Card>
-  <Card title="RLS policies" icon="setting">
-    Row-Level Security policies are first-class citizens. Define, diff, and apply policies alongside your tables.
-  </Card>
-  <Card title="Multi-schema" icon="list-format">
-    Manage auth, api, public, and custom schemas. Cross-schema foreign keys handled automatically.
-  </Card>
-  <Card title="CI/CD ready" icon="github">
-    GitHub Action included. JSON output for pipelines. Non-zero exit on drift. PR comments with migration plans.
-  </Card>
-  <Card title="Transactional apply" icon="approve-check">
-    All migrations run in a single transaction. If anything fails, nothing changes.
-  </Card>
-  <Card title="Terraform provider" icon="puzzle">
-    Manage PostgreSQL schemas as infrastructure-as-code with the pgmold Terraform provider.
-  </Card>
-  <Card title="ORM integration" icon="random">
-    Use Drizzle ORM schemas as source. Mix SQL and ORM sources.
-  </Card>
+<CardGrid>
+  <LinkCard title="Installation" href="/docs/getting-started/installation/" description="Install pgmold via Cargo" />
+  <LinkCard title="Quick Start" href="/docs/getting-started/quick-start/" description="Up and running in 60 seconds" />
+</CardGrid>
+
+## Guides
+
+<CardGrid>
+  <LinkCard title="Multi-File Schemas" href="/docs/guides/multi-file-schemas/" description="Organize schema across directories" />
+  <LinkCard title="Filtering" href="/docs/guides/filtering/" description="Include/exclude by name or type" />
+  <LinkCard title="Adopting pgmold" href="/docs/guides/adopting/" description="Baseline an existing database" />
+  <LinkCard title="CI/CD Integration" href="/docs/guides/ci-cd/" description="GitHub Action and drift detection" />
+  <LinkCard title="Drizzle ORM" href="/docs/guides/drizzle/" description="Use Drizzle schemas as source" />
+  <LinkCard title="Safety Rules" href="/docs/guides/safety/" description="Destructive operation guardrails" />
+</CardGrid>
+
+## Reference
+
+<CardGrid>
+  <LinkCard title="CLI Commands" href="/docs/reference/cli/" description="All commands and flags" />
+  <LinkCard title="Terraform Provider" href="/docs/reference/terraform/" description="Schema management in HCL" />
+  <LinkCard title="GitHub Action" href="/docs/reference/github-action/" description="drift-check action reference" />
 </CardGrid>
