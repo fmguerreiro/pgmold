@@ -55,6 +55,20 @@ struct DriftOutput {
 }
 
 #[derive(Serialize)]
+struct LintOutput {
+    results: Vec<LintResultOutput>,
+    error_count: usize,
+    warning_count: usize,
+}
+
+#[derive(Serialize)]
+struct LintResultOutput {
+    severity: String,
+    rule: String,
+    message: String,
+}
+
+#[derive(Serialize)]
 struct ApplyOutput {
     applied: Vec<String>,
     total: usize,
@@ -222,6 +236,9 @@ enum Commands {
         /// Target PostgreSQL schemas (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
         target_schemas: Vec<String>,
+        /// Output lint results as JSON
+        #[arg(long, short = 'j')]
+        json: bool,
     },
 
     /// Detect schema drift between SQL files and database
@@ -798,6 +815,7 @@ Successfully applied {total} statements."
             schema,
             database,
             target_schemas,
+            json,
         } => {
             let target = load_schema(&schema)?;
             let target = filter_by_target_schemas(&target, &target_schemas);
@@ -818,7 +836,35 @@ Successfully applied {total} statements."
             let lint_options = LintOptions::default();
             let results = lint_migration_plan(&ops, &lint_options);
 
-            if results.is_empty() {
+            let error_count = results
+                .iter()
+                .filter(|r| matches!(r.severity, LintSeverity::Error))
+                .count();
+            let warning_count = results
+                .iter()
+                .filter(|r| matches!(r.severity, LintSeverity::Warning))
+                .count();
+
+            if json {
+                let output = LintOutput {
+                    results: results
+                        .iter()
+                        .map(|r| LintResultOutput {
+                            severity: match r.severity {
+                                LintSeverity::Error => "error".to_string(),
+                                LintSeverity::Warning => "warning".to_string(),
+                            },
+                            rule: r.rule.clone(),
+                            message: r.message.clone(),
+                        })
+                        .collect(),
+                    error_count,
+                    warning_count,
+                };
+                let json_output = serde_json::to_string_pretty(&output)
+                    .map_err(|e| anyhow!("Failed to serialize lint output to JSON: {e}"))?;
+                println!("{json_output}");
+            } else if results.is_empty() {
                 println!("No lint issues found.");
             } else {
                 for result in &results {
@@ -828,10 +874,10 @@ Successfully applied {total} statements."
                     };
                     println!("[{}] {}: {}", severity, result.rule, result.message);
                 }
+            }
 
-                if has_errors(&results) {
-                    std::process::exit(1);
-                }
+            if has_errors(&results) {
+                return Err(anyhow!("Lint failed with {error_count} error(s)"));
             }
             Ok(())
         }
@@ -1705,6 +1751,39 @@ mod tests {
             assert_eq!(name, "add_users");
         } else {
             panic!("Expected Migrate command");
+        }
+    }
+
+    #[test]
+    fn lint_parses_json_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "lint",
+            "--schema",
+            "sql:schema.sql",
+            "--json",
+        ]);
+
+        if let Commands::Lint { json, .. } = args.command {
+            assert!(json);
+        } else {
+            panic!("Expected Lint command");
+        }
+    }
+
+    #[test]
+    fn lint_json_flag_defaults_false() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "lint",
+            "--schema",
+            "sql:schema.sql",
+        ]);
+
+        if let Commands::Lint { json, .. } = args.command {
+            assert!(!json);
+        } else {
+            panic!("Expected Lint command");
         }
     }
 }
