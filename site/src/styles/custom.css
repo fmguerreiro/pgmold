@@ -56,3 +56,14 @@
 .expressive-code .copy button {
 	color: #8b949e !important;
 }
+
+/* pointer cursor on all clickable elements */
+nav a,
+.sidebar-content a,
+starlight-menu-button button,
+site-search button,
+starlight-theme-select button,
+header a,
+summary {
+	cursor: pointer;
+}
