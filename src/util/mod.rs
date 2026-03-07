@@ -168,7 +168,7 @@ fn normalize_ident_quoting(ident: sqlparser::ast::Ident) -> sqlparser::ast::Iden
             || !value
                 .chars()
                 .next()
-                .map_or(false, |c| c.is_ascii_lowercase() || c == '_')
+                .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
             || value
                 .chars()
                 .any(|c| !c.is_ascii_alphanumeric() && c != '_');
