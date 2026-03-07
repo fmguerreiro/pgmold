@@ -1,4 +1,7 @@
 target/
+site/node_modules/
+site/dist/
+site/.astro/
 
 # AI tooling
 CLAUDE.md
