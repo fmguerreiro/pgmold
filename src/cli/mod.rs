@@ -81,6 +81,13 @@ struct ApplyOutput {
     lock_warnings: Vec<String>,
 }
 
+#[derive(Serialize)]
+struct MigrateOutput {
+    file_path: Option<String>,
+    statement_count: usize,
+    statements: Vec<String>,
+}
+
 /// Shared object filtering options
 #[derive(Args)]
 struct FilterArgs {
@@ -294,6 +301,9 @@ enum Commands {
         target_schemas: Vec<String>,
         #[command(flatten)]
         grants: GrantArgs,
+        /// Output result as JSON
+        #[arg(long, short = 'j')]
+        json: bool,
     },
 }
 
@@ -1017,6 +1027,7 @@ Successfully applied {total} statements."
             name,
             target_schemas,
             grants,
+            json,
         } => {
             let target = load_schema(&schema)?;
             let target = filter_by_target_schemas(&target, &target_schemas);
@@ -1038,7 +1049,18 @@ Successfully applied {total} statements."
             let sql = generate_sql(&ops);
 
             if sql.is_empty() {
-                println!("No changes to generate - schema is already in sync.");
+                if json {
+                    let output = MigrateOutput {
+                        file_path: None,
+                        statement_count: 0,
+                        statements: vec![],
+                    };
+                    let json_output = serde_json::to_string_pretty(&output)
+                        .map_err(|e| anyhow!("Failed to serialize migrate output to JSON: {e}"))?;
+                    println!("{json_output}");
+                } else {
+                    println!("No changes to generate - schema is already in sync.");
+                }
                 return Ok(());
             }
 
@@ -1055,11 +1077,22 @@ Successfully applied {total} statements."
             std::fs::write(&file_path, format!("{content}\n"))
                 .map_err(|e| anyhow!("Failed to write migration file: {e}"))?;
 
-            println!(
-                "Created migration: {} ({} statements)",
-                file_path.display(),
-                sql.len()
-            );
+            if json {
+                let output = MigrateOutput {
+                    file_path: Some(file_path.display().to_string()),
+                    statement_count: sql.len(),
+                    statements: sql,
+                };
+                let json_output = serde_json::to_string_pretty(&output)
+                    .map_err(|e| anyhow!("Failed to serialize migrate output to JSON: {e}"))?;
+                println!("{json_output}");
+            } else {
+                println!(
+                    "Created migration: {} ({} statements)",
+                    file_path.display(),
+                    sql.len()
+                );
+            }
             Ok(())
         }
     }
@@ -1784,6 +1817,29 @@ mod tests {
             assert!(!json);
         } else {
             panic!("Expected Lint command");
+        }
+    }
+
+    #[test]
+    fn migrate_parses_json_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "migrate",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "postgres://localhost/db",
+            "--migrations",
+            "migrations",
+            "--name",
+            "test_migration",
+            "--json",
+        ]);
+
+        if let Commands::Migrate { json, .. } = args.command {
+            assert!(json);
+        } else {
+            panic!("Expected Migrate command");
         }
     }
 }
