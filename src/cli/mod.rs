@@ -278,12 +278,14 @@ enum Commands {
         /// Schema source with prefix: sql:path (SQL files/dirs) or drizzle:config.ts (Drizzle ORM). Can be repeated.
         #[arg(long, short = 's', required = true)]
         schema: Vec<String>,
-        /// PostgreSQL connection URL to lint against (optional, enables migration-aware linting)
+        /// PostgreSQL connection URL (e.g., postgres://user:pass@host:5432/db or db:postgres://...)
         #[arg(long, short = 'd', env = "PGMOLD_DATABASE_URL")]
-        database: Option<String>,
+        database: String,
         /// Target PostgreSQL schemas (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
         target_schemas: Vec<String>,
+        #[command(flatten)]
+        grants: GrantArgs,
         /// Output lint results as JSON
         #[arg(long, short = 'j')]
         json: bool,
@@ -847,23 +849,26 @@ pub async fn run() -> Result<()> {
             schema,
             database,
             target_schemas,
+            grants,
             json,
         } => {
             let target = load_schema(&schema)?;
             let target = filter_by_target_schemas(&target, &target_schemas);
 
-            let ops = if let Some(db_source) = database {
-                let db_url = parse_db_source(&db_source)?;
-                let connection = PgConnection::new(&db_url)
-                    .await
-                    .map_err(|e| anyhow!("{e}"))?;
-                let current = introspect_schema(&connection, &target_schemas, false)
-                    .await
-                    .map_err(|e| anyhow!("{e}"))?;
-                plan_migration(compute_diff(&current, &target))
-            } else {
-                vec![]
-            };
+            let db_url = parse_db_source(&database)?;
+            let connection = PgConnection::new(&db_url)
+                .await
+                .map_err(|e| anyhow!("{e}"))?;
+            let current = introspect_schema(&connection, &target_schemas, false)
+                .await
+                .map_err(|e| anyhow!("{e}"))?;
+            let ops = plan_migration(pgmold::diff::compute_diff_with_flags(
+                &current,
+                &target,
+                grants.manage_ownership,
+                grants.manage_grants(),
+                &grants.excluded_grant_roles(),
+            ));
 
             let lint_options = LintOptions::default();
             let results = lint_migration_plan(&ops, &lint_options);
@@ -1171,7 +1176,7 @@ pub async fn run() -> Result<()> {
                     name: "lint".into(),
                     description: "Lint schema or migration plan for issues".into(),
                     supports_json: true,
-                    requires_database: false,
+                    requires_database: true,
                     supports_filters: false,
                 },
                 CommandDescription {
@@ -1929,7 +1934,15 @@ mod tests {
 
     #[test]
     fn lint_parses_json_flag() {
-        let args = Cli::parse_from(["pgmold", "lint", "--schema", "sql:schema.sql", "--json"]);
+        let args = Cli::parse_from([
+            "pgmold",
+            "lint",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "postgres://localhost/db",
+            "--json",
+        ]);
 
         if let Commands::Lint { json, .. } = args.command {
             assert!(json);
@@ -1940,13 +1953,53 @@ mod tests {
 
     #[test]
     fn lint_json_flag_defaults_false() {
-        let args = Cli::parse_from(["pgmold", "lint", "--schema", "sql:schema.sql"]);
+        let args = Cli::parse_from([
+            "pgmold",
+            "lint",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "postgres://localhost/db",
+        ]);
 
         if let Commands::Lint { json, .. } = args.command {
             assert!(!json);
         } else {
             panic!("Expected Lint command");
         }
+    }
+
+    #[test]
+    fn lint_parses_grant_args() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "lint",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "postgres://localhost/db",
+            "--manage-ownership",
+            "--no-manage-grants",
+            "--exclude-grants-for-role",
+            "rds_superuser",
+        ]);
+
+        if let Commands::Lint { grants, .. } = args.command {
+            assert!(grants.manage_ownership);
+            assert!(!grants.manage_grants());
+            assert_eq!(
+                grants.excluded_grant_roles(),
+                HashSet::from(["rds_superuser".to_string()])
+            );
+        } else {
+            panic!("Expected Lint command");
+        }
+    }
+
+    #[test]
+    fn lint_requires_database() {
+        let result = Cli::try_parse_from(["pgmold", "lint", "--schema", "sql:schema.sql"]);
+        assert!(result.is_err());
     }
 
     #[test]
