@@ -1,4 +1,5 @@
-:root {
+:root,
+:root[data-theme='dark'] {
 	--sl-color-accent-low: #151f53;
 	--sl-color-accent: #336df5;
 	--sl-color-accent-high: #c2d5ff;
@@ -13,10 +14,10 @@
 	--sl-font-system: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
-[data-theme='light'] {
-	--sl-color-accent-low: #e0eaff;
-	--sl-color-accent: #1e4fea;
-	--sl-color-accent-high: #151f53;
+:root[data-theme='light'] {
+	--sl-color-accent-low: #dce6f8;
+	--sl-color-accent: #1a3dd6;
+	--sl-color-accent-high: #0f2470;
 	--sl-color-white: #1a1a1a;
 	--sl-color-gray-1: #383838;
 	--sl-color-gray-2: #585858;
@@ -27,15 +28,31 @@
 	--sl-color-black: #ffffff;
 }
 
-/* match landing page code block style */
-starlight-tabs,
-.expressive-code {
+/* always-dark code blocks in both themes */
+:root,
+:root[data-theme='dark'],
+:root[data-theme='light'] {
 	--ec-codeBg: #0d1117;
 	--ec-codeBrdCol: #21262d;
+	--ec-codeColor: #c9d1d9;
+	--ec-tm-lineNumFg: #484f58;
+	--ec-frm-edTabBg: #0d1117;
+	--ec-frm-edActTabBg: #0d1117;
+	--ec-frm-edActTabIndBotCol: #336df5;
+	--ec-frm-edTabBarBg: #161b22;
+	--ec-frm-edTabBarBrdBotCol: #21262d;
+	--ec-frm-trmTtbBg: #161b22;
+	--ec-frm-trmTtbBrdBotCol: #21262d;
+	--ec-frm-tooltipBg: #161b22;
+	--ec-uiFg: #c9d1d9;
+	--ec-uiSelBg: #264f78;
+	--ec-brdCol: #21262d;
 }
 
-/* sidebar active item uses accent blue */
-nav.sidebar a[aria-current="page"] {
-	color: var(--sl-color-accent);
-	font-weight: 600;
+.expressive-code .frame .header {
+	color: #8b949e !important;
+}
+
+.expressive-code .copy button {
+	color: #8b949e !important;
 }
