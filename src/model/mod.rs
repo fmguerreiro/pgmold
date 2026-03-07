@@ -1587,7 +1587,10 @@ mod tests {
         assert_eq!(normalize_pg_type("varchar"), "character varying");
         assert_eq!(normalize_pg_type("timestamptz"), "timestamp with time zone");
         assert_eq!(normalize_pg_type("timetz"), "time with time zone");
-        assert_eq!(normalize_pg_type("timestamp"), "timestamp without time zone");
+        assert_eq!(
+            normalize_pg_type("timestamp"),
+            "timestamp without time zone"
+        );
         assert_eq!(normalize_pg_type("time"), "time without time zone");
         // Already canonical types should remain unchanged
         assert_eq!(normalize_pg_type("integer"), "integer");
