@@ -983,7 +983,7 @@ Successfully applied {total} statements."
             }
 
             if report.has_drift {
-                std::process::exit(1);
+                return Err(anyhow!("Schema drift detected"));
             }
             Ok(())
         }
