@@ -143,7 +143,7 @@ enum Commands {
         #[arg(long, short = 's', required = true)]
         schema: Vec<String>,
         /// PostgreSQL connection URL (e.g., postgres://user:pass@host:5432/db or db:postgres://...)
-        #[arg(long, short = 'd')]
+        #[arg(long, short = 'd', env = "PGMOLD_DATABASE_URL")]
         database: String,
         /// Target PostgreSQL schemas to compare (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
@@ -172,7 +172,7 @@ enum Commands {
         #[arg(long, short = 's', required = true)]
         schema: Vec<String>,
         /// PostgreSQL connection URL (e.g., postgres://user:pass@host:5432/db or db:postgres://...)
-        #[arg(long, short = 'd')]
+        #[arg(long, short = 'd', env = "PGMOLD_DATABASE_URL")]
         database: String,
         /// Preview the SQL without executing
         #[arg(long)]
@@ -201,7 +201,7 @@ enum Commands {
         #[arg(long, short = 's', required = true)]
         schema: Vec<String>,
         /// PostgreSQL connection URL to lint against (optional, enables migration-aware linting)
-        #[arg(long, short = 'd')]
+        #[arg(long, short = 'd', env = "PGMOLD_DATABASE_URL")]
         database: Option<String>,
         /// Target PostgreSQL schemas (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
@@ -214,7 +214,7 @@ enum Commands {
         #[arg(long, short = 's', required = true)]
         schema: Vec<String>,
         /// PostgreSQL connection URL (e.g., postgres://user:pass@host:5432/db or db:postgres://...)
-        #[arg(long, short = 'd')]
+        #[arg(long, short = 'd', env = "PGMOLD_DATABASE_URL")]
         database: String,
         /// Target PostgreSQL schemas (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
@@ -227,7 +227,7 @@ enum Commands {
     /// Export database schema to SQL DDL
     Dump {
         /// PostgreSQL connection URL (e.g., postgres://user:pass@host:5432/db or db:postgres://...)
-        #[arg(long, short = 'd')]
+        #[arg(long, short = 'd', env = "PGMOLD_DATABASE_URL")]
         database: String,
         /// Schemas to dump (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
@@ -248,7 +248,7 @@ enum Commands {
         #[arg(long, short = 's', required = true)]
         schema: Vec<String>,
         /// PostgreSQL connection URL (e.g., postgres://user:pass@host:5432/db or db:postgres://...)
-        #[arg(long, short = 'd')]
+        #[arg(long, short = 'd', env = "PGMOLD_DATABASE_URL")]
         database: String,
         /// Directory for migration files
         #[arg(long, short = 'm')]
@@ -1523,6 +1523,24 @@ mod tests {
         } else {
             panic!("Expected Diff command");
         }
+    }
+
+    #[test]
+    fn database_falls_back_to_env_var() {
+        std::env::set_var("PGMOLD_DATABASE_URL", "postgres://env-test/db");
+        let args = Cli::parse_from([
+            "pgmold",
+            "drift",
+            "--schema",
+            "sql:schema.sql",
+        ]);
+
+        if let Commands::Drift { database, .. } = args.command {
+            assert_eq!(database, "postgres://env-test/db");
+        } else {
+            panic!("Expected Drift command");
+        }
+        std::env::remove_var("PGMOLD_DATABASE_URL");
     }
 
     #[test]
