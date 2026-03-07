@@ -13,6 +13,32 @@ pub enum PlanError {
     CyclicDependency(String),
 }
 
+/// Extracts the type reference from a SETOF return type, if present.
+/// Returns the raw type string after "SETOF " (trimmed but preserving quotes).
+fn extract_setof_type_ref(return_type: &str) -> Option<&str> {
+    let rt = return_type.trim();
+    if rt.to_lowercase().starts_with("setof ") {
+        Some(rt["setof ".len()..].trim())
+    } else {
+        None
+    }
+}
+
+/// Parses a possibly-qualified type reference into (schema, name).
+/// Falls back to `default_schema` when no dot is present.
+fn parse_type_ref(type_ref: &str, default_schema: &str) -> (String, String) {
+    if let Some(dot_pos) = type_ref.find('.') {
+        let schema = type_ref[..dot_pos].trim().trim_matches('"');
+        let name = type_ref[dot_pos + 1..].trim().trim_matches('"');
+        (schema.to_string(), name.to_string())
+    } else {
+        (
+            default_schema.to_string(),
+            type_ref.trim_matches('"').to_string(),
+        )
+    }
+}
+
 /// Unique key for identifying each MigrationOp in the dependency graph.
 /// Used for edge lookup and duplicate detection.
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -581,8 +607,36 @@ impl MigrationGraph {
         self.edges_all_to_all(&domains, &alter_functions);
         self.edges_all_to_all(&add_enum_values, &alter_functions);
 
-        // Functions before tables (used in defaults/checks)
-        self.edges_all_to_all(&functions, &tables);
+        // Functions before tables (used in defaults/checks),
+        // except functions with RETURNS SETOF <table> which depend on the table existing first.
+        // Only skip the blanket edge when the SETOF target is an actual table in this migration.
+        for &func_idx in &functions {
+            let skip_tables_edge = if let MigrationOp::CreateFunction(f) = &self.graph[func_idx].op
+            {
+                if let Some(type_ref) = extract_setof_type_ref(&f.return_type) {
+                    let (ref_schema, ref_name) = parse_type_ref(type_ref, &f.schema);
+                    let ref_qualified = qualified_name(&ref_schema, &ref_name);
+                    tables.iter().any(|&t| {
+                        if let MigrationOp::CreateTable(tbl) = &self.graph[t].op {
+                            qualified_name(&tbl.schema, &tbl.name) == ref_qualified
+                        } else {
+                            false
+                        }
+                    })
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if !skip_tables_edge {
+                for &table_idx in &tables {
+                    if func_idx != table_idx {
+                        self.graph.add_edge(func_idx, table_idx, ());
+                    }
+                }
+            }
+        }
         self.edges_all_to_all(&functions, &add_columns);
         self.edges_all_to_all(&functions, &triggers);
         self.edges_all_to_all(&functions, &policies);
@@ -820,6 +874,13 @@ impl MigrationGraph {
                                     }
                                 }
                             }
+                        }
+
+                        // Functions with RETURNS SETOF <table> depend on the referenced table
+                        if let Some(type_ref) = extract_setof_type_ref(&func.return_type) {
+                            let (ref_schema, ref_name) = parse_type_ref(type_ref, &func.schema);
+                            let ref_qualified = qualified_name(&ref_schema, &ref_name);
+                            edges_to_add.push((OpKey::CreateTable(ref_qualified), key.clone()));
                         }
                     }
                 }
@@ -3110,6 +3171,177 @@ mod tests {
         assert!(
             add_enum_pos < create_func_pos,
             "AddEnumValue must come before CreateFunction. ENUM at {add_enum_pos}, FUNC at {create_func_pos}"
+        );
+    }
+
+    #[test]
+    fn returns_setof_table_ordered_after_table() {
+        let func = Function {
+            name: "get_facilities".to_string(),
+            schema: "mrv".to_string(),
+            arguments: vec![],
+            return_type: "SETOF mrv.\"ProcurementFacility\"".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN RETURN QUERY SELECT * FROM mrv.\"ProcurementFacility\"; END;".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+
+        let mut table = make_table("ProcurementFacility", vec![]);
+        table.schema = "mrv".to_string();
+
+        let ops = vec![
+            MigrationOp::CreateFunction(func),
+            MigrationOp::CreateTable(table),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_table_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .unwrap();
+        let create_func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .unwrap();
+
+        assert!(
+            create_table_pos < create_func_pos,
+            "CreateTable must come before CreateFunction with RETURNS SETOF. TABLE at {create_table_pos}, FUNC at {create_func_pos}"
+        );
+    }
+
+    #[test]
+    fn returns_setof_unqualified_table_ordered_after_table() {
+        let func = Function {
+            name: "get_users".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "SETOF \"Users\"".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN RETURN QUERY SELECT * FROM \"Users\"; END;".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+
+        let table = make_table("Users", vec![]);
+
+        let ops = vec![
+            MigrationOp::CreateFunction(func),
+            MigrationOp::CreateTable(table),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_table_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .unwrap();
+        let create_func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .unwrap();
+
+        assert!(
+            create_table_pos < create_func_pos,
+            "CreateTable must come before CreateFunction with RETURNS SETOF (unqualified). TABLE at {create_table_pos}, FUNC at {create_func_pos}"
+        );
+    }
+
+    #[test]
+    fn returns_setof_enum_still_before_tables() {
+        // A function returning SETOF <enum> should NOT lose its blanket "function before table"
+        // edge, because the SETOF target is an enum, not a table in this migration.
+        let func = Function {
+            name: "get_entity_types".to_string(),
+            schema: "mrv".to_string(),
+            arguments: vec![],
+            return_type: "SETOF mrv.\"EntityType\"".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN RETURN QUERY SELECT unnest(ARRAY['project','field']::mrv.\"EntityType\"[]); END;".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+
+        let mut unrelated_table = make_table("Parcel", vec![]);
+        unrelated_table.schema = "mrv".to_string();
+
+        let ops = vec![
+            MigrationOp::CreateEnum(EnumType {
+                name: "EntityType".to_string(),
+                schema: "mrv".to_string(),
+                values: vec!["project".to_string(), "field".to_string()],
+                owner: None,
+                grants: Vec::new(),
+            }),
+            MigrationOp::CreateTable(unrelated_table),
+            MigrationOp::CreateFunction(func),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .unwrap();
+        let create_table_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .unwrap();
+
+        assert!(
+            create_func_pos < create_table_pos,
+            "CreateFunction returning SETOF enum must still come before unrelated CreateTable. FUNC at {create_func_pos}, TABLE at {create_table_pos}"
+        );
+    }
+
+    #[test]
+    fn regular_function_still_before_tables() {
+        let func = Function {
+            name: "compute_total".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "integer".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN RETURN 42; END;".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+
+        let table = make_table("orders", vec![]);
+
+        let ops = vec![
+            MigrationOp::CreateTable(table),
+            MigrationOp::CreateFunction(func),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .unwrap();
+        let create_table_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .unwrap();
+
+        assert!(
+            create_func_pos < create_table_pos,
+            "Regular CreateFunction must come before CreateTable. FUNC at {create_func_pos}, TABLE at {create_table_pos}"
         );
     }
 }
