@@ -160,7 +160,7 @@ fn merge_schemas(schemas: Vec<Schema>) -> Result<Schema> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use tempfile::TempDir;
 
     fn write_sql_file(directory: &TempDir, filename: &str, content: &[u8]) -> PathBuf {
@@ -169,7 +169,7 @@ mod tests {
         path
     }
 
-    fn sql_source(path: &PathBuf) -> String {
+    fn sql_source(path: &Path) -> String {
         format!("sql:{}", path.display())
     }
 
