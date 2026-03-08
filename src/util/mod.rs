@@ -22,6 +22,22 @@ fn find_password_span(url: &str) -> Option<(usize, usize)> {
 
 /// Replaces the password portion of a PostgreSQL connection URL with `****`.
 /// Returns the URL unchanged if no password is present.
+///
+/// # Examples
+///
+/// ```
+/// use pgmold::util::sanitize_url;
+///
+/// assert_eq!(
+///     sanitize_url("postgres://alice:s3cret@localhost/mydb"),
+///     "postgres://alice:****@localhost/mydb",
+/// );
+/// // URLs without a password are returned unchanged.
+/// assert_eq!(
+///     sanitize_url("postgres://localhost/mydb"),
+///     "postgres://localhost/mydb",
+/// );
+/// ```
 pub fn sanitize_url(url: &str) -> String {
     match find_password_span(url) {
         Some((colon_position, at_position)) => {
@@ -82,6 +98,17 @@ pub fn normalize_sql_whitespace(sql: &str) -> String {
 
 /// Normalizes SQL expression type casts to lowercase.
 /// Handles `::TEXT` vs `::text` differences.
+///
+/// # Examples
+///
+/// ```
+/// use pgmold::util::normalize_type_casts;
+///
+/// assert_eq!(normalize_type_casts("'hello'::TEXT"), "'hello'::text");
+/// assert_eq!(normalize_type_casts("42::INTEGER"), "42::integer");
+/// // Already-lowercase casts are returned unchanged.
+/// assert_eq!(normalize_type_casts("now()::date"), "now()::date");
+/// ```
 pub fn normalize_type_casts(expr: &str) -> String {
     let re = Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").unwrap();
     re.replace_all(expr, |caps: &regex::Captures| {
