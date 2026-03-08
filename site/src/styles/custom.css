@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
 :root,
 :root[data-theme='dark'] {
 	--sl-color-accent-low: #151f53;
@@ -12,6 +14,7 @@
 	--sl-color-gray-6: #111111;
 	--sl-color-black: #0a0a0a;
 	--sl-font-system: 'Inter', system-ui, -apple-system, sans-serif;
+	--sl-font-system-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 }
 
 :root[data-theme='light'] {
