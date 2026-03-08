@@ -1,0 +1,7 @@
+[advisories]
+ignore = [
+    # rsa timing sidechannel — transitive via sqlx-mysql, which pgmold doesn't use (postgres only)
+    "RUSTSEC-2023-0071",
+    # tokio-tar file smuggling — dev-only dependency via testcontainers
+    "RUSTSEC-2025-0111",
+]
