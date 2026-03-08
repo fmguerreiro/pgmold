@@ -618,6 +618,15 @@ impl VersionSchema {
 /// # Panics
 /// Panics if the version identifier is empty, contains underscores, or has invalid characters.
 /// Valid characters are: alphanumeric (a-z, A-Z, 0-9) and hyphens.
+///
+/// # Examples
+///
+/// ```
+/// use pgmold::model::versioned_schema_name;
+///
+/// assert_eq!(versioned_schema_name("public", "v0001"), "public_v0001");
+/// assert_eq!(versioned_schema_name("auth", "add-email"), "auth_add-email");
+/// ```
 pub fn versioned_schema_name(base_schema: &str, version: &str) -> String {
     assert!(!version.is_empty(), "Version identifier cannot be empty");
     assert!(
@@ -708,12 +717,31 @@ pub enum SequenceDataType {
 
 /// Creates a qualified name from schema and object name.
 /// Used as map keys for schema-aware lookups.
+///
+/// # Examples
+///
+/// ```
+/// use pgmold::model::qualified_name;
+///
+/// assert_eq!(qualified_name("public", "users"), "public.users");
+/// assert_eq!(qualified_name("auth", "sessions"), "auth.sessions");
+/// ```
 pub fn qualified_name(schema: &str, name: &str) -> String {
     format!("{schema}.{name}")
 }
 
 /// Parses a qualified name into (schema, name) tuple.
 /// Defaults to "public" schema if no dot separator found.
+///
+/// # Examples
+///
+/// ```
+/// use pgmold::model::parse_qualified_name;
+///
+/// assert_eq!(parse_qualified_name("auth.users"), ("auth".to_string(), "users".to_string()));
+/// // Unqualified names default to the "public" schema.
+/// assert_eq!(parse_qualified_name("orders"), ("public".to_string(), "orders".to_string()));
+/// ```
 pub fn parse_qualified_name(qname: &str) -> (String, String) {
     match qname.split_once('.') {
         Some((schema, name)) => (schema.to_string(), name.to_string()),
