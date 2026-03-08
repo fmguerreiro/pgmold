@@ -28,42 +28,10 @@
 	--sl-color-black: #ffffff;
 }
 
-/* always-dark code blocks in both themes */
-:root,
-:root[data-theme='dark'],
-:root[data-theme='light'] {
-	--ec-codeBg: #0d1117;
-	--ec-codeBrdCol: #21262d;
-	--ec-codeColor: #c9d1d9;
-	--ec-tm-lineNumFg: #484f58;
-	--ec-frm-edTabBg: #0d1117;
-	--ec-frm-edActTabBg: #0d1117;
-	--ec-frm-edActTabIndBotCol: #336df5;
-	--ec-frm-edTabBarBg: #161b22;
-	--ec-frm-edTabBarBrdBotCol: #21262d;
-	--ec-frm-trmTtbBg: #161b22;
-	--ec-frm-trmTtbBrdBotCol: #21262d;
-	--ec-frm-tooltipBg: #161b22;
-	--ec-uiFg: #c9d1d9;
-	--ec-uiSelBg: #264f78;
-	--ec-brdCol: #21262d;
-}
-
-.expressive-code .frame .header {
-	color: #8b949e !important;
-}
-
-.expressive-code .copy button {
-	color: #8b949e !important;
-}
-
 /* pointer cursor on all clickable elements */
-nav a,
-.sidebar-content a,
-starlight-menu-button button,
-site-search button,
-starlight-theme-select button,
-header a,
-summary {
-	cursor: pointer;
+a,
+button,
+summary,
+[role="button"] {
+	cursor: pointer !important;
 }
