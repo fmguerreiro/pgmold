@@ -355,7 +355,7 @@ runs:
     - name: Post PR comment
       shell: bash
       id: comment
-      if: ${{ inputs.plan-comment == 'true' && github.event_name == 'pull_request' }}
+      if: ${{ inputs.plan-comment == 'true' && (github.event_name == 'pull_request' || inputs.pr-number != '') }}
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         PLAN_JSON: ${{ steps.plan.outputs.plan-json }}
@@ -364,7 +364,7 @@ runs:
         HAS_DRIFT: ${{ steps.drift.outputs.has-drift }}
         DRIFT_REPORT: ${{ steps.drift.outputs.report }}
         REPO: ${{ github.repository }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
       run: |
         emit_drift_status() {
           if [[ -z "$HAS_DRIFT" ]]; then return; fi
@@ -473,12 +473,12 @@ runs:
 
     - name: Auto-label PR
       shell: bash
-      if: ${{ inputs.auto-label == 'true' && github.event_name == 'pull_request' }}
+      if: ${{ inputs.auto-label == 'true' && (github.event_name == 'pull_request' || inputs.pr-number != '') }}
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         STATEMENT_COUNT: ${{ steps.plan.outputs.statement-count }}
         REPO: ${{ github.repository }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
       run: |
         LABEL="database-schema"
         LABEL_COLOR="5319e7"
