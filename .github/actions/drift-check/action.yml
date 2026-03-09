@@ -161,9 +161,10 @@ runs:
         INPUT_DATABASE: ${{ inputs.database }}
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_DRIFT_CHECK: ${{ inputs.drift-check }}
+        INPUT_SECRET_CMD: ${{ inputs.database-secret-command }}
       run: |
-        if [[ -z "$INPUT_DATABASE" && -z "$INPUT_BASELINE" ]]; then
-          echo "::error::Either 'database' or 'baseline' input must be provided."
+        if [[ -z "$INPUT_DATABASE" && -z "$INPUT_BASELINE" && -z "$INPUT_SECRET_CMD" ]]; then
+          echo "::error::One of 'database', 'baseline', or 'database-secret-command' must be provided."
           exit 1
         fi
 
@@ -209,12 +210,35 @@ runs:
         done
         echo "Tunnel ready on localhost:${TUNNEL_PORT} (${ELAPSED}s)"
 
+    - name: Resolve database connection
+      shell: bash
+      id: resolve-database
+      if: ${{ inputs.database-secret-command != '' }}
+      env:
+        SECRET_COMMAND: ${{ inputs.database-secret-command }}
+      run: |
+        echo "Resolving database connection string..."
+        DATABASE=$(eval "$SECRET_COMMAND")
+
+        if [[ -z "$DATABASE" ]]; then
+          echo "::error::database-secret-command produced empty output"
+          exit 1
+        fi
+
+        if [[ "$DATABASE" != db:* ]]; then
+          echo "::error::database-secret-command output must start with 'db:' (got: ${DATABASE:0:20}...)"
+          exit 1
+        fi
+
+        echo "::add-mask::$DATABASE"
+        echo "database=$DATABASE" >> "$GITHUB_OUTPUT"
+
     - name: Run migration plan
       shell: bash
       id: plan
       env:
         INPUT_SCHEMA: ${{ inputs.schema }}
-        INPUT_DATABASE: ${{ inputs.database }}
+        INPUT_DATABASE: ${{ steps.resolve-database.outputs.database || inputs.database }}
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_TARGET_SCHEMAS: ${{ inputs.target-schemas }}
       run: |
@@ -259,10 +283,10 @@ runs:
     - name: Run drift detection
       shell: bash
       id: drift
-      if: ${{ inputs.drift-check == 'true' && inputs.database != '' }}
+      if: ${{ inputs.drift-check == 'true' && (inputs.database != '' || steps.resolve-database.outputs.database != '') }}
       env:
         INPUT_SCHEMA: ${{ inputs.schema }}
-        INPUT_DATABASE: ${{ inputs.database }}
+        INPUT_DATABASE: ${{ steps.resolve-database.outputs.database || inputs.database }}
         INPUT_TARGET_SCHEMAS: ${{ inputs.target-schemas }}
         INPUT_FAIL_ON_DRIFT: ${{ inputs.fail-on-drift }}
       run: |
