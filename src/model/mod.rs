@@ -412,8 +412,14 @@ impl Function {
     }
 
     /// Checks if the function differences require DROP + CREATE instead of CREATE OR REPLACE.
-    /// PostgreSQL doesn't allow changing parameter names or defaults via CREATE OR REPLACE.
+    /// PostgreSQL doesn't allow changing parameter names, defaults, or return types
+    /// via CREATE OR REPLACE.
     pub fn requires_drop_recreate(&self, other: &Function) -> bool {
+        // Return type changes (including RETURNS TABLE column names) require DROP+CREATE
+        if normalize_pg_type(&self.return_type) != normalize_pg_type(&other.return_type) {
+            return true;
+        }
+
         if self.arguments.len() != other.arguments.len() {
             return false; // Different signature entirely, not a name change
         }

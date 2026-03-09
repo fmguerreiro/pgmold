@@ -706,6 +706,73 @@ mod tests {
     }
 
     #[test]
+    fn function_with_changed_return_type_uses_drop_create() {
+        // PostgreSQL doesn't allow changing RETURNS TABLE column names via CREATE OR REPLACE.
+        let mut from = empty_schema();
+        let func_old = Function {
+            name: "my_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("p_id".to_string()),
+                data_type: "uuid".to_string(),
+                mode: ArgMode::In,
+                default: None,
+            }],
+            return_type: "TABLE(id uuid, user_name text)".to_string(),
+            language: "plpgsql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+        from.functions.insert(
+            qualified_name(&func_old.schema, &func_old.signature()),
+            func_old,
+        );
+
+        let mut to = empty_schema();
+        let func_new = Function {
+            name: "my_func".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![FunctionArg {
+                name: Some("p_id".to_string()),
+                data_type: "uuid".to_string(),
+                mode: ArgMode::In,
+                default: None,
+            }],
+            return_type: "TABLE(id uuid, \"userName\" text)".to_string(), // Changed column name
+            language: "plpgsql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+        };
+        to.functions.insert(
+            qualified_name(&func_new.schema, &func_new.signature()),
+            func_new,
+        );
+
+        let ops = compute_diff(&from, &to);
+
+        // Should generate DROP + CREATE (not ALTER/CREATE OR REPLACE)
+        assert_eq!(ops.len(), 2, "Should have DROP and CREATE operations");
+        assert!(
+            matches!(&ops[0], MigrationOp::DropFunction { .. }),
+            "First op should be DropFunction, got: {:?}",
+            &ops[0]
+        );
+        assert!(
+            matches!(&ops[1], MigrationOp::CreateFunction(_)),
+            "Second op should be CreateFunction, got: {:?}",
+            &ops[1]
+        );
+    }
+
+    #[test]
     fn drop_view_uses_correct_schema() {
         let mut from = empty_schema();
         let view = View {
