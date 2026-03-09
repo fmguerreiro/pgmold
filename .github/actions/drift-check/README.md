@@ -54,6 +54,11 @@ No live database required. Diffs `schema` against a `baseline` SQL file.
 | `drift-check` | no | `true` | Run drift detection against the live database |
 | `auto-label` | no | `true` | Add `database-schema` label to the PR when schema changes are detected |
 | `github-token` | no | `${{ github.token }}` | GitHub token for API calls (PR comments, labels) |
+| `tunnel-command` | no | — | Command to run in background to establish a tunnel to the database |
+| `tunnel-port` | no | `15432` | Local port the tunnel exposes (used for TCP readiness check) |
+| `tunnel-ready-timeout` | no | `30` | Seconds to wait for the tunnel to accept TCP connections |
+| `database-secret-command` | no | — | Command that prints a `db:postgres://...` connection string to stdout |
+| `pr-number` | no | — | PR number for comments/labels (required for `workflow_call` triggers) |
 
 ## Outputs
 
@@ -132,6 +137,35 @@ jobs:
         body: `Differences: ${report.differences.length}\nExpected: ${report.expected_fingerprint}\nActual: ${report.actual_fingerprint}`
       });
 ```
+
+### Validate via tunnel
+
+For databases behind firewalls (VPC, bastion, private network):
+
+```yaml
+# For databases behind firewalls (VPC, bastion, private network)
+steps:
+  - uses: actions/checkout@v4
+  - uses: fmguerreiro/pgmold/.github/actions/drift-check@main
+    with:
+      schema: sql:schema.sql
+      target-schemas: auth,public
+      tunnel-command: ssh -N -L 15432:db.internal:5432 bastion@jump.example.com
+      database-secret-command: |
+        aws secretsmanager get-secret-value --secret-id prod/db \
+          --query SecretString --output text \
+          | jq -r '"db:postgres://\(.username):\(.password)@localhost:15432/\(.dbname)"'
+```
+
+## Tunnel Support
+
+For databases behind firewalls, the action can run a tunnel command in the background:
+
+- `tunnel-command` — Any command that opens a tunnel (SSH, SSM, kubectl port-forward, cloud-sql-proxy)
+- `tunnel-port` — Local port to check for readiness (default: 15432)
+- `tunnel-ready-timeout` — Seconds to wait for the tunnel (default: 30)
+- `database-secret-command` — Command that prints a `db:postgres://...` connection string to stdout
+- `pr-number` — Explicit PR number for `workflow_call` triggers
 
 ## Platform Support
 

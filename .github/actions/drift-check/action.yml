@@ -1,5 +1,5 @@
 name: 'pgmold CI'
-description: 'PostgreSQL schema CI — migration plans, drift detection, PR comments, and auto-labeling'
+description: 'PostgreSQL schema CI — migration plans, drift detection, PR comments, auto-labeling, and tunnel support for firewalled databases'
 author: 'fmguerreiro'
 
 inputs:
@@ -40,6 +40,23 @@ inputs:
     description: 'GitHub token for API calls (PR comments, labels)'
     required: false
     default: ${{ github.token }}
+  tunnel-command:
+    description: 'Command to run in background to establish a tunnel to the database (e.g. ssh -N -L 15432:db:5432 bastion)'
+    required: false
+  tunnel-port:
+    description: 'Local port the tunnel exposes (used for TCP readiness check)'
+    required: false
+    default: '15432'
+  tunnel-ready-timeout:
+    description: 'Seconds to wait for the tunnel to accept TCP connections'
+    required: false
+    default: '30'
+  database-secret-command:
+    description: 'Command that prints a db:postgres://... connection string to stdout'
+    required: false
+  pr-number:
+    description: 'PR number for comments/labels (auto-detected for pull_request events, required for workflow_call)'
+    required: false
 
 outputs:
   has-drift:
@@ -144,22 +161,91 @@ runs:
         INPUT_DATABASE: ${{ inputs.database }}
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_DRIFT_CHECK: ${{ inputs.drift-check }}
+        INPUT_SECRET_CMD: ${{ inputs.database-secret-command }}
       run: |
-        if [[ -z "$INPUT_DATABASE" && -z "$INPUT_BASELINE" ]]; then
-          echo "::error::Either 'database' or 'baseline' input must be provided."
+        if [[ -z "$INPUT_DATABASE" && -z "$INPUT_BASELINE" && -z "$INPUT_SECRET_CMD" ]]; then
+          echo "::error::One of 'database', 'baseline', or 'database-secret-command' must be provided."
           exit 1
         fi
 
-        if [[ "$INPUT_DRIFT_CHECK" == "true" && -z "$INPUT_DATABASE" ]]; then
-          echo "::warning::drift-check is enabled but no 'database' input was provided — skipping drift detection."
+        if [[ "$INPUT_DRIFT_CHECK" == "true" && -z "$INPUT_DATABASE" && -z "$INPUT_SECRET_CMD" ]]; then
+          echo "::warning::drift-check is enabled but no database connection was provided — skipping drift detection."
         fi
+
+    - name: Start tunnel
+      shell: bash
+      id: tunnel
+      if: ${{ inputs.tunnel-command != '' }}
+      env:
+        TUNNEL_COMMAND: ${{ inputs.tunnel-command }}
+      run: |
+        echo "Starting tunnel..."
+        eval "$TUNNEL_COMMAND" &
+        TUNNEL_PID=$!
+        echo "pid=$TUNNEL_PID" >> "$GITHUB_OUTPUT"
+        echo "Tunnel started (PID: $TUNNEL_PID)"
+
+    - name: Wait for tunnel
+      shell: bash
+      if: ${{ steps.tunnel.outputs.pid != '' }}
+      env:
+        TUNNEL_PORT: ${{ inputs.tunnel-port }}
+        TUNNEL_TIMEOUT: ${{ inputs.tunnel-ready-timeout }}
+        TUNNEL_PID: ${{ steps.tunnel.outputs.pid }}
+      run: |
+        if ! [[ "$TUNNEL_TIMEOUT" =~ ^[0-9]+$ ]]; then
+          echo "::error::tunnel-ready-timeout must be a positive integer (got: '$TUNNEL_TIMEOUT')"
+          exit 1
+        fi
+
+        ELAPSED=0
+        echo "Waiting for tunnel on localhost:${TUNNEL_PORT}..."
+        while ! (echo >/dev/tcp/localhost/"$TUNNEL_PORT") 2>/dev/null; do
+          if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+            echo "::error::Tunnel process (PID $TUNNEL_PID) exited before becoming ready"
+            exit 1
+          fi
+          if [[ "$ELAPSED" -ge "$TUNNEL_TIMEOUT" ]]; then
+            echo "::error::Tunnel not ready after ${TUNNEL_TIMEOUT}s on localhost:${TUNNEL_PORT}"
+            kill "$TUNNEL_PID" 2>/dev/null || true
+            exit 1
+          fi
+          sleep 1
+          ELAPSED=$((ELAPSED + 1))
+        done
+        echo "Tunnel ready on localhost:${TUNNEL_PORT} (${ELAPSED}s)"
+
+    - name: Resolve database connection
+      shell: bash
+      id: resolve-database
+      if: ${{ inputs.database-secret-command != '' }}
+      env:
+        SECRET_COMMAND: ${{ inputs.database-secret-command }}
+      run: |
+        echo "Resolving database connection string..."
+        DATABASE=$(eval "$SECRET_COMMAND" | tr -d '\r')
+
+        if [[ -z "$DATABASE" ]]; then
+          echo "::error::database-secret-command produced empty output"
+          exit 1
+        fi
+
+        echo "::add-mask::$DATABASE"
+
+        if [[ "$DATABASE" != db:* ]]; then
+          echo "::error::database-secret-command output must start with 'db:'"
+          exit 1
+        fi
+
+        echo "RESOLVED_DATABASE=$DATABASE" >> "$GITHUB_ENV"
+        echo "resolved=true" >> "$GITHUB_OUTPUT"
 
     - name: Run migration plan
       shell: bash
       id: plan
       env:
         INPUT_SCHEMA: ${{ inputs.schema }}
-        INPUT_DATABASE: ${{ inputs.database }}
+        INPUT_DATABASE: ${{ env.RESOLVED_DATABASE || inputs.database }}
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_TARGET_SCHEMAS: ${{ inputs.target-schemas }}
       run: |
@@ -204,10 +290,10 @@ runs:
     - name: Run drift detection
       shell: bash
       id: drift
-      if: ${{ inputs.drift-check == 'true' && inputs.database != '' }}
+      if: ${{ inputs.drift-check == 'true' && (inputs.database != '' || steps.resolve-database.outputs.resolved == 'true') }}
       env:
         INPUT_SCHEMA: ${{ inputs.schema }}
-        INPUT_DATABASE: ${{ inputs.database }}
+        INPUT_DATABASE: ${{ env.RESOLVED_DATABASE || inputs.database }}
         INPUT_TARGET_SCHEMAS: ${{ inputs.target-schemas }}
         INPUT_FAIL_ON_DRIFT: ${{ inputs.fail-on-drift }}
       run: |
@@ -276,7 +362,7 @@ runs:
     - name: Post PR comment
       shell: bash
       id: comment
-      if: ${{ inputs.plan-comment == 'true' && github.event_name == 'pull_request' }}
+      if: ${{ inputs.plan-comment == 'true' && (github.event_name == 'pull_request' || inputs.pr-number != '') }}
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         PLAN_JSON: ${{ steps.plan.outputs.plan-json }}
@@ -285,7 +371,7 @@ runs:
         HAS_DRIFT: ${{ steps.drift.outputs.has-drift }}
         DRIFT_REPORT: ${{ steps.drift.outputs.report }}
         REPO: ${{ github.repository }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
       run: |
         emit_drift_status() {
           if [[ -z "$HAS_DRIFT" ]]; then return; fi
@@ -394,12 +480,12 @@ runs:
 
     - name: Auto-label PR
       shell: bash
-      if: ${{ inputs.auto-label == 'true' && github.event_name == 'pull_request' }}
+      if: ${{ inputs.auto-label == 'true' && (github.event_name == 'pull_request' || inputs.pr-number != '') }}
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         STATEMENT_COUNT: ${{ steps.plan.outputs.statement-count }}
         REPO: ${{ github.repository }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
       run: |
         LABEL="database-schema"
         LABEL_COLOR="5319e7"
@@ -415,6 +501,17 @@ runs:
             -f "labels[]=$LABEL"
         else
           gh api "repos/$REPO/issues/$PR_NUMBER/labels/$LABEL" -X DELETE &>/dev/null || true
+        fi
+
+    - name: Cleanup tunnel
+      shell: bash
+      if: ${{ always() }}
+      env:
+        TUNNEL_PID: ${{ steps.tunnel.outputs.pid }}
+      run: |
+        if [[ -n "$TUNNEL_PID" ]] && kill -0 "$TUNNEL_PID" 2>/dev/null; then
+          kill "$TUNNEL_PID" 2>/dev/null || true
+          echo "Tunnel process (PID $TUNNEL_PID) terminated"
         fi
 
 branding:
