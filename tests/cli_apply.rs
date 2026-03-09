@@ -1,12 +1,10 @@
 mod common;
 use common::*;
 
-#[allow(deprecated)]
 use assert_cmd::Command;
 
-/// When `apply --json` encounters a SQL execution error, stdout must contain
-/// `{"success": false, ...}` and the process must exit non-zero.
 #[tokio::test]
+#[allow(deprecated)]
 async fn apply_json_emits_error_on_sql_failure() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
