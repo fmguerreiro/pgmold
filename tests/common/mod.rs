@@ -1,4 +1,4 @@
-#![allow(unused_imports)]
+#![allow(unused_imports, dead_code)]
 
 pub use pgmold::diff::{compute_diff, planner::plan_migration, MigrationOp};
 pub use pgmold::drift::detect_drift;
@@ -19,6 +19,13 @@ pub use testcontainers::runners::AsyncRunner;
 pub use testcontainers::ContainerAsync;
 pub use testcontainers_modules::postgres::Postgres;
 
+pub fn write_sql_temp_file(sql: &str) -> NamedTempFile {
+    let mut file = tempfile::Builder::new().suffix(".sql").tempfile().unwrap();
+    writeln!(file, "{sql}").unwrap();
+    file
+}
+
+#[allow(deprecated)]
 pub async fn setup_postgres() -> (ContainerAsync<Postgres>, String) {
     let container = Postgres::default().start().await.unwrap();
     let port = container.get_host_port_ipv4(5432).await.unwrap();

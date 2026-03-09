@@ -34,6 +34,7 @@ testcontainers-modules = { version = "0.11", features = ["postgres"] }
 tempfile = "3"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres"] }
 tokio = { version = "1.35", features = ["full"] }
+assert_cmd = "2"
 
 [build-dependencies]
 sqlparser = { package = "pgmold-sqlparser", version = "0.60.3", features = ["visitor"] }
