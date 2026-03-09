@@ -271,6 +271,9 @@ enum Commands {
         /// Output results as JSON
         #[arg(long, short = 'j')]
         json: bool,
+        /// Re-introspect the database after apply and fail if any residual differences remain
+        #[arg(long)]
+        verify_after_apply: bool,
     },
 
     /// Lint schema or migration plan for issues
@@ -639,6 +642,7 @@ pub async fn run() -> Result<()> {
             verbose,
             validate,
             json,
+            verify_after_apply,
         } => {
             let include_extension_objects = filter.include_extension_objects;
             let filter = filter.to_filter()?;
@@ -785,47 +789,101 @@ pub async fn run() -> Result<()> {
                 }
             } else {
                 let total = sql.len();
-                let mut transaction = connection
-                    .pool()
-                    .begin()
-                    .await
-                    .map_err(|e| anyhow!("Failed to begin transaction: {e}"))?;
-
-                for (i, statement) in sql.iter().enumerate() {
-                    let display_num = i + 1;
-                    if verbose && !json {
-                        let truncated = if statement.len() > 80 {
-                            format!("{}...", &statement[..80])
-                        } else {
-                            statement.clone()
-                        };
-                        println!("[{display_num}/{total}] Executing: {truncated}");
-                    }
-                    let result = transaction
-                        .execute(statement.as_str())
+                let apply_result: Result<()> = async {
+                    let mut transaction = connection
+                        .pool()
+                        .begin()
                         .await
-                        .map_err(|e| anyhow!("Failed to execute SQL: {e}"))?;
-                    if verbose && !json {
-                        println!(
-                            "[{display_num}/{total}] OK ({} rows affected)",
-                            result.rows_affected()
-                        );
+                        .map_err(|e| anyhow!("Failed to begin transaction: {e}"))?;
+
+                    for (i, statement) in sql.iter().enumerate() {
+                        let display_num = i + 1;
+                        if verbose && !json {
+                            let truncated = if statement.len() > 80 {
+                                format!("{}...", &statement[..80])
+                            } else {
+                                statement.clone()
+                            };
+                            println!("[{display_num}/{total}] Executing: {truncated}");
+                        }
+                        let result = transaction
+                            .execute(statement.as_str())
+                            .await
+                            .map_err(|e| anyhow!("Failed to execute SQL: {e}"))?;
+                        if verbose && !json {
+                            println!(
+                                "[{display_num}/{total}] OK ({} rows affected)",
+                                result.rows_affected()
+                            );
+                        }
                     }
-                }
 
-                if verbose && !json {
-                    println!("Committing transaction...");
-                }
-                transaction
-                    .commit()
-                    .await
-                    .map_err(|e| anyhow!("Failed to commit transaction: {e}"))?;
-                if verbose && !json {
-                    println!("Transaction committed.");
-                }
+                    if verbose && !json {
+                        println!("Committing transaction...");
+                    }
+                    transaction
+                        .commit()
+                        .await
+                        .map_err(|e| anyhow!("Failed to commit transaction: {e}"))?;
+                    if verbose && !json {
+                        println!("Transaction committed.");
+                    }
 
-                if !json {
-                    println!("\nSuccessfully applied {total} statements.");
+                    if !json {
+                        println!("\nSuccessfully applied {total} statements.");
+                    }
+                    Ok(())
+                }
+                .await;
+
+                if let Err(error) = apply_result {
+                    if json {
+                        let error_output = serde_json::json!({
+                            "success": false,
+                            "error": error.to_string(),
+                        });
+                        print_json(&error_output)?;
+                    }
+                    return Err(error);
+                }
+            }
+
+            if verify_after_apply && !dry_run {
+                let verify_result = pgmold::apply::verify_after_apply(
+                    &schema,
+                    &connection,
+                    &target_schemas,
+                    &filter,
+                    manage_ownership,
+                    manage_grants,
+                    &excluded_grant_roles,
+                )
+                .await
+                .map_err(|e| anyhow!("Post-apply verification failed: {e}"))?;
+
+                if !verify_result.convergent {
+                    let residual_count = verify_result.residual_operations.len();
+                    let residual_sql = generate_sql(&verify_result.residual_operations);
+                    if json {
+                        let error_output = serde_json::json!({
+                            "success": false,
+                            "error": format!("Verification failed: {residual_count} residual operation(s) remain after apply"),
+                            "residual_ops": residual_sql,
+                        });
+                        print_json(&error_output)?;
+                    } else {
+                        eprintln!(
+                            "\u{274C} Verification failed: {residual_count} residual operation(s) remain after apply:"
+                        );
+                        for statement in &residual_sql {
+                            eprintln!("  - {statement}");
+                        }
+                    }
+                    return Err(anyhow!(
+                        "Verification failed: {residual_count} residual operation(s) remain after apply"
+                    ));
+                } else if !json {
+                    println!("\u{2705} Post-apply verification passed: schema converged.");
                 }
             }
 

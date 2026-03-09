@@ -1,11 +1,50 @@
-use crate::diff::{compute_diff, planner::plan_migration, MigrationOp};
+use crate::diff::{compute_diff_with_flags, planner::plan_migration, MigrationOp};
+use crate::filter::{filter_by_target_schemas, filter_schema, Filter};
 use crate::lint::{lint_migration_plan, LintOptions, LintResult};
 use crate::parser::load_schema_sources;
 use crate::pg::connection::PgConnection;
 use crate::pg::introspect::introspect_schema;
 use crate::pg::sqlgen::generate_sql;
+use crate::provider::load_schema_from_sources;
 use crate::util::{Result, SchemaError};
 use sqlx::Executor;
+use std::collections::HashSet;
+
+#[derive(Debug, Clone)]
+pub struct VerifyResult {
+    pub convergent: bool,
+    pub residual_operations: Vec<MigrationOp>,
+}
+
+pub async fn verify_after_apply(
+    schema_sources: &[String],
+    connection: &PgConnection,
+    target_schemas: &[String],
+    filter: &Filter,
+    manage_ownership: bool,
+    manage_grants: bool,
+    excluded_grant_roles: &HashSet<String>,
+) -> Result<VerifyResult> {
+    let raw_target = load_schema_from_sources(schema_sources)?;
+    let target = filter_schema(
+        &filter_by_target_schemas(&raw_target, target_schemas),
+        filter,
+    );
+    let raw_current = introspect_schema(connection, target_schemas, false).await?;
+    let current = filter_schema(&raw_current, filter);
+    let residual_operations = plan_migration(compute_diff_with_flags(
+        &current,
+        &target,
+        manage_ownership,
+        manage_grants,
+        excluded_grant_roles,
+    ));
+    let convergent = residual_operations.is_empty();
+    Ok(VerifyResult {
+        convergent,
+        residual_operations,
+    })
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct ApplyOptions {
@@ -29,7 +68,13 @@ pub async fn apply_migration(
     let target = load_schema_sources(schema_sources)?;
     let current = introspect_schema(connection, &[String::from("public")], false).await?;
 
-    let ops = plan_migration(compute_diff(&current, &target));
+    let ops = plan_migration(compute_diff_with_flags(
+        &current,
+        &target,
+        false,
+        false,
+        &HashSet::new(),
+    ));
 
     let lint_options = LintOptions {
         allow_destructive: options.allow_destructive,
