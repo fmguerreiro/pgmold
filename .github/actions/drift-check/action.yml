@@ -193,9 +193,14 @@ runs:
         TUNNEL_TIMEOUT: ${{ inputs.tunnel-ready-timeout }}
         TUNNEL_PID: ${{ steps.tunnel.outputs.pid }}
       run: |
+        if ! [[ "$TUNNEL_TIMEOUT" =~ ^[0-9]+$ ]]; then
+          echo "::error::tunnel-ready-timeout must be a positive integer (got: '$TUNNEL_TIMEOUT')"
+          exit 1
+        fi
+
         ELAPSED=0
         echo "Waiting for tunnel on localhost:${TUNNEL_PORT}..."
-        while ! nc -z localhost "$TUNNEL_PORT" 2>/dev/null; do
+        while ! (echo >/dev/tcp/localhost/"$TUNNEL_PORT") 2>/dev/null; do
           if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
             echo "::error::Tunnel process (PID $TUNNEL_PID) exited before becoming ready"
             exit 1
@@ -225,13 +230,15 @@ runs:
           exit 1
         fi
 
+        echo "::add-mask::$DATABASE"
+
         if [[ "$DATABASE" != db:* ]]; then
-          echo "::error::database-secret-command output must start with 'db:' (got: ${DATABASE:0:20}...)"
+          echo "::error::database-secret-command output must start with 'db:'"
           exit 1
         fi
 
-        echo "::add-mask::$DATABASE"
         echo "RESOLVED_DATABASE=$DATABASE" >> "$GITHUB_ENV"
+        echo "resolved=true" >> "$GITHUB_OUTPUT"
 
     - name: Run migration plan
       shell: bash
@@ -283,7 +290,7 @@ runs:
     - name: Run drift detection
       shell: bash
       id: drift
-      if: ${{ inputs.drift-check == 'true' && (inputs.database != '' || env.RESOLVED_DATABASE != '') }}
+      if: ${{ inputs.drift-check == 'true' && (inputs.database != '' || steps.resolve-database.outputs.resolved == 'true') }}
       env:
         INPUT_SCHEMA: ${{ inputs.schema }}
         INPUT_DATABASE: ${{ env.RESOLVED_DATABASE || inputs.database }}
@@ -498,11 +505,11 @@ runs:
 
     - name: Cleanup tunnel
       shell: bash
-      if: ${{ always() && steps.tunnel.outputs.pid != '' }}
+      if: ${{ always() }}
       env:
         TUNNEL_PID: ${{ steps.tunnel.outputs.pid }}
       run: |
-        if kill -0 "$TUNNEL_PID" 2>/dev/null; then
+        if [[ -n "$TUNNEL_PID" ]] && kill -0 "$TUNNEL_PID" 2>/dev/null; then
           kill "$TUNNEL_PID" 2>/dev/null || true
           echo "Tunnel process (PID $TUNNEL_PID) terminated"
         fi
