@@ -15,6 +15,10 @@ PostgreSQL schema-as-code management tool. Define schemas in native PostgreSQL D
 - **Drift Detection**: Detect schema drift in CI/CD
 - **Transactional Apply**: All migrations run in a single transaction
 - **Partitioned Tables**: Full support for `PARTITION BY` and `PARTITION OF` syntax
+- **JSON Output**: Machine-readable output for all commands via `--json` / `-j`
+- **Describe**: Inspect available commands, object types, and providers with `pgmold describe`
+- **Grant Management**: `GRANT`/`REVOKE` sync enabled by default; `--manage-ownership` for `ALTER OWNER`
+- **Environment Variable**: Set connection string via `PGMOLD_DATABASE_URL`
 
 ## How pgmold Works
 
@@ -118,8 +122,8 @@ pgmold apply -s sql:schema.sql -d postgres://localhost/mydb --allow-destructive
 # Dry run (preview SQL without executing)
 pgmold apply -s sql:schema.sql -d postgres://localhost/mydb --dry-run
 
-# Lint schema
-pgmold lint -s sql:schema.sql
+# Lint schema (requires a database connection to resolve types)
+pgmold lint -s sql:schema.sql -d postgres://localhost/mydb
 
 # Detect drift (returns JSON report with exit code 1 if drift detected)
 pgmold drift -s sql:schema.sql -d postgres://localhost/mydb -j
