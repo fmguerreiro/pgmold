@@ -171,6 +171,44 @@ runs:
           echo "::warning::drift-check is enabled but no 'database' input was provided — skipping drift detection."
         fi
 
+    - name: Start tunnel
+      shell: bash
+      id: tunnel
+      if: ${{ inputs.tunnel-command != '' }}
+      env:
+        TUNNEL_COMMAND: ${{ inputs.tunnel-command }}
+      run: |
+        echo "Starting tunnel..."
+        eval "$TUNNEL_COMMAND" &
+        TUNNEL_PID=$!
+        echo "pid=$TUNNEL_PID" >> "$GITHUB_OUTPUT"
+        echo "Tunnel started (PID: $TUNNEL_PID)"
+
+    - name: Wait for tunnel
+      shell: bash
+      if: ${{ steps.tunnel.outputs.pid != '' }}
+      env:
+        TUNNEL_PORT: ${{ inputs.tunnel-port }}
+        TUNNEL_TIMEOUT: ${{ inputs.tunnel-ready-timeout }}
+        TUNNEL_PID: ${{ steps.tunnel.outputs.pid }}
+      run: |
+        ELAPSED=0
+        echo "Waiting for tunnel on localhost:${TUNNEL_PORT}..."
+        while ! (echo >/dev/tcp/localhost/"$TUNNEL_PORT") 2>/dev/null; do
+          if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+            echo "::error::Tunnel process (PID $TUNNEL_PID) exited before becoming ready"
+            exit 1
+          fi
+          if [[ "$ELAPSED" -ge "$TUNNEL_TIMEOUT" ]]; then
+            echo "::error::Tunnel not ready after ${TUNNEL_TIMEOUT}s on localhost:${TUNNEL_PORT}"
+            kill "$TUNNEL_PID" 2>/dev/null || true
+            exit 1
+          fi
+          sleep 1
+          ELAPSED=$((ELAPSED + 1))
+        done
+        echo "Tunnel ready on localhost:${TUNNEL_PORT} (${ELAPSED}s)"
+
     - name: Run migration plan
       shell: bash
       id: plan
@@ -432,6 +470,17 @@ runs:
             -f "labels[]=$LABEL"
         else
           gh api "repos/$REPO/issues/$PR_NUMBER/labels/$LABEL" -X DELETE &>/dev/null || true
+        fi
+
+    - name: Cleanup tunnel
+      shell: bash
+      if: ${{ always() && steps.tunnel.outputs.pid != '' }}
+      env:
+        TUNNEL_PID: ${{ steps.tunnel.outputs.pid }}
+      run: |
+        if kill -0 "$TUNNEL_PID" 2>/dev/null; then
+          kill "$TUNNEL_PID" 2>/dev/null || true
+          echo "Tunnel process (PID $TUNNEL_PID) terminated"
         fi
 
 branding:
