@@ -54,6 +54,11 @@ No live database required. Diffs `schema` against a `baseline` SQL file.
 | `drift-check` | no | `true` | Run drift detection against the live database |
 | `auto-label` | no | `true` | Add `database-schema` label to the PR when schema changes are detected |
 | `github-token` | no | `${{ github.token }}` | GitHub token for API calls (PR comments, labels) |
+| `tunnel-command` | no | — | Command to run in background to establish a tunnel to the database |
+| `tunnel-port` | no | `15432` | Local port the tunnel exposes (used for TCP readiness check) |
+| `tunnel-ready-timeout` | no | `30` | Seconds to wait for the tunnel to accept TCP connections |
+| `database-secret-command` | no | — | Command that prints a `db:postgres://...` connection string to stdout |
+| `pr-number` | no | — | PR number for comments/labels (required for `workflow_call` triggers) |
 
 ## Outputs
 
