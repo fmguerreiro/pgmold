@@ -644,6 +644,12 @@ pub async fn run() -> Result<()> {
             json,
             verify_after_apply,
         } => {
+            if verify_after_apply && dry_run {
+                return Err(anyhow!(
+                    "--verify-after-apply cannot be combined with --dry-run"
+                ));
+            }
+
             let include_extension_objects = filter.include_extension_objects;
             let filter = filter.to_filter()?;
             let excluded_grant_roles = grants.excluded_grant_roles();
@@ -848,7 +854,7 @@ pub async fn run() -> Result<()> {
                 }
             }
 
-            if verify_after_apply && !dry_run {
+            if verify_after_apply {
                 let verify_result = pgmold::apply::verify_after_apply(
                     &schema,
                     &connection,
@@ -887,6 +893,8 @@ pub async fn run() -> Result<()> {
                 }
             }
 
+            // JSON output is emitted exactly once: either an error object (from the apply
+            // or verify failure paths above, both of which return early) or this success object.
             if json {
                 let total = sql.len();
                 let output = ApplyOutput {

@@ -1,4 +1,8 @@
-use crate::diff::{compute_diff_with_flags, planner::plan_migration, MigrationOp};
+use std::collections::HashSet;
+
+use sqlx::Executor;
+
+use crate::diff::{compute_diff, compute_diff_with_flags, planner::plan_migration, MigrationOp};
 use crate::filter::{filter_by_target_schemas, filter_schema, Filter};
 use crate::lint::{lint_migration_plan, LintOptions, LintResult};
 use crate::parser::load_schema_sources;
@@ -7,8 +11,6 @@ use crate::pg::introspect::introspect_schema;
 use crate::pg::sqlgen::generate_sql;
 use crate::provider::load_schema_from_sources;
 use crate::util::{Result, SchemaError};
-use sqlx::Executor;
-use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct VerifyResult {
@@ -68,13 +70,7 @@ pub async fn apply_migration(
     let target = load_schema_sources(schema_sources)?;
     let current = introspect_schema(connection, &[String::from("public")], false).await?;
 
-    let ops = plan_migration(compute_diff_with_flags(
-        &current,
-        &target,
-        false,
-        false,
-        &HashSet::new(),
-    ));
+    let ops = plan_migration(compute_diff(&current, &target));
 
     let lint_options = LintOptions {
         allow_destructive: options.allow_destructive,

@@ -25,6 +25,7 @@ pub fn write_sql_temp_file(sql: &str) -> NamedTempFile {
     file
 }
 
+#[allow(deprecated)]
 pub async fn setup_postgres() -> (ContainerAsync<Postgres>, String) {
     let container = Postgres::default().start().await.unwrap();
     let port = container.get_host_port_ipv4(5432).await.unwrap();
