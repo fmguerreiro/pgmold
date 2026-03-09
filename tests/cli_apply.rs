@@ -4,6 +4,7 @@ use common::*;
 use assert_cmd::Command;
 
 #[tokio::test]
+#[allow(deprecated)] // Command::cargo_bin
 async fn apply_json_emits_error_on_sql_failure() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
