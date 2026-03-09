@@ -40,6 +40,23 @@ inputs:
     description: 'GitHub token for API calls (PR comments, labels)'
     required: false
     default: ${{ github.token }}
+  tunnel-command:
+    description: 'Command to run in background to establish a tunnel to the database (e.g. ssh -N -L 15432:db:5432 bastion)'
+    required: false
+  tunnel-port:
+    description: 'Local port the tunnel exposes (used for TCP readiness check)'
+    required: false
+    default: '15432'
+  tunnel-ready-timeout:
+    description: 'Seconds to wait for the tunnel to accept TCP connections'
+    required: false
+    default: '30'
+  database-secret-command:
+    description: 'Command that prints a db:postgres://... connection string to stdout'
+    required: false
+  pr-number:
+    description: 'PR number for comments/labels (auto-detected for pull_request events, required for workflow_call)'
+    required: false
 
 outputs:
   has-drift:
