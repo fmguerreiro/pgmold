@@ -168,8 +168,8 @@ runs:
           exit 1
         fi
 
-        if [[ "$INPUT_DRIFT_CHECK" == "true" && -z "$INPUT_DATABASE" ]]; then
-          echo "::warning::drift-check is enabled but no 'database' input was provided — skipping drift detection."
+        if [[ "$INPUT_DRIFT_CHECK" == "true" && -z "$INPUT_DATABASE" && -z "$INPUT_SECRET_CMD" ]]; then
+          echo "::warning::drift-check is enabled but no database connection was provided — skipping drift detection."
         fi
 
     - name: Start tunnel
@@ -195,7 +195,7 @@ runs:
       run: |
         ELAPSED=0
         echo "Waiting for tunnel on localhost:${TUNNEL_PORT}..."
-        while ! (echo >/dev/tcp/localhost/"$TUNNEL_PORT") 2>/dev/null; do
+        while ! nc -z localhost "$TUNNEL_PORT" 2>/dev/null; do
           if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
             echo "::error::Tunnel process (PID $TUNNEL_PID) exited before becoming ready"
             exit 1
@@ -218,7 +218,7 @@ runs:
         SECRET_COMMAND: ${{ inputs.database-secret-command }}
       run: |
         echo "Resolving database connection string..."
-        DATABASE=$(eval "$SECRET_COMMAND")
+        DATABASE=$(eval "$SECRET_COMMAND" | tr -d '\r')
 
         if [[ -z "$DATABASE" ]]; then
           echo "::error::database-secret-command produced empty output"
@@ -231,14 +231,14 @@ runs:
         fi
 
         echo "::add-mask::$DATABASE"
-        echo "database=$DATABASE" >> "$GITHUB_OUTPUT"
+        echo "RESOLVED_DATABASE=$DATABASE" >> "$GITHUB_ENV"
 
     - name: Run migration plan
       shell: bash
       id: plan
       env:
         INPUT_SCHEMA: ${{ inputs.schema }}
-        INPUT_DATABASE: ${{ steps.resolve-database.outputs.database || inputs.database }}
+        INPUT_DATABASE: ${{ env.RESOLVED_DATABASE || inputs.database }}
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_TARGET_SCHEMAS: ${{ inputs.target-schemas }}
       run: |
@@ -283,10 +283,10 @@ runs:
     - name: Run drift detection
       shell: bash
       id: drift
-      if: ${{ inputs.drift-check == 'true' && (inputs.database != '' || steps.resolve-database.outputs.database != '') }}
+      if: ${{ inputs.drift-check == 'true' && (inputs.database != '' || env.RESOLVED_DATABASE != '') }}
       env:
         INPUT_SCHEMA: ${{ inputs.schema }}
-        INPUT_DATABASE: ${{ steps.resolve-database.outputs.database || inputs.database }}
+        INPUT_DATABASE: ${{ env.RESOLVED_DATABASE || inputs.database }}
         INPUT_TARGET_SCHEMAS: ${{ inputs.target-schemas }}
         INPUT_FAIL_ON_DRIFT: ${{ inputs.fail-on-drift }}
       run: |
