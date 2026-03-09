@@ -133,6 +133,35 @@ jobs:
       });
 ```
 
+### Validate via tunnel
+
+For databases behind firewalls (VPC, bastion, private network):
+
+```yaml
+# For databases behind firewalls (VPC, bastion, private network)
+steps:
+  - uses: actions/checkout@v4
+  - uses: fmguerreiro/pgmold/.github/actions/drift-check@main
+    with:
+      schema: sql:schema.sql
+      target-schemas: auth,public
+      tunnel-command: ssh -N -L 15432:db.internal:5432 bastion@jump.example.com
+      database-secret-command: |
+        aws secretsmanager get-secret-value --secret-id prod/db \
+          --query SecretString --output text \
+          | jq -r '"db:postgres://\(.username):\(.password)@localhost:15432/\(.dbname)"'
+```
+
+## Tunnel Support
+
+For databases behind firewalls, the action can run a tunnel command in the background:
+
+- `tunnel-command` — Any command that opens a tunnel (SSH, SSM, kubectl port-forward, cloud-sql-proxy)
+- `tunnel-port` — Local port to check for readiness (default: 15432)
+- `tunnel-ready-timeout` — Seconds to wait for the tunnel (default: 30)
+- `database-secret-command` — Command that prints a `db:postgres://...` connection string to stdout
+- `pr-number` — Explicit PR number for `workflow_call` triggers
+
 ## Platform Support
 
 - Linux (x86_64, aarch64)

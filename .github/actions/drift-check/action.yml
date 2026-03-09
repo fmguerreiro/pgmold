@@ -1,5 +1,5 @@
 name: 'pgmold CI'
-description: 'PostgreSQL schema CI — migration plans, drift detection, PR comments, and auto-labeling'
+description: 'PostgreSQL schema CI — migration plans, drift detection, PR comments, auto-labeling, and tunnel support for firewalled databases'
 author: 'fmguerreiro'
 
 inputs:
