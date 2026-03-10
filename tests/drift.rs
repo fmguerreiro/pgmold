@@ -1,6 +1,7 @@
 mod common;
 use common::*;
 
+#[allow(deprecated)] // Command::cargo_bin
 use assert_cmd::Command;
 
 const USERS_DDL: &str =
