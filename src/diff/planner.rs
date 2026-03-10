@@ -611,41 +611,41 @@ impl MigrationGraph {
 
         // Functions before tables (used in defaults/checks),
         // except functions with RETURNS SETOF <table> or %ROWTYPE references which depend on
-        // the table existing first.
-        let table_names_in_migration: HashSet<String> = tables
-            .iter()
-            .filter_map(|&t| {
-                if let MigrationOp::CreateTable(tbl) = &self.graph[t].op {
-                    Some(qualified_name(&tbl.schema, &tbl.name))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
+        // the table existing first. Per-table granularity: only skip the func→table edge for
+        // the specific tables the function depends on, not all tables.
+        // AlterFunction carries no body, so %ROWTYPE/SETOF detection is not needed for it.
         for &func_idx in &functions {
             if let MigrationOp::CreateFunction(f) = &self.graph[func_idx].op {
-                let has_setof_table =
-                    extract_setof_type_ref(&f.return_type).is_some_and(|type_ref| {
-                        let (ref_schema, ref_name) = parse_type_ref(type_ref, &f.schema);
-                        table_names_in_migration.contains(&qualified_name(&ref_schema, &ref_name))
-                    });
-
-                let has_rowtype_table =
+                let setof_table = extract_setof_type_ref(&f.return_type).map(|type_ref| {
+                    let (s, n) = parse_type_ref(type_ref, &f.schema);
+                    qualified_name(&s, &n)
+                });
+                let rowtype_tables: HashSet<String> =
                     extract_rowtype_references(&f.body, &f.schema)
                         .iter()
-                        .any(|ref_obj| {
-                            table_names_in_migration
-                                .contains(&qualified_name(&ref_obj.schema, &ref_obj.name))
-                        });
+                        .map(|r| qualified_name(&r.schema, &r.name))
+                        .collect();
 
-                if has_setof_table || has_rowtype_table {
-                    continue;
+                for &table_idx in &tables {
+                    if func_idx == table_idx {
+                        continue;
+                    }
+                    let table_qualified = match &self.graph[table_idx].op {
+                        MigrationOp::CreateTable(t) => qualified_name(&t.schema, &t.name),
+                        _ => continue,
+                    };
+                    let func_depends_on_this_table = setof_table.as_deref()
+                        == Some(table_qualified.as_str())
+                        || rowtype_tables.contains(&table_qualified);
+                    if !func_depends_on_this_table {
+                        self.graph.add_edge(func_idx, table_idx, ());
+                    }
                 }
-            }
-            for &table_idx in &tables {
-                if func_idx != table_idx {
-                    self.graph.add_edge(func_idx, table_idx, ());
+            } else {
+                for &table_idx in &tables {
+                    if func_idx != table_idx {
+                        self.graph.add_edge(func_idx, table_idx, ());
+                    }
                 }
             }
         }
@@ -3927,6 +3927,35 @@ mod tests {
             "CreateFunction(process_item)",
             |op| matches!(op, MigrationOp::CreateTable(t) if t.name == "items"),
             |op| matches!(op, MigrationOp::CreateFunction(f) if f.name == "process_item"),
+        );
+    }
+
+    #[test]
+    fn function_with_rowtype_ref_to_table_not_in_migration() {
+        let func = make_function_with_body(
+            "lookup",
+            "public",
+            r#"
+            DECLARE
+                r public.external_table%ROWTYPE;
+            BEGIN
+                RETURN 1;
+            END;
+            "#,
+            "integer",
+        );
+        let table = make_table("unrelated", vec![]);
+        let ops = vec![
+            MigrationOp::CreateFunction(func),
+            MigrationOp::CreateTable(table),
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreateFunction(lookup)",
+            "CreateTable(unrelated)",
+            |op| matches!(op, MigrationOp::CreateFunction(f) if f.name == "lookup"),
+            |op| matches!(op, MigrationOp::CreateTable(t) if t.name == "unrelated"),
         );
     }
 

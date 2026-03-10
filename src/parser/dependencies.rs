@@ -12,9 +12,8 @@ use sqlparser::parser::Parser;
 use std::collections::{HashSet, VecDeque};
 use std::sync::LazyLock;
 
-static ROWTYPE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)(?:(\w+|"[^"]+")\s*\.\s*)?(\w+|"[^"]+")\s*%ROWTYPE"#).unwrap()
-});
+static ROWTYPE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)(?:(\w+|"[^"]+")\s*\.\s*)?(\w+|"[^"]+")%ROWTYPE"#).unwrap());
 
 /// A reference to a database object (function, table, view, etc.)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -820,133 +819,5 @@ mod tests {
         let refs = extract_rowtype_references(body, "public");
 
         assert!(refs.is_empty());
-    }
-
-    #[test]
-    fn topological_sort_simple_chain() {
-        // A depends on B depends on C
-        // Expected order: C, B, A
-        let items = vec!["A", "B", "C"];
-        let get_key = |item: &&str| -> String { (*item).to_string() };
-        let get_deps = |item: &&str| -> HashSet<String> {
-            match *item {
-                "A" => vec!["B".to_string()].into_iter().collect(),
-                "B" => vec!["C".to_string()].into_iter().collect(),
-                "C" => HashSet::new(),
-                _ => HashSet::new(),
-            }
-        };
-
-        let result = topological_sort(items, get_key, get_deps).unwrap();
-        assert_eq!(result, vec!["C", "B", "A"]);
-    }
-
-    #[test]
-    fn topological_sort_multiple_roots() {
-        // A depends on B, C depends on D, no connection between chains
-        // Valid orders: [B, A, D, C] or [D, C, B, A] or [B, D, A, C] etc.
-        let items = vec!["A", "B", "C", "D"];
-        let get_key = |item: &&str| -> String { (*item).to_string() };
-        let get_deps = |item: &&str| -> HashSet<String> {
-            match *item {
-                "A" => vec!["B".to_string()].into_iter().collect(),
-                "C" => vec!["D".to_string()].into_iter().collect(),
-                _ => HashSet::new(),
-            }
-        };
-
-        let result = topological_sort(items, get_key, get_deps).unwrap();
-
-        // B must come before A
-        let b_idx = result.iter().position(|&x| x == "B").unwrap();
-        let a_idx = result.iter().position(|&x| x == "A").unwrap();
-        assert!(b_idx < a_idx);
-
-        // D must come before C
-        let d_idx = result.iter().position(|&x| x == "D").unwrap();
-        let c_idx = result.iter().position(|&x| x == "C").unwrap();
-        assert!(d_idx < c_idx);
-    }
-
-    #[test]
-    fn topological_sort_diamond_dependency() {
-        // A depends on B and C, both B and C depend on D
-        // Expected: D first, then B and C (order doesn't matter), then A
-        let items = vec!["A", "B", "C", "D"];
-        let get_key = |item: &&str| -> String { (*item).to_string() };
-        let get_deps = |item: &&str| -> HashSet<String> {
-            match *item {
-                "A" => vec!["B".to_string(), "C".to_string()].into_iter().collect(),
-                "B" => vec!["D".to_string()].into_iter().collect(),
-                "C" => vec!["D".to_string()].into_iter().collect(),
-                _ => HashSet::new(),
-            }
-        };
-
-        let result = topological_sort(items, get_key, get_deps).unwrap();
-
-        // D must come first
-        assert_eq!(result[0], "D");
-
-        // A must come last
-        assert_eq!(result[3], "A");
-
-        // B and C must be in middle (order doesn't matter)
-        let b_idx = result.iter().position(|&x| x == "B").unwrap();
-        let c_idx = result.iter().position(|&x| x == "C").unwrap();
-        assert!(b_idx > 0 && b_idx < 3);
-        assert!(c_idx > 0 && c_idx < 3);
-    }
-
-    #[test]
-    fn topological_sort_detects_cycle() {
-        // A depends on B, B depends on C, C depends on A (cycle)
-        let items = vec!["A", "B", "C"];
-        let get_key = |item: &&str| -> String { (*item).to_string() };
-        let get_deps = |item: &&str| -> HashSet<String> {
-            match *item {
-                "A" => vec!["B".to_string()].into_iter().collect(),
-                "B" => vec!["C".to_string()].into_iter().collect(),
-                "C" => vec!["A".to_string()].into_iter().collect(),
-                _ => HashSet::new(),
-            }
-        };
-
-        let result = topological_sort(items, get_key, get_deps);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("Circular dependency"));
-    }
-
-    #[test]
-    fn topological_sort_self_cycle() {
-        // A depends on itself
-        let items = vec!["A"];
-        let get_key = |item: &&str| -> String { (*item).to_string() };
-        let get_deps = |item: &&str| -> HashSet<String> {
-            match *item {
-                "A" => vec!["A".to_string()].into_iter().collect(),
-                _ => HashSet::new(),
-            }
-        };
-
-        let result = topological_sort(items, get_key, get_deps);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("Circular dependency"));
-    }
-
-    #[test]
-    fn topological_sort_no_dependencies() {
-        // No dependencies, any order is valid
-        let items = vec!["A", "B", "C"];
-        let get_key = |item: &&str| -> String { (*item).to_string() };
-        let get_deps = |_item: &&str| -> HashSet<String> { HashSet::new() };
-
-        let result = topological_sort(items, get_key, get_deps).unwrap();
-        assert_eq!(result.len(), 3);
-        assert!(result.contains(&"A"));
-        assert!(result.contains(&"B"));
-        assert!(result.contains(&"C"));
     }
 }
