@@ -1,7 +1,6 @@
 mod common;
 use common::*;
 
-#[allow(deprecated)] // Command::cargo_bin
 use assert_cmd::Command;
 
 const USERS_DDL: &str =
@@ -55,6 +54,7 @@ async fn drift_detection() {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // Command::cargo_bin
 async fn drift_cli_no_drift() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
@@ -93,6 +93,7 @@ async fn drift_cli_no_drift() {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // Command::cargo_bin
 async fn drift_cli_detects_drift() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
@@ -135,6 +136,7 @@ async fn drift_cli_detects_drift() {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // Command::cargo_bin
 async fn drift_cli_json_output() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
