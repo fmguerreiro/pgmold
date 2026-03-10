@@ -1383,7 +1383,7 @@ fn topological_sort(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diff::ColumnChanges;
+    use crate::diff::{ColumnChanges, OwnerObjectKind};
     use crate::model::*;
     use std::collections::BTreeMap;
 
@@ -3425,6 +3425,72 @@ mod tests {
         }
     }
 
+    fn make_schema(name: &str) -> PgSchema {
+        PgSchema {
+            name: name.to_string(),
+            grants: vec![],
+        }
+    }
+
+    fn make_extension(name: &str) -> Extension {
+        Extension {
+            name: name.to_string(),
+            version: None,
+            schema: None,
+        }
+    }
+
+    fn make_enum(name: &str, schema: &str) -> EnumType {
+        EnumType {
+            name: name.to_string(),
+            schema: schema.to_string(),
+            values: vec!["active".to_string()],
+            owner: None,
+            grants: Vec::new(),
+        }
+    }
+
+    fn make_domain(name: &str, schema: &str) -> Domain {
+        Domain {
+            name: name.to_string(),
+            schema: schema.to_string(),
+            data_type: PgType::Text,
+            default: None,
+            not_null: false,
+            collation: None,
+            check_constraints: vec![],
+            owner: None,
+            grants: vec![],
+        }
+    }
+
+    fn make_sequence(name: &str, schema: &str) -> Sequence {
+        Sequence {
+            name: name.to_string(),
+            schema: schema.to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            owner: None,
+            grants: Vec::new(),
+            cache: Some(1),
+            owned_by: None,
+        }
+    }
+
+    fn make_column(name: &str) -> Column {
+        Column {
+            name: name.to_string(),
+            data_type: PgType::Text,
+            nullable: true,
+            default: None,
+            comment: None,
+        }
+    }
+
     /// Asserts that the single op matching `before_finder` appears before
     /// the single op matching `after_finder` in the planned output.
     /// Panics if either predicate matches zero or more than one op.
@@ -3451,13 +3517,13 @@ mod tests {
         assert_eq!(
             before_matches.len(),
             1,
-            "{before_name}: expected exactly 1 match, found {} at positions {before_matches:?}",
+            "{before_name}: expected exactly 1 match, found {} at positions {before_matches:?}\nPlan: {planned:#?}",
             before_matches.len()
         );
         assert_eq!(
             after_matches.len(),
             1,
-            "{after_name}: expected exactly 1 match, found {} at positions {after_matches:?}",
+            "{after_name}: expected exactly 1 match, found {} at positions {after_matches:?}\nPlan: {planned:#?}",
             after_matches.len()
         );
 
@@ -3474,17 +3540,8 @@ mod tests {
     #[test]
     fn schema_before_enum() {
         let ops = vec![
-            MigrationOp::CreateEnum(EnumType {
-                name: "status".to_string(),
-                schema: "api".to_string(),
-                values: vec!["active".to_string()],
-                owner: None,
-                grants: Vec::new(),
-            }),
-            MigrationOp::CreateSchema(PgSchema {
-                name: "api".to_string(),
-                grants: vec![],
-            }),
+            MigrationOp::CreateEnum(make_enum("status", "api")),
+            MigrationOp::CreateSchema(make_schema("api")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3499,21 +3556,8 @@ mod tests {
     #[test]
     fn schema_before_domain() {
         let ops = vec![
-            MigrationOp::CreateDomain(Domain {
-                name: "email".to_string(),
-                schema: "api".to_string(),
-                data_type: PgType::Text,
-                default: None,
-                not_null: false,
-                collation: None,
-                check_constraints: vec![],
-                owner: None,
-                grants: vec![],
-            }),
-            MigrationOp::CreateSchema(PgSchema {
-                name: "api".to_string(),
-                grants: vec![],
-            }),
+            MigrationOp::CreateDomain(make_domain("email", "api")),
+            MigrationOp::CreateSchema(make_schema("api")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3528,24 +3572,8 @@ mod tests {
     #[test]
     fn schema_before_sequence() {
         let ops = vec![
-            MigrationOp::CreateSequence(Sequence {
-                name: "counter".to_string(),
-                schema: "api".to_string(),
-                data_type: SequenceDataType::BigInt,
-                start: Some(1),
-                increment: Some(1),
-                min_value: Some(1),
-                max_value: Some(9223372036854775807),
-                cycle: false,
-                owner: None,
-                grants: Vec::new(),
-                cache: Some(1),
-                owned_by: None,
-            }),
-            MigrationOp::CreateSchema(PgSchema {
-                name: "api".to_string(),
-                grants: vec![],
-            }),
+            MigrationOp::CreateSequence(make_sequence("counter", "api")),
+            MigrationOp::CreateSchema(make_schema("api")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3561,10 +3589,7 @@ mod tests {
     fn schema_before_function() {
         let ops = vec![
             MigrationOp::CreateFunction(make_simple_function("helper", "api")),
-            MigrationOp::CreateSchema(PgSchema {
-                name: "api".to_string(),
-                grants: vec![],
-            }),
+            MigrationOp::CreateSchema(make_schema("api")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3582,10 +3607,7 @@ mod tests {
         table.schema = "api".to_string();
         let ops = vec![
             MigrationOp::CreateTable(table),
-            MigrationOp::CreateSchema(PgSchema {
-                name: "api".to_string(),
-                grants: vec![],
-            }),
+            MigrationOp::CreateSchema(make_schema("api")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3601,10 +3623,7 @@ mod tests {
     fn schema_before_view() {
         let ops = vec![
             MigrationOp::CreateView(make_view("dashboard", "api", "SELECT 1")),
-            MigrationOp::CreateSchema(PgSchema {
-                name: "api".to_string(),
-                grants: vec![],
-            }),
+            MigrationOp::CreateSchema(make_schema("api")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3621,18 +3640,8 @@ mod tests {
     #[test]
     fn extension_before_enum() {
         let ops = vec![
-            MigrationOp::CreateEnum(EnumType {
-                name: "status".to_string(),
-                schema: "public".to_string(),
-                values: vec!["active".to_string()],
-                owner: None,
-                grants: Vec::new(),
-            }),
-            MigrationOp::CreateExtension(Extension {
-                name: "uuid-ossp".to_string(),
-                version: None,
-                schema: None,
-            }),
+            MigrationOp::CreateEnum(make_enum("status", "public")),
+            MigrationOp::CreateExtension(make_extension("uuid-ossp")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3648,11 +3657,7 @@ mod tests {
     fn extension_before_table() {
         let ops = vec![
             MigrationOp::CreateTable(make_table("users", vec![])),
-            MigrationOp::CreateExtension(Extension {
-                name: "uuid-ossp".to_string(),
-                version: None,
-                schema: None,
-            }),
+            MigrationOp::CreateExtension(make_extension("uuid-ossp")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3670,13 +3675,7 @@ mod tests {
     fn enum_before_table() {
         let ops = vec![
             MigrationOp::CreateTable(make_table("users", vec![])),
-            MigrationOp::CreateEnum(EnumType {
-                name: "role".to_string(),
-                schema: "public".to_string(),
-                values: vec!["admin".to_string()],
-                owner: None,
-                grants: Vec::new(),
-            }),
+            MigrationOp::CreateEnum(make_enum("role", "public")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3692,17 +3691,7 @@ mod tests {
     fn domain_before_table() {
         let ops = vec![
             MigrationOp::CreateTable(make_table("users", vec![])),
-            MigrationOp::CreateDomain(Domain {
-                name: "email".to_string(),
-                schema: "public".to_string(),
-                data_type: PgType::Text,
-                default: None,
-                not_null: false,
-                collation: None,
-                check_constraints: vec![],
-                owner: None,
-                grants: vec![],
-            }),
+            MigrationOp::CreateDomain(make_domain("email", "public")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3718,20 +3707,7 @@ mod tests {
     fn sequence_before_table() {
         let ops = vec![
             MigrationOp::CreateTable(make_table("users", vec![])),
-            MigrationOp::CreateSequence(Sequence {
-                name: "users_id_seq".to_string(),
-                schema: "public".to_string(),
-                data_type: SequenceDataType::BigInt,
-                start: Some(1),
-                increment: Some(1),
-                min_value: Some(1),
-                max_value: Some(9223372036854775807),
-                cycle: false,
-                owner: None,
-                grants: Vec::new(),
-                cache: Some(1),
-                owned_by: None,
-            }),
+            MigrationOp::CreateSequence(make_sequence("users_id_seq", "public")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3822,8 +3798,7 @@ mod tests {
 
     #[test]
     fn table_before_partition() {
-        let mut parent = make_table("events", vec![]);
-        parent.schema = "public".to_string();
+        let parent = make_table("events", vec![]);
         let partition = crate::model::Partition {
             name: "events_2024".to_string(),
             schema: "public".to_string(),
@@ -3856,13 +3831,7 @@ mod tests {
         let ops = vec![
             MigrationOp::AddColumn {
                 table: "public.users".to_string(),
-                column: Column {
-                    name: "email".to_string(),
-                    data_type: PgType::Text,
-                    nullable: true,
-                    default: None,
-                    comment: None,
-                },
+                column: make_column("email"),
             },
             MigrationOp::CreateTable(make_table("users", vec![])),
         ];
@@ -3926,15 +3895,25 @@ mod tests {
             MigrationOp::EnableRls {
                 table: "public.users".to_string(),
             },
+            MigrationOp::CreateTable(make_table("users", vec![])),
         ];
         let planned = plan_migration(ops);
-        assert_op_position(
-            &planned,
-            "EnableRls",
-            "CreatePolicy",
-            |op| matches!(op, MigrationOp::EnableRls { .. }),
-            |op| matches!(op, MigrationOp::CreatePolicy(_)),
-        );
+
+        let table_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .unwrap();
+        let rls_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::EnableRls { .. }))
+            .unwrap();
+        let policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .unwrap();
+
+        assert!(table_pos < rls_pos, "CreateTable before EnableRls");
+        assert!(rls_pos < policy_pos, "EnableRls before CreatePolicy");
     }
 
     #[test]
@@ -3958,14 +3937,30 @@ mod tests {
         let ops = vec![
             MigrationOp::CreateTrigger(make_trigger("audit_insert", "public", "users", "audit_fn")),
             MigrationOp::CreateFunction(make_simple_function("audit_fn", "public")),
+            MigrationOp::CreateTable(make_table("users", vec![])),
         ];
         let planned = plan_migration(ops);
-        assert_op_position(
-            &planned,
-            "CreateFunction",
-            "CreateTrigger",
-            |op| matches!(op, MigrationOp::CreateFunction(_)),
-            |op| matches!(op, MigrationOp::CreateTrigger(_)),
+
+        let table_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .expect("CreateTable not found");
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let trigger_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTrigger(_)))
+            .expect("CreateTrigger not found");
+
+        assert!(
+            func_pos < trigger_pos,
+            "CreateFunction ({func_pos}) before CreateTrigger ({trigger_pos})"
+        );
+        assert!(
+            table_pos < trigger_pos,
+            "CreateTable ({table_pos}) before CreateTrigger ({trigger_pos})"
         );
     }
 
@@ -4045,13 +4040,7 @@ mod tests {
             },
             MigrationOp::AddColumn {
                 table: "public.users".to_string(),
-                column: Column {
-                    name: "email".to_string(),
-                    data_type: PgType::Text,
-                    nullable: false,
-                    default: None,
-                    comment: None,
-                },
+                column: make_column("email"),
             },
         ];
         let planned = plan_migration(ops);
@@ -4327,17 +4316,8 @@ mod tests {
 
     #[test]
     fn full_stack_schema_enum_table_view_trigger_policy() {
-        let schema = PgSchema {
-            name: "api".to_string(),
-            grants: vec![],
-        };
-        let my_enum = EnumType {
-            name: "status".to_string(),
-            schema: "api".to_string(),
-            values: vec!["active".to_string()],
-            owner: None,
-            grants: Vec::new(),
-        };
+        let schema = make_schema("api");
+        let my_enum = make_enum("status", "api");
         let func = make_simple_function("auth_check", "api");
         let mut table = make_table("users", vec![]);
         table.schema = "api".to_string();
@@ -4393,29 +4373,13 @@ mod tests {
         let mut users = make_table("users", vec![]);
         users.schema = "auth".to_string();
 
-        let posts = Table {
-            name: "posts".to_string(),
-            schema: "api".to_string(),
-            columns: BTreeMap::new(),
-            indexes: Vec::new(),
-            primary_key: None,
-            foreign_keys: vec![ForeignKey {
-                name: "posts_author_fkey".to_string(),
-                columns: vec!["author_id".to_string()],
-                referenced_table: "users".to_string(),
-                referenced_schema: "auth".to_string(),
-                referenced_columns: vec!["id".to_string()],
-                on_delete: ReferentialAction::NoAction,
-                on_update: ReferentialAction::NoAction,
-            }],
-            check_constraints: Vec::new(),
-            comment: None,
-            row_level_security: false,
-            policies: Vec::new(),
-            partition_by: None,
-            owner: None,
-            grants: Vec::new(),
-        };
+        let mut fk = make_fk("users");
+        fk.name = "posts_author_fkey".to_string();
+        fk.columns = vec!["author_id".to_string()];
+        fk.referenced_schema = "auth".to_string();
+
+        let mut posts = make_table("posts", vec![fk]);
+        posts.schema = "api".to_string();
 
         let ops = vec![
             MigrationOp::CreateTable(posts),
@@ -4495,22 +4459,8 @@ mod tests {
     #[test]
     fn extension_before_domain() {
         let ops = vec![
-            MigrationOp::CreateDomain(Domain {
-                name: "email".to_string(),
-                schema: "public".to_string(),
-                data_type: PgType::Text,
-                default: None,
-                not_null: false,
-                collation: None,
-                check_constraints: vec![],
-                owner: None,
-                grants: vec![],
-            }),
-            MigrationOp::CreateExtension(Extension {
-                name: "citext".to_string(),
-                version: None,
-                schema: None,
-            }),
+            MigrationOp::CreateDomain(make_domain("email", "public")),
+            MigrationOp::CreateExtension(make_extension("citext")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4534,13 +4484,7 @@ mod tests {
             },
             MigrationOp::AddColumn {
                 table: "public.users".to_string(),
-                column: Column {
-                    name: "status".to_string(),
-                    data_type: PgType::Text,
-                    nullable: true,
-                    default: None,
-                    comment: None,
-                },
+                column: make_column("status"),
             },
         ];
         let planned = plan_migration(ops);
@@ -4585,13 +4529,7 @@ mod tests {
             },
             MigrationOp::AddColumn {
                 table: "public.users".to_string(),
-                column: Column {
-                    name: "status".to_string(),
-                    data_type: PgType::Text,
-                    nullable: true,
-                    default: None,
-                    comment: None,
-                },
+                column: make_column("status"),
             },
         ];
         let planned = plan_migration(ops);
@@ -4608,7 +4546,6 @@ mod tests {
 
     #[test]
     fn alter_owner_table_after_create_table() {
-        use crate::diff::OwnerObjectKind;
         let ops = vec![
             MigrationOp::AlterOwner {
                 object_kind: OwnerObjectKind::Table,
@@ -4631,7 +4568,6 @@ mod tests {
 
     #[test]
     fn alter_owner_view_after_create_view() {
-        use crate::diff::OwnerObjectKind;
         let ops = vec![
             MigrationOp::AlterOwner {
                 object_kind: OwnerObjectKind::View,
@@ -4654,7 +4590,6 @@ mod tests {
 
     #[test]
     fn alter_owner_sequence_after_create_sequence() {
-        use crate::diff::OwnerObjectKind;
         let ops = vec![
             MigrationOp::AlterOwner {
                 object_kind: OwnerObjectKind::Sequence,
@@ -4663,20 +4598,7 @@ mod tests {
                 args: None,
                 new_owner: "app_admin".to_string(),
             },
-            MigrationOp::CreateSequence(Sequence {
-                name: "counter_seq".to_string(),
-                schema: "public".to_string(),
-                data_type: SequenceDataType::BigInt,
-                start: Some(1),
-                increment: Some(1),
-                min_value: Some(1),
-                max_value: Some(9223372036854775807),
-                cycle: false,
-                owner: None,
-                grants: Vec::new(),
-                cache: Some(1),
-                owned_by: None,
-            }),
+            MigrationOp::CreateSequence(make_sequence("counter_seq", "public")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4690,7 +4612,6 @@ mod tests {
 
     #[test]
     fn alter_owner_enum_after_create_enum() {
-        use crate::diff::OwnerObjectKind;
         let ops = vec![
             MigrationOp::AlterOwner {
                 object_kind: OwnerObjectKind::Type,
@@ -4699,13 +4620,7 @@ mod tests {
                 args: None,
                 new_owner: "app_admin".to_string(),
             },
-            MigrationOp::CreateEnum(EnumType {
-                name: "status".to_string(),
-                schema: "public".to_string(),
-                values: vec!["active".to_string()],
-                owner: None,
-                grants: Vec::new(),
-            }),
+            MigrationOp::CreateEnum(make_enum("status", "public")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4719,7 +4634,6 @@ mod tests {
 
     #[test]
     fn alter_owner_domain_after_create_domain() {
-        use crate::diff::OwnerObjectKind;
         let ops = vec![
             MigrationOp::AlterOwner {
                 object_kind: OwnerObjectKind::Domain,
@@ -4728,17 +4642,7 @@ mod tests {
                 args: None,
                 new_owner: "app_admin".to_string(),
             },
-            MigrationOp::CreateDomain(Domain {
-                name: "email".to_string(),
-                schema: "public".to_string(),
-                data_type: PgType::Text,
-                default: None,
-                not_null: false,
-                collation: None,
-                check_constraints: vec![],
-                owner: None,
-                grants: vec![],
-            }),
+            MigrationOp::CreateDomain(make_domain("email", "public")),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4823,13 +4727,7 @@ mod tests {
             MigrationOp::DropTable("public.old_table".to_string()),
             MigrationOp::CreateTable(make_table("new_table", vec![])),
             MigrationOp::DropEnum("public.old_status".to_string()),
-            MigrationOp::CreateEnum(EnumType {
-                name: "new_status".to_string(),
-                schema: "public".to_string(),
-                values: vec!["active".to_string()],
-                owner: None,
-                grants: Vec::new(),
-            }),
+            MigrationOp::CreateEnum(make_enum("new_status", "public")),
         ];
         let planned = plan_migration(ops);
 
@@ -4845,6 +4743,42 @@ mod tests {
         assert!(
             last_create < first_drop,
             "all creates ({last_create}) must come before final drops ({first_drop})"
+        );
+    }
+
+    #[test]
+    fn drop_function_excluded_from_final_drops() {
+        // DropFunction is a drop-before-recreate, not a "final drop" like DropTable/DropEnum.
+        // It should NOT be pushed to the end of the plan.
+        let ops = vec![
+            MigrationOp::DropTable("public.old_table".to_string()),
+            MigrationOp::DropFunction {
+                name: "public.old_fn".to_string(),
+                args: "".to_string(),
+            },
+            MigrationOp::CreateFunction(make_simple_function("old_fn", "public")),
+            MigrationOp::CreateTable(make_table("users", vec![])),
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "DropFunction",
+            "CreateFunction",
+            |op| matches!(op, MigrationOp::DropFunction { .. }),
+            |op| matches!(op, MigrationOp::CreateFunction(_)),
+        );
+
+        let create_table_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .unwrap();
+        let drop_table_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropTable(_)))
+            .unwrap();
+        assert!(
+            create_table_pos < drop_table_pos,
+            "CreateTable ({create_table_pos}) should come before DropTable ({drop_table_pos})"
         );
     }
 }
