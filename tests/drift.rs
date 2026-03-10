@@ -69,7 +69,13 @@ async fn drift_cli_no_drift() {
 
     let output = Command::cargo_bin("pgmold")
         .unwrap()
-        .args(["drift", "--schema", &schema_arg, "--database", &database_arg])
+        .args([
+            "drift",
+            "--schema",
+            &schema_arg,
+            "--database",
+            &database_arg,
+        ])
         .output()
         .unwrap();
 
@@ -105,7 +111,13 @@ async fn drift_cli_detects_drift() {
 
     let output = Command::cargo_bin("pgmold")
         .unwrap()
-        .args(["drift", "--schema", &schema_arg, "--database", &database_arg])
+        .args([
+            "drift",
+            "--schema",
+            &schema_arg,
+            "--database",
+            &database_arg,
+        ])
         .output()
         .unwrap();
 
