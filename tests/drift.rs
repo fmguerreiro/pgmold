@@ -26,7 +26,7 @@ async fn drift_detection() {
     )
     .unwrap();
 
-    let sources = vec![schema_file.path().to_str().unwrap().to_string()];
+    let sources = vec![format!("sql:{}", schema_file.path().to_str().unwrap())];
     let report = detect_drift(&sources, &connection, &["public".to_string()])
         .await
         .unwrap();
@@ -73,13 +73,14 @@ async fn drift_cli_no_drift() {
     )
     .unwrap();
 
+    let schema_arg = format!("sql:{}", schema_file.path().to_str().unwrap());
     let output = Command::new("cargo")
         .args([
             "run",
             "--",
             "drift",
             "--schema",
-            schema_file.path().to_str().unwrap(),
+            &schema_arg,
             "--database",
             &format!("db:{url}"),
         ])
@@ -129,13 +130,14 @@ async fn drift_cli_detects_drift() {
     )
     .unwrap();
 
+    let schema_arg = format!("sql:{}", schema_file.path().to_str().unwrap());
     let output = Command::new("cargo")
         .args([
             "run",
             "--",
             "drift",
             "--schema",
-            schema_file.path().to_str().unwrap(),
+            &schema_arg,
             "--database",
             &format!("db:{url}"),
         ])
@@ -185,13 +187,14 @@ async fn drift_cli_json_output() {
     )
     .unwrap();
 
+    let schema_arg = format!("sql:{}", schema_file.path().to_str().unwrap());
     let output = Command::new("cargo")
         .args([
             "run",
             "--",
             "drift",
             "--schema",
-            schema_file.path().to_str().unwrap(),
+            &schema_arg,
             "--database",
             &format!("db:{url}"),
             "--json",
@@ -200,8 +203,9 @@ async fn drift_cli_json_output() {
         .expect("Failed to execute command");
 
     assert!(
-        !output.status.success(),
-        "Should exit with code 1 when drift detected"
+        output.status.success(),
+        "JSON mode should exit with code 0 even when drift detected, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
