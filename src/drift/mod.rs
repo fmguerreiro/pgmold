@@ -1,8 +1,8 @@
 use crate::diff::{compute_diff, MigrationOp};
 use crate::filter::filter_by_target_schemas;
-use crate::provider::load_schema_from_sources;
 use crate::pg::connection::PgConnection;
 use crate::pg::introspect::introspect_schema;
+use crate::provider::load_schema_from_sources;
 use crate::util::Result;
 use serde::Serialize;
 
