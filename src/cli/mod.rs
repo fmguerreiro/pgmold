@@ -1022,8 +1022,8 @@ pub async fn run() -> Result<()> {
                 println!("Fingerprint: {}", report.expected_fingerprint);
             }
 
-            if report.has_drift {
-                return Err(anyhow!("Schema drift detected"));
+            if !json && report.has_drift {
+                std::process::exit(1);
             }
             Ok(())
         }
