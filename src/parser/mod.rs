@@ -12,7 +12,8 @@ mod util;
 mod tests;
 
 pub use dependencies::{
-    extract_function_references, extract_table_references, topological_sort, ObjectRef,
+    extract_function_references, extract_rowtype_references, extract_table_references,
+    topological_sort, ObjectRef,
 };
 pub use loader::load_schema_sources;
 
