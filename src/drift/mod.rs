@@ -1,6 +1,6 @@
 use crate::diff::{compute_diff, MigrationOp};
 use crate::filter::filter_by_target_schemas;
-use crate::parser::load_schema_sources;
+use crate::provider::load_schema_from_sources;
 use crate::pg::connection::PgConnection;
 use crate::pg::introspect::introspect_schema;
 use crate::util::Result;
@@ -20,7 +20,7 @@ pub async fn detect_drift(
     conn: &PgConnection,
     target_schemas: &[String],
 ) -> Result<DriftReport> {
-    let expected = load_schema_sources(schema_sources)?;
+    let expected = load_schema_from_sources(schema_sources)?;
     let expected = filter_by_target_schemas(&expected, target_schemas);
     let actual = introspect_schema(conn, target_schemas, false).await?;
 
