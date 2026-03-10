@@ -790,6 +790,7 @@ impl Schema {
         for policy in pending {
             let table_key = qualified_name(&policy.table_schema, &policy.table);
             if let Some(table) = self.tables.get_mut(&table_key) {
+                table.row_level_security = true;
                 table.policies.push(policy);
                 table.policies.sort();
             } else {
@@ -815,6 +816,7 @@ impl Schema {
         for policy in pending {
             let table_key = qualified_name(&policy.table_schema, &policy.table);
             if let Some(table) = self.tables.get_mut(&table_key) {
+                table.row_level_security = true;
                 table.policies.push(policy);
                 table.policies.sort();
             } else {
@@ -1278,6 +1280,61 @@ mod tests {
             parse_qualified_name("users"),
             ("public".to_string(), "users".to_string())
         );
+    }
+
+    fn schema_with_pending_policy() -> Schema {
+        let mut schema = Schema::new();
+        schema.tables.insert(
+            "public.users".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: Vec::new(),
+                primary_key: None,
+                foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
+                comment: None,
+                row_level_security: false,
+                policies: Vec::new(),
+                partition_by: None,
+                owner: None,
+                grants: Vec::new(),
+            },
+        );
+        schema.pending_policies.push(Policy {
+            name: "users_select".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("true".to_string()),
+            check_expr: None,
+        });
+        schema
+    }
+
+    #[test]
+    fn finalize_enables_rls_when_policies_attached() {
+        let mut schema = schema_with_pending_policy();
+
+        schema.finalize().unwrap();
+
+        let table = schema.tables.get("public.users").unwrap();
+        assert!(table.row_level_security);
+        assert_eq!(table.policies.len(), 1);
+    }
+
+    #[test]
+    fn finalize_partial_enables_rls_when_policies_attached() {
+        let mut schema = schema_with_pending_policy();
+
+        let orphaned = schema.finalize_partial();
+
+        assert!(orphaned.is_empty());
+        let table = schema.tables.get("public.users").unwrap();
+        assert!(table.row_level_security);
+        assert_eq!(table.policies.len(), 1);
     }
 
     #[test]
