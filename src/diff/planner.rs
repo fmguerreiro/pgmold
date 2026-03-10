@@ -3353,7 +3353,12 @@ mod tests {
     // reorder them, the test fails.
     // =========================================================================
 
-    fn make_function_with_body(name: &str, schema: &str, body: &str, return_type: &str) -> Function {
+    fn make_function_with_body(
+        name: &str,
+        schema: &str,
+        body: &str,
+        return_type: &str,
+    ) -> Function {
         Function {
             name: name.to_string(),
             schema: schema.to_string(),
@@ -3373,7 +3378,12 @@ mod tests {
         make_function_with_body(name, schema, "BEGIN RETURN 1; END;", "integer")
     }
 
-    fn make_trigger(name: &str, target_schema: &str, target_name: &str, function_name: &str) -> Trigger {
+    fn make_trigger(
+        name: &str,
+        target_schema: &str,
+        target_name: &str,
+        function_name: &str,
+    ) -> Trigger {
         Trigger {
             name: name.to_string(),
             target_schema: target_schema.to_string(),
@@ -3978,7 +3988,11 @@ mod tests {
     #[test]
     fn table_before_view() {
         let ops = vec![
-            MigrationOp::CreateView(make_view("active_users", "public", "SELECT * FROM public.users WHERE active")),
+            MigrationOp::CreateView(make_view(
+                "active_users",
+                "public",
+                "SELECT * FROM public.users WHERE active",
+            )),
             MigrationOp::CreateTable(make_table("users", vec![])),
         ];
         let planned = plan_migration(ops);
@@ -4353,7 +4367,9 @@ mod tests {
 
         let schema_pos = find_pos("schema", &|op| matches!(op, MigrationOp::CreateSchema(_)));
         let enum_pos = find_pos("enum", &|op| matches!(op, MigrationOp::CreateEnum(_)));
-        let func_pos = find_pos("function", &|op| matches!(op, MigrationOp::CreateFunction(_)));
+        let func_pos = find_pos("function", &|op| {
+            matches!(op, MigrationOp::CreateFunction(_))
+        });
         let table_pos = find_pos("table", &|op| matches!(op, MigrationOp::CreateTable(_)));
         let view_pos = find_pos("view", &|op| matches!(op, MigrationOp::CreateView(_)));
         let trigger_pos = find_pos("trigger", &|op| matches!(op, MigrationOp::CreateTrigger(_)));
@@ -4819,18 +4835,11 @@ mod tests {
 
         let last_create = planned
             .iter()
-            .rposition(|op| {
-                matches!(
-                    op,
-                    MigrationOp::CreateTable(_) | MigrationOp::CreateEnum(_)
-                )
-            })
+            .rposition(|op| matches!(op, MigrationOp::CreateTable(_) | MigrationOp::CreateEnum(_)))
             .unwrap();
         let first_drop = planned
             .iter()
-            .position(|op| {
-                matches!(op, MigrationOp::DropTable(_) | MigrationOp::DropEnum(_))
-            })
+            .position(|op| matches!(op, MigrationOp::DropTable(_) | MigrationOp::DropEnum(_)))
             .unwrap();
 
         assert!(
