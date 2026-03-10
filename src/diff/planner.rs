@@ -1,6 +1,8 @@
 use super::MigrationOp;
 use crate::model::qualified_name;
-use crate::parser::{extract_function_references, extract_table_references};
+use crate::parser::{
+    extract_function_references, extract_rowtype_references, extract_table_references,
+};
 use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -608,32 +610,42 @@ impl MigrationGraph {
         self.edges_all_to_all(&add_enum_values, &alter_functions);
 
         // Functions before tables (used in defaults/checks),
-        // except functions with RETURNS SETOF <table> which depend on the table existing first.
-        // Only skip the blanket edge when the SETOF target is an actual table in this migration.
-        for &func_idx in &functions {
-            let skip_tables_edge = if let MigrationOp::CreateFunction(f) = &self.graph[func_idx].op
-            {
-                if let Some(type_ref) = extract_setof_type_ref(&f.return_type) {
-                    let (ref_schema, ref_name) = parse_type_ref(type_ref, &f.schema);
-                    let ref_qualified = qualified_name(&ref_schema, &ref_name);
-                    tables.iter().any(|&t| {
-                        if let MigrationOp::CreateTable(tbl) = &self.graph[t].op {
-                            qualified_name(&tbl.schema, &tbl.name) == ref_qualified
-                        } else {
-                            false
-                        }
-                    })
+        // except functions with RETURNS SETOF <table> or %ROWTYPE references which depend on
+        // the table existing first.
+        let table_names_in_migration: HashSet<String> = tables
+            .iter()
+            .filter_map(|&t| {
+                if let MigrationOp::CreateTable(tbl) = &self.graph[t].op {
+                    Some(qualified_name(&tbl.schema, &tbl.name))
                 } else {
-                    false
+                    None
                 }
-            } else {
-                false
-            };
-            if !skip_tables_edge {
-                for &table_idx in &tables {
-                    if func_idx != table_idx {
-                        self.graph.add_edge(func_idx, table_idx, ());
-                    }
+            })
+            .collect();
+
+        for &func_idx in &functions {
+            if let MigrationOp::CreateFunction(f) = &self.graph[func_idx].op {
+                let has_setof_table =
+                    extract_setof_type_ref(&f.return_type).is_some_and(|type_ref| {
+                        let (ref_schema, ref_name) = parse_type_ref(type_ref, &f.schema);
+                        table_names_in_migration.contains(&qualified_name(&ref_schema, &ref_name))
+                    });
+
+                let has_rowtype_table =
+                    extract_rowtype_references(&f.body, &f.schema)
+                        .iter()
+                        .any(|ref_obj| {
+                            table_names_in_migration
+                                .contains(&qualified_name(&ref_obj.schema, &ref_obj.name))
+                        });
+
+                if has_setof_table || has_rowtype_table {
+                    continue;
+                }
+            }
+            for &table_idx in &tables {
+                if func_idx != table_idx {
+                    self.graph.add_edge(func_idx, table_idx, ());
                 }
             }
         }
@@ -880,6 +892,11 @@ impl MigrationGraph {
                         if let Some(type_ref) = extract_setof_type_ref(&func.return_type) {
                             let (ref_schema, ref_name) = parse_type_ref(type_ref, &func.schema);
                             let ref_qualified = qualified_name(&ref_schema, &ref_name);
+                            edges_to_add.push((OpKey::CreateTable(ref_qualified), key.clone()));
+                        }
+
+                        for ref_obj in extract_rowtype_references(&func.body, &func.schema) {
+                            let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
                             edges_to_add.push((OpKey::CreateTable(ref_qualified), key.clone()));
                         }
                     }
@@ -3759,13 +3776,9 @@ mod tests {
         );
     }
 
-    // --- Function body referencing tables via %ROWTYPE (#112) ---
-    // This test documents the current gap: functions using %ROWTYPE
-    // depend on the referenced table at creation time, but the planner
-    // doesn't detect this dependency yet.
+    // --- %ROWTYPE table dependencies (#112) ---
 
     #[test]
-    #[ignore = "TODO #112: %ROWTYPE references not yet detected by planner"]
     fn function_with_rowtype_after_referenced_table() {
         let func = make_function_with_body(
             "process_user",
@@ -3791,6 +3804,129 @@ mod tests {
             "CreateFunction(process_user)",
             |op| matches!(op, MigrationOp::CreateTable(t) if t.name == "users"),
             |op| matches!(op, MigrationOp::CreateFunction(f) if f.name == "process_user"),
+        );
+    }
+
+    #[test]
+    fn function_with_rowtype_quoted_table_name() {
+        let func = make_function_with_body(
+            "process_item",
+            "myschema",
+            r#"
+            DECLARE
+                r myschema."MyTable"%ROWTYPE;
+            BEGIN
+                RETURN r.id;
+            END;
+            "#,
+            "integer",
+        );
+        let mut table = make_table("MyTable", vec![]);
+        table.schema = "myschema".to_string();
+        let ops = vec![
+            MigrationOp::CreateFunction(func),
+            MigrationOp::CreateTable(table),
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreateTable(MyTable)",
+            "CreateFunction(process_item)",
+            |op| matches!(op, MigrationOp::CreateTable(t) if t.name == "MyTable"),
+            |op| matches!(op, MigrationOp::CreateFunction(f) if f.name == "process_item"),
+        );
+    }
+
+    #[test]
+    fn function_with_rowtype_unqualified_uses_function_schema() {
+        let func = make_function_with_body(
+            "process_order",
+            "public",
+            r#"
+            DECLARE
+                r orders%ROWTYPE;
+            BEGIN
+                RETURN r.id;
+            END;
+            "#,
+            "integer",
+        );
+        let ops = vec![
+            MigrationOp::CreateFunction(func),
+            MigrationOp::CreateTable(make_table("orders", vec![])),
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreateTable(orders)",
+            "CreateFunction(process_order)",
+            |op| matches!(op, MigrationOp::CreateTable(t) if t.name == "orders"),
+            |op| matches!(op, MigrationOp::CreateFunction(f) if f.name == "process_order"),
+        );
+    }
+
+    #[test]
+    fn function_with_multiple_rowtype_references() {
+        let func = make_function_with_body(
+            "process_both",
+            "public",
+            r#"
+            DECLARE
+                u public.users%ROWTYPE;
+                p public.posts%ROWTYPE;
+            BEGIN
+                RETURN u.id;
+            END;
+            "#,
+            "integer",
+        );
+        let ops = vec![
+            MigrationOp::CreateFunction(func),
+            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(make_table("posts", vec![])),
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreateTable(users)",
+            "CreateFunction(process_both)",
+            |op| matches!(op, MigrationOp::CreateTable(t) if t.name == "users"),
+            |op| matches!(op, MigrationOp::CreateFunction(f) if f.name == "process_both"),
+        );
+        assert_op_position(
+            &planned,
+            "CreateTable(posts)",
+            "CreateFunction(process_both)",
+            |op| matches!(op, MigrationOp::CreateTable(t) if t.name == "posts"),
+            |op| matches!(op, MigrationOp::CreateFunction(f) if f.name == "process_both"),
+        );
+    }
+
+    #[test]
+    fn function_with_rowtype_case_insensitive() {
+        let func = make_function_with_body(
+            "process_item",
+            "public",
+            r#"
+            DECLARE
+                r public.items%rowtype;
+            BEGIN
+                RETURN r.id;
+            END;
+            "#,
+            "integer",
+        );
+        let ops = vec![
+            MigrationOp::CreateFunction(func),
+            MigrationOp::CreateTable(make_table("items", vec![])),
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreateTable(items)",
+            "CreateFunction(process_item)",
+            |op| matches!(op, MigrationOp::CreateTable(t) if t.name == "items"),
+            |op| matches!(op, MigrationOp::CreateFunction(f) if f.name == "process_item"),
         );
     }
 

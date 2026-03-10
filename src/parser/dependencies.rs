@@ -2,6 +2,7 @@
 ///
 /// This module parses SQL DDL to identify object references, enabling
 /// topological sorting for correct creation order.
+use regex::Regex;
 use sqlparser::ast::{
     Expr, FunctionArg, FunctionArgExpr, FunctionArgumentList, FunctionArguments, Query, Select,
     SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
@@ -9,6 +10,11 @@ use sqlparser::ast::{
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use std::collections::{HashSet, VecDeque};
+use std::sync::LazyLock;
+
+static ROWTYPE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(?:(\w+|"[^"]+")\s*\.\s*)?(\w+|"[^"]+")\s*%ROWTYPE"#).unwrap()
+});
 
 /// A reference to a database object (function, table, view, etc.)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -476,6 +482,35 @@ fn is_builtin_function(name: &str) -> bool {
     )
 }
 
+/// Extract table references from `%ROWTYPE` annotations in plpgsql function bodies.
+///
+/// Matches patterns like:
+/// - `schema.table%ROWTYPE`
+/// - `schema."Table"%ROWTYPE`
+/// - `table%ROWTYPE`
+/// - `"Table"%ROWTYPE`
+///
+/// Returns qualified `ObjectRef` values using `default_schema` when no schema qualifier is found.
+/// NOTE: This uses regex on the raw body text, so it can match inside comments or
+/// string literals. This mirrors the limitation of `extract_setof_type_ref` and
+/// `extract_function_references`. False positives are harmless (they just add
+/// edges to non-existent nodes), but could cause wrong ordering if a comment
+/// mentions a real table being created in the same migration.
+pub fn extract_rowtype_references(body: &str, default_schema: &str) -> HashSet<ObjectRef> {
+    let mut refs = HashSet::new();
+
+    for cap in ROWTYPE_RE.captures_iter(body) {
+        let schema = cap
+            .get(1)
+            .map(|m| m.as_str().trim_matches('"'))
+            .unwrap_or(default_schema);
+        let name = cap[2].trim_matches('"');
+        refs.insert(ObjectRef::new(schema, name));
+    }
+
+    refs
+}
+
 /// Perform topological sort on a set of objects with dependencies.
 ///
 /// Returns objects in an order where dependencies come before dependents.
@@ -724,6 +759,67 @@ mod tests {
 
         assert_eq!(table_refs.len(), 1);
         assert!(table_refs.contains(&ObjectRef::new("public", "users")));
+    }
+
+    #[test]
+    fn extract_rowtype_simple_unqualified() {
+        let body = "DECLARE v users%ROWTYPE;";
+        let refs = extract_rowtype_references(body, "public");
+
+        assert_eq!(refs.len(), 1);
+        assert!(refs.contains(&ObjectRef::new("public", "users")));
+    }
+
+    #[test]
+    fn extract_rowtype_schema_qualified() {
+        let body = "DECLARE v myschema.users%ROWTYPE;";
+        let refs = extract_rowtype_references(body, "public");
+
+        assert_eq!(refs.len(), 1);
+        assert!(refs.contains(&ObjectRef::new("myschema", "users")));
+    }
+
+    #[test]
+    fn extract_rowtype_quoted_table_name() {
+        let body = r#"DECLARE v myschema."MyTable"%ROWTYPE;"#;
+        let refs = extract_rowtype_references(body, "public");
+
+        assert_eq!(refs.len(), 1);
+        assert!(refs.contains(&ObjectRef::new("myschema", "MyTable")));
+    }
+
+    #[test]
+    fn extract_rowtype_case_insensitive() {
+        let body = "DECLARE v users%rowtype;";
+        let refs = extract_rowtype_references(body, "public");
+
+        assert_eq!(refs.len(), 1);
+        assert!(refs.contains(&ObjectRef::new("public", "users")));
+    }
+
+    #[test]
+    fn extract_rowtype_multiple_references() {
+        let body = r#"
+            DECLARE
+                u public.users%ROWTYPE;
+                p public.posts%ROWTYPE;
+            BEGIN
+                RETURN NULL;
+            END;
+        "#;
+        let refs = extract_rowtype_references(body, "public");
+
+        assert_eq!(refs.len(), 2);
+        assert!(refs.contains(&ObjectRef::new("public", "users")));
+        assert!(refs.contains(&ObjectRef::new("public", "posts")));
+    }
+
+    #[test]
+    fn extract_rowtype_no_references() {
+        let body = "BEGIN RETURN 1; END;";
+        let refs = extract_rowtype_references(body, "public");
+
+        assert!(refs.is_empty());
     }
 
     #[test]
