@@ -207,6 +207,9 @@ enum Commands {
         /// Target schema to compare to (e.g., sql:new.sql, drizzle:config.ts)
         #[arg(long)]
         to: String,
+        /// Target PostgreSQL schemas to compare (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        target_schemas: Vec<String>,
         /// Output diff as JSON for CI integration
         #[arg(long, short = 'j')]
         json: bool,
@@ -390,9 +393,14 @@ pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Diff { from, to, json } => {
-            let from_schema = load_schema(&[from])?;
-            let to_schema = load_schema(&[to])?;
+        Commands::Diff {
+            from,
+            to,
+            target_schemas,
+            json,
+        } => {
+            let from_schema = filter_by_target_schemas(&load_schema(&[from])?, &target_schemas);
+            let to_schema = filter_by_target_schemas(&load_schema(&[to])?, &target_schemas);
             let ops = plan_migration(compute_diff(&from_schema, &to_schema));
             let lock_warnings = detect_lock_hazards(&ops);
             let sql = generate_sql(&ops);
@@ -1948,6 +1956,44 @@ mod tests {
 
         if let Commands::Diff { json, .. } = args.command {
             assert!(json);
+        } else {
+            panic!("Expected Diff command");
+        }
+    }
+
+    #[test]
+    fn diff_parses_target_schemas() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "diff",
+            "--from",
+            "sql:old.sql",
+            "--to",
+            "sql:new.sql",
+            "--target-schemas",
+            "public,auth",
+        ]);
+
+        if let Commands::Diff { target_schemas, .. } = args.command {
+            assert_eq!(target_schemas, vec!["public", "auth"]);
+        } else {
+            panic!("Expected Diff command");
+        }
+    }
+
+    #[test]
+    fn diff_target_schemas_defaults_empty() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "diff",
+            "--from",
+            "sql:old.sql",
+            "--to",
+            "sql:new.sql",
+        ]);
+
+        if let Commands::Diff { target_schemas, .. } = args.command {
+            assert!(target_schemas.is_empty());
         } else {
             panic!("Expected Diff command");
         }
