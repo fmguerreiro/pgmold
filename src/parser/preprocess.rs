@@ -45,6 +45,7 @@ pub(super) fn preprocess_sql(sql: &str) -> String {
         r"(?i)\bSET\s+search_path\s+TO\s+'[^']*'(?:\s*,\s*'[^']*')*",
         r"(?i)ALTER\s+TABLE\s+[^;]+\s+OWNER\s+TO\s+[^;]+;",
         r"(?i)ALTER\s+FUNCTION\s+[^;]+;",
+        r"(?i)ALTER\s+MATERIALIZED\s+VIEW\s+[^;]+;",
         r"(?i)ALTER\s+VIEW\s+[^;]+;",
         r"(?i)ALTER\s+SEQUENCE\s+[^;]+;",
         r"(?i)ALTER\s+TYPE\s+[^;]+;",

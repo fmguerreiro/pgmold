@@ -326,12 +326,41 @@ pub(super) fn diff_tables(
     ops
 }
 
-pub(super) fn diff_partitions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+pub(super) fn diff_partitions(
+    from: &Schema,
+    to: &Schema,
+    manage_ownership: bool,
+) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, partition) in &to.partitions {
-        if !from.partitions.contains_key(name) {
+        if let Some(from_partition) = from.partitions.get(name) {
+            if manage_ownership && from_partition.owner != partition.owner {
+                if let Some(ref new_owner) = partition.owner {
+                    let (schema, partition_name) = parse_qualified_name(name);
+                    ops.push(MigrationOp::AlterOwner {
+                        object_kind: OwnerObjectKind::Partition,
+                        schema,
+                        name: partition_name,
+                        args: None,
+                        new_owner: new_owner.clone(),
+                    });
+                }
+            }
+        } else {
             ops.push(MigrationOp::CreatePartition(partition.clone()));
+            if manage_ownership {
+                if let Some(ref owner) = partition.owner {
+                    let (schema, partition_name) = parse_qualified_name(name);
+                    ops.push(MigrationOp::AlterOwner {
+                        object_kind: OwnerObjectKind::Partition,
+                        schema,
+                        name: partition_name,
+                        args: None,
+                        new_owner: owner.clone(),
+                    });
+                }
+            }
         }
     }
 
@@ -447,6 +476,14 @@ pub(super) fn diff_functions(
     ops
 }
 
+fn view_owner_kind(materialized: bool) -> OwnerObjectKind {
+    if materialized {
+        OwnerObjectKind::MaterializedView
+    } else {
+        OwnerObjectKind::View
+    }
+}
+
 pub(super) fn diff_views(
     from: &Schema,
     to: &Schema,
@@ -468,7 +505,7 @@ pub(super) fn diff_views(
                 if let Some(ref new_owner) = view.owner {
                     let (schema, view_name) = parse_qualified_name(name);
                     ops.push(MigrationOp::AlterOwner {
-                        object_kind: OwnerObjectKind::View,
+                        object_kind: view_owner_kind(view.materialized),
                         schema,
                         name: view_name,
                         args: None,
@@ -494,7 +531,7 @@ pub(super) fn diff_views(
                 if let Some(ref owner) = view.owner {
                     let (schema, view_name) = parse_qualified_name(name);
                     ops.push(MigrationOp::AlterOwner {
-                        object_kind: OwnerObjectKind::View,
+                        object_kind: view_owner_kind(view.materialized),
                         schema,
                         name: view_name,
                         args: None,

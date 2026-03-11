@@ -7,7 +7,9 @@ use crate::model::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OwnerObjectKind {
     Table,
+    Partition,
     View,
+    MaterializedView,
     Sequence,
     Function,
     Type,

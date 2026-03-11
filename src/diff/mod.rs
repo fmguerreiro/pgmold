@@ -64,7 +64,7 @@ pub fn compute_diff_with_flags(
         manage_grants,
         excluded_grant_roles,
     ));
-    ops.extend(diff_partitions(from, to));
+    ops.extend(diff_partitions(from, to, manage_ownership));
     ops.extend(diff_functions(
         from,
         to,
@@ -3123,5 +3123,171 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 ..
             } if grantee == "app_user"
         ));
+    }
+
+    #[test]
+    fn detects_partition_owner_change_when_flag_enabled() {
+        use crate::model::{Partition, PartitionBound};
+
+        let partition_key = "public.orders_2024".to_string();
+        let mut from = empty_schema();
+        from.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "orders_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "orders".to_string(),
+                bound: PartitionBound::Default,
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: Some("oldowner".to_string()),
+            },
+        );
+
+        let mut to = empty_schema();
+        to.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "orders_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "orders".to_string(),
+                bound: PartitionBound::Default,
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: Some("newowner".to_string()),
+            },
+        );
+
+        let ops = compute_diff_with_flags(&from, &to, true, false, &HashSet::new());
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterOwner {
+                object_kind: OwnerObjectKind::Partition,
+                schema,
+                name,
+                new_owner,
+                ..
+            } if schema == "public" && name == "orders_2024" && new_owner == "newowner"
+        ));
+    }
+
+    #[test]
+    fn ignores_partition_owner_change_when_flag_disabled() {
+        use crate::model::{Partition, PartitionBound};
+
+        let partition_key = "public.orders_2024".to_string();
+        let mut from = empty_schema();
+        from.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "orders_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "orders".to_string(),
+                bound: PartitionBound::Default,
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: Some("oldowner".to_string()),
+            },
+        );
+
+        let mut to = empty_schema();
+        to.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "orders_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "orders".to_string(),
+                bound: PartitionBound::Default,
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: Some("newowner".to_string()),
+            },
+        );
+
+        let ops = compute_diff_with_flags(&from, &to, false, false, &HashSet::new());
+        assert_eq!(ops.len(), 0);
+    }
+
+    #[test]
+    fn detects_materialized_view_owner_change_when_flag_enabled() {
+        use crate::model::View;
+
+        let mut from = empty_schema();
+        from.views.insert(
+            "summary".to_string(),
+            View {
+                name: "summary".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT count(*) FROM users".to_string(),
+                materialized: true,
+                owner: Some("oldowner".to_string()),
+                grants: Vec::new(),
+            },
+        );
+
+        let mut to = empty_schema();
+        to.views.insert(
+            "summary".to_string(),
+            View {
+                name: "summary".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT count(*) FROM users".to_string(),
+                materialized: true,
+                owner: Some("newowner".to_string()),
+                grants: Vec::new(),
+            },
+        );
+
+        let ops = compute_diff_with_flags(&from, &to, true, false, &HashSet::new());
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterOwner {
+                object_kind: OwnerObjectKind::MaterializedView,
+                schema,
+                name,
+                new_owner,
+                ..
+            } if schema == "public" && name == "summary" && new_owner == "newowner"
+        ));
+    }
+
+    #[test]
+    fn ignores_materialized_view_owner_change_when_flag_disabled() {
+        use crate::model::View;
+
+        let mut from = empty_schema();
+        from.views.insert(
+            "summary".to_string(),
+            View {
+                name: "summary".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT count(*) FROM users".to_string(),
+                materialized: true,
+                owner: Some("oldowner".to_string()),
+                grants: Vec::new(),
+            },
+        );
+
+        let mut to = empty_schema();
+        to.views.insert(
+            "summary".to_string(),
+            View {
+                name: "summary".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT count(*) FROM users".to_string(),
+                materialized: true,
+                owner: Some("newowner".to_string()),
+                grants: Vec::new(),
+            },
+        );
+
+        let ops = compute_diff_with_flags(&from, &to, false, false, &HashSet::new());
+        assert_eq!(ops.len(), 0);
     }
 }
