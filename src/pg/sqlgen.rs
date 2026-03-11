@@ -575,7 +575,11 @@ fn generate_create_table(table: &Table) -> Vec<String> {
 
     for index in &table.indexes {
         if index.is_constraint {
-            statements.push(generate_add_unique_constraint(&table.schema, &table.name, index));
+            statements.push(generate_add_unique_constraint(
+                &table.schema,
+                &table.name,
+                index,
+            ));
         } else {
             statements.push(generate_create_index(&table.schema, &table.name, index));
         }

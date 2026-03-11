@@ -432,8 +432,12 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 2);
-        assert!(ops.iter().any(|op| matches!(op, MigrationOp::DropIndex { .. })));
-        assert!(ops.iter().any(|op| matches!(op, MigrationOp::AddIndex { .. })));
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::DropIndex { .. })));
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::AddIndex { .. })));
     }
 
     #[test]

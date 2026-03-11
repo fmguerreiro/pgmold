@@ -118,10 +118,7 @@ pub(super) fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<Migratio
                 });
             }
             Some(from_index) if !indexes_semantically_equal(from_index, index) => {
-                ops.push(drop_index_op(
-                    &from_qualified_table_name,
-                    from_index,
-                ));
+                ops.push(drop_index_op(&from_qualified_table_name, from_index));
                 ops.push(MigrationOp::AddIndex {
                     table: qualified_table_name.clone(),
                     index: index.clone(),
