@@ -76,6 +76,10 @@ pub enum MigrationOp {
         table: String,
         index_name: String,
     },
+    DropUniqueConstraint {
+        table: String,
+        constraint_name: String,
+    },
     AddForeignKey {
         table: String,
         foreign_key: ForeignKey,

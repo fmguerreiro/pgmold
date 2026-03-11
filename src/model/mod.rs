@@ -166,6 +166,7 @@ pub struct Index {
     pub unique: bool,
     pub index_type: IndexType,
     pub predicate: Option<String>,
+    pub is_constraint: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]

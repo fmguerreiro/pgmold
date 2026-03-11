@@ -252,6 +252,16 @@ impl OpKey {
                 table: table.clone(),
                 name: index_name.clone(),
             },
+            // DropUniqueConstraint maps to OpKey::DropIndex intentionally:
+            // both need identical ordering (run before DropTable/DropColumn,
+            // after AddIndex in replace-in-place scenarios).
+            MigrationOp::DropUniqueConstraint {
+                table,
+                constraint_name,
+            } => OpKey::DropIndex {
+                table: table.clone(),
+                name: constraint_name.clone(),
+            },
             MigrationOp::AddForeignKey { table, foreign_key } => OpKey::AddForeignKey {
                 table: table.clone(),
                 name: foreign_key.name.clone(),
@@ -1568,6 +1578,7 @@ mod tests {
                     unique: true,
                     index_type: IndexType::BTree,
                     predicate: None,
+                    is_constraint: false,
                 },
             },
             MigrationOp::AddColumn {
@@ -1881,6 +1892,7 @@ mod tests {
             unique: true,
             index_type: IndexType::BTree,
             predicate: Some("active = true".to_string()),
+            is_constraint: false,
         };
 
         let ops = vec![
@@ -4021,6 +4033,7 @@ mod tests {
                     unique: false,
                     index_type: IndexType::BTree,
                     predicate: None,
+                    is_constraint: false,
                 },
             },
             MigrationOp::CreateTable(make_table("users", vec![])),

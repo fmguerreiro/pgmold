@@ -139,6 +139,7 @@ pub(super) fn parse_create_table(
                     unique: true,
                     index_type: IndexType::BTree,
                     predicate: None,
+                    is_constraint: true,
                 });
             }
             _ => {}
