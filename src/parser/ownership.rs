@@ -75,6 +75,24 @@ pub(super) fn parse_owner_statements(sql: &str, schema: &mut Schema) {
         });
     }
 
+    let alter_materialized_view_owner_re = Regex::new(
+        r#"(?i)ALTER\s+MATERIALIZED\s+VIEW\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
+    ).unwrap();
+
+    for cap in alter_materialized_view_owner_re.captures_iter(sql) {
+        let schema_part = cap.get(1).map(|m| m.as_str().trim_matches('"'));
+        let view_name = cap.get(2).unwrap().as_str().trim_matches('"');
+        let owner = cap.get(3).unwrap().as_str().trim_matches('"');
+
+        let view_schema = schema_part.unwrap_or("public");
+        let object_key = qualified_name(view_schema, view_name);
+        schema.pending_owners.push(PendingOwner {
+            object_type: PendingOwnerObjectType::View,
+            object_key,
+            owner: owner.to_string(),
+        });
+    }
+
     let alter_view_owner_re = Regex::new(
         r#"(?i)ALTER\s+VIEW\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
     ).unwrap();

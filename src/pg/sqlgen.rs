@@ -1177,8 +1177,9 @@ fn generate_alter_owner(
     new_owner: &str,
 ) -> String {
     let object_type = match object_kind {
-        OwnerObjectKind::Table => "TABLE",
+        OwnerObjectKind::Table | OwnerObjectKind::Partition => "TABLE",
         OwnerObjectKind::View => "VIEW",
+        OwnerObjectKind::MaterializedView => "MATERIALIZED VIEW",
         OwnerObjectKind::Sequence => "SEQUENCE",
         OwnerObjectKind::Function => "FUNCTION",
         OwnerObjectKind::Type => "TYPE",
@@ -3567,6 +3568,42 @@ mod tests {
         assert_eq!(
             sql[0],
             "ALTER TABLE \"public\".\"data\" ADD COLUMN \"scores\" INTEGER[];"
+        );
+    }
+
+    #[test]
+    fn alter_owner_partition_generates_alter_table_sql() {
+        let ops = vec![MigrationOp::AlterOwner {
+            object_kind: OwnerObjectKind::Partition,
+            schema: "public".to_string(),
+            name: "orders_2024".to_string(),
+            args: None,
+            new_owner: "analytics_user".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"orders_2024\" OWNER TO analytics_user;"
+        );
+    }
+
+    #[test]
+    fn alter_owner_materialized_view_generates_valid_sql() {
+        let ops = vec![MigrationOp::AlterOwner {
+            object_kind: OwnerObjectKind::MaterializedView,
+            schema: "public".to_string(),
+            name: "summary".to_string(),
+            args: None,
+            new_owner: "analytics_user".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER MATERIALIZED VIEW \"public\".\"summary\" OWNER TO analytics_user;"
         );
     }
 }

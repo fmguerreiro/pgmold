@@ -1035,7 +1035,10 @@ impl MigrationGraph {
                         "Table" => {
                             edges_to_add.push((OpKey::CreateTable(qualified), key.clone()));
                         }
-                        "View" => {
+                        "Partition" => {
+                            edges_to_add.push((OpKey::CreatePartition(qualified), key.clone()));
+                        }
+                        "View" | "MaterializedView" => {
                             edges_to_add.push((OpKey::CreateView(qualified), key.clone()));
                         }
                         "Sequence" => {
@@ -4815,6 +4818,63 @@ mod tests {
             "CreateDomain",
             "AlterOwner",
             |op| matches!(op, MigrationOp::CreateDomain(_)),
+            |op| matches!(op, MigrationOp::AlterOwner { .. }),
+        );
+    }
+
+    #[test]
+    fn alter_owner_partition_after_create_partition() {
+        let partition = crate::model::Partition {
+            name: "orders_2024".to_string(),
+            schema: "public".to_string(),
+            parent_name: "orders".to_string(),
+            parent_schema: "public".to_string(),
+            bound: crate::model::PartitionBound::Default,
+            indexes: vec![],
+            check_constraints: vec![],
+            owner: None,
+        };
+        let ops = vec![
+            MigrationOp::AlterOwner {
+                object_kind: OwnerObjectKind::Partition,
+                schema: "public".to_string(),
+                name: "orders_2024".to_string(),
+                args: None,
+                new_owner: "app_admin".to_string(),
+            },
+            MigrationOp::CreatePartition(partition),
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreatePartition",
+            "AlterOwner",
+            |op| matches!(op, MigrationOp::CreatePartition(_)),
+            |op| matches!(op, MigrationOp::AlterOwner { .. }),
+        );
+    }
+
+    #[test]
+    fn alter_owner_materialized_view_after_create_view() {
+        let ops = vec![
+            MigrationOp::AlterOwner {
+                object_kind: OwnerObjectKind::MaterializedView,
+                schema: "public".to_string(),
+                name: "summary".to_string(),
+                args: None,
+                new_owner: "app_admin".to_string(),
+            },
+            MigrationOp::CreateView(View {
+                materialized: true,
+                ..make_view("summary", "public", "SELECT 1")
+            }),
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreateView",
+            "AlterOwner",
+            |op| matches!(op, MigrationOp::CreateView(_)),
             |op| matches!(op, MigrationOp::AlterOwner { .. }),
         );
     }

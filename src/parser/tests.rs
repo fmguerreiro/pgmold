@@ -2958,3 +2958,27 @@ fn parse_unsupported_type_returns_error() {
     let err = result.unwrap_err().to_string();
     assert!(err.contains("unsupported column type"));
 }
+
+#[test]
+fn parses_alter_materialized_view_owner() {
+    let sql = r#"
+        CREATE MATERIALIZED VIEW summary AS SELECT count(*) FROM users;
+        ALTER MATERIALIZED VIEW summary OWNER TO analytics_user;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let view = schema.views.get("public.summary").unwrap();
+    assert!(view.materialized);
+    assert_eq!(view.owner, Some("analytics_user".to_string()));
+}
+
+#[test]
+fn parses_alter_materialized_view_owner_schema_qualified() {
+    let sql = r#"
+        CREATE MATERIALIZED VIEW "reporting"."summary" AS SELECT count(*) FROM users;
+        ALTER MATERIALIZED VIEW "reporting"."summary" OWNER TO "analytics_user";
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let view = schema.views.get("reporting.summary").unwrap();
+    assert!(view.materialized);
+    assert_eq!(view.owner, Some("analytics_user".to_string()));
+}
