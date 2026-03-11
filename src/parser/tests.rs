@@ -2357,6 +2357,7 @@ fn parses_unique_constraint_in_create_table() {
         .expect("UNIQUE constraint should be parsed as an index");
 
     assert!(unique_idx.unique, "Index should be marked as unique");
+    assert!(unique_idx.is_constraint);
     assert_eq!(unique_idx.columns, vec!["email"]);
 }
 
@@ -2382,9 +2383,64 @@ fn parses_unique_constraint_from_alter_table() {
         .expect("UNIQUE constraint from ALTER TABLE should be parsed as an index");
 
     assert!(unique_idx.unique, "Index should be marked as unique");
+    assert!(unique_idx.is_constraint);
     assert_eq!(
         unique_idx.columns,
         vec!["session_id", "authentication_method"]
+    );
+}
+
+#[test]
+fn unique_index_is_not_marked_as_constraint() {
+    let sql = r#"
+        CREATE TABLE users (
+            id BIGINT PRIMARY KEY,
+            email TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX users_email_idx ON users (email);
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.users").unwrap();
+
+    let index = table
+        .indexes
+        .iter()
+        .find(|idx| idx.name == "users_email_idx")
+        .expect("unique index should be parsed");
+
+    assert!(index.unique);
+    assert!(!index.is_constraint);
+}
+
+#[test]
+fn partial_unique_index_preserves_where_clause() {
+    let sql = r#"
+        CREATE TABLE auth.users (
+            id BIGINT PRIMARY KEY,
+            confirmation_token TEXT
+        );
+        CREATE UNIQUE INDEX confirmation_token_idx ON auth.users (confirmation_token)
+            WHERE (confirmation_token)::text <> ''::text;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("auth.users").unwrap();
+
+    let index = table
+        .indexes
+        .iter()
+        .find(|idx| idx.name == "confirmation_token_idx")
+        .expect("partial unique index should be parsed");
+
+    assert!(index.unique);
+    assert!(!index.is_constraint);
+    assert!(index.predicate.is_some(), "WHERE clause must be preserved");
+    assert!(
+        index
+            .predicate
+            .as_ref()
+            .unwrap()
+            .contains("confirmation_token"),
+        "predicate should reference confirmation_token"
     );
 }
 

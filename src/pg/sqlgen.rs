@@ -156,7 +156,11 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
 
         MigrationOp::AddIndex { table, index } => {
             let (schema, table_name) = parse_qualified_name(table);
-            vec![generate_create_index(&schema, &table_name, index)]
+            if index.is_constraint {
+                vec![generate_add_unique_constraint(&schema, &table_name, index)]
+            } else {
+                vec![generate_create_index(&schema, &table_name, index)]
+            }
         }
 
         MigrationOp::DropIndex { table, index_name } => {
@@ -164,6 +168,18 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             vec![format!(
                 "DROP INDEX {};",
                 quote_qualified(&schema, index_name)
+            )]
+        }
+
+        MigrationOp::DropUniqueConstraint {
+            table,
+            constraint_name,
+        } => {
+            let (schema, table_name) = parse_qualified_name(table);
+            vec![format!(
+                "ALTER TABLE {} DROP CONSTRAINT {};",
+                quote_qualified(&schema, &table_name),
+                quote_ident(constraint_name)
             )]
         }
 
@@ -558,7 +574,11 @@ fn generate_create_table(table: &Table) -> Vec<String> {
     ));
 
     for index in &table.indexes {
-        statements.push(generate_create_index(&table.schema, &table.name, index));
+        if index.is_constraint {
+            statements.push(generate_add_unique_constraint(&table.schema, &table.name, index));
+        } else {
+            statements.push(generate_create_index(&table.schema, &table.name, index));
+        }
     }
 
     for foreign_key in &table.foreign_keys {
@@ -627,6 +647,19 @@ fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {
         quote_qualified(schema, table),
         format_column_list(&index.columns),
         where_clause
+    )
+}
+
+fn generate_add_unique_constraint(schema: &str, table: &str, index: &Index) -> String {
+    debug_assert!(
+        index.predicate.is_none(),
+        "unique constraints cannot have a WHERE predicate — use CREATE UNIQUE INDEX instead"
+    );
+    format!(
+        "ALTER TABLE {} ADD CONSTRAINT {} UNIQUE ({});",
+        quote_qualified(schema, table),
+        quote_ident(&index.name),
+        format_column_list(&index.columns)
     )
 }
 
@@ -1532,6 +1565,7 @@ mod tests {
                 unique: true,
                 index_type: IndexType::BTree,
                 predicate: None,
+                is_constraint: false,
             },
         }];
 
@@ -1540,6 +1574,46 @@ mod tests {
         assert_eq!(
             sql[0],
             "CREATE UNIQUE INDEX \"users_email_idx\" ON \"public\".\"users\" (\"email\");"
+        );
+    }
+
+    #[test]
+    fn add_unique_constraint_generates_alter_table() {
+        let ops = vec![MigrationOp::AddIndex {
+            table: "auth.mfa_amr_claims".to_string(),
+            index: Index {
+                name: "mfa_amr_claims_session_id_authentication_method_pkey".to_string(),
+                columns: vec![
+                    "session_id".to_string(),
+                    "authentication_method".to_string(),
+                ],
+                unique: true,
+                index_type: IndexType::BTree,
+                predicate: None,
+                is_constraint: true,
+            },
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"auth\".\"mfa_amr_claims\" ADD CONSTRAINT \"mfa_amr_claims_session_id_authentication_method_pkey\" UNIQUE (\"session_id\", \"authentication_method\");"
+        );
+    }
+
+    #[test]
+    fn drop_unique_constraint_generates_alter_table() {
+        let ops = vec![MigrationOp::DropUniqueConstraint {
+            table: "auth.mfa_amr_claims".to_string(),
+            constraint_name: "mfa_amr_claims_session_id_authentication_method_pkey".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"auth\".\"mfa_amr_claims\" DROP CONSTRAINT \"mfa_amr_claims_session_id_authentication_method_pkey\";"
         );
     }
 

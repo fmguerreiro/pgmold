@@ -345,6 +345,7 @@ mod tests {
             unique: true,
             index_type: IndexType::BTree,
             predicate: None,
+            is_constraint: false,
         });
         to.tables.insert("users".to_string(), table);
 
@@ -365,6 +366,7 @@ mod tests {
             unique: true,
             index_type: IndexType::BTree,
             predicate: None,
+            is_constraint: false,
         });
         from.tables.insert("users".to_string(), from_table);
 
@@ -376,6 +378,62 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropIndex { table, index_name } if table == "public.users" && index_name == "users_email_idx")
         );
+    }
+
+    #[test]
+    fn detects_removed_unique_constraint() {
+        let mut from = empty_schema();
+        let mut from_table = simple_table("users");
+        from_table.indexes.push(Index {
+            name: "users_email_unique".to_string(),
+            columns: vec!["email".to_string()],
+            unique: true,
+            index_type: IndexType::BTree,
+            predicate: None,
+            is_constraint: true,
+        });
+        from.tables.insert("users".to_string(), from_table);
+
+        let mut to = empty_schema();
+        to.tables.insert("users".to_string(), simple_table("users"));
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(
+            matches!(&ops[0], MigrationOp::DropUniqueConstraint { table, constraint_name } if table == "public.users" && constraint_name == "users_email_unique")
+        );
+    }
+
+    #[test]
+    fn detects_index_to_constraint_change() {
+        let mut from = empty_schema();
+        let mut from_table = simple_table("users");
+        from_table.indexes.push(Index {
+            name: "users_email_unique".to_string(),
+            columns: vec!["email".to_string()],
+            unique: true,
+            index_type: IndexType::BTree,
+            predicate: None,
+            is_constraint: false,
+        });
+        from.tables.insert("users".to_string(), from_table);
+
+        let mut to = empty_schema();
+        let mut to_table = simple_table("users");
+        to_table.indexes.push(Index {
+            name: "users_email_unique".to_string(),
+            columns: vec!["email".to_string()],
+            unique: true,
+            index_type: IndexType::BTree,
+            predicate: None,
+            is_constraint: true,
+        });
+        to.tables.insert("users".to_string(), to_table);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 2);
+        assert!(ops.iter().any(|op| matches!(op, MigrationOp::DropIndex { .. })));
+        assert!(ops.iter().any(|op| matches!(op, MigrationOp::AddIndex { .. })));
     }
 
     #[test]

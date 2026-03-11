@@ -889,18 +889,20 @@ async fn introspect_all_indexes(
             ix.indisunique,
             am.amname,
             array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
-            pg_get_expr(ix.indpred, ix.indrelid) as predicate
+            pg_get_expr(ix.indpred, ix.indrelid) as predicate,
+            (uc.oid IS NOT NULL) AS is_constraint
         FROM pg_index ix
         JOIN pg_class t ON t.oid = ix.indrelid
         JOIN pg_class i ON i.oid = ix.indexrelid
         JOIN pg_am am ON am.oid = i.relam
         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
         JOIN pg_namespace n ON n.oid = t.relnamespace
+        LEFT JOIN pg_constraint uc ON uc.conindid = ix.indexrelid AND uc.contype = 'u'
         WHERE n.nspname = ANY($1::text[])
           AND NOT ix.indisprimary
           AND t.relkind IN ('r', 'p')
           AND t.relispartition = false
-        GROUP BY n.nspname, t.relname, i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid
+        GROUP BY n.nspname, t.relname, i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid, uc.oid
         "#,
     )
     .bind(target_schemas)
@@ -917,6 +919,7 @@ async fn introspect_all_indexes(
         let am_name: String = row.get("amname");
         let columns: Vec<String> = row.get("columns");
         let predicate: Option<String> = row.get("predicate");
+        let is_constraint: bool = row.get("is_constraint");
 
         let index_type = match am_name.as_str() {
             "btree" => IndexType::BTree,
@@ -935,6 +938,7 @@ async fn introspect_all_indexes(
                 unique,
                 index_type,
                 predicate,
+                is_constraint,
             });
     }
 

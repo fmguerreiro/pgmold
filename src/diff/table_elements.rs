@@ -91,13 +91,15 @@ pub(super) fn diff_primary_keys(from_table: &Table, to_table: &Table) -> Vec<Mig
     ops
 }
 
-/// Compares two indexes semantically, using AST-based comparison for predicates.
-/// This handles PostgreSQL's normalization of WHERE clauses (e.g., adding explicit enum casts).
+/// Canonical equality check for indexes — use this instead of derived `==`.
+/// Uses AST-based comparison for predicates to handle PostgreSQL's normalization
+/// of WHERE clauses (e.g., adding explicit enum casts).
 pub(super) fn indexes_semantically_equal(from: &Index, to: &Index) -> bool {
     from.name == to.name
         && from.columns == to.columns
         && from.unique == to.unique
         && from.index_type == to.index_type
+        && from.is_constraint == to.is_constraint
         && optional_expressions_equal(&from.predicate, &to.predicate)
 }
 
@@ -116,10 +118,10 @@ pub(super) fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<Migratio
                 });
             }
             Some(from_index) if !indexes_semantically_equal(from_index, index) => {
-                ops.push(MigrationOp::DropIndex {
-                    table: from_qualified_table_name.clone(),
-                    index_name: index.name.clone(),
-                });
+                ops.push(drop_index_op(
+                    &from_qualified_table_name,
+                    from_index,
+                ));
                 ops.push(MigrationOp::AddIndex {
                     table: qualified_table_name.clone(),
                     index: index.clone(),
@@ -131,14 +133,25 @@ pub(super) fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<Migratio
 
     for index in &from_table.indexes {
         if !to_table.indexes.iter().any(|i| i.name == index.name) {
-            ops.push(MigrationOp::DropIndex {
-                table: from_qualified_table_name.clone(),
-                index_name: index.name.clone(),
-            });
+            ops.push(drop_index_op(&from_qualified_table_name, index));
         }
     }
 
     ops
+}
+
+fn drop_index_op(table: &str, index: &Index) -> MigrationOp {
+    if index.is_constraint {
+        MigrationOp::DropUniqueConstraint {
+            table: table.to_string(),
+            constraint_name: index.name.clone(),
+        }
+    } else {
+        MigrationOp::DropIndex {
+            table: table.to_string(),
+            index_name: index.name.clone(),
+        }
+    }
 }
 
 pub(super) fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {

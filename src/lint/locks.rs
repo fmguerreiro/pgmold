@@ -134,6 +134,19 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     ),
                 });
             }
+            MigrationOp::DropUniqueConstraint {
+                table,
+                constraint_name,
+            } => {
+                warnings.push(LockWarning {
+                    operation: "DropUniqueConstraint".to_string(),
+                    table: table.clone(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "DROP CONSTRAINT acquires ACCESS EXCLUSIVE lock on table {table} (constraint {constraint_name})"
+                    ),
+                });
+            }
             MigrationOp::EnableRls { table } => {
                 warnings.push(LockWarning {
                     operation: "EnableRls".to_string(),
@@ -358,6 +371,7 @@ mod tests {
                 unique: false,
                 index_type: IndexType::BTree,
                 predicate: None,
+                is_constraint: false,
             },
         }];
         let warnings = detect_lock_hazards(&ops);
@@ -507,6 +521,7 @@ mod tests {
                     unique: false,
                     index_type: IndexType::BTree,
                     predicate: None,
+                    is_constraint: false,
                 },
             },
         ];

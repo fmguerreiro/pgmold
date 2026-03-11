@@ -165,6 +165,21 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
             }
         }
 
+        MigrationOp::DropUniqueConstraint {
+            table,
+            constraint_name,
+        } => {
+            if !options.allow_destructive {
+                results.push(LintResult {
+                    rule: "deny_drop_unique_constraint".to_string(),
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping unique constraint \"{constraint_name}\" on \"{table}\" requires --allow-destructive flag"
+                    ),
+                });
+            }
+        }
+
         MigrationOp::AlterSequence { name, changes } => {
             if changes.restart.is_some() {
                 results.push(LintResult {
@@ -463,5 +478,36 @@ mod tests {
 
         let results = lint_migration_plan(&ops, &options);
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn blocks_drop_unique_constraint_without_flag() {
+        let ops = vec![MigrationOp::DropUniqueConstraint {
+            table: "auth.users".to_string(),
+            constraint_name: "users_email_unique".to_string(),
+        }];
+        let options = LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_unique_constraint");
+    }
+
+    #[test]
+    fn allows_drop_unique_constraint_with_flag() {
+        let ops = vec![MigrationOp::DropUniqueConstraint {
+            table: "auth.users".to_string(),
+            constraint_name: "users_email_unique".to_string(),
+        }];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!has_errors(&results));
     }
 }
