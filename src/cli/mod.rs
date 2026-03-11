@@ -18,6 +18,7 @@ use pgmold::pg::connection::PgConnection;
 use pgmold::pg::introspect::introspect_schema;
 use pgmold::pg::sqlgen::generate_sql;
 use pgmold::provider::load_schema_from_sources;
+use pgmold::check::{check_schema, has_errors as check_has_errors, IssueSeverity};
 use pgmold::validate::validate_migration_on_temp_db;
 
 #[derive(Serialize)]
@@ -96,6 +97,20 @@ struct DumpOutput {
     sql: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     files: Option<Vec<String>>,
+}
+
+#[derive(Serialize)]
+struct CheckOutput {
+    issues: Vec<CheckIssueOutput>,
+    error_count: usize,
+    warning_count: usize,
+}
+
+#[derive(Serialize)]
+struct CheckIssueOutput {
+    severity: String,
+    rule: String,
+    message: String,
 }
 
 #[derive(Serialize)]
@@ -354,6 +369,16 @@ enum Commands {
         #[command(flatten)]
         grants: GrantArgs,
         /// Output result as JSON
+        #[arg(long, short = 'j')]
+        json: bool,
+    },
+
+    /// Validate schema files without a database connection (static analysis)
+    Check {
+        /// Schema source with prefix: sql:path (SQL files/dirs) or drizzle:config.ts (Drizzle ORM). Can be repeated.
+        #[arg(long, short = 's', required = true)]
+        schema: Vec<String>,
+        /// Output results as JSON
         #[arg(long, short = 'j')]
         json: bool,
     },
@@ -1203,6 +1228,62 @@ pub async fn run() -> Result<()> {
             }
             Ok(())
         }
+        Commands::Check { schema, json } => {
+            let schema = load_schema(&schema)?;
+            let issues = check_schema(&schema);
+
+            let error_count = issues
+                .iter()
+                .filter(|i| matches!(i.severity, IssueSeverity::Error))
+                .count();
+            let warning_count = issues
+                .iter()
+                .filter(|i| matches!(i.severity, IssueSeverity::Warning))
+                .count();
+
+            if json {
+                let output = CheckOutput {
+                    issues: issues
+                        .iter()
+                        .map(|i| CheckIssueOutput {
+                            severity: match i.severity {
+                                IssueSeverity::Error => "error".to_string(),
+                                IssueSeverity::Warning => "warning".to_string(),
+                            },
+                            rule: i.rule.clone(),
+                            message: i.message.clone(),
+                        })
+                        .collect(),
+                    error_count,
+                    warning_count,
+                };
+                print_json(&output)?;
+            } else {
+                for issue in &issues {
+                    let severity = match issue.severity {
+                        IssueSeverity::Error => "ERROR",
+                        IssueSeverity::Warning => "WARNING",
+                    };
+                    println!("[{severity}] {}: {}", issue.rule, issue.message);
+                }
+
+                if issues.is_empty() {
+                    println!("Schema check passed. No issues found.");
+                } else {
+                    println!(
+                        "\nSchema check complete: {} error(s), {} warning(s).",
+                        error_count, warning_count
+                    );
+                }
+            }
+
+            if check_has_errors(&issues) {
+                return Err(anyhow!(
+                    "Schema check failed with {error_count} error(s)"
+                ));
+            }
+            Ok(())
+        }
         Commands::Describe {
             command: specific_command,
         } => {
@@ -1258,6 +1339,15 @@ pub async fn run() -> Result<()> {
                     description: "Generate a numbered migration file from schema diff".into(),
                     supports_json: true,
                     requires_database: true,
+                    supports_filters: false,
+                },
+                CommandDescription {
+                    name: "check".into(),
+                    description:
+                        "Validate schema files without a database connection (static analysis)"
+                            .into(),
+                    supports_json: true,
+                    requires_database: false,
                     supports_filters: false,
                 },
                 CommandDescription {
