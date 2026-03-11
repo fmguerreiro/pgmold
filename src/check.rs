@@ -116,10 +116,7 @@ fn check_trigger_references(schema: &Schema, issues: &mut Vec<SchemaIssue>) {
             });
         }
 
-        let function_prefix = format!(
-            "{}.{}(",
-            trigger.function_schema, trigger.function_name
-        );
+        let function_prefix = format!("{}.{}(", trigger.function_schema, trigger.function_name);
         let function_exists = schema
             .functions
             .keys()
@@ -377,7 +374,10 @@ mod tests {
             .iter()
             .filter(|i| i.rule == "column_references_missing_enum")
             .collect();
-        assert!(enum_issues.is_empty(), "Expected no enum issues, got: {enum_issues:?}");
+        assert!(
+            enum_issues.is_empty(),
+            "Expected no enum issues, got: {enum_issues:?}"
+        );
     }
 
     #[test]
@@ -432,7 +432,10 @@ mod tests {
             .iter()
             .filter(|i| i.rule == "trigger_references_missing_function")
             .collect();
-        assert!(trigger_issues.is_empty(), "Expected no trigger issues, got: {trigger_issues:?}");
+        assert!(
+            trigger_issues.is_empty(),
+            "Expected no trigger issues, got: {trigger_issues:?}"
+        );
     }
 
     #[test]

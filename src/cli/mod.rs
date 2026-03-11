@@ -5,6 +5,7 @@ use clap::{ArgAction, Args, Parser, Subcommand};
 use serde::Serialize;
 use sqlx::Executor;
 
+use pgmold::check::{check_schema, has_errors as check_has_errors, IssueSeverity};
 use pgmold::diff::{compute_diff, planner::plan_migration};
 use pgmold::drift::detect_drift;
 use pgmold::dump::{generate_dump, generate_split_dump};
@@ -18,7 +19,6 @@ use pgmold::pg::connection::PgConnection;
 use pgmold::pg::introspect::introspect_schema;
 use pgmold::pg::sqlgen::generate_sql;
 use pgmold::provider::load_schema_from_sources;
-use pgmold::check::{check_schema, has_errors as check_has_errors, IssueSeverity};
 use pgmold::validate::validate_migration_on_temp_db;
 
 #[derive(Serialize)]
@@ -1278,9 +1278,7 @@ pub async fn run() -> Result<()> {
             }
 
             if check_has_errors(&issues) {
-                return Err(anyhow!(
-                    "Schema check failed with {error_count} error(s)"
-                ));
+                return Err(anyhow!("Schema check failed with {error_count} error(s)"));
             }
             Ok(())
         }
