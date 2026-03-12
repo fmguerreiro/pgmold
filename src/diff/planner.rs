@@ -1075,7 +1075,42 @@ impl MigrationGraph {
                     }
                 }
 
-                // AlterColumn must happen after dropping dependent objects
+                // AlterPolicy depends on functions in new expressions
+                OpKey::AlterPolicy { table, .. } => {
+                    if let Some(MigrationOp::AlterPolicy { changes, .. }) = self.get_op(key) {
+                        let schema = table.split('.').next().unwrap_or("public");
+                        if let Some(Some(expr)) = &changes.using_expr {
+                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
+                        }
+                        if let Some(Some(expr)) = &changes.check_expr {
+                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
+                        }
+                    }
+                }
+
+                // AlterView depends on functions in replacement query
+                OpKey::AlterView(view_name) => {
+                    if let Some(MigrationOp::AlterView { new_view, .. }) = self.get_op(key) {
+                        let refs = extract_relation_references(&new_view.query);
+                        for ref_name in refs {
+                            if ref_name != *view_name {
+                                edges_to_add
+                                    .push((OpKey::CreateTable(ref_name.clone()), key.clone()));
+                                edges_to_add.push((OpKey::CreateView(ref_name), key.clone()));
+                            }
+                        }
+                        push_function_ref_edges(
+                            &mut edges_to_add,
+                            &keys,
+                            &new_view.query,
+                            &new_view.schema,
+                            key,
+                        );
+                    }
+                }
+
+                // AlterColumn must happen after dropping dependent objects,
+                // and new defaults may reference functions
                 OpKey::AlterColumn { table, .. } => {
                     for other in &keys {
                         if drop_targets_table(other, table)
@@ -1088,6 +1123,20 @@ impl MigrationGraph {
                             )
                         {
                             edges_to_add.push((other.clone(), key.clone()));
+                        }
+                    }
+
+                    if let Some(MigrationOp::AlterColumn { table, changes, .. }) = self.get_op(key)
+                    {
+                        if let Some(Some(default_expr)) = &changes.default {
+                            let schema = table.split('.').next().unwrap_or("public");
+                            push_function_ref_edges(
+                                &mut edges_to_add,
+                                &keys,
+                                default_expr,
+                                schema,
+                                key,
+                            );
                         }
                     }
                 }
@@ -4485,6 +4534,103 @@ mod tests {
         assert!(
             func_pos < col_pos,
             "CreateFunction ({func_pos}) before AddColumn ({col_pos})"
+        );
+    }
+
+    #[test]
+    fn alter_policy_with_function_reference() {
+        let ops = vec![
+            MigrationOp::AlterPolicy {
+                table: "public.items".to_string(),
+                name: "entity_owner".to_string(),
+                changes: PolicyChanges {
+                    roles: None,
+                    using_expr: Some(Some(
+                        "auth.user_owns_entity(entity_id, 'items'::text)".to_string(),
+                    )),
+                    check_expr: None,
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("user_owns_entity", "auth")),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let alter_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterPolicy { .. }))
+            .expect("AlterPolicy not found");
+
+        assert!(
+            func_pos < alter_pos,
+            "CreateFunction ({func_pos}) before AlterPolicy ({alter_pos})"
+        );
+    }
+
+    #[test]
+    fn alter_view_with_function_reference() {
+        let ops = vec![
+            MigrationOp::AlterView {
+                name: "public.active_users".to_string(),
+                new_view: View {
+                    name: "active_users".to_string(),
+                    schema: "public".to_string(),
+                    query: "SELECT auth.is_active(id) FROM public.users".to_string(),
+                    materialized: false,
+                    owner: None,
+                    grants: Vec::new(),
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("is_active", "auth")),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let alter_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterView { .. }))
+            .expect("AlterView not found");
+
+        assert!(
+            func_pos < alter_pos,
+            "CreateFunction ({func_pos}) before AlterView ({alter_pos})"
+        );
+    }
+
+    #[test]
+    fn alter_column_default_with_function_reference() {
+        let ops = vec![
+            MigrationOp::AlterColumn {
+                table: "public.items".to_string(),
+                column: "tracking_id".to_string(),
+                changes: ColumnChanges {
+                    data_type: None,
+                    nullable: None,
+                    default: Some(Some("auth.generate_tracking_id()".to_string())),
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("generate_tracking_id", "auth")),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let alter_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .expect("AlterColumn not found");
+
+        assert!(
+            func_pos < alter_pos,
+            "CreateFunction ({func_pos}) before AlterColumn ({alter_pos})"
         );
     }
 
