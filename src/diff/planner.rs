@@ -829,6 +829,26 @@ impl MigrationGraph {
         // Collect edges to add to avoid borrow issues
         let mut edges_to_add: Vec<(OpKey, OpKey)> = Vec::new();
 
+        /// Add edges from all CreateFunction ops matching `ref_qualified` to `consumer_key`.
+        /// Multiple overloads may match (we can't resolve which without type info).
+        fn push_function_edges(
+            edges: &mut Vec<(OpKey, OpKey)>,
+            keys: &[OpKey],
+            ref_qualified: &str,
+            consumer_key: &OpKey,
+        ) {
+            for other_key in keys {
+                if let OpKey::CreateFunction {
+                    name: other_name, ..
+                } = other_key
+                {
+                    if *other_name == ref_qualified {
+                        edges.push((other_key.clone(), consumer_key.clone()));
+                    }
+                }
+            }
+        }
+
         for key in &keys {
             match key {
                 // CreateTable with FKs depends on referenced tables existing
@@ -857,18 +877,28 @@ impl MigrationGraph {
                     }
                 }
 
-                // CreateView depends on tables/views it references in its query
+                // CreateView depends on tables/views/functions it references in its query
                 OpKey::CreateView(view_name) => {
                     if let Some(MigrationOp::CreateView(view)) = self.get_op(key) {
                         let refs = extract_relation_references(&view.query);
                         for ref_name in refs {
-                            // Don't add self-edge
                             if ref_name != *view_name {
-                                // Try both table and view keys
                                 edges_to_add
                                     .push((OpKey::CreateTable(ref_name.clone()), key.clone()));
                                 edges_to_add.push((OpKey::CreateView(ref_name), key.clone()));
                             }
+                        }
+
+                        let func_refs = extract_function_references(&view.query, &view.schema);
+                        for ref_obj in func_refs {
+                            let ref_qualified =
+                                qualified_name(&ref_obj.schema, &ref_obj.name);
+                            push_function_edges(
+                                &mut edges_to_add,
+                                &keys,
+                                &ref_qualified,
+                                key,
+                            );
                         }
                     }
                 }
@@ -881,20 +911,13 @@ impl MigrationGraph {
                         let refs = extract_function_references(&func.body, &func.schema);
                         for ref_obj in refs {
                             let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                            // Don't add self-edge
                             if ref_qualified != *func_name {
-                                // Add edge from all CreateFunction ops matching this name
-                                // (we can't know which overload is being called without type info)
-                                for other_key in &keys {
-                                    if let OpKey::CreateFunction {
-                                        name: other_name, ..
-                                    } = other_key
-                                    {
-                                        if *other_name == ref_qualified {
-                                            edges_to_add.push((other_key.clone(), key.clone()));
-                                        }
-                                    }
-                                }
+                                push_function_edges(
+                                    &mut edges_to_add,
+                                    &keys,
+                                    &ref_qualified,
+                                    key,
+                                );
                             }
                         }
 
@@ -912,14 +935,51 @@ impl MigrationGraph {
                     }
                 }
 
-                // Trigger depends on its target table
+                // Trigger depends on its target table and its trigger function
                 OpKey::CreateTrigger { target, .. } => {
                     edges_to_add.push((OpKey::CreateTable(target.clone()), key.clone()));
+
+                    if let Some(MigrationOp::CreateTrigger(trigger)) = self.get_op(key) {
+                        let func_qualified = qualified_name(
+                            &trigger.function_schema,
+                            &trigger.function_name,
+                        );
+                        push_function_edges(
+                            &mut edges_to_add,
+                            &keys,
+                            &func_qualified,
+                            key,
+                        );
+                    }
                 }
 
-                // Policy depends on its table
+                // Policy depends on its table and functions referenced in expressions
                 OpKey::CreatePolicy { table, .. } => {
                     edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
+
+                    if let Some(MigrationOp::CreatePolicy(policy)) = self.get_op(key) {
+                        // default_schema uses table_schema — unqualified function calls
+                        // in the expression resolve against the table's schema, not necessarily
+                        // "public". Cross-schema unqualified calls won't be caught.
+                        let schema = &policy.table_schema;
+                        let mut func_refs = HashSet::new();
+                        if let Some(expr) = &policy.using_expr {
+                            func_refs.extend(extract_function_references(expr, schema));
+                        }
+                        if let Some(expr) = &policy.check_expr {
+                            func_refs.extend(extract_function_references(expr, schema));
+                        }
+                        for ref_obj in func_refs {
+                            let ref_qualified =
+                                qualified_name(&ref_obj.schema, &ref_obj.name);
+                            push_function_edges(
+                                &mut edges_to_add,
+                                &keys,
+                                &ref_qualified,
+                                key,
+                            );
+                        }
+                    }
                 }
 
                 // Index depends on its table
@@ -4158,6 +4218,117 @@ mod tests {
             "CreatePolicy",
             |op| matches!(op, MigrationOp::CreateFunction(_)),
             |op| matches!(op, MigrationOp::CreatePolicy(_)),
+        );
+    }
+
+    #[test]
+    fn policy_with_function_reference_in_using_expr() {
+        let mut policy = make_policy("entity_owner", "public", "items");
+        policy.using_expr = Some(
+            "auth.user_owns_entity(entity_id, 'items'::text)".to_string(),
+        );
+        let ops = vec![
+            MigrationOp::CreatePolicy(policy),
+            MigrationOp::CreateFunction(make_simple_function("user_owns_entity", "auth")),
+            MigrationOp::CreateTable(make_table("items", vec![])),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .expect("CreatePolicy not found");
+
+        assert!(
+            func_pos < policy_pos,
+            "CreateFunction ({func_pos}) before CreatePolicy ({policy_pos})"
+        );
+    }
+
+    #[test]
+    fn policy_with_function_reference_in_check_expr() {
+        let mut policy = make_policy("entity_insert", "public", "items");
+        policy.using_expr = None;
+        policy.check_expr = Some(
+            "auth.can_insert('items'::text)".to_string(),
+        );
+        let ops = vec![
+            MigrationOp::CreatePolicy(policy),
+            MigrationOp::CreateFunction(make_simple_function("can_insert", "auth")),
+            MigrationOp::CreateTable(make_table("items", vec![])),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .expect("CreatePolicy not found");
+
+        assert!(
+            func_pos < policy_pos,
+            "CreateFunction ({func_pos}) before CreatePolicy ({policy_pos})"
+        );
+    }
+
+    #[test]
+    fn trigger_cross_schema_function_dependency() {
+        let mut trigger = make_trigger("audit_insert", "public", "users", "log_changes");
+        trigger.function_schema = "audit".to_string();
+        let ops = vec![
+            MigrationOp::CreateTrigger(trigger),
+            MigrationOp::CreateFunction(make_simple_function("log_changes", "audit")),
+            MigrationOp::CreateTable(make_table("users", vec![])),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let trigger_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTrigger(_)))
+            .expect("CreateTrigger not found");
+
+        assert!(
+            func_pos < trigger_pos,
+            "CreateFunction ({func_pos}) before CreateTrigger ({trigger_pos})"
+        );
+    }
+
+    #[test]
+    fn view_with_function_reference() {
+        let ops = vec![
+            MigrationOp::CreateView(make_view(
+                "active_users",
+                "public",
+                "SELECT auth.is_active(id) FROM public.users",
+            )),
+            MigrationOp::CreateFunction(make_simple_function("is_active", "auth")),
+            MigrationOp::CreateTable(make_table("users", vec![])),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let view_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateView(_)))
+            .expect("CreateView not found");
+
+        assert!(
+            func_pos < view_pos,
+            "CreateFunction ({func_pos}) before CreateView ({view_pos})"
         );
     }
 
