@@ -891,14 +891,8 @@ impl MigrationGraph {
 
                         let func_refs = extract_function_references(&view.query, &view.schema);
                         for ref_obj in func_refs {
-                            let ref_qualified =
-                                qualified_name(&ref_obj.schema, &ref_obj.name);
-                            push_function_edges(
-                                &mut edges_to_add,
-                                &keys,
-                                &ref_qualified,
-                                key,
-                            );
+                            let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
+                            push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
                         }
                     }
                 }
@@ -912,12 +906,7 @@ impl MigrationGraph {
                         for ref_obj in refs {
                             let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
                             if ref_qualified != *func_name {
-                                push_function_edges(
-                                    &mut edges_to_add,
-                                    &keys,
-                                    &ref_qualified,
-                                    key,
-                                );
+                                push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
                             }
                         }
 
@@ -940,16 +929,9 @@ impl MigrationGraph {
                     edges_to_add.push((OpKey::CreateTable(target.clone()), key.clone()));
 
                     if let Some(MigrationOp::CreateTrigger(trigger)) = self.get_op(key) {
-                        let func_qualified = qualified_name(
-                            &trigger.function_schema,
-                            &trigger.function_name,
-                        );
-                        push_function_edges(
-                            &mut edges_to_add,
-                            &keys,
-                            &func_qualified,
-                            key,
-                        );
+                        let func_qualified =
+                            qualified_name(&trigger.function_schema, &trigger.function_name);
+                        push_function_edges(&mut edges_to_add, &keys, &func_qualified, key);
                     }
                 }
 
@@ -970,14 +952,8 @@ impl MigrationGraph {
                             func_refs.extend(extract_function_references(expr, schema));
                         }
                         for ref_obj in func_refs {
-                            let ref_qualified =
-                                qualified_name(&ref_obj.schema, &ref_obj.name);
-                            push_function_edges(
-                                &mut edges_to_add,
-                                &keys,
-                                &ref_qualified,
-                                key,
-                            );
+                            let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
+                            push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
                         }
                     }
                 }
@@ -4224,9 +4200,7 @@ mod tests {
     #[test]
     fn policy_with_function_reference_in_using_expr() {
         let mut policy = make_policy("entity_owner", "public", "items");
-        policy.using_expr = Some(
-            "auth.user_owns_entity(entity_id, 'items'::text)".to_string(),
-        );
+        policy.using_expr = Some("auth.user_owns_entity(entity_id, 'items'::text)".to_string());
         let ops = vec![
             MigrationOp::CreatePolicy(policy),
             MigrationOp::CreateFunction(make_simple_function("user_owns_entity", "auth")),
@@ -4253,9 +4227,7 @@ mod tests {
     fn policy_with_function_reference_in_check_expr() {
         let mut policy = make_policy("entity_insert", "public", "items");
         policy.using_expr = None;
-        policy.check_expr = Some(
-            "auth.can_insert('items'::text)".to_string(),
-        );
+        policy.check_expr = Some("auth.can_insert('items'::text)".to_string());
         let ops = vec![
             MigrationOp::CreatePolicy(policy),
             MigrationOp::CreateFunction(make_simple_function("can_insert", "auth")),
