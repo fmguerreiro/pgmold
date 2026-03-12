@@ -849,9 +849,37 @@ impl MigrationGraph {
             }
         }
 
+        /// Extract function references from an expression and add dependency edges.
+        fn push_function_ref_edges(
+            edges: &mut Vec<(OpKey, OpKey)>,
+            keys: &[OpKey],
+            expression: &str,
+            default_schema: &str,
+            consumer_key: &OpKey,
+        ) {
+            for ref_obj in extract_function_references(expression, default_schema) {
+                let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
+                push_function_edges(edges, keys, &ref_qualified, consumer_key);
+            }
+        }
+
+        /// Check if a drop-level OpKey targets the given table.
+        fn drop_targets_table(other: &OpKey, table: &str) -> bool {
+            match other {
+                OpKey::DropForeignKey { table: t, .. }
+                | OpKey::DropIndex { table: t, .. }
+                | OpKey::DropCheckConstraint { table: t, .. }
+                | OpKey::DropColumn { table: t, .. }
+                | OpKey::DropPolicy { table: t, .. }
+                | OpKey::DropTrigger { target: t, .. } => t == table,
+                _ => false,
+            }
+        }
+
         for key in &keys {
             match key {
-                // CreateTable with FKs depends on referenced tables existing
+                // CreateTable with FKs depends on referenced tables existing,
+                // and column defaults may reference functions
                 OpKey::CreateTable(table_name) => {
                     if let Some(MigrationOp::CreateTable(table)) = self.get_op(key) {
                         for fk in &table.foreign_keys {
@@ -862,6 +890,18 @@ impl MigrationGraph {
                             // edge is needed because the table doesn't depend on itself.
                             if ref_qualified != *table_name {
                                 edges_to_add.push((OpKey::CreateTable(ref_qualified), key.clone()));
+                            }
+                        }
+
+                        for column in table.columns.values() {
+                            if let Some(default) = &column.default {
+                                push_function_ref_edges(
+                                    &mut edges_to_add,
+                                    &keys,
+                                    default,
+                                    &table.schema,
+                                    key,
+                                );
                             }
                         }
                     }
@@ -889,11 +929,13 @@ impl MigrationGraph {
                             }
                         }
 
-                        let func_refs = extract_function_references(&view.query, &view.schema);
-                        for ref_obj in func_refs {
-                            let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                            push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
-                        }
+                        push_function_ref_edges(
+                            &mut edges_to_add,
+                            &keys,
+                            &view.query,
+                            &view.schema,
+                            key,
+                        );
                     }
                 }
 
@@ -902,8 +944,7 @@ impl MigrationGraph {
                     name: func_name, ..
                 } => {
                     if let Some(MigrationOp::CreateFunction(func)) = self.get_op(key) {
-                        let refs = extract_function_references(&func.body, &func.schema);
-                        for ref_obj in refs {
+                        for ref_obj in extract_function_references(&func.body, &func.schema) {
                             let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
                             if ref_qualified != *func_name {
                                 push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
@@ -940,53 +981,87 @@ impl MigrationGraph {
                     edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
 
                     if let Some(MigrationOp::CreatePolicy(policy)) = self.get_op(key) {
-                        // default_schema uses table_schema — unqualified function calls
-                        // in the expression resolve against the table's schema, not necessarily
-                        // "public". Cross-schema unqualified calls won't be caught.
                         let schema = &policy.table_schema;
-                        let mut func_refs = HashSet::new();
                         if let Some(expr) = &policy.using_expr {
-                            func_refs.extend(extract_function_references(expr, schema));
+                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
                         }
                         if let Some(expr) = &policy.check_expr {
-                            func_refs.extend(extract_function_references(expr, schema));
-                        }
-                        for ref_obj in func_refs {
-                            let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                            push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
+                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
                         }
                     }
                 }
 
-                // Index depends on its table
+                // Index depends on its table and functions in expressions/predicates
                 OpKey::AddIndex { table, .. } => {
                     edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
+
+                    if let Some(MigrationOp::AddIndex { table, index }) = self.get_op(key) {
+                        let schema = table.split('.').next().unwrap_or("public");
+                        for col in &index.columns {
+                            push_function_ref_edges(&mut edges_to_add, &keys, col, schema, key);
+                        }
+                        if let Some(predicate) = &index.predicate {
+                            push_function_ref_edges(
+                                &mut edges_to_add,
+                                &keys,
+                                predicate,
+                                schema,
+                                key,
+                            );
+                        }
+                    }
                 }
 
-                // AddColumn depends on table
+                // AddColumn depends on table and functions in defaults
                 OpKey::AddColumn { table, .. } => {
                     edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
+
+                    if let Some(MigrationOp::AddColumn { table, column }) = self.get_op(key) {
+                        if let Some(default) = &column.default {
+                            let schema = table.split('.').next().unwrap_or("public");
+                            push_function_ref_edges(&mut edges_to_add, &keys, default, schema, key);
+                        }
+                    }
                 }
 
-                // AddCheckConstraint depends on table
+                // AddCheckConstraint depends on table and functions in expression
                 OpKey::AddCheckConstraint { table, .. } => {
                     edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
+
+                    if let Some(MigrationOp::AddCheckConstraint {
+                        table,
+                        check_constraint,
+                    }) = self.get_op(key)
+                    {
+                        let schema = table.split('.').next().unwrap_or("public");
+                        push_function_ref_edges(
+                            &mut edges_to_add,
+                            &keys,
+                            &check_constraint.expression,
+                            schema,
+                            key,
+                        );
+                    }
                 }
 
-                // DropColumn must happen after DropFK/DropIndex on that column
+                // NOTE: CreateDomain can reference functions in CHECK constraints and
+                // defaults, but adding function→domain edges would conflict with the
+                // phase-level domain→function ordering (domains are types used in function
+                // signatures). PostgreSQL resolves this naturally: the domain is created
+                // first, then the function, and the CHECK is validated lazily.
+
+                // DropColumn must happen after DropFK/DropIndex/DropCheck on that table
                 OpKey::DropColumn { table, .. } => {
                     for other in &keys {
-                        match other {
-                            OpKey::DropForeignKey { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropIndex { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropCheckConstraint { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            _ => {}
+                        if drop_targets_table(other, table)
+                            && matches!(
+                                other,
+                                OpKey::DropForeignKey { .. }
+                                    | OpKey::DropIndex { .. }
+                                    | OpKey::DropCheckConstraint { .. }
+                            )
+                        {
+                            edges_to_add.push((other.clone(), key.clone()));
                         }
                     }
                 }
@@ -994,47 +1069,74 @@ impl MigrationGraph {
                 // DropTable must happen after dropping all table objects
                 OpKey::DropTable(table) => {
                     for other in &keys {
-                        match other {
-                            OpKey::DropForeignKey { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropIndex { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropPolicy { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropTrigger { target: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropColumn { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropCheckConstraint { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            _ => {}
+                        if drop_targets_table(other, table) {
+                            edges_to_add.push((other.clone(), key.clone()));
                         }
                     }
                 }
 
-                // AlterColumn must happen after dropping dependent objects
+                // AlterPolicy depends on functions in new expressions
+                OpKey::AlterPolicy { table, .. } => {
+                    if let Some(MigrationOp::AlterPolicy { changes, .. }) = self.get_op(key) {
+                        let schema = table.split('.').next().unwrap_or("public");
+                        if let Some(Some(expr)) = &changes.using_expr {
+                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
+                        }
+                        if let Some(Some(expr)) = &changes.check_expr {
+                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
+                        }
+                    }
+                }
+
+                // AlterView depends on functions in replacement query
+                OpKey::AlterView(view_name) => {
+                    if let Some(MigrationOp::AlterView { new_view, .. }) = self.get_op(key) {
+                        let refs = extract_relation_references(&new_view.query);
+                        for ref_name in refs {
+                            if ref_name != *view_name {
+                                edges_to_add
+                                    .push((OpKey::CreateTable(ref_name.clone()), key.clone()));
+                                edges_to_add.push((OpKey::CreateView(ref_name), key.clone()));
+                            }
+                        }
+                        push_function_ref_edges(
+                            &mut edges_to_add,
+                            &keys,
+                            &new_view.query,
+                            &new_view.schema,
+                            key,
+                        );
+                    }
+                }
+
+                // AlterColumn must happen after dropping dependent objects,
+                // and new defaults may reference functions
                 OpKey::AlterColumn { table, .. } => {
                     for other in &keys {
-                        match other {
-                            OpKey::DropForeignKey { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropIndex { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropPolicy { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropTrigger { target: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            _ => {}
+                        if drop_targets_table(other, table)
+                            && matches!(
+                                other,
+                                OpKey::DropForeignKey { .. }
+                                    | OpKey::DropIndex { .. }
+                                    | OpKey::DropPolicy { .. }
+                                    | OpKey::DropTrigger { .. }
+                            )
+                        {
+                            edges_to_add.push((other.clone(), key.clone()));
+                        }
+                    }
+
+                    if let Some(MigrationOp::AlterColumn { table, changes, .. }) = self.get_op(key)
+                    {
+                        if let Some(Some(default_expr)) = &changes.default {
+                            let schema = table.split('.').next().unwrap_or("public");
+                            push_function_ref_edges(
+                                &mut edges_to_add,
+                                &keys,
+                                default_expr,
+                                schema,
+                                key,
+                            );
                         }
                     }
                 }
@@ -1449,7 +1551,7 @@ fn topological_sort(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diff::{ColumnChanges, OwnerObjectKind};
+    use crate::diff::{ColumnChanges, OwnerObjectKind, PolicyChanges};
     use crate::model::*;
     use std::collections::BTreeMap;
 
@@ -4301,6 +4403,234 @@ mod tests {
         assert!(
             func_pos < view_pos,
             "CreateFunction ({func_pos}) before CreateView ({view_pos})"
+        );
+    }
+
+    #[test]
+    fn check_constraint_with_function_reference() {
+        let ops = vec![
+            MigrationOp::AddCheckConstraint {
+                table: "public.items".to_string(),
+                check_constraint: CheckConstraint {
+                    name: "items_valid".to_string(),
+                    expression: "auth.validate_item(price, quantity)".to_string(),
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("validate_item", "auth")),
+            MigrationOp::CreateTable(make_table("items", vec![])),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let check_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddCheckConstraint { .. }))
+            .expect("AddCheckConstraint not found");
+
+        assert!(
+            func_pos < check_pos,
+            "CreateFunction ({func_pos}) before AddCheckConstraint ({check_pos})"
+        );
+    }
+
+    #[test]
+    fn index_with_function_expression() {
+        let ops = vec![
+            MigrationOp::AddIndex {
+                table: "public.items".to_string(),
+                index: Index {
+                    name: "items_normalized_idx".to_string(),
+                    columns: vec!["auth.normalize_name(name)".to_string()],
+                    unique: false,
+                    index_type: IndexType::BTree,
+                    predicate: None,
+                    is_constraint: false,
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("normalize_name", "auth")),
+            MigrationOp::CreateTable(make_table("items", vec![])),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let index_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddIndex { .. }))
+            .expect("AddIndex not found");
+
+        assert!(
+            func_pos < index_pos,
+            "CreateFunction ({func_pos}) before AddIndex ({index_pos})"
+        );
+    }
+
+    #[test]
+    fn index_with_function_predicate() {
+        let ops = vec![
+            MigrationOp::AddIndex {
+                table: "public.items".to_string(),
+                index: Index {
+                    name: "items_active_idx".to_string(),
+                    columns: vec!["id".to_string()],
+                    unique: false,
+                    index_type: IndexType::BTree,
+                    predicate: Some("auth.is_active(status)".to_string()),
+                    is_constraint: false,
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("is_active", "auth")),
+            MigrationOp::CreateTable(make_table("items", vec![])),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let index_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddIndex { .. }))
+            .expect("AddIndex not found");
+
+        assert!(
+            func_pos < index_pos,
+            "CreateFunction ({func_pos}) before AddIndex ({index_pos})"
+        );
+    }
+
+    #[test]
+    fn column_default_with_function_reference() {
+        let ops = vec![
+            MigrationOp::AddColumn {
+                table: "public.items".to_string(),
+                column: Column {
+                    name: "tracking_id".to_string(),
+                    data_type: PgType::Text,
+                    nullable: true,
+                    default: Some("auth.generate_tracking_id()".to_string()),
+                    comment: None,
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("generate_tracking_id", "auth")),
+            MigrationOp::CreateTable(make_table("items", vec![])),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let col_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddColumn { .. }))
+            .expect("AddColumn not found");
+
+        assert!(
+            func_pos < col_pos,
+            "CreateFunction ({func_pos}) before AddColumn ({col_pos})"
+        );
+    }
+
+    #[test]
+    fn alter_policy_with_function_reference() {
+        let ops = vec![
+            MigrationOp::AlterPolicy {
+                table: "public.items".to_string(),
+                name: "entity_owner".to_string(),
+                changes: PolicyChanges {
+                    roles: None,
+                    using_expr: Some(Some(
+                        "auth.user_owns_entity(entity_id, 'items'::text)".to_string(),
+                    )),
+                    check_expr: None,
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("user_owns_entity", "auth")),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let alter_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterPolicy { .. }))
+            .expect("AlterPolicy not found");
+
+        assert!(
+            func_pos < alter_pos,
+            "CreateFunction ({func_pos}) before AlterPolicy ({alter_pos})"
+        );
+    }
+
+    #[test]
+    fn alter_view_with_function_reference() {
+        let ops = vec![
+            MigrationOp::AlterView {
+                name: "public.active_users".to_string(),
+                new_view: View {
+                    name: "active_users".to_string(),
+                    schema: "public".to_string(),
+                    query: "SELECT auth.is_active(id) FROM public.users".to_string(),
+                    materialized: false,
+                    owner: None,
+                    grants: Vec::new(),
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("is_active", "auth")),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let alter_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterView { .. }))
+            .expect("AlterView not found");
+
+        assert!(
+            func_pos < alter_pos,
+            "CreateFunction ({func_pos}) before AlterView ({alter_pos})"
+        );
+    }
+
+    #[test]
+    fn alter_column_default_with_function_reference() {
+        let ops = vec![
+            MigrationOp::AlterColumn {
+                table: "public.items".to_string(),
+                column: "tracking_id".to_string(),
+                changes: ColumnChanges {
+                    data_type: None,
+                    nullable: None,
+                    default: Some(Some("auth.generate_tracking_id()".to_string())),
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("generate_tracking_id", "auth")),
+        ];
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .expect("CreateFunction not found");
+        let alter_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterColumn { .. }))
+            .expect("AlterColumn not found");
+
+        assert!(
+            func_pos < alter_pos,
+            "CreateFunction ({func_pos}) before AlterColumn ({alter_pos})"
         );
     }
 
