@@ -849,6 +849,33 @@ impl MigrationGraph {
             }
         }
 
+        /// Extract function references from an expression and add dependency edges.
+        fn push_function_ref_edges(
+            edges: &mut Vec<(OpKey, OpKey)>,
+            keys: &[OpKey],
+            expression: &str,
+            default_schema: &str,
+            consumer_key: &OpKey,
+        ) {
+            for ref_obj in extract_function_references(expression, default_schema) {
+                let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
+                push_function_edges(edges, keys, &ref_qualified, consumer_key);
+            }
+        }
+
+        /// Check if a drop-level OpKey targets the given table.
+        fn drop_targets_table(other: &OpKey, table: &str) -> bool {
+            match other {
+                OpKey::DropForeignKey { table: t, .. }
+                | OpKey::DropIndex { table: t, .. }
+                | OpKey::DropCheckConstraint { table: t, .. }
+                | OpKey::DropColumn { table: t, .. }
+                | OpKey::DropPolicy { table: t, .. }
+                | OpKey::DropTrigger { target: t, .. } => t == table,
+                _ => false,
+            }
+        }
+
         for key in &keys {
             match key {
                 // CreateTable with FKs depends on referenced tables existing,
@@ -868,16 +895,13 @@ impl MigrationGraph {
 
                         for column in table.columns.values() {
                             if let Some(default) = &column.default {
-                                for ref_obj in extract_function_references(default, &table.schema) {
-                                    let ref_qualified =
-                                        qualified_name(&ref_obj.schema, &ref_obj.name);
-                                    push_function_edges(
-                                        &mut edges_to_add,
-                                        &keys,
-                                        &ref_qualified,
-                                        key,
-                                    );
-                                }
+                                push_function_ref_edges(
+                                    &mut edges_to_add,
+                                    &keys,
+                                    default,
+                                    &table.schema,
+                                    key,
+                                );
                             }
                         }
                     }
@@ -905,11 +929,13 @@ impl MigrationGraph {
                             }
                         }
 
-                        let func_refs = extract_function_references(&view.query, &view.schema);
-                        for ref_obj in func_refs {
-                            let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                            push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
-                        }
+                        push_function_ref_edges(
+                            &mut edges_to_add,
+                            &keys,
+                            &view.query,
+                            &view.schema,
+                            key,
+                        );
                     }
                 }
 
@@ -918,8 +944,7 @@ impl MigrationGraph {
                     name: func_name, ..
                 } => {
                     if let Some(MigrationOp::CreateFunction(func)) = self.get_op(key) {
-                        let refs = extract_function_references(&func.body, &func.schema);
-                        for ref_obj in refs {
+                        for ref_obj in extract_function_references(&func.body, &func.schema) {
                             let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
                             if ref_qualified != *func_name {
                                 push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
@@ -956,20 +981,12 @@ impl MigrationGraph {
                     edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
 
                     if let Some(MigrationOp::CreatePolicy(policy)) = self.get_op(key) {
-                        // default_schema uses table_schema — unqualified function calls
-                        // in the expression resolve against the table's schema, not necessarily
-                        // "public". Cross-schema unqualified calls won't be caught.
                         let schema = &policy.table_schema;
-                        let mut func_refs = HashSet::new();
                         if let Some(expr) = &policy.using_expr {
-                            func_refs.extend(extract_function_references(expr, schema));
+                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
                         }
                         if let Some(expr) = &policy.check_expr {
-                            func_refs.extend(extract_function_references(expr, schema));
-                        }
-                        for ref_obj in func_refs {
-                            let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                            push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
+                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
                         }
                     }
                 }
@@ -981,16 +998,16 @@ impl MigrationGraph {
                     if let Some(MigrationOp::AddIndex { table, index }) = self.get_op(key) {
                         let schema = table.split('.').next().unwrap_or("public");
                         for col in &index.columns {
-                            for ref_obj in extract_function_references(col, schema) {
-                                let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                                push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
-                            }
+                            push_function_ref_edges(&mut edges_to_add, &keys, col, schema, key);
                         }
                         if let Some(predicate) = &index.predicate {
-                            for ref_obj in extract_function_references(predicate, schema) {
-                                let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                                push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
-                            }
+                            push_function_ref_edges(
+                                &mut edges_to_add,
+                                &keys,
+                                predicate,
+                                schema,
+                                key,
+                            );
                         }
                     }
                 }
@@ -1002,10 +1019,7 @@ impl MigrationGraph {
                     if let Some(MigrationOp::AddColumn { table, column }) = self.get_op(key) {
                         if let Some(default) = &column.default {
                             let schema = table.split('.').next().unwrap_or("public");
-                            for ref_obj in extract_function_references(default, schema) {
-                                let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                                push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
-                            }
+                            push_function_ref_edges(&mut edges_to_add, &keys, default, schema, key);
                         }
                     }
                 }
@@ -1020,12 +1034,13 @@ impl MigrationGraph {
                     }) = self.get_op(key)
                     {
                         let schema = table.split('.').next().unwrap_or("public");
-                        for ref_obj in
-                            extract_function_references(&check_constraint.expression, schema)
-                        {
-                            let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                            push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
-                        }
+                        push_function_ref_edges(
+                            &mut edges_to_add,
+                            &keys,
+                            &check_constraint.expression,
+                            schema,
+                            key,
+                        );
                     }
                 }
 
@@ -1035,20 +1050,18 @@ impl MigrationGraph {
                 // signatures). PostgreSQL resolves this naturally: the domain is created
                 // first, then the function, and the CHECK is validated lazily.
 
-                // DropColumn must happen after DropFK/DropIndex on that column
+                // DropColumn must happen after DropFK/DropIndex/DropCheck on that table
                 OpKey::DropColumn { table, .. } => {
                     for other in &keys {
-                        match other {
-                            OpKey::DropForeignKey { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropIndex { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropCheckConstraint { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            _ => {}
+                        if drop_targets_table(other, table)
+                            && matches!(
+                                other,
+                                OpKey::DropForeignKey { .. }
+                                    | OpKey::DropIndex { .. }
+                                    | OpKey::DropCheckConstraint { .. }
+                            )
+                        {
+                            edges_to_add.push((other.clone(), key.clone()));
                         }
                     }
                 }
@@ -1056,26 +1069,8 @@ impl MigrationGraph {
                 // DropTable must happen after dropping all table objects
                 OpKey::DropTable(table) => {
                     for other in &keys {
-                        match other {
-                            OpKey::DropForeignKey { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropIndex { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropPolicy { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropTrigger { target: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropColumn { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropCheckConstraint { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            _ => {}
+                        if drop_targets_table(other, table) {
+                            edges_to_add.push((other.clone(), key.clone()));
                         }
                     }
                 }
@@ -1083,20 +1078,16 @@ impl MigrationGraph {
                 // AlterColumn must happen after dropping dependent objects
                 OpKey::AlterColumn { table, .. } => {
                     for other in &keys {
-                        match other {
-                            OpKey::DropForeignKey { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropIndex { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropPolicy { table: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            OpKey::DropTrigger { target: t, .. } if t == table => {
-                                edges_to_add.push((other.clone(), key.clone()));
-                            }
-                            _ => {}
+                        if drop_targets_table(other, table)
+                            && matches!(
+                                other,
+                                OpKey::DropForeignKey { .. }
+                                    | OpKey::DropIndex { .. }
+                                    | OpKey::DropPolicy { .. }
+                                    | OpKey::DropTrigger { .. }
+                            )
+                        {
+                            edges_to_add.push((other.clone(), key.clone()));
                         }
                     }
                 }
