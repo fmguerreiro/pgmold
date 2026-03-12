@@ -1551,7 +1551,7 @@ fn topological_sort(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diff::{ColumnChanges, OwnerObjectKind};
+    use crate::diff::{ColumnChanges, OwnerObjectKind, PolicyChanges};
     use crate::model::*;
     use std::collections::BTreeMap;
 
