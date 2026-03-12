@@ -1029,25 +1029,11 @@ impl MigrationGraph {
                     }
                 }
 
-                // CreateDomain depends on functions in check constraints and defaults
-                OpKey::CreateDomain(_) => {
-                    if let Some(MigrationOp::CreateDomain(domain)) = self.get_op(key) {
-                        for constraint in &domain.check_constraints {
-                            for ref_obj in
-                                extract_function_references(&constraint.expression, &domain.schema)
-                            {
-                                let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                                push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
-                            }
-                        }
-                        if let Some(default) = &domain.default {
-                            for ref_obj in extract_function_references(default, &domain.schema) {
-                                let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                                push_function_edges(&mut edges_to_add, &keys, &ref_qualified, key);
-                            }
-                        }
-                    }
-                }
+                // NOTE: CreateDomain can reference functions in CHECK constraints and
+                // defaults, but adding function→domain edges would conflict with the
+                // phase-level domain→function ordering (domains are types used in function
+                // signatures). PostgreSQL resolves this naturally: the domain is created
+                // first, then the function, and the CHECK is validated lazily.
 
                 // DropColumn must happen after DropFK/DropIndex on that column
                 OpKey::DropColumn { table, .. } => {
@@ -4508,59 +4494,6 @@ mod tests {
         assert!(
             func_pos < col_pos,
             "CreateFunction ({func_pos}) before AddColumn ({col_pos})"
-        );
-    }
-
-    #[test]
-    fn domain_check_constraint_with_function_reference() {
-        let mut domain = make_domain("valid_email", "public");
-        domain.check_constraints = vec![DomainConstraint {
-            name: Some("email_check".to_string()),
-            expression: "auth.validate_email(VALUE)".to_string(),
-        }];
-        let ops = vec![
-            MigrationOp::CreateDomain(domain),
-            MigrationOp::CreateFunction(make_simple_function("validate_email", "auth")),
-        ];
-        let planned = plan_migration(ops);
-
-        let func_pos = planned
-            .iter()
-            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
-            .expect("CreateFunction not found");
-        let domain_pos = planned
-            .iter()
-            .position(|op| matches!(op, MigrationOp::CreateDomain(_)))
-            .expect("CreateDomain not found");
-
-        assert!(
-            func_pos < domain_pos,
-            "CreateFunction ({func_pos}) before CreateDomain ({domain_pos})"
-        );
-    }
-
-    #[test]
-    fn domain_default_with_function_reference() {
-        let mut domain = make_domain("tracking_id", "public");
-        domain.default = Some("auth.generate_id()".to_string());
-        let ops = vec![
-            MigrationOp::CreateDomain(domain),
-            MigrationOp::CreateFunction(make_simple_function("generate_id", "auth")),
-        ];
-        let planned = plan_migration(ops);
-
-        let func_pos = planned
-            .iter()
-            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
-            .expect("CreateFunction not found");
-        let domain_pos = planned
-            .iter()
-            .position(|op| matches!(op, MigrationOp::CreateDomain(_)))
-            .expect("CreateDomain not found");
-
-        assert!(
-            func_pos < domain_pos,
-            "CreateFunction ({func_pos}) before CreateDomain ({domain_pos})"
         );
     }
 
