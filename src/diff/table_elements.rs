@@ -10,10 +10,7 @@ pub(super) fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<Migratio
     for (name, column) in &to_table.columns {
         if let Some(from_column) = from_table.columns.get(name) {
             let changes = compute_column_changes(from_column, column);
-            if changes.data_type.is_some()
-                || changes.nullable.is_some()
-                || changes.default.is_some()
-            {
+            if changes.has_changes() {
                 ops.push(MigrationOp::AlterColumn {
                     table: qualified_table_name.clone(),
                     column: name.clone(),
@@ -256,10 +253,7 @@ pub(super) fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<Migrati
     for policy in &to_table.policies {
         if let Some(from_policy) = from_table.policies.iter().find(|p| p.name == policy.name) {
             let changes = compute_policy_changes(from_policy, policy);
-            if changes.roles.is_some()
-                || changes.using_expr.is_some()
-                || changes.check_expr.is_some()
-            {
+            if changes.has_changes() {
                 ops.push(MigrationOp::AlterPolicy {
                     table: qualified_table_name.clone(),
                     name: policy.name.clone(),

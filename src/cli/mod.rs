@@ -6,7 +6,7 @@ use serde::Serialize;
 use sqlx::Executor;
 
 use pgmold::check::{check_schema, has_errors as check_has_errors, IssueSeverity};
-use pgmold::diff::{compute_diff, planner::plan_migration};
+use pgmold::diff::{compute_diff, planner::plan_migration_checked};
 use pgmold::drift::detect_drift;
 use pgmold::dump::{generate_dump, generate_split_dump};
 use pgmold::expand_contract::expand_operations;
@@ -426,7 +426,7 @@ pub async fn run() -> Result<()> {
         } => {
             let from_schema = filter_by_target_schemas(&load_schema(&[from])?, &target_schemas);
             let to_schema = filter_by_target_schemas(&load_schema(&[to])?, &target_schemas);
-            let ops = plan_migration(compute_diff(&from_schema, &to_schema));
+            let ops = plan_migration_checked(compute_diff(&from_schema, &to_schema))?;
             let lock_warnings = detect_lock_hazards(&ops);
             let sql = generate_sql(&ops);
 
@@ -483,40 +483,25 @@ pub async fn run() -> Result<()> {
 
             let filtered_db_schema = filter_schema(&db_schema, &filter);
 
-            let ops = if reverse {
-                plan_migration(pgmold::diff::compute_diff_with_flags(
-                    &filtered_target,
-                    &filtered_db_schema,
-                    manage_ownership,
-                    manage_grants,
-                    &excluded_grant_roles,
-                ))
+            let (from, to) = if reverse {
+                (&filtered_target, &filtered_db_schema)
             } else {
-                plan_migration(pgmold::diff::compute_diff_with_flags(
-                    &filtered_db_schema,
-                    &filtered_target,
-                    manage_ownership,
-                    manage_grants,
-                    &excluded_grant_roles,
-                ))
+                (&filtered_db_schema, &filtered_target)
             };
+            let ops = plan_migration_checked(pgmold::diff::compute_diff_with_flags(
+                from,
+                to,
+                manage_ownership,
+                manage_grants,
+                &excluded_grant_roles,
+            ))?;
 
             let validation_info = if let Some(validate_db_url) = &validate {
                 let validate_url = parse_db_source(validate_db_url)?;
-                let (current_schema, target_schema_for_validation) = if reverse {
-                    (&filtered_target, &filtered_db_schema)
-                } else {
-                    (&filtered_db_schema, &filtered_target)
-                };
-                let validation_result = validate_migration_on_temp_db(
-                    &ops,
-                    &validate_url,
-                    current_schema,
-                    target_schema_for_validation,
-                    &target_schemas,
-                )
-                .await
-                .map_err(|e| anyhow!("Validation failed: {e}"))?;
+                let validation_result =
+                    validate_migration_on_temp_db(&ops, &validate_url, from, to, &target_schemas)
+                        .await
+                        .map_err(|e| anyhow!("Validation failed: {e}"))?;
 
                 if !validation_result.success {
                     eprintln!("\n\u{274C} Validation failed on temp database:");
@@ -704,13 +689,13 @@ pub async fn run() -> Result<()> {
 
             let filtered_db_schema = filter_schema(&db_schema, &filter);
 
-            let ops = plan_migration(pgmold::diff::compute_diff_with_flags(
+            let ops = plan_migration_checked(pgmold::diff::compute_diff_with_flags(
                 &filtered_db_schema,
                 &filtered_target,
                 manage_ownership,
                 manage_grants,
                 &excluded_grant_roles,
-            ));
+            ))?;
             let lint_options = LintOptions {
                 allow_destructive,
                 ..Default::default()
@@ -961,13 +946,13 @@ pub async fn run() -> Result<()> {
             let current = introspect_schema(&connection, &target_schemas, false)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
-            let ops = plan_migration(pgmold::diff::compute_diff_with_flags(
+            let ops = plan_migration_checked(pgmold::diff::compute_diff_with_flags(
                 &current,
                 &target,
                 grants.manage_ownership,
                 grants.manage_grants(),
                 &grants.excluded_grant_roles(),
-            ));
+            ))?;
 
             let lint_options = LintOptions::default();
             let results = lint_migration_plan(&ops, &lint_options);
@@ -1176,13 +1161,13 @@ pub async fn run() -> Result<()> {
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
-            let ops = plan_migration(pgmold::diff::compute_diff_with_flags(
+            let ops = plan_migration_checked(pgmold::diff::compute_diff_with_flags(
                 &current,
                 &target,
                 grants.manage_ownership,
                 grants.manage_grants(),
                 &grants.excluded_grant_roles(),
-            ));
+            ))?;
             let sql = generate_sql(&ops);
 
             if sql.is_empty() {

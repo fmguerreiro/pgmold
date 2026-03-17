@@ -88,19 +88,10 @@ pub(super) fn generate_fk_ops_for_type_changes(
                     table: qualified_table.clone(),
                     foreign_key_name: fk.name.clone(),
                 });
-
-                if let Some(target_fk) = target_fk {
-                    let target_table = to.tables.get(table_name).unwrap();
-                    additional_ops.push(MigrationOp::AddForeignKey {
-                        table: qualified_name(&target_table.schema, &target_table.name),
-                        foreign_key: target_fk.clone(),
-                    });
-                } else {
-                    additional_ops.push(MigrationOp::AddForeignKey {
-                        table: qualified_table,
-                        foreign_key: fk.clone(),
-                    });
-                }
+                additional_ops.push(MigrationOp::AddForeignKey {
+                    table: qualified_table,
+                    foreign_key: target_fk.unwrap_or(fk).clone(),
+                });
             }
         }
     }
@@ -152,12 +143,9 @@ pub(super) fn generate_policy_ops_for_type_changes(
                     table: qualified_table.clone(),
                     name: policy.name.clone(),
                 });
-
-                if let Some(target_policy) = target_policy {
-                    additional_ops.push(MigrationOp::CreatePolicy(target_policy.clone()));
-                } else {
-                    additional_ops.push(MigrationOp::CreatePolicy(policy.clone()));
-                }
+                additional_ops.push(MigrationOp::CreatePolicy(
+                    target_policy.unwrap_or(policy).clone(),
+                ));
             }
         }
     }
@@ -220,12 +208,9 @@ pub(super) fn generate_trigger_ops_for_type_changes(
                     target_name: trigger.target_name.clone(),
                     name: trigger.name.clone(),
                 });
-
-                if let Some(target_trigger) = target_trigger {
-                    additional_ops.push(MigrationOp::CreateTrigger(target_trigger.clone()));
-                } else {
-                    additional_ops.push(MigrationOp::CreateTrigger(trigger.clone()));
-                }
+                additional_ops.push(MigrationOp::CreateTrigger(
+                    target_trigger.unwrap_or(trigger).clone(),
+                ));
             }
         }
     }
@@ -278,12 +263,7 @@ pub(super) fn generate_view_ops_for_type_changes(
                 name: qualified_view_name.clone(),
                 materialized: view.materialized,
             });
-
-            if let Some(target_view) = target_view {
-                additional_ops.push(MigrationOp::CreateView(target_view.clone()));
-            } else {
-                additional_ops.push(MigrationOp::CreateView(view.clone()));
-            }
+            additional_ops.push(MigrationOp::CreateView(target_view.unwrap_or(view).clone()));
         }
     }
 
@@ -348,12 +328,9 @@ pub(super) fn generate_policy_ops_for_function_changes(
                     table: qualified_table.clone(),
                     name: policy.name.clone(),
                 });
-
-                if let Some(target_policy) = target_policy {
-                    additional_ops.push(MigrationOp::CreatePolicy(target_policy.clone()));
-                } else {
-                    additional_ops.push(MigrationOp::CreatePolicy(policy.clone()));
-                }
+                additional_ops.push(MigrationOp::CreatePolicy(
+                    target_policy.unwrap_or(policy).clone(),
+                ));
             }
         }
     }

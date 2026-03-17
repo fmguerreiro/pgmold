@@ -2,7 +2,9 @@ use std::collections::HashSet;
 
 use sqlx::Executor;
 
-use crate::diff::{compute_diff, compute_diff_with_flags, planner::plan_migration, MigrationOp};
+use crate::diff::{
+    compute_diff, compute_diff_with_flags, planner::plan_migration_checked, MigrationOp,
+};
 use crate::filter::{filter_by_target_schemas, filter_schema, Filter};
 use crate::lint::{lint_migration_plan, LintOptions, LintResult};
 use crate::parser::load_schema_sources;
@@ -34,13 +36,14 @@ pub async fn verify_after_apply(
     );
     let raw_current = introspect_schema(connection, target_schemas, false).await?;
     let current = filter_schema(&raw_current, filter);
-    let residual_operations = plan_migration(compute_diff_with_flags(
+    let residual_operations = plan_migration_checked(compute_diff_with_flags(
         &current,
         &target,
         manage_ownership,
         manage_grants,
         excluded_grant_roles,
-    ));
+    ))
+    .map_err(|e| SchemaError::ValidationError(e.to_string()))?;
     let convergent = residual_operations.is_empty();
     Ok(VerifyResult {
         convergent,
@@ -70,7 +73,8 @@ pub async fn apply_migration(
     let target = load_schema_sources(schema_sources)?;
     let current = introspect_schema(connection, &[String::from("public")], false).await?;
 
-    let ops = plan_migration(compute_diff(&current, &target));
+    let ops = plan_migration_checked(compute_diff(&current, &target))
+        .map_err(|e| SchemaError::ValidationError(e.to_string()))?;
 
     let lint_options = LintOptions {
         allow_destructive: options.allow_destructive,
