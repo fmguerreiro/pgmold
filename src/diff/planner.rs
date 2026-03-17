@@ -561,6 +561,7 @@ impl MigrationGraph {
         let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
         let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
         let version_views = self.nodes_matching(|k| matches!(k, OpKey::CreateVersionView { .. }));
+        let alter_views = self.nodes_matching(|k| matches!(k, OpKey::AlterView(_)));
         let alter_sequences = self.nodes_matching(|k| matches!(k, OpKey::AlterSequence(_)));
 
         let drop_fks = self.nodes_matching(|k| matches!(k, OpKey::DropForeignKey { .. }));
@@ -681,6 +682,10 @@ impl MigrationGraph {
         self.edges_all_to_all(&add_columns, &add_fks);
         self.edges_all_to_all(&add_columns, &add_checks);
 
+        // Columns before views that may reference new columns
+        self.edges_all_to_all(&add_columns, &views);
+        self.edges_all_to_all(&add_columns, &alter_views);
+
         // Enable RLS before policies
         self.edges_all_to_all(&enable_rls, &policies);
 
@@ -742,6 +747,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&alter_columns, &policies);
         self.edges_all_to_all(&alter_columns, &triggers);
         self.edges_all_to_all(&alter_columns, &views);
+        self.edges_all_to_all(&alter_columns, &alter_views);
 
         // === MODIFICATION patterns (drop before create/alter) ===
         // When objects are modified (dropped and recreated), drop must come before create
@@ -785,6 +791,7 @@ impl MigrationGraph {
             &views,
             &version_views,
             &alter_columns,
+            &alter_views,
             &alter_sequences,
         ]
         .into_iter()
@@ -4651,6 +4658,92 @@ mod tests {
             "CreateView",
             |op| matches!(op, MigrationOp::CreateTable(_)),
             |op| matches!(op, MigrationOp::CreateView(_)),
+        );
+    }
+
+    #[test]
+    fn add_column_before_create_view_referencing_column() {
+        // Reproduces issue #126: when a function is also being created, the
+        // type-level edge functions→add_columns pushes AddColumn later, while
+        // the content-aware edge CreateFunction→CreateView pulls the view earlier.
+        // Without an add_columns→views edge, the view can appear before AddColumn.
+        let ops = vec![
+            MigrationOp::CreateView(make_view(
+                "supplier_users_view",
+                "public",
+                "SELECT public.some_func(s.is_active) FROM public.suppliers s",
+            )),
+            MigrationOp::AddColumn {
+                table: "public.suppliers".to_string(),
+                column: Column {
+                    name: "is_active".to_string(),
+                    data_type: PgType::Boolean,
+                    nullable: false,
+                    default: Some("true".to_string()),
+                    comment: None,
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("some_func", "public")),
+        ];
+        let planned = plan_migration(ops);
+
+        let add_column_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddColumn { .. }))
+            .unwrap();
+        let create_view_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateView(_)))
+            .unwrap();
+
+        assert!(
+            add_column_pos < create_view_pos,
+            "AddColumn ({add_column_pos}) must come before CreateView ({create_view_pos})"
+        );
+    }
+
+    #[test]
+    fn add_column_before_alter_view_referencing_column() {
+        // Same as above but with AlterView instead of CreateView
+        let ops = vec![
+            MigrationOp::AlterView {
+                name: "public.supplier_users_view".to_string(),
+                new_view: View {
+                    name: "supplier_users_view".to_string(),
+                    schema: "public".to_string(),
+                    query: "SELECT public.some_func(s.is_active) FROM public.suppliers s"
+                        .to_string(),
+                    materialized: false,
+                    owner: None,
+                    grants: Vec::new(),
+                },
+            },
+            MigrationOp::AddColumn {
+                table: "public.suppliers".to_string(),
+                column: Column {
+                    name: "is_active".to_string(),
+                    data_type: PgType::Boolean,
+                    nullable: false,
+                    default: Some("true".to_string()),
+                    comment: None,
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("some_func", "public")),
+        ];
+        let planned = plan_migration(ops);
+
+        let add_column_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddColumn { .. }))
+            .unwrap();
+        let alter_view_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterView { .. }))
+            .unwrap();
+
+        assert!(
+            add_column_pos < alter_view_pos,
+            "AddColumn ({add_column_pos}) must come before AlterView ({alter_view_pos})"
         );
     }
 
