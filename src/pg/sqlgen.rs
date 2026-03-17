@@ -5,8 +5,9 @@ use crate::diff::{
 use crate::model::{
     parse_qualified_name, versioned_schema_name, CheckConstraint, Column, Domain, ForeignKey,
     Function, Index, IndexType, Partition, PartitionBound, PartitionStrategy, PgType, Policy,
-    PolicyCommand, Privilege, ReferentialAction, SecurityType, Sequence, SequenceDataType, Table,
-    Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, VersionView, View, Volatility,
+    PolicyCommand, Privilege, QualifiedName, ReferentialAction, SecurityType, Sequence,
+    SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, VersionView,
+    View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -113,19 +114,17 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         }
 
         MigrationOp::AddColumn { table, column } => {
-            let (schema, table_name) = parse_qualified_name(table);
             vec![format!(
                 "ALTER TABLE {} ADD COLUMN {};",
-                quote_qualified(&schema, &table_name),
+                quote_qualified(&table.schema, &table.name),
                 format_column(column)
             )]
         }
 
         MigrationOp::DropColumn { table, column } => {
-            let (schema, table_name) = parse_qualified_name(table);
             vec![format!(
                 "ALTER TABLE {} DROP COLUMN {};",
-                quote_qualified(&schema, &table_name),
+                quote_qualified(&table.schema, &table.name),
                 quote_ident(column)
             )]
         }
@@ -137,37 +136,37 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         } => generate_alter_column(table, column, changes),
 
         MigrationOp::AddPrimaryKey { table, primary_key } => {
-            let (schema, table_name) = parse_qualified_name(table);
             vec![format!(
                 "ALTER TABLE {} ADD PRIMARY KEY ({});",
-                quote_qualified(&schema, &table_name),
+                quote_qualified(&table.schema, &table.name),
                 format_column_list(&primary_key.columns)
             )]
         }
 
         MigrationOp::DropPrimaryKey { table } => {
-            let (schema, table_name) = parse_qualified_name(table);
             vec![format!(
                 "ALTER TABLE {} DROP CONSTRAINT {}_pkey;",
-                quote_qualified(&schema, &table_name),
-                quote_ident(&table_name)
+                quote_qualified(&table.schema, &table.name),
+                quote_ident(&table.name)
             )]
         }
 
         MigrationOp::AddIndex { table, index } => {
-            let (schema, table_name) = parse_qualified_name(table);
             if index.is_constraint {
-                vec![generate_add_unique_constraint(&schema, &table_name, index)]
+                vec![generate_add_unique_constraint(
+                    &table.schema,
+                    &table.name,
+                    index,
+                )]
             } else {
-                vec![generate_create_index(&schema, &table_name, index)]
+                vec![generate_create_index(&table.schema, &table.name, index)]
             }
         }
 
         MigrationOp::DropIndex { table, index_name } => {
-            let (schema, _) = parse_qualified_name(table);
             vec![format!(
                 "DROP INDEX {};",
-                quote_qualified(&schema, index_name)
+                quote_qualified(&table.schema, index_name)
             )]
         }
 
@@ -175,27 +174,28 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             table,
             constraint_name,
         } => {
-            let (schema, table_name) = parse_qualified_name(table);
             vec![format!(
                 "ALTER TABLE {} DROP CONSTRAINT {};",
-                quote_qualified(&schema, &table_name),
+                quote_qualified(&table.schema, &table.name),
                 quote_ident(constraint_name)
             )]
         }
 
         MigrationOp::AddForeignKey { table, foreign_key } => {
-            let (schema, table_name) = parse_qualified_name(table);
-            vec![generate_add_foreign_key(&schema, &table_name, foreign_key)]
+            vec![generate_add_foreign_key(
+                &table.schema,
+                &table.name,
+                foreign_key,
+            )]
         }
 
         MigrationOp::DropForeignKey {
             table,
             foreign_key_name,
         } => {
-            let (schema, table_name) = parse_qualified_name(table);
             vec![format!(
                 "ALTER TABLE {} DROP CONSTRAINT {};",
-                quote_qualified(&schema, &table_name),
+                quote_qualified(&table.schema, &table.name),
                 quote_ident(foreign_key_name)
             )]
         }
@@ -204,10 +204,9 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             table,
             check_constraint,
         } => {
-            let (schema, table_name) = parse_qualified_name(table);
             vec![generate_add_check_constraint(
-                &schema,
-                &table_name,
+                &table.schema,
+                &table.name,
                 check_constraint,
             )]
         }
@@ -216,38 +215,34 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             table,
             constraint_name,
         } => {
-            let (schema, table_name) = parse_qualified_name(table);
             vec![format!(
                 "ALTER TABLE {} DROP CONSTRAINT {};",
-                quote_qualified(&schema, &table_name),
+                quote_qualified(&table.schema, &table.name),
                 quote_ident(constraint_name)
             )]
         }
 
         MigrationOp::EnableRls { table } => {
-            let (schema, table_name) = parse_qualified_name(table);
             vec![format!(
                 "ALTER TABLE {} ENABLE ROW LEVEL SECURITY;",
-                quote_qualified(&schema, &table_name)
+                quote_qualified(&table.schema, &table.name)
             )]
         }
 
         MigrationOp::DisableRls { table } => {
-            let (schema, table_name) = parse_qualified_name(table);
             vec![format!(
                 "ALTER TABLE {} DISABLE ROW LEVEL SECURITY;",
-                quote_qualified(&schema, &table_name)
+                quote_qualified(&table.schema, &table.name)
             )]
         }
 
         MigrationOp::CreatePolicy(policy) => vec![generate_create_policy(policy)],
 
         MigrationOp::DropPolicy { table, name } => {
-            let (schema, table_name) = parse_qualified_name(table);
             vec![format!(
                 "DROP POLICY IF EXISTS {} ON {};",
                 quote_ident(name),
-                quote_qualified(&schema, &table_name)
+                quote_qualified(&table.schema, &table.name)
             )]
         }
 
@@ -381,10 +376,9 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         }
 
         MigrationOp::SetColumnNotNull { table, column } => {
-            let (schema, table_name) = parse_qualified_name(table);
             vec![format!(
                 "ALTER TABLE {} ALTER COLUMN {} SET NOT NULL;",
-                quote_qualified(&schema, &table_name),
+                quote_qualified(&table.schema, &table.name),
                 quote_ident(column)
             )]
         }
@@ -693,9 +687,12 @@ fn generate_add_check_constraint(
     )
 }
 
-fn generate_alter_column(table: &str, column: &str, changes: &ColumnChanges) -> Vec<String> {
-    let (schema, table_name) = parse_qualified_name(table);
-    let qualified = quote_qualified(&schema, &table_name);
+fn generate_alter_column(
+    table: &QualifiedName,
+    column: &str,
+    changes: &ColumnChanges,
+) -> Vec<String> {
+    let qualified = quote_qualified(&table.schema, &table.name);
     let mut statements = Vec::new();
 
     if let Some(ref data_type) = changes.data_type {
@@ -787,11 +784,11 @@ fn format_pg_type(pg_type: &PgType) -> String {
         PgType::Vector(Some(dim)) => format!("vector({dim})"),
         PgType::Vector(None) => "vector".to_string(),
         PgType::Array(inner) => format!("{}[]", format_pg_type(inner)),
-        PgType::CustomEnum(name) => {
+        PgType::UserDefined(name) => {
             let (schema, enum_name) = parse_qualified_name(name);
             quote_qualified(&schema, &enum_name)
         }
-        PgType::Named(name) => {
+        PgType::BuiltinNamed(name) => {
             if name.contains('.') {
                 let (schema, type_name) = parse_qualified_name(name);
                 quote_qualified(&schema, &type_name)
@@ -903,9 +900,12 @@ fn generate_create_policy(policy: &Policy) -> String {
     sql
 }
 
-fn generate_alter_policy(table: &str, name: &str, changes: &PolicyChanges) -> Vec<String> {
-    let (schema, table_name) = parse_qualified_name(table);
-    let qualified = quote_qualified(&schema, &table_name);
+fn generate_alter_policy(
+    table: &QualifiedName,
+    name: &str,
+    changes: &PolicyChanges,
+) -> Vec<String> {
+    let qualified = quote_qualified(&table.schema, &table.name);
     let mut statements = Vec::new();
 
     if let Some(ref roles) = changes.roles {
@@ -1436,7 +1436,7 @@ fn format_grant_object_name(kind: &GrantObjectKind, schema: &str, name: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{EnumType, PrimaryKey};
+    use crate::model::{EnumType, PrimaryKey, QualifiedName};
     use std::collections::BTreeMap;
 
     #[test]
@@ -1470,7 +1470,7 @@ mod tests {
     #[test]
     fn add_column_generates_valid_sql() {
         let ops = vec![MigrationOp::AddColumn {
-            table: "public.users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: Column {
                 name: "email".to_string(),
                 data_type: PgType::Varchar(Some(255)),
@@ -1491,7 +1491,7 @@ mod tests {
     #[test]
     fn drop_column_generates_valid_sql() {
         let ops = vec![MigrationOp::DropColumn {
-            table: "public.users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: "email".to_string(),
         }];
 
@@ -1563,7 +1563,7 @@ mod tests {
     #[test]
     fn add_index_generates_valid_sql() {
         let ops = vec![MigrationOp::AddIndex {
-            table: "public.users".to_string(),
+            table: QualifiedName::new("public", "users"),
             index: Index {
                 name: "users_email_idx".to_string(),
                 columns: vec!["email".to_string()],
@@ -1585,7 +1585,7 @@ mod tests {
     #[test]
     fn add_unique_constraint_generates_alter_table() {
         let ops = vec![MigrationOp::AddIndex {
-            table: "auth.mfa_amr_claims".to_string(),
+            table: QualifiedName::new("auth", "mfa_amr_claims"),
             index: Index {
                 name: "mfa_amr_claims_session_id_authentication_method_pkey".to_string(),
                 columns: vec![
@@ -1610,7 +1610,7 @@ mod tests {
     #[test]
     fn drop_unique_constraint_generates_alter_table() {
         let ops = vec![MigrationOp::DropUniqueConstraint {
-            table: "auth.mfa_amr_claims".to_string(),
+            table: QualifiedName::new("auth", "mfa_amr_claims"),
             constraint_name: "mfa_amr_claims_session_id_authentication_method_pkey".to_string(),
         }];
 
@@ -1625,7 +1625,7 @@ mod tests {
     #[test]
     fn drop_index_generates_schema_qualified_sql() {
         let ops = vec![MigrationOp::DropIndex {
-            table: "auth.mfa_factors".to_string(),
+            table: QualifiedName::new("auth", "mfa_factors"),
             index_name: "mfa_factors_user_friendly_name_unique".to_string(),
         }];
 
@@ -1640,7 +1640,7 @@ mod tests {
     #[test]
     fn alter_column_type_generates_valid_sql_with_using_clause() {
         let ops = vec![MigrationOp::AlterColumn {
-            table: "public.users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: "name".to_string(),
             changes: ColumnChanges {
                 data_type: Some(PgType::Varchar(Some(100))),
@@ -1660,7 +1660,7 @@ mod tests {
     #[test]
     fn alter_column_text_to_uuid_generates_using_clause() {
         let ops = vec![MigrationOp::AlterColumn {
-            table: "public.users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: "id".to_string(),
             changes: ColumnChanges {
                 data_type: Some(PgType::Uuid),
@@ -1744,7 +1744,7 @@ mod tests {
     #[test]
     fn add_foreign_key_generates_valid_sql() {
         let ops = vec![MigrationOp::AddForeignKey {
-            table: "public.posts".to_string(),
+            table: QualifiedName::new("public", "posts"),
             foreign_key: ForeignKey {
                 name: "posts_user_id_fkey".to_string(),
                 columns: vec!["user_id".to_string()],
@@ -1769,7 +1769,7 @@ mod tests {
     #[test]
     fn add_check_constraint_generates_valid_sql() {
         let ops = vec![MigrationOp::AddCheckConstraint {
-            table: "public.products".to_string(),
+            table: QualifiedName::new("public", "products"),
             check_constraint: CheckConstraint {
                 name: "price_positive".to_string(),
                 expression: "price > 0".to_string(),
@@ -1787,7 +1787,7 @@ mod tests {
     #[test]
     fn drop_check_constraint_generates_valid_sql() {
         let ops = vec![MigrationOp::DropCheckConstraint {
-            table: "public.products".to_string(),
+            table: QualifiedName::new("public", "products"),
             constraint_name: "price_positive".to_string(),
         }];
 
@@ -2652,7 +2652,7 @@ mod tests {
     #[test]
     fn sqlgen_backfill_hint() {
         let op = MigrationOp::BackfillHint {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: "email".to_string(),
             hint: "UPDATE users SET email = <value> WHERE email IS NULL;".to_string(),
         };
@@ -2667,7 +2667,7 @@ mod tests {
     #[test]
     fn sqlgen_set_column_not_null() {
         let op = MigrationOp::SetColumnNotNull {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: "email".to_string(),
         };
         let sql = generate_sql(&[op]);
@@ -2681,7 +2681,7 @@ mod tests {
     #[test]
     fn sqlgen_set_column_not_null_with_schema() {
         let op = MigrationOp::SetColumnNotNull {
-            table: "auth.users".to_string(),
+            table: QualifiedName::new("auth", "users"),
             column: "email".to_string(),
         };
         let sql = generate_sql(&[op]);
@@ -3574,7 +3574,7 @@ mod tests {
     #[test]
     fn drop_policy_uses_if_exists() {
         let ops = vec![MigrationOp::DropPolicy {
-            table: "mrv.Season".to_string(),
+            table: QualifiedName::new("mrv", "Season"),
             name: "season_owner_update".to_string(),
         }];
 
@@ -3589,7 +3589,7 @@ mod tests {
     #[test]
     fn add_boolean_array_column() {
         let ops = vec![MigrationOp::AddColumn {
-            table: "public.settings".to_string(),
+            table: QualifiedName::new("public", "settings"),
             column: Column {
                 name: "flags".to_string(),
                 data_type: PgType::Array(Box::new(PgType::Boolean)),
@@ -3610,7 +3610,7 @@ mod tests {
     #[test]
     fn add_varchar_array_column() {
         let ops = vec![MigrationOp::AddColumn {
-            table: "public.data".to_string(),
+            table: QualifiedName::new("public", "data"),
             column: Column {
                 name: "names".to_string(),
                 data_type: PgType::Array(Box::new(PgType::Varchar(Some(100)))),
@@ -3631,7 +3631,7 @@ mod tests {
     #[test]
     fn add_integer_array_column() {
         let ops = vec![MigrationOp::AddColumn {
-            table: "public.data".to_string(),
+            table: QualifiedName::new("public", "data"),
             column: Column {
                 name: "scores".to_string(),
                 data_type: PgType::Array(Box::new(PgType::Integer)),

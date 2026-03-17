@@ -5,30 +5,79 @@ use crate::util::{normalize_sql_whitespace, Result, SchemaError};
 use sqlx::Row;
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Queries run concurrently via try_join! — requires a connection pool
+/// with enough capacity (default max_connections=5 handles the concurrency
+/// since sqlx queues excess acquires).
 pub async fn introspect_schema(
     connection: &PgConnection,
     target_schemas: &[String],
     include_extension_objects: bool,
 ) -> Result<Schema> {
+    let (
+        schemas,
+        extensions,
+        enums,
+        domains,
+        tables,
+        functions,
+        views,
+        triggers,
+        sequences,
+        table_view_grants,
+        sequence_grants,
+        function_grants,
+        schema_grants,
+        type_grants,
+        partition_keys,
+        partitions,
+        mut all_columns,
+        mut all_primary_keys,
+        mut all_indexes,
+        mut all_foreign_keys,
+        mut all_check_constraints,
+        mut all_rls,
+        mut all_policies,
+        default_privileges,
+    ) = tokio::try_join!(
+        introspect_schemas(connection, target_schemas),
+        introspect_extensions(connection),
+        introspect_enums(connection, target_schemas, include_extension_objects),
+        introspect_domains(connection, target_schemas, include_extension_objects),
+        introspect_tables(connection, target_schemas, include_extension_objects),
+        introspect_functions(connection, target_schemas, include_extension_objects),
+        introspect_views(connection, target_schemas, include_extension_objects),
+        introspect_triggers(connection, target_schemas, include_extension_objects),
+        introspect_sequences(connection, target_schemas, include_extension_objects),
+        introspect_table_view_grants(connection, target_schemas),
+        introspect_sequence_grants(connection, target_schemas),
+        introspect_function_grants(connection, target_schemas),
+        introspect_schema_grants(connection, target_schemas),
+        introspect_type_grants(connection, target_schemas),
+        introspect_partition_keys(connection, target_schemas),
+        introspect_partitions(connection, target_schemas),
+        introspect_all_columns(connection, target_schemas),
+        introspect_all_primary_keys(connection, target_schemas),
+        introspect_all_indexes(connection, target_schemas),
+        introspect_all_foreign_keys(connection, target_schemas),
+        introspect_all_check_constraints(connection, target_schemas),
+        introspect_all_rls(connection, target_schemas),
+        introspect_all_policies(connection, target_schemas),
+        introspect_default_privileges(connection, target_schemas),
+    )?;
+
     let mut schema = Schema::new();
+    schema.schemas = schemas;
+    schema.extensions = extensions;
+    schema.enums = enums;
+    schema.domains = domains;
+    schema.tables = tables;
+    schema.functions = functions;
+    schema.views = views;
+    schema.triggers = triggers;
+    schema.sequences = sequences;
+    schema.partitions = partitions;
+    schema.default_privileges = default_privileges;
 
-    schema.schemas = introspect_schemas(connection, target_schemas).await?;
-    schema.extensions = introspect_extensions(connection).await?;
-    schema.enums = introspect_enums(connection, target_schemas, include_extension_objects).await?;
-    schema.domains =
-        introspect_domains(connection, target_schemas, include_extension_objects).await?;
-    schema.tables =
-        introspect_tables(connection, target_schemas, include_extension_objects).await?;
-    schema.functions =
-        introspect_functions(connection, target_schemas, include_extension_objects).await?;
-    schema.views = introspect_views(connection, target_schemas, include_extension_objects).await?;
-    schema.triggers =
-        introspect_triggers(connection, target_schemas, include_extension_objects).await?;
-    schema.sequences =
-        introspect_sequences(connection, target_schemas, include_extension_objects).await?;
-
-    // Introspect grants for tables and views
-    let table_view_grants = introspect_table_view_grants(connection, target_schemas).await?;
     for (qualified_name, grants) in table_view_grants {
         if let Some(table) = schema.tables.get_mut(&qualified_name) {
             table.grants = grants;
@@ -37,32 +86,24 @@ pub async fn introspect_schema(
         }
     }
 
-    // Introspect grants for sequences
-    let sequence_grants = introspect_sequence_grants(connection, target_schemas).await?;
     for (qualified_name, grants) in sequence_grants {
         if let Some(sequence) = schema.sequences.get_mut(&qualified_name) {
             sequence.grants = grants;
         }
     }
 
-    // Introspect grants for functions
-    let function_grants = introspect_function_grants(connection, target_schemas).await?;
     for (qualified_name, grants) in function_grants {
         if let Some(function) = schema.functions.get_mut(&qualified_name) {
             function.grants = grants;
         }
     }
 
-    // Introspect grants for schemas
-    let schema_grants = introspect_schema_grants(connection, target_schemas).await?;
     for (schema_name, grants) in schema_grants {
         if let Some(pg_schema) = schema.schemas.get_mut(&schema_name) {
             pg_schema.grants = grants;
         }
     }
 
-    // Introspect grants for types (enums and domains)
-    let type_grants = introspect_type_grants(connection, target_schemas).await?;
     for (qualified_name, grants) in type_grants {
         if let Some(enum_type) = schema.enums.get_mut(&qualified_name) {
             enum_type.grants = grants;
@@ -71,25 +112,11 @@ pub async fn introspect_schema(
         }
     }
 
-    // Introspect partition keys and merge into tables
-    let partition_keys = introspect_partition_keys(connection, target_schemas).await?;
     for (qualified_name, partition_key) in partition_keys {
         if let Some(table) = schema.tables.get_mut(&qualified_name) {
             table.partition_by = Some(partition_key);
         }
     }
-
-    // Introspect partitions (child tables)
-    schema.partitions = introspect_partitions(connection, target_schemas).await?;
-
-    let mut all_columns = introspect_all_columns(connection, target_schemas).await?;
-    let mut all_primary_keys = introspect_all_primary_keys(connection, target_schemas).await?;
-    let mut all_indexes = introspect_all_indexes(connection, target_schemas).await?;
-    let mut all_foreign_keys = introspect_all_foreign_keys(connection, target_schemas).await?;
-    let mut all_check_constraints =
-        introspect_all_check_constraints(connection, target_schemas).await?;
-    let mut all_rls = introspect_all_rls(connection, target_schemas).await?;
-    let mut all_policies = introspect_all_policies(connection, target_schemas).await?;
 
     for (qualified_name, table) in &mut schema.tables {
         if let Some(columns) = all_columns.remove(qualified_name) {
@@ -116,8 +143,6 @@ pub async fn introspect_schema(
             table.policies = policies;
         }
     }
-
-    schema.default_privileges = introspect_default_privileges(connection, target_schemas).await?;
 
     Ok(schema)
 }
@@ -305,7 +330,7 @@ async fn introspect_domains(
                 "smallint" | "int2" => PgType::SmallInt,
                 "real" | "float4" => PgType::Real,
                 "double precision" | "float8" => PgType::DoublePrecision,
-                "numeric" => PgType::Named("numeric".to_string()),
+                "numeric" => PgType::BuiltinNamed("numeric".to_string()),
                 "text" => PgType::Text,
                 "boolean" | "bool" => PgType::Boolean,
                 "timestamp" => PgType::Timestamp,
@@ -318,9 +343,9 @@ async fn introspect_domains(
                 _ => {
                     let qualified = format!("public.{base_type}");
                     if base_type.contains('.') {
-                        PgType::Named(base_type)
+                        PgType::UserDefined(base_type)
                     } else {
-                        PgType::CustomEnum(qualified)
+                        PgType::UserDefined(qualified)
                     }
                 }
             }
@@ -739,7 +764,7 @@ fn map_pg_type(
         "smallint" => Ok(PgType::SmallInt),
         "real" => Ok(PgType::Real),
         "double precision" => Ok(PgType::DoublePrecision),
-        "numeric" => Ok(PgType::Named("numeric".to_string())),
+        "numeric" => Ok(PgType::BuiltinNamed("numeric".to_string())),
         "character varying" => Ok(PgType::Varchar(char_max_length.map(|l| l as u32))),
         "text" => Ok(PgType::Text),
         "boolean" => Ok(PgType::Boolean),
@@ -764,7 +789,7 @@ fn map_pg_type(
                 };
                 Ok(PgType::Vector(dimension))
             } else {
-                Ok(PgType::CustomEnum(format!("{udt_schema}.{udt_name}")))
+                Ok(PgType::UserDefined(format!("{udt_schema}.{udt_name}")))
             }
         }
         "ARRAY" => {
@@ -796,12 +821,12 @@ fn map_pg_type(
                 "date" => PgType::Date,
                 "json" => PgType::Json,
                 "jsonb" => PgType::Jsonb,
-                "numeric" => PgType::Named("numeric".to_string()),
+                "numeric" => PgType::BuiltinNamed("numeric".to_string()),
                 "inet" => PgType::Inet,
                 "cidr" => PgType::Cidr,
                 "macaddr" => PgType::Macaddr,
                 "macaddr8" => PgType::Macaddr8,
-                _ => PgType::CustomEnum(format!("{udt_schema}.{base_udt}")),
+                _ => PgType::UserDefined(format!("{udt_schema}.{base_udt}")),
             };
             Ok(PgType::Array(Box::new(element_type)))
         }
@@ -827,12 +852,12 @@ fn map_domain_element_type(base_udt: &str, domain_schema: &str) -> PgType {
         "date" => PgType::Date,
         "json" => PgType::Json,
         "jsonb" => PgType::Jsonb,
-        "numeric" => PgType::Named("numeric".to_string()),
+        "numeric" => PgType::BuiltinNamed("numeric".to_string()),
         "inet" => PgType::Inet,
         "cidr" => PgType::Cidr,
         "macaddr" => PgType::Macaddr,
         "macaddr8" => PgType::Macaddr8,
-        _ => PgType::CustomEnum(format!("{domain_schema}.{base_udt}")),
+        _ => PgType::UserDefined(format!("{domain_schema}.{base_udt}")),
     }
 }
 

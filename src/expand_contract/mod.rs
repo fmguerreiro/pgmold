@@ -256,7 +256,7 @@ pub fn expand_operations_with_versioning(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Column, PgType, Schema, Table};
+    use crate::model::{Column, PgType, QualifiedName, Schema, Table};
 
     #[test]
     fn empty_operations_produce_empty_plan() {
@@ -277,7 +277,7 @@ mod tests {
         };
 
         let ops = vec![MigrationOp::AddColumn {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column,
         }];
 
@@ -289,7 +289,7 @@ mod tests {
 
         match &plan.expand_ops[0].op {
             MigrationOp::AddColumn { table, column } => {
-                assert_eq!(table, "users");
+                assert_eq!(table, &QualifiedName::new("public", "users"));
                 assert_eq!(column.name, "email");
                 assert!(column.nullable);
             }
@@ -298,7 +298,7 @@ mod tests {
 
         match &plan.backfill_ops[0].op {
             MigrationOp::BackfillHint { table, column, .. } => {
-                assert_eq!(table, "users");
+                assert_eq!(table, &QualifiedName::new("public", "users"));
                 assert_eq!(column, "email");
             }
             _ => panic!("Expected BackfillHint in backfill phase"),
@@ -306,7 +306,7 @@ mod tests {
 
         match &plan.contract_ops[0].op {
             MigrationOp::SetColumnNotNull { table, column } => {
-                assert_eq!(table, "users");
+                assert_eq!(table, &QualifiedName::new("public", "users"));
                 assert_eq!(column, "email");
             }
             _ => panic!("Expected SetColumnNotNull in contract phase"),
@@ -324,7 +324,7 @@ mod tests {
         };
 
         let ops = vec![MigrationOp::AddColumn {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column,
         }];
 
@@ -336,7 +336,7 @@ mod tests {
 
         match &plan.expand_ops[0].op {
             MigrationOp::AddColumn { table, column } => {
-                assert_eq!(table, "users");
+                assert_eq!(table, &QualifiedName::new("public", "users"));
                 assert_eq!(column.name, "bio");
                 assert!(column.nullable);
             }
@@ -530,7 +530,7 @@ mod tests {
         };
 
         let ops = vec![MigrationOp::AddColumn {
-            table: "public.users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column,
         }];
 

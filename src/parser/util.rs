@@ -71,7 +71,9 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
         DataType::SmallInt(_) => Ok(PgType::SmallInt),
         DataType::Real | DataType::Float4 => Ok(PgType::Real),
         DataType::DoublePrecision | DataType::Float8 => Ok(PgType::DoublePrecision),
-        DataType::Numeric(_) | DataType::Decimal(_) => Ok(PgType::Named("numeric".to_string())),
+        DataType::Numeric(_) | DataType::Decimal(_) => {
+            Ok(PgType::BuiltinNamed("numeric".to_string()))
+        }
         DataType::Varchar(len) => {
             let size = len.as_ref().and_then(|l| match l {
                 CharacterLength::IntegerLength { length, .. } => Some(*length as u32),
@@ -119,7 +121,7 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
                 [type_name] => format!("public.{type_name}"),
                 _ => name.to_string(),
             };
-            Ok(PgType::CustomEnum(qualified))
+            Ok(PgType::UserDefined(qualified))
         }
         DataType::Array(elem_type_def) => {
             let inner = match elem_type_def {

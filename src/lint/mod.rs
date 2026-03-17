@@ -209,11 +209,12 @@ fn is_type_narrowing(new_type: &PgType) -> bool {
 mod tests {
     use super::*;
     use crate::diff::ColumnChanges;
+    use crate::model::QualifiedName;
 
     #[test]
     fn blocks_drop_column_without_flag() {
         let ops = vec![MigrationOp::DropColumn {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: "email".to_string(),
         }];
         let options = LintOptions {
@@ -229,7 +230,7 @@ mod tests {
     #[test]
     fn allows_drop_column_with_flag() {
         let ops = vec![MigrationOp::DropColumn {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: "email".to_string(),
         }];
         let options = LintOptions {
@@ -270,7 +271,7 @@ mod tests {
     #[test]
     fn warns_on_type_narrowing() {
         let ops = vec![MigrationOp::AlterColumn {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: "name".to_string(),
             changes: ColumnChanges {
                 data_type: Some(PgType::Varchar(Some(50))),
@@ -289,7 +290,7 @@ mod tests {
     #[test]
     fn warns_on_set_not_null() {
         let ops = vec![MigrationOp::AlterColumn {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: "bio".to_string(),
             changes: ColumnChanges {
                 data_type: None,
@@ -483,7 +484,7 @@ mod tests {
     #[test]
     fn blocks_drop_unique_constraint_without_flag() {
         let ops = vec![MigrationOp::DropUniqueConstraint {
-            table: "auth.users".to_string(),
+            table: QualifiedName::new("auth", "users"),
             constraint_name: "users_email_unique".to_string(),
         }];
         let options = LintOptions {
@@ -499,7 +500,7 @@ mod tests {
     #[test]
     fn allows_drop_unique_constraint_with_flag() {
         let ops = vec![MigrationOp::DropUniqueConstraint {
-            table: "auth.users".to_string(),
+            table: QualifiedName::new("auth", "users"),
             constraint_name: "users_email_unique".to_string(),
         }];
         let options = LintOptions {

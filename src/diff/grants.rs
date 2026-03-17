@@ -36,7 +36,7 @@ pub(super) fn diff_grants_for_object(
                     .collect();
                 if !privs_to_revoke.is_empty() {
                     ops.push(MigrationOp::RevokePrivileges {
-                        object_kind: object_kind.clone(),
+                        object_kind,
                         schema: schema.to_string(),
                         name: name.to_string(),
                         args: args.clone(),
@@ -53,7 +53,7 @@ pub(super) fn diff_grants_for_object(
                     .collect();
                 if !privs_to_grant.is_empty() {
                     ops.push(MigrationOp::GrantPrivileges {
-                        object_kind: object_kind.clone(),
+                        object_kind,
                         schema: schema.to_string(),
                         name: name.to_string(),
                         args: args.clone(),
@@ -71,7 +71,7 @@ pub(super) fn diff_grants_for_object(
                         .collect();
                     if !common_privs.is_empty() {
                         ops.push(MigrationOp::RevokePrivileges {
-                            object_kind: object_kind.clone(),
+                            object_kind,
                             schema: schema.to_string(),
                             name: name.to_string(),
                             args: args.clone(),
@@ -88,7 +88,7 @@ pub(super) fn diff_grants_for_object(
                         .collect();
                     if !common_privs.is_empty() {
                         ops.push(MigrationOp::GrantPrivileges {
-                            object_kind: object_kind.clone(),
+                            object_kind,
                             schema: schema.to_string(),
                             name: name.to_string(),
                             args: args.clone(),
@@ -103,7 +103,7 @@ pub(super) fn diff_grants_for_object(
                 let privs: Vec<Privilege> = from_grant.privileges.iter().cloned().collect();
                 if !privs.is_empty() {
                     ops.push(MigrationOp::RevokePrivileges {
-                        object_kind: object_kind.clone(),
+                        object_kind,
                         schema: schema.to_string(),
                         name: name.to_string(),
                         args: args.clone(),
@@ -121,7 +121,7 @@ pub(super) fn diff_grants_for_object(
             let privs: Vec<Privilege> = to_grant.privileges.iter().cloned().collect();
             if !privs.is_empty() {
                 ops.push(MigrationOp::GrantPrivileges {
-                    object_kind: object_kind.clone(),
+                    object_kind,
                     schema: schema.to_string(),
                     name: name.to_string(),
                     args: args.clone(),
@@ -153,7 +153,7 @@ pub(super) fn create_grants_for_new_object(
                 return None;
             }
             Some(MigrationOp::GrantPrivileges {
-                object_kind: object_kind.clone(),
+                object_kind,
                 schema: schema.to_string(),
                 name: name.to_string(),
                 args: args.clone(),

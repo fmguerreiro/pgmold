@@ -1,28 +1,44 @@
 use crate::diff::planner::plan_dump;
-use crate::diff::{GrantObjectKind, MigrationOp};
-use crate::model::{qualified_name, Grant, Schema};
+use crate::diff::{GrantObjectKind, MigrationOp, OwnerObjectKind};
+use crate::model::{Grant, QualifiedName, Schema};
 use crate::pg::sqlgen::generate_sql;
 
-/// Helper to generate GrantPrivileges operations for a list of grants
-fn grants_to_ops(
+fn push_owner_op(
+    ops: &mut Vec<MigrationOp>,
+    object_kind: OwnerObjectKind,
+    schema: &str,
+    name: &str,
+    args: Option<String>,
+    owner: &str,
+) {
+    ops.push(MigrationOp::AlterOwner {
+        object_kind,
+        schema: schema.to_string(),
+        name: name.to_string(),
+        args,
+        new_owner: owner.to_string(),
+    });
+}
+
+fn push_grant_ops(
+    ops: &mut Vec<MigrationOp>,
     grants: &[Grant],
     object_kind: GrantObjectKind,
     schema: &str,
     name: &str,
     args: Option<String>,
-) -> Vec<MigrationOp> {
-    grants
-        .iter()
-        .map(|grant| MigrationOp::GrantPrivileges {
-            object_kind: object_kind.clone(),
+) {
+    for grant in grants {
+        ops.push(MigrationOp::GrantPrivileges {
+            object_kind,
             schema: schema.to_string(),
             name: name.to_string(),
             args: args.clone(),
             grantee: grant.grantee.clone(),
             privileges: grant.privileges.iter().cloned().collect(),
             with_grant_option: grant.with_grant_option,
-        })
-        .collect()
+        });
+    }
 }
 
 pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
@@ -30,13 +46,14 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
 
     for pg_schema in schema.schemas.values() {
         ops.push(MigrationOp::CreateSchema(pg_schema.clone()));
-        ops.extend(grants_to_ops(
+        push_grant_ops(
+            &mut ops,
             &pg_schema.grants,
             GrantObjectKind::Schema,
             &pg_schema.name,
             &pg_schema.name,
             None,
-        ));
+        );
     }
 
     for extension in schema.extensions.values() {
@@ -46,61 +63,67 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
     for enum_type in schema.enums.values() {
         ops.push(MigrationOp::CreateEnum(enum_type.clone()));
         if let Some(ref owner) = enum_type.owner {
-            ops.push(MigrationOp::AlterOwner {
-                object_kind: crate::diff::OwnerObjectKind::Type,
-                schema: enum_type.schema.clone(),
-                name: enum_type.name.clone(),
-                args: None,
-                new_owner: owner.clone(),
-            });
+            push_owner_op(
+                &mut ops,
+                OwnerObjectKind::Type,
+                &enum_type.schema,
+                &enum_type.name,
+                None,
+                owner,
+            );
         }
-        ops.extend(grants_to_ops(
+        push_grant_ops(
+            &mut ops,
             &enum_type.grants,
             GrantObjectKind::Type,
             &enum_type.schema,
             &enum_type.name,
             None,
-        ));
+        );
     }
 
     for domain in schema.domains.values() {
         ops.push(MigrationOp::CreateDomain(domain.clone()));
         if let Some(ref owner) = domain.owner {
-            ops.push(MigrationOp::AlterOwner {
-                object_kind: crate::diff::OwnerObjectKind::Domain,
-                schema: domain.schema.clone(),
-                name: domain.name.clone(),
-                args: None,
-                new_owner: owner.clone(),
-            });
+            push_owner_op(
+                &mut ops,
+                OwnerObjectKind::Domain,
+                &domain.schema,
+                &domain.name,
+                None,
+                owner,
+            );
         }
-        ops.extend(grants_to_ops(
+        push_grant_ops(
+            &mut ops,
             &domain.grants,
             GrantObjectKind::Domain,
             &domain.schema,
             &domain.name,
             None,
-        ));
+        );
     }
 
     for sequence in schema.sequences.values() {
         ops.push(MigrationOp::CreateSequence(sequence.clone()));
         if let Some(ref owner) = sequence.owner {
-            ops.push(MigrationOp::AlterOwner {
-                object_kind: crate::diff::OwnerObjectKind::Sequence,
-                schema: sequence.schema.clone(),
-                name: sequence.name.clone(),
-                args: None,
-                new_owner: owner.clone(),
-            });
+            push_owner_op(
+                &mut ops,
+                OwnerObjectKind::Sequence,
+                &sequence.schema,
+                &sequence.name,
+                None,
+                owner,
+            );
         }
-        ops.extend(grants_to_ops(
+        push_grant_ops(
+            &mut ops,
             &sequence.grants,
             GrantObjectKind::Sequence,
             &sequence.schema,
             &sequence.name,
             None,
-        ));
+        );
     }
 
     for table in schema.tables.values() {
@@ -109,16 +132,17 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
         // generate_create_table in sqlgen.rs, so we don't create separate ops here.
 
         if let Some(ref owner) = table.owner {
-            ops.push(MigrationOp::AlterOwner {
-                object_kind: crate::diff::OwnerObjectKind::Table,
-                schema: table.schema.clone(),
-                name: table.name.clone(),
-                args: None,
-                new_owner: owner.clone(),
-            });
+            push_owner_op(
+                &mut ops,
+                OwnerObjectKind::Table,
+                &table.schema,
+                &table.name,
+                None,
+                owner,
+            );
         }
 
-        let table_qualified = qualified_name(&table.schema, &table.name);
+        let table_qualified = QualifiedName::new(&table.schema, &table.name);
 
         if table.row_level_security {
             ops.push(MigrationOp::EnableRls {
@@ -130,13 +154,14 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
             ops.push(MigrationOp::CreatePolicy(policy.clone()));
         }
 
-        ops.extend(grants_to_ops(
+        push_grant_ops(
+            &mut ops,
             &table.grants,
             GrantObjectKind::Table,
             &table.schema,
             &table.name,
             None,
-        ));
+        );
     }
 
     for partition in schema.partitions.values() {
@@ -152,41 +177,45 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
             .collect::<Vec<_>>()
             .join(", ");
         if let Some(ref owner) = function.owner {
-            ops.push(MigrationOp::AlterOwner {
-                object_kind: crate::diff::OwnerObjectKind::Function,
-                schema: function.schema.clone(),
-                name: function.name.clone(),
-                args: Some(func_args.clone()),
-                new_owner: owner.clone(),
-            });
+            push_owner_op(
+                &mut ops,
+                OwnerObjectKind::Function,
+                &function.schema,
+                &function.name,
+                Some(func_args.clone()),
+                owner,
+            );
         }
-        ops.extend(grants_to_ops(
+        push_grant_ops(
+            &mut ops,
             &function.grants,
             GrantObjectKind::Function,
             &function.schema,
             &function.name,
             Some(func_args),
-        ));
+        );
     }
 
     for view in schema.views.values() {
         ops.push(MigrationOp::CreateView(view.clone()));
         if let Some(ref owner) = view.owner {
-            ops.push(MigrationOp::AlterOwner {
-                object_kind: crate::diff::OwnerObjectKind::View,
-                schema: view.schema.clone(),
-                name: view.name.clone(),
-                args: None,
-                new_owner: owner.clone(),
-            });
+            push_owner_op(
+                &mut ops,
+                OwnerObjectKind::View,
+                &view.schema,
+                &view.name,
+                None,
+                owner,
+            );
         }
-        ops.extend(grants_to_ops(
+        push_grant_ops(
+            &mut ops,
             &view.grants,
             GrantObjectKind::View,
             &view.schema,
             &view.name,
             None,
-        ));
+        );
     }
 
     for trigger in schema.triggers.values() {

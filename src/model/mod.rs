@@ -1,6 +1,60 @@
 use crate::util::{canonicalize_expression, views_semantically_equal};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
+/// A PostgreSQL qualified name consisting of a schema and object name.
+///
+/// Used as the `table` field in `MigrationOp` variants to replace bare `String`
+/// fields that previously encoded qualified names as `"schema.name"` strings,
+/// requiring callers to parse them back out with `parse_qualified_name`.
+///
+/// # Examples
+///
+/// ```
+/// use pgmold::model::QualifiedName;
+///
+/// let name = QualifiedName::new("public", "users");
+/// assert_eq!(name.schema, "public");
+/// assert_eq!(name.name, "users");
+/// assert_eq!(name.to_qualified_string(), "public.users");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct QualifiedName {
+    pub schema: String,
+    pub name: String,
+}
+
+impl QualifiedName {
+    pub fn new(schema: &str, name: &str) -> Self {
+        Self {
+            schema: schema.to_string(),
+            name: name.to_string(),
+        }
+    }
+
+    pub fn to_qualified_string(&self) -> String {
+        format!("{}.{}", self.schema, self.name)
+    }
+}
+
+impl fmt::Display for QualifiedName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.schema, self.name)
+    }
+}
+
+impl PartialEq<str> for QualifiedName {
+    fn eq(&self, other: &str) -> bool {
+        self.to_qualified_string() == other
+    }
+}
+
+impl PartialEq<&str> for QualifiedName {
+    fn eq(&self, other: &&str) -> bool {
+        self.to_qualified_string() == *other
+    }
+}
 
 /// Represents a pending ownership assignment parsed from ALTER ... OWNER TO statements.
 /// Used for cross-file resolution when object definitions and ownership are in separate files.
@@ -155,8 +209,8 @@ pub enum PgType {
     Macaddr8,
     Vector(Option<u32>),
     Array(Box<PgType>),
-    CustomEnum(String),
-    Named(String),
+    UserDefined(String),
+    BuiltinNamed(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
