@@ -2,7 +2,9 @@ use std::collections::HashSet;
 
 use sqlx::Executor;
 
-use crate::diff::{compute_diff, compute_diff_with_flags, planner::plan_migration_checked, MigrationOp};
+use crate::diff::{
+    compute_diff, compute_diff_with_flags, planner::plan_migration_checked, MigrationOp,
+};
 use crate::filter::{filter_by_target_schemas, filter_schema, Filter};
 use crate::lint::{lint_migration_plan, LintOptions, LintResult};
 use crate::parser::load_schema_sources;

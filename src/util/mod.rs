@@ -605,7 +605,9 @@ fn remove_where_outer_parens(s: &str) -> String {
 }
 
 fn strip_text_cast_from_string_literals(query: &str) -> String {
-    RE_STRING_TEXT_CAST_CI.replace_all(query, "'$1'").to_string()
+    RE_STRING_TEXT_CAST_CI
+        .replace_all(query, "'$1'")
+        .to_string()
 }
 
 fn collapse_double_parens(query: &str) -> String {

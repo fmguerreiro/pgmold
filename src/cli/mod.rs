@@ -498,15 +498,10 @@ pub async fn run() -> Result<()> {
 
             let validation_info = if let Some(validate_db_url) = &validate {
                 let validate_url = parse_db_source(validate_db_url)?;
-                let validation_result = validate_migration_on_temp_db(
-                    &ops,
-                    &validate_url,
-                    from,
-                    to,
-                    &target_schemas,
-                )
-                .await
-                .map_err(|e| anyhow!("Validation failed: {e}"))?;
+                let validation_result =
+                    validate_migration_on_temp_db(&ops, &validate_url, from, to, &target_schemas)
+                        .await
+                        .map_err(|e| anyhow!("Validation failed: {e}"))?;
 
                 if !validation_result.success {
                     eprintln!("\n\u{274C} Validation failed on temp database:");
