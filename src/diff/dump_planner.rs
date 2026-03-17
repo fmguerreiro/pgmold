@@ -234,7 +234,6 @@ mod tests {
 
     #[test]
     fn plan_dump_orders_default_privileges_at_end() {
-
         let table = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
