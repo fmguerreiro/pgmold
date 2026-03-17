@@ -3,19 +3,10 @@ pub mod locks;
 use crate::diff::MigrationOp;
 use crate::model::PgType;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LintOptions {
     pub allow_destructive: bool,
     pub is_production: bool,
-}
-
-impl Default for LintOptions {
-    fn default() -> Self {
-        Self {
-            allow_destructive: false,
-            is_production: false,
-        }
-    }
 }
 
 impl LintOptions {

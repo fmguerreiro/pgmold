@@ -42,13 +42,16 @@ impl fmt::Display for QualifiedName {
 
 impl PartialEq<str> for QualifiedName {
     fn eq(&self, other: &str) -> bool {
-        self.to_string() == other
+        match other.split_once('.') {
+            Some((schema, name)) => self.schema == schema && self.name == name,
+            None => false,
+        }
     }
 }
 
 impl PartialEq<&str> for QualifiedName {
     fn eq(&self, other: &&str) -> bool {
-        self.to_string() == *other
+        *self == **other
     }
 }
 
