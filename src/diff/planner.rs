@@ -1331,8 +1331,7 @@ fn preprocess_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result
 }
 
-#[cfg(test)]
-pub(crate) fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     plan_migration_checked(ops).expect("Circular dependency detected in migration operations")
 }
 
