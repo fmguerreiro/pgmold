@@ -18,6 +18,7 @@ fn function_args_string(function: &Function) -> String {
         .join(", ")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_ownership_change(
     ops: &mut Vec<MigrationOp>,
     options: &DiffOptions,
@@ -41,6 +42,7 @@ fn emit_ownership_change(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_grants_diff(
     ops: &mut Vec<MigrationOp>,
     options: &DiffOptions,
