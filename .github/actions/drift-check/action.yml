@@ -280,10 +280,22 @@ runs:
         echo "statement-count=$STATEMENT_COUNT" >> "$GITHUB_OUTPUT"
         echo "has-destructive=$HAS_DESTRUCTIVE" >> "$GITHUB_OUTPUT"
 
+        PLAN_FILE="$RUNNER_TEMP/pgmold-plan.json"
+        echo "$OUTPUT" > "$PLAN_FILE"
+        echo "plan-json-file=$PLAN_FILE" >> "$GITHUB_OUTPUT"
+
+        MAX_OUTPUT_CHARS=48000
+        if [[ ${#OUTPUT} -gt $MAX_OUTPUT_CHARS ]]; then
+          echo "::warning::plan-json output truncated (${#OUTPUT} chars exceeds $MAX_OUTPUT_CHARS limit); use plan-json-file output instead"
+          PLAN_FOR_OUTPUT="${OUTPUT:0:$MAX_OUTPUT_CHARS}"
+        else
+          PLAN_FOR_OUTPUT="$OUTPUT"
+        fi
+
         DELIMITER="pgmold_$(openssl rand -hex 8)"
         {
           echo "plan-json<<$DELIMITER"
-          echo "$OUTPUT"
+          echo "$PLAN_FOR_OUTPUT"
           echo "$DELIMITER"
         } >> "$GITHUB_OUTPUT"
 
@@ -327,10 +339,22 @@ runs:
         echo "expected-fingerprint=$EXPECTED_FP" >> "$GITHUB_OUTPUT"
         echo "actual-fingerprint=$ACTUAL_FP" >> "$GITHUB_OUTPUT"
 
+        REPORT_FILE="$RUNNER_TEMP/pgmold-drift-report.json"
+        echo "$OUTPUT" > "$REPORT_FILE"
+        echo "report-file=$REPORT_FILE" >> "$GITHUB_OUTPUT"
+
+        MAX_OUTPUT_CHARS=48000
+        if [[ ${#OUTPUT} -gt $MAX_OUTPUT_CHARS ]]; then
+          echo "::warning::drift report output truncated (${#OUTPUT} chars exceeds $MAX_OUTPUT_CHARS limit); use report-file output instead"
+          REPORT_FOR_OUTPUT="${OUTPUT:0:$MAX_OUTPUT_CHARS}"
+        else
+          REPORT_FOR_OUTPUT="$OUTPUT"
+        fi
+
         DELIMITER="pgmold_$(openssl rand -hex 8)"
         {
           echo "report<<$DELIMITER"
-          echo "$OUTPUT"
+          echo "$REPORT_FOR_OUTPUT"
           echo "$DELIMITER"
         } >> "$GITHUB_OUTPUT"
 
@@ -349,13 +373,9 @@ runs:
       shell: bash
       if: ${{ steps.plan.outputs.has-destructive == 'true' }}
       env:
-        PLAN_JSON: ${{ steps.plan.outputs.plan-json }}
+        PLAN_FILE: ${{ steps.plan.outputs.plan-json-file }}
       run: |
-        if [[ -z "$PLAN_JSON" ]]; then
-          echo "::warning::PLAN_JSON is empty, skipping destructive operation warnings"
-          exit 0
-        fi
-        echo "$PLAN_JSON" | jq -r '.operations[] | select(startswith("Drop"))' | while IFS= read -r statement; do
+        jq -r '.operations[] | select(startswith("Drop"))' "$PLAN_FILE" | while IFS= read -r statement; do
           echo "::warning::Destructive operation: $statement"
         done
 
@@ -365,11 +385,11 @@ runs:
       if: ${{ inputs.plan-comment == 'true' && (github.event_name == 'pull_request' || inputs.pr-number != '') }}
       env:
         GH_TOKEN: ${{ inputs.github-token }}
-        PLAN_JSON: ${{ steps.plan.outputs.plan-json }}
+        PLAN_FILE: ${{ steps.plan.outputs.plan-json-file }}
         STATEMENT_COUNT: ${{ steps.plan.outputs.statement-count }}
         HAS_DESTRUCTIVE: ${{ steps.plan.outputs.has-destructive }}
         HAS_DRIFT: ${{ steps.drift.outputs.has-drift }}
-        DRIFT_REPORT: ${{ steps.drift.outputs.report }}
+        DRIFT_FILE: ${{ steps.drift.outputs.report-file }}
         REPO: ${{ github.repository }}
         PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
       run: |
@@ -378,8 +398,12 @@ runs:
           echo ""
           echo "### Drift Status"
           if [[ "$HAS_DRIFT" == "true" ]]; then
+            if [[ ! -f "$DRIFT_FILE" ]]; then
+              echo "Drift detected (report file unavailable)"
+              return
+            fi
             local diff_count
-            diff_count=$(echo "$DRIFT_REPORT" | jq '.differences | length')
+            diff_count=$(jq '.differences | length' "$DRIFT_FILE")
             echo "Drift detected ($diff_count differences)"
           else
             echo "No drift detected"
@@ -406,14 +430,14 @@ runs:
             return
           fi
 
-          if [[ -z "$PLAN_JSON" ]]; then
+          if [[ ! -f "$PLAN_FILE" ]]; then
             echo "Plan output unavailable (may have been truncated)."
             emit_footer
             return
           fi
 
           local dest_count
-          dest_count=$(echo "$PLAN_JSON" | jq -r '[.operations[] | select(startswith("Drop"))] | length')
+          dest_count=$(jq -r '[.operations[] | select(startswith("Drop"))] | length' "$PLAN_FILE")
 
           local dest_display="$dest_count"
           if [[ "$dest_count" -gt 0 ]]; then
@@ -430,13 +454,13 @@ runs:
             echo ""
             echo "### Destructive Operations"
             echo "> **Warning:** This migration contains destructive operations that require \`--allow-destructive\`."
-            echo "$PLAN_JSON" | jq -r '.operations[] | select(startswith("Drop"))' | while IFS= read -r op; do
+            jq -r '.operations[] | select(startswith("Drop"))' "$PLAN_FILE" | while IFS= read -r op; do
               echo "- \`$op\`"
             done
           fi
 
           local lock_warnings
-          lock_warnings=$(echo "$PLAN_JSON" | jq -r '.lock_warnings // [] | .[]' 2>/dev/null)
+          lock_warnings=$(jq -r '.lock_warnings // [] | .[]' "$PLAN_FILE" 2>/dev/null)
           if [[ -n "$lock_warnings" ]]; then
             echo ""
             echo "### Lock Warnings"
@@ -450,7 +474,7 @@ runs:
           echo "<details><summary>Click to expand ($stmt_count statements)</summary>"
           echo ""
           echo '```sql'
-          echo "$PLAN_JSON" | jq -r '.statements // [] | .[]'
+          jq -r '.statements // [] | .[]' "$PLAN_FILE"
           echo '```'
           echo ""
           echo "</details>"
