@@ -245,7 +245,7 @@ pub(super) fn diff_domains(from: &Schema, to: &Schema, options: &DiffOptions) ->
                     None
                 },
             };
-            if changes.default.is_some() || changes.not_null.is_some() {
+            if changes.has_changes() {
                 ops.push(MigrationOp::AlterDomain {
                     name: name.clone(),
                     changes,

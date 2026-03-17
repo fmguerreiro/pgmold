@@ -228,11 +228,35 @@ pub struct PolicyChanges {
     pub check_expr: Option<Option<String>>,
 }
 
+impl PolicyChanges {
+    pub fn has_changes(&self) -> bool {
+        self.roles.is_some() || self.using_expr.is_some() || self.check_expr.is_some()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnChanges {
     pub data_type: Option<PgType>,
     pub nullable: Option<bool>,
     pub default: Option<Option<String>>,
+}
+
+impl ColumnChanges {
+    pub fn has_changes(&self) -> bool {
+        self.data_type.is_some() || self.nullable.is_some() || self.default.is_some()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DomainChanges {
+    pub default: Option<Option<String>>,
+    pub not_null: Option<bool>,
+}
+
+impl DomainChanges {
+    pub fn has_changes(&self) -> bool {
+        self.default.is_some() || self.not_null.is_some()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -245,12 +269,6 @@ pub struct SequenceChanges {
     pub cache: Option<i64>,
     pub cycle: Option<bool>,
     pub owned_by: Option<Option<SequenceOwner>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct DomainChanges {
-    pub default: Option<Option<String>>,
-    pub not_null: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
