@@ -111,9 +111,23 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
         merge_objects!(object_sources, path, merged, "trigger", triggers, schema);
         merge_objects!(object_sources, path, merged, "sequence", sequences, schema);
         merge_objects!(object_sources, path, merged, "domain", domains, schema);
-        merge_objects!(object_sources, path, merged, "extension", extensions, schema);
+        merge_objects!(
+            object_sources,
+            path,
+            merged,
+            "extension",
+            extensions,
+            schema
+        );
         merge_objects!(object_sources, path, merged, "schema", schemas, schema);
-        merge_objects!(object_sources, path, merged, "partition", partitions, schema);
+        merge_objects!(
+            object_sources,
+            path,
+            merged,
+            "partition",
+            partitions,
+            schema
+        );
 
         merged.pending_policies.extend(schema.pending_policies);
         merged.pending_owners.extend(schema.pending_owners);

@@ -70,8 +70,13 @@ pub async fn apply_migration(
     connection: &PgConnection,
     options: ApplyOptions,
 ) -> Result<ApplyResult> {
-    apply_migration_with_schemas(schema_sources, connection, options, &[String::from("public")])
-        .await
+    apply_migration_with_schemas(
+        schema_sources,
+        connection,
+        options,
+        &[String::from("public")],
+    )
+    .await
 }
 
 pub async fn apply_migration_with_schemas(
