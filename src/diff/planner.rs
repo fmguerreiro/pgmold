@@ -1,5 +1,5 @@
 use super::{GrantObjectKind, MigrationOp, OwnerObjectKind};
-use crate::model::{parse_qualified_name, qualified_name};
+use crate::model::{qualified_name, QualifiedName};
 use crate::parser::{
     extract_function_references, extract_rowtype_references, extract_table_references,
 };
@@ -63,63 +63,63 @@ pub enum OpKey {
     CreatePartition(String),
     DropPartition(String),
     AddColumn {
-        table: String,
+        table: QualifiedName,
         column: String,
     },
     DropColumn {
-        table: String,
+        table: QualifiedName,
         column: String,
     },
     AlterColumn {
-        table: String,
+        table: QualifiedName,
         column: String,
     },
     AddPrimaryKey {
-        table: String,
+        table: QualifiedName,
     },
     DropPrimaryKey {
-        table: String,
+        table: QualifiedName,
     },
     AddIndex {
-        table: String,
+        table: QualifiedName,
         name: String,
     },
     DropIndex {
-        table: String,
+        table: QualifiedName,
         name: String,
     },
     AddForeignKey {
-        table: String,
+        table: QualifiedName,
         name: String,
     },
     DropForeignKey {
-        table: String,
+        table: QualifiedName,
         name: String,
     },
     AddCheckConstraint {
-        table: String,
+        table: QualifiedName,
         name: String,
     },
     DropCheckConstraint {
-        table: String,
+        table: QualifiedName,
         name: String,
     },
     EnableRls {
-        table: String,
+        table: QualifiedName,
     },
     DisableRls {
-        table: String,
+        table: QualifiedName,
     },
     CreatePolicy {
-        table: String,
+        table: QualifiedName,
         name: String,
     },
     DropPolicy {
-        table: String,
+        table: QualifiedName,
         name: String,
     },
     AlterPolicy {
-        table: String,
+        table: QualifiedName,
         name: String,
     },
     CreateFunction {
@@ -142,7 +142,7 @@ pub enum OpKey {
         name: String,
     },
     DropTrigger {
-        target: String,
+        target: QualifiedName,
         name: String,
     },
     AlterTriggerEnabled {
@@ -158,11 +158,11 @@ pub enum OpKey {
         name: String,
     },
     BackfillHint {
-        table: String,
+        table: QualifiedName,
         column: String,
     },
     SetColumnNotNull {
-        table: String,
+        table: QualifiedName,
         column: String,
     },
     GrantPrivileges {
@@ -294,7 +294,7 @@ impl OpKey {
                 table: table.clone(),
             },
             MigrationOp::CreatePolicy(p) => OpKey::CreatePolicy {
-                table: qualified_name(&p.table_schema, &p.table),
+                table: QualifiedName::new(&p.table_schema, &p.table),
                 name: p.name.clone(),
             },
             MigrationOp::DropPolicy { table, name } => OpKey::DropPolicy {
@@ -334,7 +334,7 @@ impl OpKey {
                 target_name,
                 name,
             } => OpKey::DropTrigger {
-                target: qualified_name(target_schema, target_name),
+                target: QualifiedName::new(target_schema, target_name),
                 name: name.clone(),
             },
             MigrationOp::AlterTriggerEnabled {
@@ -357,7 +357,7 @@ impl OpKey {
                 name,
                 ..
             } => OpKey::AlterOwner {
-                object_kind: object_kind.clone(),
+                object_kind: *object_kind,
                 schema: schema.clone(),
                 name: name.clone(),
             },
@@ -376,7 +376,7 @@ impl OpKey {
                 grantee,
                 ..
             } => OpKey::GrantPrivileges {
-                object_kind: object_kind.clone(),
+                object_kind: *object_kind,
                 schema: schema.clone(),
                 name: name.clone(),
                 grantee: grantee.clone(),
@@ -388,7 +388,7 @@ impl OpKey {
                 grantee,
                 ..
             } => OpKey::RevokePrivileges {
-                object_kind: object_kind.clone(),
+                object_kind: *object_kind,
                 schema: schema.clone(),
                 name: name.clone(),
                 grantee: grantee.clone(),
@@ -485,6 +485,7 @@ impl MigrationGraph {
     /// Returns the NodeIndex for the new vertex.
     pub fn add_vertex(&mut self, op: MigrationOp) -> NodeIndex {
         let key = OpKey::from_op(&op);
+        debug_assert!(!self.nodes.contains_key(&key), "duplicate OpKey: {key:?}");
         let node = self.graph.add_node(op);
         self.nodes.insert(key, node);
         node
@@ -531,56 +532,32 @@ impl MigrationGraph {
 
     /// Add type-level dependency edges (all ops of type A before all ops of type B).
     pub fn add_type_level_edges(&mut self) {
+        self.add_schema_infrastructure_edges();
+        self.add_type_system_edges();
+        self.add_function_edges();
+        self.add_table_and_partition_edges();
+        self.add_table_element_edges();
+        self.add_rls_policy_trigger_view_edges();
+        self.add_drop_edges();
+        self.add_alter_column_edges();
+        self.add_modification_pattern_edges();
+        self.add_creates_before_final_drops_edges();
+    }
+
+    /// Tier 1: Schema infrastructure — schemas and version schemas before everything.
+    fn add_schema_infrastructure_edges(&mut self) {
         let schemas = self.nodes_matching(|k| matches!(k, OpKey::CreateSchema(_)));
         let version_schemas =
             self.nodes_matching(|k| matches!(k, OpKey::CreateVersionSchema { .. }));
         let extensions = self.nodes_matching(|k| matches!(k, OpKey::CreateExtension(_)));
         let enums = self.nodes_matching(|k| matches!(k, OpKey::CreateEnum(_)));
-        let add_enum_values = self.nodes_matching(|k| matches!(k, OpKey::AddEnumValue { .. }));
         let domains = self.nodes_matching(|k| matches!(k, OpKey::CreateDomain(_)));
         let sequences = self.nodes_matching(|k| matches!(k, OpKey::CreateSequence(_)));
         let functions = self.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. }));
-        let alter_functions = self.nodes_matching(|k| matches!(k, OpKey::AlterFunction { .. }));
         let tables = self.nodes_matching(|k| matches!(k, OpKey::CreateTable(_)));
-        let partitions = self.nodes_matching(|k| matches!(k, OpKey::CreatePartition(_)));
-        let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
-        let add_pks = self.nodes_matching(|k| matches!(k, OpKey::AddPrimaryKey { .. }));
-        let add_indexes = self.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. }));
-        let add_fks = self.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. }));
-        let add_checks = self.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. }));
-        let enable_rls = self.nodes_matching(|k| matches!(k, OpKey::EnableRls { .. }));
-        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
-        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
         let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
         let version_views = self.nodes_matching(|k| matches!(k, OpKey::CreateVersionView { .. }));
-        let alter_views = self.nodes_matching(|k| matches!(k, OpKey::AlterView(_)));
-        let alter_sequences = self.nodes_matching(|k| matches!(k, OpKey::AlterSequence(_)));
 
-        let drop_fks = self.nodes_matching(|k| matches!(k, OpKey::DropForeignKey { .. }));
-        let drop_indexes = self.nodes_matching(|k| matches!(k, OpKey::DropIndex { .. }));
-        let drop_checks = self.nodes_matching(|k| matches!(k, OpKey::DropCheckConstraint { .. }));
-        let drop_policies = self.nodes_matching(|k| matches!(k, OpKey::DropPolicy { .. }));
-        let drop_triggers = self.nodes_matching(|k| matches!(k, OpKey::DropTrigger { .. }));
-        let drop_views = self.nodes_matching(|k| matches!(k, OpKey::DropView(_)));
-        let drop_columns = self.nodes_matching(|k| matches!(k, OpKey::DropColumn { .. }));
-        let drop_pks = self.nodes_matching(|k| matches!(k, OpKey::DropPrimaryKey { .. }));
-        let drop_tables = self.nodes_matching(|k| matches!(k, OpKey::DropTable(_)));
-        let drop_partitions = self.nodes_matching(|k| matches!(k, OpKey::DropPartition(_)));
-        let drop_sequences = self.nodes_matching(|k| matches!(k, OpKey::DropSequence(_)));
-        let drop_domains = self.nodes_matching(|k| matches!(k, OpKey::DropDomain(_)));
-        let drop_enums = self.nodes_matching(|k| matches!(k, OpKey::DropEnum(_)));
-        let drop_extensions = self.nodes_matching(|k| matches!(k, OpKey::DropExtension(_)));
-        let drop_version_schemas =
-            self.nodes_matching(|k| matches!(k, OpKey::DropVersionSchema { .. }));
-        let drop_schemas = self.nodes_matching(|k| matches!(k, OpKey::DropSchema(_)));
-        let drop_version_views =
-            self.nodes_matching(|k| matches!(k, OpKey::DropVersionView { .. }));
-
-        let alter_columns = self.nodes_matching(|k| matches!(k, OpKey::AlterColumn { .. }));
-
-        // === CREATE dependencies ===
-
-        // Schema infrastructure first
         self.edges_all_to_all(&schemas, &tables);
         self.edges_all_to_all(&schemas, &enums);
         self.edges_all_to_all(&schemas, &domains);
@@ -589,12 +566,21 @@ impl MigrationGraph {
         self.edges_all_to_all(&schemas, &views);
         self.edges_all_to_all(&version_schemas, &version_views);
 
-        // Extensions before types/tables
         self.edges_all_to_all(&extensions, &enums);
         self.edges_all_to_all(&extensions, &domains);
         self.edges_all_to_all(&extensions, &tables);
+    }
 
-        // Types before tables
+    /// Tier 2: Type system — enums, enum values, and domains before tables and columns.
+    fn add_type_system_edges(&mut self) {
+        let enums = self.nodes_matching(|k| matches!(k, OpKey::CreateEnum(_)));
+        let add_enum_values = self.nodes_matching(|k| matches!(k, OpKey::AddEnumValue { .. }));
+        let domains = self.nodes_matching(|k| matches!(k, OpKey::CreateDomain(_)));
+        let tables = self.nodes_matching(|k| matches!(k, OpKey::CreateTable(_)));
+        let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
+        let functions = self.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. }));
+        let alter_functions = self.nodes_matching(|k| matches!(k, OpKey::AlterFunction { .. }));
+
         self.edges_all_to_all(&enums, &tables);
         self.edges_all_to_all(&enums, &add_columns);
         self.edges_all_to_all(&enums, &add_enum_values);
@@ -602,15 +588,27 @@ impl MigrationGraph {
         self.edges_all_to_all(&add_enum_values, &add_columns);
         self.edges_all_to_all(&domains, &tables);
         self.edges_all_to_all(&domains, &add_columns);
-        self.edges_all_to_all(&sequences, &tables);
 
-        // Types before functions (used in RETURNS TABLE, parameters, DECLARE blocks)
         self.edges_all_to_all(&enums, &functions);
         self.edges_all_to_all(&domains, &functions);
         self.edges_all_to_all(&add_enum_values, &functions);
         self.edges_all_to_all(&enums, &alter_functions);
         self.edges_all_to_all(&domains, &alter_functions);
         self.edges_all_to_all(&add_enum_values, &alter_functions);
+    }
+
+    /// Tier 3: Sequences and functions before tables.
+    /// Functions with RETURNS SETOF <table> or %ROWTYPE references are handled per-table
+    /// to avoid introducing cycles.
+    fn add_function_edges(&mut self) {
+        let sequences = self.nodes_matching(|k| matches!(k, OpKey::CreateSequence(_)));
+        let functions = self.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. }));
+        let tables = self.nodes_matching(|k| matches!(k, OpKey::CreateTable(_)));
+        let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
+        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
+        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
+
+        self.edges_all_to_all(&sequences, &tables);
 
         // Functions before tables (used in defaults/checks),
         // except functions with RETURNS SETOF <table> or %ROWTYPE references which depend on
@@ -652,14 +650,29 @@ impl MigrationGraph {
                 }
             }
         }
+
         self.edges_all_to_all(&functions, &add_columns);
         self.edges_all_to_all(&functions, &triggers);
         self.edges_all_to_all(&functions, &policies);
+    }
 
-        // Tables before partitions
+    /// Tier 4: Tables before partitions, and tables before all table-level objects.
+    fn add_table_and_partition_edges(&mut self) {
+        let tables = self.nodes_matching(|k| matches!(k, OpKey::CreateTable(_)));
+        let partitions = self.nodes_matching(|k| matches!(k, OpKey::CreatePartition(_)));
+        let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
+        let add_pks = self.nodes_matching(|k| matches!(k, OpKey::AddPrimaryKey { .. }));
+        let add_indexes = self.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. }));
+        let add_fks = self.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. }));
+        let add_checks = self.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. }));
+        let enable_rls = self.nodes_matching(|k| matches!(k, OpKey::EnableRls { .. }));
+        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
+        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
+        let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
+        let alter_sequences = self.nodes_matching(|k| matches!(k, OpKey::AlterSequence(_)));
+
         self.edges_all_to_all(&tables, &partitions);
 
-        // Tables before table-level objects
         self.edges_all_to_all(&tables, &add_columns);
         self.edges_all_to_all(&tables, &add_pks);
         self.edges_all_to_all(&tables, &add_indexes);
@@ -668,30 +681,61 @@ impl MigrationGraph {
         self.edges_all_to_all(&tables, &enable_rls);
         self.edges_all_to_all(&tables, &policies);
         self.edges_all_to_all(&tables, &triggers);
+        self.edges_all_to_all(&tables, &views);
+        self.edges_all_to_all(&tables, &alter_sequences);
+    }
 
-        // Columns before indexes/constraints on them
+    /// Tier 5: Table elements — columns before indexes, FKs, checks, views, policies, triggers.
+    fn add_table_element_edges(&mut self) {
+        let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
+        let add_indexes = self.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. }));
+        let add_fks = self.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. }));
+        let add_checks = self.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. }));
+        let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
+        let alter_views = self.nodes_matching(|k| matches!(k, OpKey::AlterView(_)));
+        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
+        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
+
         self.edges_all_to_all(&add_columns, &add_indexes);
         self.edges_all_to_all(&add_columns, &add_fks);
         self.edges_all_to_all(&add_columns, &add_checks);
 
-        // Columns before objects that may reference new columns
         self.edges_all_to_all(&add_columns, &views);
         self.edges_all_to_all(&add_columns, &alter_views);
         self.edges_all_to_all(&add_columns, &policies);
         self.edges_all_to_all(&add_columns, &triggers);
+    }
 
-        // Enable RLS before policies
+    /// Tier 6: RLS, policies, triggers, and views — RLS before policies.
+    fn add_rls_policy_trigger_view_edges(&mut self) {
+        let enable_rls = self.nodes_matching(|k| matches!(k, OpKey::EnableRls { .. }));
+        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
+
         self.edges_all_to_all(&enable_rls, &policies);
+    }
 
-        // Tables before views (views depend on tables)
-        self.edges_all_to_all(&tables, &views);
+    /// Tier 8 (reverse): Drop operations in reverse creation order.
+    fn add_drop_edges(&mut self) {
+        let drop_fks = self.nodes_matching(|k| matches!(k, OpKey::DropForeignKey { .. }));
+        let drop_indexes = self.nodes_matching(|k| matches!(k, OpKey::DropIndex { .. }));
+        let drop_checks = self.nodes_matching(|k| matches!(k, OpKey::DropCheckConstraint { .. }));
+        let drop_policies = self.nodes_matching(|k| matches!(k, OpKey::DropPolicy { .. }));
+        let drop_triggers = self.nodes_matching(|k| matches!(k, OpKey::DropTrigger { .. }));
+        let drop_views = self.nodes_matching(|k| matches!(k, OpKey::DropView(_)));
+        let drop_columns = self.nodes_matching(|k| matches!(k, OpKey::DropColumn { .. }));
+        let drop_pks = self.nodes_matching(|k| matches!(k, OpKey::DropPrimaryKey { .. }));
+        let drop_tables = self.nodes_matching(|k| matches!(k, OpKey::DropTable(_)));
+        let drop_partitions = self.nodes_matching(|k| matches!(k, OpKey::DropPartition(_)));
+        let drop_sequences = self.nodes_matching(|k| matches!(k, OpKey::DropSequence(_)));
+        let drop_domains = self.nodes_matching(|k| matches!(k, OpKey::DropDomain(_)));
+        let drop_enums = self.nodes_matching(|k| matches!(k, OpKey::DropEnum(_)));
+        let drop_extensions = self.nodes_matching(|k| matches!(k, OpKey::DropExtension(_)));
+        let drop_version_schemas =
+            self.nodes_matching(|k| matches!(k, OpKey::DropVersionSchema { .. }));
+        let drop_schemas = self.nodes_matching(|k| matches!(k, OpKey::DropSchema(_)));
+        let drop_version_views =
+            self.nodes_matching(|k| matches!(k, OpKey::DropVersionView { .. }));
 
-        // Tables before AlterSequence (for OWNED BY)
-        self.edges_all_to_all(&tables, &alter_sequences);
-
-        // === DROP dependencies (reverse order) ===
-
-        // Drop constraints before drop tables
         self.edges_all_to_all(&drop_fks, &drop_tables);
         self.edges_all_to_all(&drop_indexes, &drop_tables);
         self.edges_all_to_all(&drop_checks, &drop_tables);
@@ -700,41 +744,46 @@ impl MigrationGraph {
         self.edges_all_to_all(&drop_pks, &drop_tables);
         self.edges_all_to_all(&drop_columns, &drop_tables);
 
-        // Drop partitions before parent tables
         self.edges_all_to_all(&drop_partitions, &drop_tables);
 
-        // Drop views before drop tables they depend on
         self.edges_all_to_all(&drop_views, &drop_tables);
 
-        // Drop version views before version schemas
         self.edges_all_to_all(&drop_version_views, &drop_version_schemas);
 
-        // Drop tables before schemas/types
         self.edges_all_to_all(&drop_tables, &drop_schemas);
         self.edges_all_to_all(&drop_tables, &drop_enums);
         self.edges_all_to_all(&drop_tables, &drop_domains);
         self.edges_all_to_all(&drop_tables, &drop_sequences);
 
-        // Drop sequences before extensions
         self.edges_all_to_all(&drop_sequences, &drop_extensions);
 
-        // Drop enums/domains before extensions
         self.edges_all_to_all(&drop_enums, &drop_extensions);
         self.edges_all_to_all(&drop_domains, &drop_extensions);
 
-        // Drop extensions before schemas
         self.edges_all_to_all(&drop_extensions, &drop_schemas);
+    }
 
-        // === ALTER dependencies ===
+    /// ALTER column dependencies: drop constraints before alter, recreate after.
+    fn add_alter_column_edges(&mut self) {
+        let alter_columns = self.nodes_matching(|k| matches!(k, OpKey::AlterColumn { .. }));
+        let drop_fks = self.nodes_matching(|k| matches!(k, OpKey::DropForeignKey { .. }));
+        let drop_indexes = self.nodes_matching(|k| matches!(k, OpKey::DropIndex { .. }));
+        let drop_policies = self.nodes_matching(|k| matches!(k, OpKey::DropPolicy { .. }));
+        let drop_triggers = self.nodes_matching(|k| matches!(k, OpKey::DropTrigger { .. }));
+        let drop_views = self.nodes_matching(|k| matches!(k, OpKey::DropView(_)));
+        let add_fks = self.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. }));
+        let add_indexes = self.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. }));
+        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
+        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
+        let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
+        let alter_views = self.nodes_matching(|k| matches!(k, OpKey::AlterView(_)));
 
-        // Drop constraints before alter column type
         self.edges_all_to_all(&drop_fks, &alter_columns);
         self.edges_all_to_all(&drop_indexes, &alter_columns);
         self.edges_all_to_all(&drop_policies, &alter_columns);
         self.edges_all_to_all(&drop_triggers, &alter_columns);
         self.edges_all_to_all(&drop_views, &alter_columns);
 
-        // Re-create constraints after alter column type
         // Pattern: DropX → AlterColumn → CreateX
         self.edges_all_to_all(&alter_columns, &add_fks);
         self.edges_all_to_all(&alter_columns, &add_indexes);
@@ -742,11 +791,24 @@ impl MigrationGraph {
         self.edges_all_to_all(&alter_columns, &triggers);
         self.edges_all_to_all(&alter_columns, &views);
         self.edges_all_to_all(&alter_columns, &alter_views);
+    }
 
-        // === MODIFICATION patterns (drop before create/alter) ===
-        // When objects are modified (dropped and recreated), drop must come before create
-
+    /// Modification patterns: when objects are dropped and recreated, drop before create.
+    fn add_modification_pattern_edges(&mut self) {
         let drop_functions = self.nodes_matching(|k| matches!(k, OpKey::DropFunction { .. }));
+        let drop_indexes = self.nodes_matching(|k| matches!(k, OpKey::DropIndex { .. }));
+        let drop_fks = self.nodes_matching(|k| matches!(k, OpKey::DropForeignKey { .. }));
+        let drop_checks = self.nodes_matching(|k| matches!(k, OpKey::DropCheckConstraint { .. }));
+        let drop_policies = self.nodes_matching(|k| matches!(k, OpKey::DropPolicy { .. }));
+        let drop_triggers = self.nodes_matching(|k| matches!(k, OpKey::DropTrigger { .. }));
+        let drop_views = self.nodes_matching(|k| matches!(k, OpKey::DropView(_)));
+        let functions = self.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. }));
+        let add_indexes = self.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. }));
+        let add_fks = self.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. }));
+        let add_checks = self.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. }));
+        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
+        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
+        let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
 
         self.edges_all_to_all(&drop_functions, &functions);
         self.edges_all_to_all(&drop_indexes, &add_indexes);
@@ -755,12 +817,49 @@ impl MigrationGraph {
         self.edges_all_to_all(&drop_policies, &policies);
         self.edges_all_to_all(&drop_triggers, &triggers);
         self.edges_all_to_all(&drop_views, &views);
+    }
 
-        // === CREATES BEFORE FINAL DROPS ===
-        // Final drops (not for modifications) should happen after all creates complete.
-        // Exclude drops that need to happen BEFORE creates/alters:
-        // - DropFunction (before CreateFunction for modifications)
-        // - DropFK, DropIndex, DropPolicy, DropTrigger, DropView (before AlterColumn)
+    /// All create/alter operations must complete before final drop operations.
+    /// Excludes drops that must precede creates/alters (DropFunction, DropFK, etc.).
+    fn add_creates_before_final_drops_edges(&mut self) {
+        let schemas = self.nodes_matching(|k| matches!(k, OpKey::CreateSchema(_)));
+        let version_schemas =
+            self.nodes_matching(|k| matches!(k, OpKey::CreateVersionSchema { .. }));
+        let extensions = self.nodes_matching(|k| matches!(k, OpKey::CreateExtension(_)));
+        let enums = self.nodes_matching(|k| matches!(k, OpKey::CreateEnum(_)));
+        let add_enum_values = self.nodes_matching(|k| matches!(k, OpKey::AddEnumValue { .. }));
+        let domains = self.nodes_matching(|k| matches!(k, OpKey::CreateDomain(_)));
+        let sequences = self.nodes_matching(|k| matches!(k, OpKey::CreateSequence(_)));
+        let functions = self.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. }));
+        let tables = self.nodes_matching(|k| matches!(k, OpKey::CreateTable(_)));
+        let partitions = self.nodes_matching(|k| matches!(k, OpKey::CreatePartition(_)));
+        let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
+        let add_pks = self.nodes_matching(|k| matches!(k, OpKey::AddPrimaryKey { .. }));
+        let add_indexes = self.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. }));
+        let add_fks = self.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. }));
+        let add_checks = self.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. }));
+        let enable_rls = self.nodes_matching(|k| matches!(k, OpKey::EnableRls { .. }));
+        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
+        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
+        let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
+        let version_views = self.nodes_matching(|k| matches!(k, OpKey::CreateVersionView { .. }));
+        let alter_columns = self.nodes_matching(|k| matches!(k, OpKey::AlterColumn { .. }));
+        let alter_views = self.nodes_matching(|k| matches!(k, OpKey::AlterView(_)));
+        let alter_sequences = self.nodes_matching(|k| matches!(k, OpKey::AlterSequence(_)));
+
+        let drop_columns = self.nodes_matching(|k| matches!(k, OpKey::DropColumn { .. }));
+        let drop_pks = self.nodes_matching(|k| matches!(k, OpKey::DropPrimaryKey { .. }));
+        let drop_tables = self.nodes_matching(|k| matches!(k, OpKey::DropTable(_)));
+        let drop_partitions = self.nodes_matching(|k| matches!(k, OpKey::DropPartition(_)));
+        let drop_sequences = self.nodes_matching(|k| matches!(k, OpKey::DropSequence(_)));
+        let drop_domains = self.nodes_matching(|k| matches!(k, OpKey::DropDomain(_)));
+        let drop_enums = self.nodes_matching(|k| matches!(k, OpKey::DropEnum(_)));
+        let drop_extensions = self.nodes_matching(|k| matches!(k, OpKey::DropExtension(_)));
+        let drop_version_schemas =
+            self.nodes_matching(|k| matches!(k, OpKey::DropVersionSchema { .. }));
+        let drop_schemas = self.nodes_matching(|k| matches!(k, OpKey::DropSchema(_)));
+        let drop_version_views =
+            self.nodes_matching(|k| matches!(k, OpKey::DropVersionView { .. }));
 
         // Create operations that should complete before final drops
         let all_creates: Vec<NodeIndex> = [
@@ -932,7 +1031,8 @@ impl MigrationGraph {
 
                 // Policy depends on its table and functions referenced in expressions
                 OpKey::CreatePolicy { table, .. } => {
-                    edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
+                    edges_to_add
+                        .push((OpKey::CreateTable(table.to_qualified_string()), key.clone()));
 
                     if let Some(MigrationOp::CreatePolicy(policy)) = self.get_op(key) {
                         let schema = &policy.table_schema;
@@ -947,19 +1047,20 @@ impl MigrationGraph {
 
                 // Index depends on its table and functions in expressions/predicates
                 OpKey::AddIndex { table, .. } => {
-                    edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
+                    edges_to_add
+                        .push((OpKey::CreateTable(table.to_qualified_string()), key.clone()));
 
                     if let Some(MigrationOp::AddIndex { table, index }) = self.get_op(key) {
-                        let schema = parse_qualified_name(table).0;
+                        let schema = &table.schema;
                         for col in &index.columns {
-                            push_function_ref_edges(&mut edges_to_add, &keys, col, &schema, key);
+                            push_function_ref_edges(&mut edges_to_add, &keys, col, schema, key);
                         }
                         if let Some(predicate) = &index.predicate {
                             push_function_ref_edges(
                                 &mut edges_to_add,
                                 &keys,
                                 predicate,
-                                &schema,
+                                schema,
                                 key,
                             );
                         }
@@ -968,37 +1069,33 @@ impl MigrationGraph {
 
                 // AddColumn depends on table and functions in defaults
                 OpKey::AddColumn { table, .. } => {
-                    edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
+                    edges_to_add
+                        .push((OpKey::CreateTable(table.to_qualified_string()), key.clone()));
 
                     if let Some(MigrationOp::AddColumn { table, column }) = self.get_op(key) {
                         if let Some(default) = &column.default {
-                            let schema = parse_qualified_name(table).0;
-                            push_function_ref_edges(
-                                &mut edges_to_add,
-                                &keys,
-                                default,
-                                &schema,
-                                key,
-                            );
+                            let schema = &table.schema;
+                            push_function_ref_edges(&mut edges_to_add, &keys, default, schema, key);
                         }
                     }
                 }
 
                 // AddCheckConstraint depends on table and functions in expression
                 OpKey::AddCheckConstraint { table, .. } => {
-                    edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
+                    edges_to_add
+                        .push((OpKey::CreateTable(table.to_qualified_string()), key.clone()));
 
                     if let Some(MigrationOp::AddCheckConstraint {
                         table,
                         check_constraint,
                     }) = self.get_op(key)
                     {
-                        let schema = parse_qualified_name(table).0;
+                        let schema = &table.schema;
                         push_function_ref_edges(
                             &mut edges_to_add,
                             &keys,
                             &check_constraint.expression,
-                            &schema,
+                            schema,
                             key,
                         );
                     }
@@ -1028,8 +1125,10 @@ impl MigrationGraph {
 
                 // DropTable must happen after dropping all table objects
                 OpKey::DropTable(table) => {
+                    let (schema, name) = parse_qualified_name_str(table);
+                    let qualified = QualifiedName::new(&schema, &name);
                     for other in &keys {
-                        if drop_targets_table(other, table) {
+                        if drop_targets_table(other, &qualified) {
                             edges_to_add.push((other.clone(), key.clone()));
                         }
                     }
@@ -1038,12 +1137,12 @@ impl MigrationGraph {
                 // AlterPolicy depends on functions in new expressions
                 OpKey::AlterPolicy { table, .. } => {
                     if let Some(MigrationOp::AlterPolicy { changes, .. }) = self.get_op(key) {
-                        let schema = parse_qualified_name(table).0;
+                        let schema = &table.schema;
                         if let Some(Some(expr)) = &changes.using_expr {
-                            push_function_ref_edges(&mut edges_to_add, &keys, expr, &schema, key);
+                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
                         }
                         if let Some(Some(expr)) = &changes.check_expr {
-                            push_function_ref_edges(&mut edges_to_add, &keys, expr, &schema, key);
+                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
                         }
                     }
                 }
@@ -1089,12 +1188,12 @@ impl MigrationGraph {
                     if let Some(MigrationOp::AlterColumn { table, changes, .. }) = self.get_op(key)
                     {
                         if let Some(Some(default_expr)) = &changes.default {
-                            let schema = parse_qualified_name(table).0;
+                            let schema = &table.schema;
                             push_function_ref_edges(
                                 &mut edges_to_add,
                                 &keys,
                                 default_expr,
-                                &schema,
+                                schema,
                                 key,
                             );
                         }
@@ -1272,14 +1371,21 @@ fn push_function_ref_edges(
     }
 }
 
-fn drop_targets_table(other: &OpKey, table: &str) -> bool {
+fn parse_qualified_name_str(qname: &str) -> (String, String) {
+    match qname.split_once('.') {
+        Some((schema, name)) => (schema.to_string(), name.to_string()),
+        None => ("public".to_string(), qname.to_string()),
+    }
+}
+
+fn drop_targets_table(other: &OpKey, table: &QualifiedName) -> bool {
     match other {
         OpKey::DropForeignKey { table: t, .. }
         | OpKey::DropIndex { table: t, .. }
         | OpKey::DropCheckConstraint { table: t, .. }
         | OpKey::DropColumn { table: t, .. }
-        | OpKey::DropPolicy { table: t, .. }
-        | OpKey::DropTrigger { target: t, .. } => t == table,
+        | OpKey::DropPolicy { table: t, .. } => t == table,
+        OpKey::DropTrigger { target: t, .. } => t == table,
         _ => false,
     }
 }
@@ -1652,11 +1758,11 @@ mod tests {
             MigrationOp::DropTable("old_table".to_string()),
             MigrationOp::CreateTable(users),
             MigrationOp::DropColumn {
-                table: "foo".to_string(),
+                table: QualifiedName::new("public", "foo"),
                 column: "bar".to_string(),
             },
             MigrationOp::AddColumn {
-                table: "foo".to_string(),
+                table: QualifiedName::new("public", "foo"),
                 column: Column {
                     name: "baz".to_string(),
                     data_type: PgType::Text,
@@ -1700,11 +1806,11 @@ mod tests {
     fn drop_foreign_key_before_drop_column() {
         let ops = vec![
             MigrationOp::DropColumn {
-                table: "posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 column: "user_id".to_string(),
             },
             MigrationOp::DropForeignKey {
-                table: "posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 foreign_key_name: "posts_user_id_fkey".to_string(),
             },
         ];
@@ -1730,7 +1836,7 @@ mod tests {
     fn add_column_before_add_index() {
         let ops = vec![
             MigrationOp::AddIndex {
-                table: "users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 index: Index {
                     name: "users_email_idx".to_string(),
                     columns: vec!["email".to_string()],
@@ -1741,7 +1847,7 @@ mod tests {
                 },
             },
             MigrationOp::AddColumn {
-                table: "users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: Column {
                     name: "email".to_string(),
                     data_type: PgType::Text,
@@ -2056,11 +2162,11 @@ mod tests {
 
         let ops = vec![
             MigrationOp::AddIndex {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 index: index.clone(),
             },
             MigrationOp::DropIndex {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 index_name: "users_email_idx".to_string(),
             },
         ];
@@ -2099,7 +2205,7 @@ mod tests {
 
         let ops = vec![
             MigrationOp::AlterColumn {
-                table: "public.posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 column: "user_id".to_string(),
                 changes: crate::diff::ColumnChanges {
                     data_type: Some(PgType::Uuid),
@@ -2108,11 +2214,11 @@ mod tests {
                 },
             },
             MigrationOp::DropForeignKey {
-                table: "public.posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 foreign_key_name: "posts_user_id_fkey".to_string(),
             },
             MigrationOp::AddForeignKey {
-                table: "public.posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 foreign_key: fk,
             },
         ];
@@ -2159,7 +2265,7 @@ mod tests {
 
         let ops = vec![
             MigrationOp::AlterColumn {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: "id".to_string(),
                 changes: crate::diff::ColumnChanges {
                     data_type: Some(PgType::Uuid),
@@ -2168,7 +2274,7 @@ mod tests {
                 },
             },
             MigrationOp::DropPolicy {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 name: "users_select_policy".to_string(),
             },
             MigrationOp::CreatePolicy(policy),
@@ -2223,7 +2329,7 @@ mod tests {
 
         let ops = vec![
             MigrationOp::AlterColumn {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: "id".to_string(),
                 changes: crate::diff::ColumnChanges {
                     data_type: Some(PgType::Uuid),
@@ -2280,7 +2386,7 @@ mod tests {
 
         let ops = vec![
             MigrationOp::AlterColumn {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: "id".to_string(),
                 changes: crate::diff::ColumnChanges {
                     data_type: Some(PgType::Uuid),
@@ -2395,7 +2501,7 @@ mod tests {
     fn v2_drop_fk_before_alter_column() {
         let ops = vec![
             MigrationOp::AlterColumn {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: "id".to_string(),
                 changes: ColumnChanges {
                     data_type: Some(PgType::Text),
@@ -2404,7 +2510,7 @@ mod tests {
                 },
             },
             MigrationOp::DropForeignKey {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 foreign_key_name: "fk_id".to_string(),
             },
         ];
@@ -4166,7 +4272,7 @@ mod tests {
     fn table_before_add_column() {
         let ops = vec![
             MigrationOp::AddColumn {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: make_column("email"),
             },
             MigrationOp::CreateTable(make_table("users", vec![])),
@@ -4185,7 +4291,7 @@ mod tests {
     fn table_before_add_index() {
         let ops = vec![
             MigrationOp::AddIndex {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 index: Index {
                     name: "users_email_idx".to_string(),
                     columns: vec!["email".to_string()],
@@ -4211,7 +4317,7 @@ mod tests {
     fn table_before_enable_rls() {
         let ops = vec![
             MigrationOp::EnableRls {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
             },
             MigrationOp::CreateTable(make_table("users", vec![])),
         ];
@@ -4230,7 +4336,7 @@ mod tests {
         let ops = vec![
             MigrationOp::CreatePolicy(make_policy("read_all", "public", "users")),
             MigrationOp::EnableRls {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
             },
             MigrationOp::CreateTable(make_table("users", vec![])),
         ];
@@ -4428,7 +4534,7 @@ mod tests {
     fn check_constraint_with_function_reference() {
         let ops = vec![
             MigrationOp::AddCheckConstraint {
-                table: "public.items".to_string(),
+                table: QualifiedName::new("public", "items"),
                 check_constraint: CheckConstraint {
                     name: "items_valid".to_string(),
                     expression: "auth.validate_item(price, quantity)".to_string(),
@@ -4458,7 +4564,7 @@ mod tests {
     fn index_with_function_expression() {
         let ops = vec![
             MigrationOp::AddIndex {
-                table: "public.items".to_string(),
+                table: QualifiedName::new("public", "items"),
                 index: Index {
                     name: "items_normalized_idx".to_string(),
                     columns: vec!["auth.normalize_name(name)".to_string()],
@@ -4492,7 +4598,7 @@ mod tests {
     fn index_with_function_predicate() {
         let ops = vec![
             MigrationOp::AddIndex {
-                table: "public.items".to_string(),
+                table: QualifiedName::new("public", "items"),
                 index: Index {
                     name: "items_active_idx".to_string(),
                     columns: vec!["id".to_string()],
@@ -4526,7 +4632,7 @@ mod tests {
     fn column_default_with_function_reference() {
         let ops = vec![
             MigrationOp::AddColumn {
-                table: "public.items".to_string(),
+                table: QualifiedName::new("public", "items"),
                 column: Column {
                     name: "tracking_id".to_string(),
                     data_type: PgType::Text,
@@ -4559,7 +4665,7 @@ mod tests {
     fn alter_policy_with_function_reference() {
         let ops = vec![
             MigrationOp::AlterPolicy {
-                table: "public.items".to_string(),
+                table: QualifiedName::new("public", "items"),
                 name: "entity_owner".to_string(),
                 changes: PolicyChanges {
                     roles: None,
@@ -4625,7 +4731,7 @@ mod tests {
     fn alter_column_default_with_function_reference() {
         let ops = vec![
             MigrationOp::AlterColumn {
-                table: "public.items".to_string(),
+                table: QualifiedName::new("public", "items"),
                 column: "tracking_id".to_string(),
                 changes: ColumnChanges {
                     data_type: None,
@@ -4684,7 +4790,7 @@ mod tests {
                 "SELECT public.some_func(s.is_active) FROM public.suppliers s",
             )),
             MigrationOp::AddColumn {
-                table: "public.suppliers".to_string(),
+                table: QualifiedName::new("public", "suppliers"),
                 column: Column {
                     name: "is_active".to_string(),
                     data_type: PgType::Boolean,
@@ -4717,7 +4823,7 @@ mod tests {
                 ),
             },
             MigrationOp::AddColumn {
-                table: "public.suppliers".to_string(),
+                table: QualifiedName::new("public", "suppliers"),
                 column: Column {
                     name: "is_active".to_string(),
                     data_type: PgType::Boolean,
@@ -4745,7 +4851,7 @@ mod tests {
         let ops = vec![
             MigrationOp::CreatePolicy(policy),
             MigrationOp::AddColumn {
-                table: "public.suppliers".to_string(),
+                table: QualifiedName::new("public", "suppliers"),
                 column: Column {
                     name: "is_active".to_string(),
                     data_type: PgType::Boolean,
@@ -4775,7 +4881,7 @@ mod tests {
                 "check_fn",
             )),
             MigrationOp::AddColumn {
-                table: "public.suppliers".to_string(),
+                table: QualifiedName::new("public", "suppliers"),
                 column: Column {
                     name: "is_active".to_string(),
                     data_type: PgType::Boolean,
@@ -4799,11 +4905,11 @@ mod tests {
     fn add_column_before_add_fk() {
         let ops = vec![
             MigrationOp::AddForeignKey {
-                table: "public.posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 foreign_key: make_fk("users"),
             },
             MigrationOp::AddColumn {
-                table: "public.posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 column: Column {
                     name: "user_id".to_string(),
                     data_type: PgType::Integer,
@@ -4827,14 +4933,14 @@ mod tests {
     fn add_column_before_add_check() {
         let ops = vec![
             MigrationOp::AddCheckConstraint {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 check_constraint: CheckConstraint {
                     name: "email_check".to_string(),
                     expression: "email LIKE '%@%'".to_string(),
                 },
             },
             MigrationOp::AddColumn {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: make_column("email"),
             },
         ];
@@ -4855,7 +4961,7 @@ mod tests {
         let ops = vec![
             MigrationOp::DropTable("public.posts".to_string()),
             MigrationOp::DropForeignKey {
-                table: "public.posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 foreign_key_name: "posts_user_fkey".to_string(),
             },
         ];
@@ -4874,7 +4980,7 @@ mod tests {
         let ops = vec![
             MigrationOp::DropTable("public.users".to_string()),
             MigrationOp::DropIndex {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 index_name: "users_email_idx".to_string(),
             },
         ];
@@ -4893,7 +4999,7 @@ mod tests {
         let ops = vec![
             MigrationOp::DropTable("public.users".to_string()),
             MigrationOp::DropPolicy {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 name: "users_policy".to_string(),
             },
         ];
@@ -5016,7 +5122,7 @@ mod tests {
     fn drop_fk_before_alter_column() {
         let ops = vec![
             MigrationOp::AlterColumn {
-                table: "public.posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 column: "user_id".to_string(),
                 changes: ColumnChanges {
                     data_type: Some(PgType::Uuid),
@@ -5025,7 +5131,7 @@ mod tests {
                 },
             },
             MigrationOp::DropForeignKey {
-                table: "public.posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 foreign_key_name: "posts_user_fkey".to_string(),
             },
         ];
@@ -5043,11 +5149,11 @@ mod tests {
     fn alter_column_before_add_fk() {
         let ops = vec![
             MigrationOp::AddForeignKey {
-                table: "public.posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 foreign_key: make_fk("users"),
             },
             MigrationOp::AlterColumn {
-                table: "public.posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 column: "user_id".to_string(),
                 changes: ColumnChanges {
                     data_type: Some(PgType::Uuid),
@@ -5213,11 +5319,11 @@ mod tests {
     fn alter_column_sandwich_drop_fk_alter_add_fk() {
         let ops = vec![
             MigrationOp::AddForeignKey {
-                table: "public.posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 foreign_key: make_fk("users"),
             },
             MigrationOp::AlterColumn {
-                table: "public.posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 column: "user_id".to_string(),
                 changes: ColumnChanges {
                     data_type: Some(PgType::BigInt),
@@ -5226,7 +5332,7 @@ mod tests {
                 },
             },
             MigrationOp::DropForeignKey {
-                table: "public.posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 foreign_key_name: "fk_users".to_string(),
             },
         ];
@@ -5273,12 +5379,12 @@ mod tests {
     fn add_column_before_backfill_hint() {
         let ops = vec![
             MigrationOp::BackfillHint {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: "status".to_string(),
                 hint: "UPDATE users SET status = 'active'".to_string(),
             },
             MigrationOp::AddColumn {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: make_column("status"),
             },
         ];
@@ -5296,11 +5402,11 @@ mod tests {
     fn backfill_hint_before_set_column_not_null() {
         let ops = vec![
             MigrationOp::SetColumnNotNull {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: "status".to_string(),
             },
             MigrationOp::BackfillHint {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: "status".to_string(),
                 hint: "UPDATE users SET status = 'active'".to_string(),
             },
@@ -5319,11 +5425,11 @@ mod tests {
     fn add_column_before_set_column_not_null() {
         let ops = vec![
             MigrationOp::SetColumnNotNull {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: "status".to_string(),
             },
             MigrationOp::AddColumn {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: make_column("status"),
             },
         ];
@@ -5512,11 +5618,11 @@ mod tests {
     fn drop_index_before_drop_column() {
         let ops = vec![
             MigrationOp::DropColumn {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: "email".to_string(),
             },
             MigrationOp::DropIndex {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 index_name: "users_email_idx".to_string(),
             },
         ];
@@ -5534,11 +5640,11 @@ mod tests {
     fn drop_check_before_drop_column() {
         let ops = vec![
             MigrationOp::DropColumn {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: "email".to_string(),
             },
             MigrationOp::DropCheckConstraint {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 constraint_name: "email_check".to_string(),
             },
         ];
@@ -5557,7 +5663,7 @@ mod tests {
         let ops = vec![
             MigrationOp::DropTable("public.users".to_string()),
             MigrationOp::DropCheckConstraint {
-                table: "public.users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 constraint_name: "email_check".to_string(),
             },
         ];

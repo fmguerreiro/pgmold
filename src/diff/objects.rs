@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::model::{
     parse_qualified_name, qualified_name, EnumType, Function, Grant, Schema, Sequence, Trigger,
 };
@@ -87,119 +89,197 @@ fn emit_grants_for_new_object(
     }
 }
 
+/// Coordinates used for ownership and grant operations.
+struct ObjectCoords {
+    schema: String,
+    name: String,
+    args: Option<String>,
+}
+
+/// Configuration for ownership/grant management on an object type.
+#[derive(Copy, Clone)]
+struct OwnerGrantConfig {
+    owner_kind: Option<OwnerObjectKind>,
+    grant_kind: Option<GrantObjectKind>,
+}
+
+/// Generic helper that iterates two BTreeMaps and emits create/update/drop ops.
+///
+/// `on_create` is called for objects in `to` but not `from`.
+/// `on_update` is called for objects present in both maps; return value extends ops.
+/// `on_drop` is called for objects in `from` but not `to`.
+/// `coords` extracts the schema/name/args for ownership and grant calls.
+/// `owner_grant` configures which ownership/grant kinds to use (None skips that category).
+/// `get_owner` and `get_grants` extract the owner/grants fields from a value.
+#[allow(clippy::too_many_arguments)]
+fn diff_objects<K, V, FCreate, FUpdate, FDrop, FCoords, FOwner, FGrants>(
+    ops: &mut Vec<MigrationOp>,
+    options: &DiffOptions,
+    from: &BTreeMap<K, V>,
+    to: &BTreeMap<K, V>,
+    on_create: FCreate,
+    on_update: FUpdate,
+    on_drop: FDrop,
+    coords: FCoords,
+    owner_grant: OwnerGrantConfig,
+    get_owner: FOwner,
+    get_grants: FGrants,
+) where
+    K: Ord,
+    FCreate: Fn(&K, &V) -> MigrationOp,
+    FUpdate: Fn(&mut Vec<MigrationOp>, &K, &V, &V),
+    FDrop: Fn(&K, &V) -> MigrationOp,
+    FCoords: Fn(&K, &V) -> ObjectCoords,
+    FOwner: Fn(&V) -> &Option<String>,
+    FGrants: Fn(&V) -> &[Grant],
+{
+    for (key, to_val) in to {
+        let c = coords(key, to_val);
+        if let Some(from_val) = from.get(key) {
+            on_update(ops, key, from_val, to_val);
+            if let Some(owner_kind) = owner_grant.owner_kind {
+                emit_ownership_change(
+                    ops,
+                    options,
+                    get_owner(from_val),
+                    get_owner(to_val),
+                    owner_kind,
+                    &c.schema,
+                    &c.name,
+                    c.args.clone(),
+                );
+            }
+            if let Some(grant_kind) = owner_grant.grant_kind {
+                emit_grants_diff(
+                    ops,
+                    options,
+                    get_grants(from_val),
+                    get_grants(to_val),
+                    grant_kind,
+                    &c.schema,
+                    &c.name,
+                    c.args,
+                );
+            }
+        } else {
+            ops.push(on_create(key, to_val));
+            if let Some(owner_kind) = owner_grant.owner_kind {
+                emit_ownership_change(
+                    ops,
+                    options,
+                    &None,
+                    get_owner(to_val),
+                    owner_kind,
+                    &c.schema,
+                    &c.name,
+                    c.args.clone(),
+                );
+            }
+            if let Some(grant_kind) = owner_grant.grant_kind {
+                emit_grants_for_new_object(
+                    ops,
+                    options,
+                    get_grants(to_val),
+                    grant_kind,
+                    &c.schema,
+                    &c.name,
+                    c.args,
+                );
+            }
+        }
+    }
+
+    for (key, from_val) in from {
+        if !to.contains_key(key) {
+            ops.push(on_drop(key, from_val));
+        }
+    }
+}
+
+/// Shorthand for object types that use `parse_qualified_name` on the map key.
+#[allow(clippy::ptr_arg)]
+fn qualified_coords<V>(key: &String, _val: &V) -> ObjectCoords {
+    let (schema, name) = parse_qualified_name(key);
+    ObjectCoords {
+        schema,
+        name,
+        args: None,
+    }
+}
+
 pub(super) fn diff_schemas(from: &Schema, to: &Schema, options: &DiffOptions) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-
-    for (name, pg_schema) in &to.schemas {
-        if let Some(from_schema) = from.schemas.get(name) {
-            emit_grants_diff(
-                &mut ops,
-                options,
-                &from_schema.grants,
-                &pg_schema.grants,
-                GrantObjectKind::Schema,
-                name,
-                name,
-                None,
-            );
-        } else {
-            ops.push(MigrationOp::CreateSchema(pg_schema.clone()));
-            emit_grants_for_new_object(
-                &mut ops,
-                options,
-                &pg_schema.grants,
-                GrantObjectKind::Schema,
-                name,
-                name,
-                None,
-            );
-        }
-    }
-
-    for name in from.schemas.keys() {
-        if !to.schemas.contains_key(name) {
-            ops.push(MigrationOp::DropSchema(name.clone()));
-        }
-    }
-
+    diff_objects(
+        &mut ops,
+        options,
+        &from.schemas,
+        &to.schemas,
+        |_key, pg_schema| MigrationOp::CreateSchema(pg_schema.clone()),
+        |_ops, _key, _from_val, _to_val| {},
+        |name, _val| MigrationOp::DropSchema(name.clone()),
+        |name, _val| ObjectCoords {
+            schema: name.clone(),
+            name: name.clone(),
+            args: None,
+        },
+        OwnerGrantConfig {
+            owner_kind: None,
+            grant_kind: Some(GrantObjectKind::Schema),
+        },
+        |_val| &None,
+        |val| &val.grants,
+    );
     ops
 }
 
-pub(super) fn diff_extensions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+pub(super) fn diff_extensions(
+    from: &Schema,
+    to: &Schema,
+    options: &DiffOptions,
+) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-
-    for (name, ext) in &to.extensions {
-        if !from.extensions.contains_key(name) {
-            ops.push(MigrationOp::CreateExtension(ext.clone()));
-        }
-    }
-
-    for name in from.extensions.keys() {
-        if !to.extensions.contains_key(name) {
-            ops.push(MigrationOp::DropExtension(name.clone()));
-        }
-    }
-
+    // Extensions have no ownership or grants; OwnerGrantConfig::none() skips both.
+    diff_objects(
+        &mut ops,
+        options,
+        &from.extensions,
+        &to.extensions,
+        |_key, ext| MigrationOp::CreateExtension(ext.clone()),
+        |_ops, _key, _from_val, _to_val| {},
+        |name, _val| MigrationOp::DropExtension(name.clone()),
+        |name, _val| ObjectCoords {
+            schema: String::new(),
+            name: name.clone(),
+            args: None,
+        },
+        OwnerGrantConfig {
+            owner_kind: None,
+            grant_kind: None,
+        },
+        |_val| &None,
+        |_val| &[],
+    );
     ops
 }
 
 pub(super) fn diff_enums(from: &Schema, to: &Schema, options: &DiffOptions) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-
-    for (name, to_enum) in &to.enums {
-        let (schema, enum_name) = parse_qualified_name(name);
-        if let Some(from_enum) = from.enums.get(name) {
-            ops.extend(diff_enum_values(name, from_enum, to_enum));
-            emit_ownership_change(
-                &mut ops,
-                options,
-                &from_enum.owner,
-                &to_enum.owner,
-                OwnerObjectKind::Type,
-                &schema,
-                &enum_name,
-                None,
-            );
-            emit_grants_diff(
-                &mut ops,
-                options,
-                &from_enum.grants,
-                &to_enum.grants,
-                GrantObjectKind::Type,
-                &schema,
-                &enum_name,
-                None,
-            );
-        } else {
-            ops.push(MigrationOp::CreateEnum(to_enum.clone()));
-            emit_ownership_change(
-                &mut ops,
-                options,
-                &None,
-                &to_enum.owner,
-                OwnerObjectKind::Type,
-                &schema,
-                &enum_name,
-                None,
-            );
-            emit_grants_for_new_object(
-                &mut ops,
-                options,
-                &to_enum.grants,
-                GrantObjectKind::Type,
-                &schema,
-                &enum_name,
-                None,
-            );
-        }
-    }
-
-    for name in from.enums.keys() {
-        if !to.enums.contains_key(name) {
-            ops.push(MigrationOp::DropEnum(name.clone()));
-        }
-    }
-
+    diff_objects(
+        &mut ops,
+        options,
+        &from.enums,
+        &to.enums,
+        |_key, to_enum| MigrationOp::CreateEnum(to_enum.clone()),
+        |ops, name, from_enum, to_enum| ops.extend(diff_enum_values(name, from_enum, to_enum)),
+        |name, _val| MigrationOp::DropEnum(name.clone()),
+        qualified_coords,
+        OwnerGrantConfig {
+            owner_kind: Some(OwnerObjectKind::Type),
+            grant_kind: Some(GrantObjectKind::Type),
+        },
+        |val| &val.owner,
+        |val| &val.grants,
+    );
     ops
 }
 
@@ -229,10 +309,13 @@ pub(super) fn diff_enum_values(name: &str, from: &EnumType, to: &EnumType) -> Ve
 
 pub(super) fn diff_domains(from: &Schema, to: &Schema, options: &DiffOptions) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-
-    for (name, to_domain) in &to.domains {
-        let (schema, domain_name) = parse_qualified_name(name);
-        if let Some(from_domain) = from.domains.get(name) {
+    diff_objects(
+        &mut ops,
+        options,
+        &from.domains,
+        &to.domains,
+        |_key, to_domain| MigrationOp::CreateDomain(to_domain.clone()),
+        |ops, name, from_domain, to_domain| {
             let changes = DomainChanges {
                 default: if !optional_expressions_equal(&from_domain.default, &to_domain.default) {
                     Some(to_domain.default.clone())
@@ -251,115 +334,37 @@ pub(super) fn diff_domains(from: &Schema, to: &Schema, options: &DiffOptions) ->
                     changes,
                 });
             }
-            emit_ownership_change(
-                &mut ops,
-                options,
-                &from_domain.owner,
-                &to_domain.owner,
-                OwnerObjectKind::Domain,
-                &schema,
-                &domain_name,
-                None,
-            );
-            emit_grants_diff(
-                &mut ops,
-                options,
-                &from_domain.grants,
-                &to_domain.grants,
-                GrantObjectKind::Domain,
-                &schema,
-                &domain_name,
-                None,
-            );
-        } else {
-            ops.push(MigrationOp::CreateDomain(to_domain.clone()));
-            emit_ownership_change(
-                &mut ops,
-                options,
-                &None,
-                &to_domain.owner,
-                OwnerObjectKind::Domain,
-                &schema,
-                &domain_name,
-                None,
-            );
-            emit_grants_for_new_object(
-                &mut ops,
-                options,
-                &to_domain.grants,
-                GrantObjectKind::Domain,
-                &schema,
-                &domain_name,
-                None,
-            );
-        }
-    }
-
-    for name in from.domains.keys() {
-        if !to.domains.contains_key(name) {
-            ops.push(MigrationOp::DropDomain(name.clone()));
-        }
-    }
-
+        },
+        |name, _val| MigrationOp::DropDomain(name.clone()),
+        qualified_coords,
+        OwnerGrantConfig {
+            owner_kind: Some(OwnerObjectKind::Domain),
+            grant_kind: Some(GrantObjectKind::Domain),
+        },
+        |val| &val.owner,
+        |val| &val.grants,
+    );
     ops
 }
 
 pub(super) fn diff_tables(from: &Schema, to: &Schema, options: &DiffOptions) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-
-    for (name, table) in &to.tables {
-        let (schema, table_name) = parse_qualified_name(name);
-        if let Some(from_table) = from.tables.get(name) {
-            emit_ownership_change(
-                &mut ops,
-                options,
-                &from_table.owner,
-                &table.owner,
-                OwnerObjectKind::Table,
-                &schema,
-                &table_name,
-                None,
-            );
-            emit_grants_diff(
-                &mut ops,
-                options,
-                &from_table.grants,
-                &table.grants,
-                GrantObjectKind::Table,
-                &schema,
-                &table_name,
-                None,
-            );
-        } else {
-            ops.push(MigrationOp::CreateTable(table.clone()));
-            emit_ownership_change(
-                &mut ops,
-                options,
-                &None,
-                &table.owner,
-                OwnerObjectKind::Table,
-                &schema,
-                &table_name,
-                None,
-            );
-            emit_grants_for_new_object(
-                &mut ops,
-                options,
-                &table.grants,
-                GrantObjectKind::Table,
-                &schema,
-                &table_name,
-                None,
-            );
-        }
-    }
-
-    for name in from.tables.keys() {
-        if !to.tables.contains_key(name) {
-            ops.push(MigrationOp::DropTable(name.clone()));
-        }
-    }
-
+    diff_objects(
+        &mut ops,
+        options,
+        &from.tables,
+        &to.tables,
+        |_key, table| MigrationOp::CreateTable(table.clone()),
+        |_ops, _key, _from_table, _to_table| {},
+        |name, _val| MigrationOp::DropTable(name.clone()),
+        qualified_coords,
+        OwnerGrantConfig {
+            owner_kind: Some(OwnerObjectKind::Table),
+            grant_kind: Some(GrantObjectKind::Table),
+        },
+        |val| &val.owner,
+        |val| &val.grants,
+    );
     ops
 }
 
@@ -369,41 +374,22 @@ pub(super) fn diff_partitions(
     options: &DiffOptions,
 ) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-
-    for (name, partition) in &to.partitions {
-        let (schema, partition_name) = parse_qualified_name(name);
-        if let Some(from_partition) = from.partitions.get(name) {
-            emit_ownership_change(
-                &mut ops,
-                options,
-                &from_partition.owner,
-                &partition.owner,
-                OwnerObjectKind::Partition,
-                &schema,
-                &partition_name,
-                None,
-            );
-        } else {
-            ops.push(MigrationOp::CreatePartition(partition.clone()));
-            emit_ownership_change(
-                &mut ops,
-                options,
-                &None,
-                &partition.owner,
-                OwnerObjectKind::Partition,
-                &schema,
-                &partition_name,
-                None,
-            );
-        }
-    }
-
-    for name in from.partitions.keys() {
-        if !to.partitions.contains_key(name) {
-            ops.push(MigrationOp::DropPartition(name.clone()));
-        }
-    }
-
+    diff_objects(
+        &mut ops,
+        options,
+        &from.partitions,
+        &to.partitions,
+        |_key, partition| MigrationOp::CreatePartition(partition.clone()),
+        |_ops, _key, _from_partition, _to_partition| {},
+        |name, _val| MigrationOp::DropPartition(name.clone()),
+        qualified_coords,
+        OwnerGrantConfig {
+            owner_kind: Some(OwnerObjectKind::Partition),
+            grant_kind: None,
+        },
+        |val| &val.owner,
+        |_val| &[],
+    );
     ops
 }
 
@@ -635,69 +621,29 @@ pub(super) fn diff_sequences(
     options: &DiffOptions,
 ) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-
-    for (name, to_seq) in &to.sequences {
-        let (schema, seq_name) = parse_qualified_name(name);
-        match from.sequences.get(name) {
-            None => {
-                ops.push(MigrationOp::CreateSequence(to_seq.clone()));
-                emit_ownership_change(
-                    &mut ops,
-                    options,
-                    &None,
-                    &to_seq.owner,
-                    OwnerObjectKind::Sequence,
-                    &schema,
-                    &seq_name,
-                    None,
-                );
-                emit_grants_for_new_object(
-                    &mut ops,
-                    options,
-                    &to_seq.grants,
-                    GrantObjectKind::Sequence,
-                    &schema,
-                    &seq_name,
-                    None,
-                );
+    diff_objects(
+        &mut ops,
+        options,
+        &from.sequences,
+        &to.sequences,
+        |_key, to_seq| MigrationOp::CreateSequence(to_seq.clone()),
+        |ops, name, from_seq, to_seq| {
+            if let Some(changes) = compute_sequence_changes(from_seq, to_seq) {
+                ops.push(MigrationOp::AlterSequence {
+                    name: name.clone(),
+                    changes,
+                });
             }
-            Some(from_seq) => {
-                if let Some(changes) = compute_sequence_changes(from_seq, to_seq) {
-                    ops.push(MigrationOp::AlterSequence {
-                        name: name.clone(),
-                        changes,
-                    });
-                }
-                emit_ownership_change(
-                    &mut ops,
-                    options,
-                    &from_seq.owner,
-                    &to_seq.owner,
-                    OwnerObjectKind::Sequence,
-                    &schema,
-                    &seq_name,
-                    None,
-                );
-                emit_grants_diff(
-                    &mut ops,
-                    options,
-                    &from_seq.grants,
-                    &to_seq.grants,
-                    GrantObjectKind::Sequence,
-                    &schema,
-                    &seq_name,
-                    None,
-                );
-            }
-        }
-    }
-
-    for name in from.sequences.keys() {
-        if !to.sequences.contains_key(name) {
-            ops.push(MigrationOp::DropSequence(name.clone()));
-        }
-    }
-
+        },
+        |name, _val| MigrationOp::DropSequence(name.clone()),
+        qualified_coords,
+        OwnerGrantConfig {
+            owner_kind: Some(OwnerObjectKind::Sequence),
+            grant_kind: Some(GrantObjectKind::Sequence),
+        },
+        |val| &val.owner,
+        |val| &val.grants,
+    );
     ops
 }
 

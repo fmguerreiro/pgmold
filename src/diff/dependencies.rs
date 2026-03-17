@@ -1,17 +1,18 @@
 use std::collections::HashSet;
 
-use crate::model::{parse_qualified_name, qualified_name, Policy, Schema};
+use crate::model::{qualified_name, Policy, QualifiedName, Schema};
 use crate::parser::{extract_function_references, extract_table_references};
 
 use super::MigrationOp;
 
 /// Extract tables that have columns with type changes from migration ops.
+/// Returns qualified name strings (schema.name) for use as map keys.
 pub(super) fn tables_with_type_changes(ops: &[MigrationOp]) -> HashSet<String> {
     ops.iter()
         .filter_map(|op| {
             if let MigrationOp::AlterColumn { table, changes, .. } = op {
                 if changes.data_type.is_some() {
-                    return Some(table.clone());
+                    return Some(table.to_qualified_string());
                 }
             }
             None
@@ -38,7 +39,7 @@ pub(super) fn generate_fk_ops_for_type_changes(
             } = op
             {
                 if changes.data_type.is_some() {
-                    return Some((table.clone(), column.clone()));
+                    return Some((table.to_qualified_string(), column.clone()));
                 }
             }
             None
@@ -57,7 +58,7 @@ pub(super) fn generate_fk_ops_for_type_changes(
                 foreign_key_name,
             } = op
             {
-                Some((table.clone(), foreign_key_name.clone()))
+                Some((table.to_qualified_string(), foreign_key_name.clone()))
             } else {
                 None
             }
@@ -66,30 +67,30 @@ pub(super) fn generate_fk_ops_for_type_changes(
 
     for (table_name, table) in &from.tables {
         for fk in &table.foreign_keys {
-            let qualified_table = qualified_name(&table.schema, &table.name);
-            let referenced_table = qualified_name(&fk.referenced_schema, &fk.referenced_table);
+            let qualified_table_str = qualified_name(&table.schema, &table.name);
+            let referenced_table_str = qualified_name(&fk.referenced_schema, &fk.referenced_table);
 
-            let fk_affected =
-                fk.columns.iter().any(|col| {
-                    type_change_columns.contains(&(qualified_table.clone(), col.clone()))
-                }) || fk.referenced_columns.iter().any(|col| {
-                    type_change_columns.contains(&(referenced_table.clone(), col.clone()))
-                });
+            let fk_affected = fk.columns.iter().any(|col| {
+                type_change_columns.contains(&(qualified_table_str.clone(), col.clone()))
+            }) || fk.referenced_columns.iter().any(|col| {
+                type_change_columns.contains(&(referenced_table_str.clone(), col.clone()))
+            });
 
             if fk_affected
-                && !existing_fk_drops.contains(&(qualified_table.clone(), fk.name.clone()))
+                && !existing_fk_drops.contains(&(qualified_table_str.clone(), fk.name.clone()))
             {
                 let target_fk = to
                     .tables
                     .get(table_name)
                     .and_then(|t| t.foreign_keys.iter().find(|f| f.name == fk.name));
 
+                let table_qname = QualifiedName::new(&table.schema, &table.name);
                 additional_ops.push(MigrationOp::DropForeignKey {
-                    table: qualified_table.clone(),
+                    table: table_qname.clone(),
                     foreign_key_name: fk.name.clone(),
                 });
                 additional_ops.push(MigrationOp::AddForeignKey {
-                    table: qualified_table,
+                    table: table_qname,
                     foreign_key: target_fk.unwrap_or(fk).clone(),
                 });
             }
@@ -118,7 +119,7 @@ pub(super) fn generate_policy_ops_for_type_changes(
         .iter()
         .filter_map(|op| {
             if let MigrationOp::DropPolicy { table, name } = op {
-                Some((table.clone(), name.clone()))
+                Some((table.to_qualified_string(), name.clone()))
             } else {
                 None
             }
@@ -128,9 +129,11 @@ pub(super) fn generate_policy_ops_for_type_changes(
     for table_name in affected_tables {
         if let Some(from_table) = from.tables.get(table_name) {
             for policy in &from_table.policies {
-                let qualified_table = qualified_name(&from_table.schema, &from_table.name);
+                let qualified_table_str = qualified_name(&from_table.schema, &from_table.name);
 
-                if existing_policy_drops.contains(&(qualified_table.clone(), policy.name.clone())) {
+                if existing_policy_drops
+                    .contains(&(qualified_table_str.clone(), policy.name.clone()))
+                {
                     continue;
                 }
 
@@ -140,7 +143,7 @@ pub(super) fn generate_policy_ops_for_type_changes(
                     .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
 
                 additional_ops.push(MigrationOp::DropPolicy {
-                    table: qualified_table.clone(),
+                    table: QualifiedName::new(&from_table.schema, &from_table.name),
                     name: policy.name.clone(),
                 });
                 additional_ops.push(MigrationOp::CreatePolicy(
@@ -185,7 +188,10 @@ pub(super) fn generate_trigger_ops_for_type_changes(
         .collect();
 
     for table_name in affected_tables {
-        let (table_schema, table_only_name) = parse_qualified_name(table_name);
+        let (table_schema, table_only_name) = table_name
+            .split_once('.')
+            .map(|(s, n)| (s.to_string(), n.to_string()))
+            .unwrap_or_else(|| ("public".to_string(), table_name.clone()));
 
         for trigger in from.triggers.values() {
             if trigger.target_schema == table_schema && trigger.target_name == table_only_name {
@@ -301,7 +307,7 @@ pub(super) fn generate_policy_ops_for_function_changes(
         .iter()
         .filter_map(|op| {
             if let MigrationOp::DropPolicy { table, name } = op {
-                Some((table.clone(), name.clone()))
+                Some((table.to_qualified_string(), name.clone()))
             } else {
                 None
             }
@@ -310,22 +316,23 @@ pub(super) fn generate_policy_ops_for_function_changes(
 
     for table in from.tables.values() {
         for policy in &table.policies {
-            let qualified_table = qualified_name(&table.schema, &table.name);
+            let qualified_table_str = qualified_name(&table.schema, &table.name);
 
             let policy_affected = policy_references_functions(policy, &dropped_functions);
 
             if policy_affected
-                && !existing_policy_drops.contains(&(qualified_table.clone(), policy.name.clone()))
+                && !existing_policy_drops
+                    .contains(&(qualified_table_str.clone(), policy.name.clone()))
             {
-                policies_to_filter.insert((qualified_table.clone(), policy.name.clone()));
+                policies_to_filter.insert((qualified_table_str.clone(), policy.name.clone()));
 
                 let target_policy = to
                     .tables
-                    .get(&qualified_table)
+                    .get(&qualified_table_str)
                     .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
 
                 additional_ops.push(MigrationOp::DropPolicy {
-                    table: qualified_table.clone(),
+                    table: QualifiedName::new(&table.schema, &table.name),
                     name: policy.name.clone(),
                 });
                 additional_ops.push(MigrationOp::CreatePolicy(

@@ -31,7 +31,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DropColumn { table, column } => {
                 warnings.push(LockWarning {
                     operation: "DropColumn".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP COLUMN acquires ACCESS EXCLUSIVE lock on table {table} (column {column})"
@@ -46,7 +46,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                 if changes.data_type.is_some() || changes.nullable == Some(false) {
                     warnings.push(LockWarning {
                         operation: "AlterColumn".to_string(),
-                        table: table.clone(),
+                        table: table.to_qualified_string(),
                         lock_level: LockLevel::AccessExclusive,
                         message: format!(
                             "ALTER COLUMN acquires ACCESS EXCLUSIVE lock on table {table} (column {column})"
@@ -57,7 +57,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::AddIndex { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "AddIndex".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "CREATE INDEX acquires ACCESS EXCLUSIVE lock on table {table} (use CREATE INDEX CONCURRENTLY to avoid blocking)"
@@ -67,7 +67,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::AddPrimaryKey { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "AddPrimaryKey".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "ADD PRIMARY KEY acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -77,7 +77,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DropPrimaryKey { table } => {
                 warnings.push(LockWarning {
                     operation: "DropPrimaryKey".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP PRIMARY KEY acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -87,7 +87,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::AddForeignKey { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "AddForeignKey".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "ADD FOREIGN KEY acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -97,7 +97,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DropForeignKey { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "DropForeignKey".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP FOREIGN KEY acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -107,7 +107,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::AddCheckConstraint { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "AddCheckConstraint".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "ADD CHECK CONSTRAINT acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -117,7 +117,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DropCheckConstraint { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "DropCheckConstraint".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP CHECK CONSTRAINT acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -127,7 +127,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DropIndex { table, index_name } => {
                 warnings.push(LockWarning {
                     operation: "DropIndex".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP INDEX acquires ACCESS EXCLUSIVE lock on table {table} (index {index_name})"
@@ -140,7 +140,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             } => {
                 warnings.push(LockWarning {
                     operation: "DropUniqueConstraint".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP CONSTRAINT acquires ACCESS EXCLUSIVE lock on table {table} (constraint {constraint_name})"
@@ -150,7 +150,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::EnableRls { table } => {
                 warnings.push(LockWarning {
                     operation: "EnableRls".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "ENABLE ROW LEVEL SECURITY acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -160,7 +160,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DisableRls { table } => {
                 warnings.push(LockWarning {
                     operation: "DisableRls".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DISABLE ROW LEVEL SECURITY acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -168,11 +168,9 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                 });
             }
             MigrationOp::CreatePolicy(policy) => {
-                use crate::model::qualified_name;
-                let table = qualified_name(&policy.table_schema, &policy.table);
                 warnings.push(LockWarning {
                     operation: "CreatePolicy".to_string(),
-                    table,
+                    table: format!("{}.{}", policy.table_schema, policy.table),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "CREATE POLICY acquires ACCESS EXCLUSIVE lock on table {}.{}",
@@ -183,7 +181,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DropPolicy { table, name } => {
                 warnings.push(LockWarning {
                     operation: "DropPolicy".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP POLICY acquires ACCESS EXCLUSIVE lock on table {table} (policy {name})"
@@ -193,7 +191,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::AlterPolicy { table, name, .. } => {
                 warnings.push(LockWarning {
                     operation: "AlterPolicy".to_string(),
-                    table: table.clone(),
+                    table: table.to_qualified_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "ALTER POLICY acquires ACCESS EXCLUSIVE lock on table {table} (policy {name})"
@@ -294,7 +292,7 @@ mod tests {
     use super::*;
     use crate::diff::ColumnChanges;
     use crate::model::{
-        CheckConstraint, Column, ForeignKey, Index, IndexType, PgType, PrimaryKey,
+        CheckConstraint, Column, ForeignKey, Index, IndexType, PgType, PrimaryKey, QualifiedName,
         ReferentialAction,
     };
 
@@ -312,21 +310,21 @@ mod tests {
     #[test]
     fn detects_drop_column_lock() {
         let ops = vec![MigrationOp::DropColumn {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: "email".to_string(),
         }];
         let warnings = detect_lock_hazards(&ops);
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "DropColumn");
-        assert_eq!(warnings[0].table, "users");
+        assert_eq!(warnings[0].table, "public.users");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
     #[test]
     fn detects_alter_column_type_change_lock() {
         let ops = vec![MigrationOp::AlterColumn {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: "age".to_string(),
             changes: ColumnChanges {
                 data_type: Some(PgType::BigInt),
@@ -338,14 +336,14 @@ mod tests {
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "AlterColumn");
-        assert_eq!(warnings[0].table, "users");
+        assert_eq!(warnings[0].table, "public.users");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
     #[test]
     fn detects_alter_column_set_not_null_lock() {
         let ops = vec![MigrationOp::AlterColumn {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: "bio".to_string(),
             changes: ColumnChanges {
                 data_type: None,
@@ -357,14 +355,14 @@ mod tests {
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "AlterColumn");
-        assert_eq!(warnings[0].table, "users");
+        assert_eq!(warnings[0].table, "public.users");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
     #[test]
     fn detects_add_index_lock() {
         let ops = vec![MigrationOp::AddIndex {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             index: Index {
                 name: "users_email_idx".to_string(),
                 columns: vec!["email".to_string()],
@@ -378,14 +376,14 @@ mod tests {
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "AddIndex");
-        assert_eq!(warnings[0].table, "users");
+        assert_eq!(warnings[0].table, "public.users");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
     #[test]
     fn detects_add_primary_key_lock() {
         let ops = vec![MigrationOp::AddPrimaryKey {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             primary_key: PrimaryKey {
                 columns: vec!["id".to_string()],
             },
@@ -394,27 +392,27 @@ mod tests {
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "AddPrimaryKey");
-        assert_eq!(warnings[0].table, "users");
+        assert_eq!(warnings[0].table, "public.users");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
     #[test]
     fn detects_drop_primary_key_lock() {
         let ops = vec![MigrationOp::DropPrimaryKey {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
         }];
         let warnings = detect_lock_hazards(&ops);
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "DropPrimaryKey");
-        assert_eq!(warnings[0].table, "users");
+        assert_eq!(warnings[0].table, "public.users");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
     #[test]
     fn detects_add_foreign_key_lock() {
         let ops = vec![MigrationOp::AddForeignKey {
-            table: "posts".to_string(),
+            table: QualifiedName::new("public", "posts"),
             foreign_key: ForeignKey {
                 name: "posts_user_id_fkey".to_string(),
                 columns: vec!["user_id".to_string()],
@@ -429,28 +427,28 @@ mod tests {
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "AddForeignKey");
-        assert_eq!(warnings[0].table, "posts");
+        assert_eq!(warnings[0].table, "public.posts");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
     #[test]
     fn detects_drop_foreign_key_lock() {
         let ops = vec![MigrationOp::DropForeignKey {
-            table: "posts".to_string(),
+            table: QualifiedName::new("public", "posts"),
             foreign_key_name: "posts_user_id_fkey".to_string(),
         }];
         let warnings = detect_lock_hazards(&ops);
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "DropForeignKey");
-        assert_eq!(warnings[0].table, "posts");
+        assert_eq!(warnings[0].table, "public.posts");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
     #[test]
     fn detects_add_check_constraint_lock() {
         let ops = vec![MigrationOp::AddCheckConstraint {
-            table: "products".to_string(),
+            table: QualifiedName::new("public", "products"),
             check_constraint: CheckConstraint {
                 name: "price_positive".to_string(),
                 expression: "price > 0".to_string(),
@@ -460,21 +458,21 @@ mod tests {
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "AddCheckConstraint");
-        assert_eq!(warnings[0].table, "products");
+        assert_eq!(warnings[0].table, "public.products");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
     #[test]
     fn detects_drop_check_constraint_lock() {
         let ops = vec![MigrationOp::DropCheckConstraint {
-            table: "products".to_string(),
+            table: QualifiedName::new("public", "products"),
             constraint_name: "price_positive".to_string(),
         }];
         let warnings = detect_lock_hazards(&ops);
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "DropCheckConstraint");
-        assert_eq!(warnings[0].table, "products");
+        assert_eq!(warnings[0].table, "public.products");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
@@ -482,7 +480,7 @@ mod tests {
     fn ignores_safe_operations() {
         let ops = vec![
             MigrationOp::AddColumn {
-                table: "users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: Column {
                     name: "new_col".to_string(),
                     data_type: PgType::Text,
@@ -492,7 +490,7 @@ mod tests {
                 },
             },
             MigrationOp::AlterColumn {
-                table: "users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: "bio".to_string(),
                 changes: ColumnChanges {
                     data_type: None,
@@ -510,11 +508,11 @@ mod tests {
     fn detects_multiple_lock_hazards() {
         let ops = vec![
             MigrationOp::DropColumn {
-                table: "users".to_string(),
+                table: QualifiedName::new("public", "users"),
                 column: "old_col".to_string(),
             },
             MigrationOp::AddIndex {
-                table: "posts".to_string(),
+                table: QualifiedName::new("public", "posts"),
                 index: Index {
                     name: "posts_idx".to_string(),
                     columns: vec!["title".to_string()],
@@ -528,47 +526,47 @@ mod tests {
         let warnings = detect_lock_hazards(&ops);
 
         assert_eq!(warnings.len(), 2);
-        assert_eq!(warnings[0].table, "users");
-        assert_eq!(warnings[1].table, "posts");
+        assert_eq!(warnings[0].table, "public.users");
+        assert_eq!(warnings[1].table, "public.posts");
     }
 
     #[test]
     fn detects_drop_index_lock() {
         let ops = vec![MigrationOp::DropIndex {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             index_name: "users_email_idx".to_string(),
         }];
         let warnings = detect_lock_hazards(&ops);
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "DropIndex");
-        assert_eq!(warnings[0].table, "users");
+        assert_eq!(warnings[0].table, "public.users");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
     #[test]
     fn detects_enable_rls_lock() {
         let ops = vec![MigrationOp::EnableRls {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
         }];
         let warnings = detect_lock_hazards(&ops);
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "EnableRls");
-        assert_eq!(warnings[0].table, "users");
+        assert_eq!(warnings[0].table, "public.users");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
     #[test]
     fn detects_disable_rls_lock() {
         let ops = vec![MigrationOp::DisableRls {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
         }];
         let warnings = detect_lock_hazards(&ops);
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "DisableRls");
-        assert_eq!(warnings[0].table, "users");
+        assert_eq!(warnings[0].table, "public.users");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
@@ -596,14 +594,14 @@ mod tests {
     #[test]
     fn detects_drop_policy_lock() {
         let ops = vec![MigrationOp::DropPolicy {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             name: "user_policy".to_string(),
         }];
         let warnings = detect_lock_hazards(&ops);
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "DropPolicy");
-        assert_eq!(warnings[0].table, "users");
+        assert_eq!(warnings[0].table, "public.users");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 
@@ -612,7 +610,7 @@ mod tests {
         use crate::diff::PolicyChanges;
 
         let ops = vec![MigrationOp::AlterPolicy {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             name: "user_policy".to_string(),
             changes: PolicyChanges {
                 roles: Some(vec!["admin".to_string()]),
@@ -624,7 +622,7 @@ mod tests {
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].operation, "AlterPolicy");
-        assert_eq!(warnings[0].table, "users");
+        assert_eq!(warnings[0].table, "public.users");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
     }
 

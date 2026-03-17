@@ -1,6 +1,6 @@
 use crate::diff::planner::plan_dump;
 use crate::diff::{GrantObjectKind, MigrationOp};
-use crate::model::{qualified_name, Grant, Schema};
+use crate::model::{Grant, QualifiedName, Schema};
 use crate::pg::sqlgen::generate_sql;
 
 /// Helper to generate GrantPrivileges operations for a list of grants
@@ -14,7 +14,7 @@ fn grants_to_ops(
     grants
         .iter()
         .map(|grant| MigrationOp::GrantPrivileges {
-            object_kind: object_kind.clone(),
+            object_kind,
             schema: schema.to_string(),
             name: name.to_string(),
             args: args.clone(),
@@ -118,7 +118,7 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
             });
         }
 
-        let table_qualified = qualified_name(&table.schema, &table.name);
+        let table_qualified = QualifiedName::new(&table.schema, &table.name);
 
         if table.row_level_security {
             ops.push(MigrationOp::EnableRls {

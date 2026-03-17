@@ -7,7 +7,7 @@ mod types;
 
 use std::collections::HashSet;
 
-use crate::model::{qualified_name, Schema};
+use crate::model::{QualifiedName, Schema};
 pub use types::{
     ColumnChanges, DiffOptions, DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp,
     OwnerObjectKind, PolicyChanges, SequenceChanges,
@@ -47,7 +47,7 @@ pub fn compute_diff_with_flags(
     let mut ops = Vec::new();
 
     ops.extend(diff_schemas(from, to, &options));
-    ops.extend(diff_extensions(from, to));
+    ops.extend(diff_extensions(from, to, &options));
     ops.extend(diff_enums(from, to, &options));
     ops.extend(diff_domains(from, to, &options));
     ops.extend(diff_tables(from, to, &options));
@@ -69,7 +69,7 @@ pub fn compute_diff_with_flags(
         } else {
             if to_table.row_level_security {
                 ops.push(MigrationOp::EnableRls {
-                    table: qualified_name(&to_table.schema, &to_table.name),
+                    table: QualifiedName::new(&to_table.schema, &to_table.name),
                 });
             }
             for policy in &to_table.policies {
@@ -104,7 +104,7 @@ pub fn compute_diff_with_flags(
     if !policies_to_filter.is_empty() {
         ops.retain(|op| {
             if let MigrationOp::AlterPolicy { table, name, .. } = op {
-                !policies_to_filter.contains(&(table.clone(), name.clone()))
+                !policies_to_filter.contains(&(table.to_qualified_string(), name.clone()))
             } else {
                 true
             }
@@ -167,8 +167,9 @@ mod tests {
     use super::test_helpers::*;
     use super::*;
     use crate::model::{
-        ArgMode, Column, Domain, EnumType, ForeignKey, Function, FunctionArg, Index, IndexType,
-        PgType, ReferentialAction, SecurityType, Sequence, SequenceDataType, View, Volatility,
+        qualified_name, ArgMode, Column, Domain, EnumType, ForeignKey, Function, FunctionArg,
+        Index, IndexType, PgType, ReferentialAction, SecurityType, Sequence, SequenceDataType,
+        View, Volatility,
     };
 
     #[test]

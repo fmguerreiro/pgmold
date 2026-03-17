@@ -18,6 +18,7 @@ use pgmold::model::Schema;
 use pgmold::pg::connection::PgConnection;
 use pgmold::pg::introspect::introspect_schema;
 use pgmold::pg::sqlgen::generate_sql;
+use pgmold::plan::{compute_migration_plan, PlanOptions};
 use pgmold::provider::load_schema_from_sources;
 use pgmold::validate::validate_migration_on_temp_db;
 
@@ -469,39 +470,60 @@ pub async fn run() -> Result<()> {
             let manage_grants = grants.manage_grants();
             let manage_ownership = grants.manage_ownership;
 
-            let target = load_schema(&schema)?;
-            let target = filter_by_target_schemas(&target, &target_schemas);
-            let filtered_target = filter_schema(&target, &filter);
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
-            let db_schema =
-                introspect_schema(&connection, &target_schemas, include_extension_objects)
-                    .await
-                    .map_err(|e| anyhow!("{e}"))?;
 
-            let filtered_db_schema = filter_schema(&db_schema, &filter);
+            // Compute the forward plan (current DB → desired target schema).
+            // For --reverse we swap from/to after loading the schemas.
+            let forward_plan = compute_migration_plan(
+                &schema,
+                &connection,
+                &target_schemas,
+                &filter,
+                &PlanOptions {
+                    manage_ownership,
+                    manage_grants,
+                    excluded_grant_roles: excluded_grant_roles.clone(),
+                    include_extension_objects,
+                },
+            )
+            .await
+            .map_err(|e| anyhow!("{e}"))?;
 
-            let (from, to) = if reverse {
-                (&filtered_target, &filtered_db_schema)
+            let (ops, filtered_db_schema, filtered_target) = if reverse {
+                let reverse_ops = plan_migration_checked(pgmold::diff::compute_diff_with_flags(
+                    &forward_plan.target_schema,
+                    &forward_plan.current_schema,
+                    manage_ownership,
+                    manage_grants,
+                    &excluded_grant_roles,
+                ))?;
+                (
+                    reverse_ops,
+                    forward_plan.target_schema,
+                    forward_plan.current_schema,
+                )
             } else {
-                (&filtered_db_schema, &filtered_target)
+                (
+                    forward_plan.ops,
+                    forward_plan.current_schema,
+                    forward_plan.target_schema,
+                )
             };
-            let ops = plan_migration_checked(pgmold::diff::compute_diff_with_flags(
-                from,
-                to,
-                manage_ownership,
-                manage_grants,
-                &excluded_grant_roles,
-            ))?;
 
             let validation_info = if let Some(validate_db_url) = &validate {
                 let validate_url = parse_db_source(validate_db_url)?;
-                let validation_result =
-                    validate_migration_on_temp_db(&ops, &validate_url, from, to, &target_schemas)
-                        .await
-                        .map_err(|e| anyhow!("Validation failed: {e}"))?;
+                let validation_result = validate_migration_on_temp_db(
+                    &ops,
+                    &validate_url,
+                    &filtered_db_schema,
+                    &filtered_target,
+                    &target_schemas,
+                )
+                .await
+                .map_err(|e| anyhow!("Validation failed: {e}"))?;
 
                 if !validation_result.success {
                     eprintln!("\n\u{274C} Validation failed on temp database:");
@@ -679,23 +701,23 @@ pub async fn run() -> Result<()> {
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
-            let target = load_schema(&schema)?;
-            let target = filter_by_target_schemas(&target, &target_schemas);
-            let filtered_target = filter_schema(&target, &filter);
-            let db_schema =
-                introspect_schema(&connection, &target_schemas, include_extension_objects)
-                    .await
-                    .map_err(|e| anyhow!("{e}"))?;
-
-            let filtered_db_schema = filter_schema(&db_schema, &filter);
-
-            let ops = plan_migration_checked(pgmold::diff::compute_diff_with_flags(
-                &filtered_db_schema,
-                &filtered_target,
-                manage_ownership,
-                manage_grants,
-                &excluded_grant_roles,
-            ))?;
+            let migration_plan = compute_migration_plan(
+                &schema,
+                &connection,
+                &target_schemas,
+                &filter,
+                &PlanOptions {
+                    manage_ownership,
+                    manage_grants,
+                    excluded_grant_roles: excluded_grant_roles.clone(),
+                    include_extension_objects,
+                },
+            )
+            .await
+            .map_err(|e| anyhow!("{e}"))?;
+            let ops = migration_plan.ops;
+            let filtered_db_schema = migration_plan.current_schema;
+            let filtered_target = migration_plan.target_schema;
             let lint_options = LintOptions {
                 allow_destructive,
                 ..Default::default()

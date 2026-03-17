@@ -1,11 +1,11 @@
-use crate::model::{qualified_name, Column, Index, Policy, Table};
+use crate::model::{Column, Index, Policy, QualifiedName, Table};
 use crate::util::optional_expressions_equal;
 
 use super::{ColumnChanges, MigrationOp, PolicyChanges};
 
 pub(super) fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
+    let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
 
     for (name, column) in &to_table.columns {
         if let Some(from_column) = from_table.columns.get(name) {
@@ -28,7 +28,7 @@ pub(super) fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<Migratio
     for name in from_table.columns.keys() {
         if !to_table.columns.contains_key(name) {
             ops.push(MigrationOp::DropColumn {
-                table: qualified_name(&from_table.schema, &from_table.name),
+                table: QualifiedName::new(&from_table.schema, &from_table.name),
                 column: name.clone(),
             });
         }
@@ -59,7 +59,7 @@ pub(super) fn compute_column_changes(from: &Column, to: &Column) -> ColumnChange
 
 pub(super) fn diff_primary_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
+    let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
 
     match (&from_table.primary_key, &to_table.primary_key) {
         (None, Some(pk)) => {
@@ -70,12 +70,12 @@ pub(super) fn diff_primary_keys(from_table: &Table, to_table: &Table) -> Vec<Mig
         }
         (Some(_), None) => {
             ops.push(MigrationOp::DropPrimaryKey {
-                table: qualified_name(&from_table.schema, &from_table.name),
+                table: QualifiedName::new(&from_table.schema, &from_table.name),
             });
         }
         (Some(from_pk), Some(to_pk)) if from_pk != to_pk => {
             ops.push(MigrationOp::DropPrimaryKey {
-                table: qualified_name(&from_table.schema, &from_table.name),
+                table: QualifiedName::new(&from_table.schema, &from_table.name),
             });
             ops.push(MigrationOp::AddPrimaryKey {
                 table: qualified_table_name,
@@ -102,8 +102,8 @@ pub(super) fn indexes_semantically_equal(from: &Index, to: &Index) -> bool {
 
 pub(super) fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
-    let from_qualified_table_name = qualified_name(&from_table.schema, &from_table.name);
+    let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
+    let from_qualified_table_name = QualifiedName::new(&from_table.schema, &from_table.name);
 
     for index in &to_table.indexes {
         let existing = from_table.indexes.iter().find(|i| i.name == index.name);
@@ -115,7 +115,7 @@ pub(super) fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<Migratio
                 });
             }
             Some(from_index) if !indexes_semantically_equal(from_index, index) => {
-                ops.push(drop_index_op(&from_qualified_table_name, from_index));
+                ops.push(drop_index_op(from_qualified_table_name.clone(), from_index));
                 ops.push(MigrationOp::AddIndex {
                     table: qualified_table_name.clone(),
                     index: index.clone(),
@@ -127,22 +127,22 @@ pub(super) fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<Migratio
 
     for index in &from_table.indexes {
         if !to_table.indexes.iter().any(|i| i.name == index.name) {
-            ops.push(drop_index_op(&from_qualified_table_name, index));
+            ops.push(drop_index_op(from_qualified_table_name.clone(), index));
         }
     }
 
     ops
 }
 
-fn drop_index_op(table: &str, index: &Index) -> MigrationOp {
+fn drop_index_op(table: QualifiedName, index: &Index) -> MigrationOp {
     if index.is_constraint {
         MigrationOp::DropUniqueConstraint {
-            table: table.to_string(),
+            table,
             constraint_name: index.name.clone(),
         }
     } else {
         MigrationOp::DropIndex {
-            table: table.to_string(),
+            table,
             index_name: index.name.clone(),
         }
     }
@@ -150,7 +150,7 @@ fn drop_index_op(table: &str, index: &Index) -> MigrationOp {
 
 pub(super) fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
+    let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
 
     for foreign_key in &to_table.foreign_keys {
         if !from_table
@@ -172,7 +172,7 @@ pub(super) fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<Mig
             .any(|fk| fk.name == foreign_key.name)
         {
             ops.push(MigrationOp::DropForeignKey {
-                table: qualified_name(&from_table.schema, &from_table.name),
+                table: QualifiedName::new(&from_table.schema, &from_table.name),
                 foreign_key_name: foreign_key.name.clone(),
             });
         }
@@ -183,7 +183,7 @@ pub(super) fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<Mig
 
 pub(super) fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
+    let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
 
     for to_constraint in &to_table.check_constraints {
         let matching_from = from_table
@@ -220,7 +220,7 @@ pub(super) fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Ve
             .any(|cc| cc.name == from_constraint.name)
         {
             ops.push(MigrationOp::DropCheckConstraint {
-                table: qualified_name(&from_table.schema, &from_table.name),
+                table: QualifiedName::new(&from_table.schema, &from_table.name),
                 constraint_name: from_constraint.name.clone(),
             });
         }
@@ -231,7 +231,7 @@ pub(super) fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Ve
 
 pub(super) fn diff_rls(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
+    let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
 
     if !from_table.row_level_security && to_table.row_level_security {
         ops.push(MigrationOp::EnableRls {
@@ -248,7 +248,7 @@ pub(super) fn diff_rls(from_table: &Table, to_table: &Table) -> Vec<MigrationOp>
 
 pub(super) fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-    let qualified_table_name = qualified_name(&to_table.schema, &to_table.name);
+    let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
 
     for policy in &to_table.policies {
         if let Some(from_policy) = from_table.policies.iter().find(|p| p.name == policy.name) {
@@ -268,7 +268,7 @@ pub(super) fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<Migrati
     for policy in &from_table.policies {
         if !to_table.policies.iter().any(|p| p.name == policy.name) {
             ops.push(MigrationOp::DropPolicy {
-                table: qualified_name(&from_table.schema, &from_table.name),
+                table: QualifiedName::new(&from_table.schema, &from_table.name),
                 name: policy.name.clone(),
             });
         }

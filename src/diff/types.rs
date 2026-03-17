@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use crate::model::{
     CheckConstraint, Column, Domain, EnumType, Extension, ForeignKey, Function, Index, Partition,
-    PgSchema, PgType, Policy, PrimaryKey, Privilege, Sequence, SequenceDataType, SequenceOwner,
-    Table, Trigger, TriggerEnabled, VersionView, View,
+    PgSchema, PgType, Policy, PrimaryKey, Privilege, QualifiedName, Sequence, SequenceDataType,
+    SequenceOwner, Table, Trigger, TriggerEnabled, VersionView, View,
 };
 
 pub struct DiffOptions<'a> {
@@ -12,7 +12,7 @@ pub struct DiffOptions<'a> {
     pub excluded_grant_roles: &'a HashSet<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OwnerObjectKind {
     Table,
     Partition,
@@ -24,7 +24,7 @@ pub enum OwnerObjectKind {
     Domain,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GrantObjectKind {
     Table,
     View,
@@ -59,66 +59,66 @@ pub enum MigrationOp {
     CreatePartition(Partition),
     DropPartition(String),
     AddColumn {
-        table: String,
+        table: QualifiedName,
         column: Column,
     },
     DropColumn {
-        table: String,
+        table: QualifiedName,
         column: String,
     },
     AlterColumn {
-        table: String,
+        table: QualifiedName,
         column: String,
         changes: ColumnChanges,
     },
     AddPrimaryKey {
-        table: String,
+        table: QualifiedName,
         primary_key: PrimaryKey,
     },
     DropPrimaryKey {
-        table: String,
+        table: QualifiedName,
     },
     AddIndex {
-        table: String,
+        table: QualifiedName,
         index: Index,
     },
     DropIndex {
-        table: String,
+        table: QualifiedName,
         index_name: String,
     },
     DropUniqueConstraint {
-        table: String,
+        table: QualifiedName,
         constraint_name: String,
     },
     AddForeignKey {
-        table: String,
+        table: QualifiedName,
         foreign_key: ForeignKey,
     },
     DropForeignKey {
-        table: String,
+        table: QualifiedName,
         foreign_key_name: String,
     },
     AddCheckConstraint {
-        table: String,
+        table: QualifiedName,
         check_constraint: CheckConstraint,
     },
     DropCheckConstraint {
-        table: String,
+        table: QualifiedName,
         constraint_name: String,
     },
     EnableRls {
-        table: String,
+        table: QualifiedName,
     },
     DisableRls {
-        table: String,
+        table: QualifiedName,
     },
     CreatePolicy(Policy),
     DropPolicy {
-        table: String,
+        table: QualifiedName,
         name: String,
     },
     AlterPolicy {
-        table: String,
+        table: QualifiedName,
         name: String,
         changes: PolicyChanges,
     },
@@ -167,12 +167,12 @@ pub enum MigrationOp {
         new_owner: String,
     },
     BackfillHint {
-        table: String,
+        table: QualifiedName,
         column: String,
         hint: String,
     },
     SetColumnNotNull {
-        table: String,
+        table: QualifiedName,
         column: String,
     },
     GrantPrivileges {

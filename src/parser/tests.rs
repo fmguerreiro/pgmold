@@ -1437,7 +1437,7 @@ fn domain_round_trip_with_table_using_domain() {
         "email".to_string(),
         Column {
             name: "email".to_string(),
-            data_type: PgType::CustomEnum("public.email_address".to_string()),
+            data_type: PgType::UserDefined("public.email_address".to_string()),
             nullable: false,
             default: None,
             comment: None,

@@ -79,7 +79,7 @@ fn check_foreign_key_references(schema: &Schema, issues: &mut Vec<SchemaIssue>) 
 fn check_enum_references(schema: &Schema, issues: &mut Vec<SchemaIssue>) {
     for (table_key, table) in &schema.tables {
         for (col_name, column) in &table.columns {
-            if let PgType::CustomEnum(enum_name) = &column.data_type {
+            if let PgType::UserDefined(enum_name) = &column.data_type {
                 let qualified = if enum_name.contains('.') {
                     enum_name.clone()
                 } else {

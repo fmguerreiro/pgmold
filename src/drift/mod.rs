@@ -45,7 +45,7 @@ pub async fn detect_drift(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Column, PgType, Table};
+    use crate::model::{Column, PgType, QualifiedName, Table};
     use std::collections::BTreeMap;
 
     #[test]
@@ -93,7 +93,7 @@ mod tests {
         );
 
         let differences = vec![MigrationOp::AddColumn {
-            table: "users".to_string(),
+            table: QualifiedName::new("public", "users"),
             column: table.columns.get("email").unwrap().clone(),
         }];
 
