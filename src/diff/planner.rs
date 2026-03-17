@@ -925,14 +925,13 @@ fn split_sequence_owned_by_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     for op in ops {
         match op {
             MigrationOp::CreateSequence(ref seq) if seq.owned_by.is_some() => {
-                let owned_by = seq.owned_by.clone().expect("guarded by is_some()");
                 let mut seq_without_owner = seq.clone();
-                seq_without_owner.owned_by = None;
+                let owned_by = seq_without_owner.owned_by.take();
                 result.push(MigrationOp::CreateSequence(seq_without_owner));
                 result.push(MigrationOp::AlterSequence {
                     name: qualified_name(&seq.schema, &seq.name),
                     changes: super::SequenceChanges {
-                        owned_by: Some(Some(owned_by)),
+                        owned_by: Some(owned_by),
                         ..Default::default()
                     },
                 });

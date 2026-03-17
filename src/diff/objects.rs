@@ -103,6 +103,15 @@ struct OwnerGrantConfig {
     grant_kind: Option<GrantObjectKind>,
 }
 
+impl OwnerGrantConfig {
+    fn none() -> Self {
+        Self {
+            owner_kind: None,
+            grant_kind: None,
+        }
+    }
+}
+
 /// Generic helper that iterates two BTreeMaps and emits create/update/drop ops.
 ///
 /// `on_create` is called for objects in `to` but not `from`.
@@ -237,7 +246,6 @@ pub(super) fn diff_extensions(
     options: &DiffOptions,
 ) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-    // Extensions have no ownership or grants; OwnerGrantConfig::none() skips both.
     diff_objects(
         &mut ops,
         options,
@@ -251,10 +259,7 @@ pub(super) fn diff_extensions(
             name: name.to_string(),
             args: None,
         },
-        OwnerGrantConfig {
-            owner_kind: None,
-            grant_kind: None,
-        },
+        OwnerGrantConfig::none(),
         |_val| &None,
         |_val| &[],
     );

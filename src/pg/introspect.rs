@@ -573,7 +573,7 @@ async fn introspect_partitions(
             Some(expr) => expr,
             None => continue,
         };
-        let bound = parse_partition_bound(&bound_expr);
+        let bound = parse_partition_bound(&bound_expr)?;
 
         let partition = Partition {
             schema: schema.clone(),
@@ -593,15 +593,14 @@ async fn introspect_partitions(
 }
 
 /// Parse a partition bound expression like "FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')"
-fn parse_partition_bound(expr: &str) -> PartitionBound {
+fn parse_partition_bound(expr: &str) -> Result<PartitionBound> {
     let expr_upper = expr.to_uppercase();
 
     if expr_upper.contains("DEFAULT") {
-        return PartitionBound::Default;
+        return Ok(PartitionBound::Default);
     }
 
     if expr_upper.contains("FROM") && expr_upper.contains("TO") {
-        // RANGE: FOR VALUES FROM (...) TO (...)
         if let (Some(from_start), Some(to_start)) = (expr.find("FROM"), expr.find("TO")) {
             let from_part = &expr[from_start + 4..to_start].trim();
             let to_part = &expr[to_start + 2..].trim();
@@ -609,24 +608,22 @@ fn parse_partition_bound(expr: &str) -> PartitionBound {
             let from_values = extract_paren_values(from_part);
             let to_values = extract_paren_values(to_part);
 
-            return PartitionBound::Range {
+            return Ok(PartitionBound::Range {
                 from: from_values,
                 to: to_values,
-            };
+            });
         }
     }
 
     if expr_upper.contains("IN") {
-        // LIST: FOR VALUES IN (...)
         if let Some(in_pos) = expr.find("IN") {
             let values_part = &expr[in_pos + 2..].trim();
             let values = extract_paren_values(values_part);
-            return PartitionBound::List { values };
+            return Ok(PartitionBound::List { values });
         }
     }
 
     if expr_upper.contains("MODULUS") && expr_upper.contains("REMAINDER") {
-        // HASH: FOR VALUES WITH (MODULUS n, REMAINDER r)
         if let Some(with_pos) = expr.find("WITH") {
             let params_part = &expr[with_pos + 4..].trim();
             let params = extract_paren_values(params_part);
@@ -637,25 +634,28 @@ fn parse_partition_bound(expr: &str) -> PartitionBound {
                 let param_upper = param.to_uppercase();
                 if param_upper.contains("MODULUS") {
                     if let Some(val) = param.split_whitespace().last() {
-                        modulus = val
-                            .parse()
-                            .expect("PostgreSQL hash partition bound must be a valid integer");
+                        modulus = val.parse().map_err(|_| {
+                            SchemaError::DatabaseError(format!(
+                                "invalid hash partition MODULUS value: {val}"
+                            ))
+                        })?;
                     }
                 } else if param_upper.contains("REMAINDER") {
                     if let Some(val) = param.split_whitespace().last() {
-                        remainder = val
-                            .parse()
-                            .expect("PostgreSQL hash partition bound must be a valid integer");
+                        remainder = val.parse().map_err(|_| {
+                            SchemaError::DatabaseError(format!(
+                                "invalid hash partition REMAINDER value: {val}"
+                            ))
+                        })?;
                     }
                 }
             }
 
-            return PartitionBound::Hash { modulus, remainder };
+            return Ok(PartitionBound::Hash { modulus, remainder });
         }
     }
 
-    // Fallback
-    PartitionBound::Default
+    Ok(PartitionBound::Default)
 }
 
 /// Extract values from a parenthesized list like "(val1, val2)"
