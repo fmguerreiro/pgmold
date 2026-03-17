@@ -561,6 +561,7 @@ impl MigrationGraph {
         let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
         let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
         let version_views = self.nodes_matching(|k| matches!(k, OpKey::CreateVersionView { .. }));
+        let alter_views = self.nodes_matching(|k| matches!(k, OpKey::AlterView(_)));
         let alter_sequences = self.nodes_matching(|k| matches!(k, OpKey::AlterSequence(_)));
 
         let drop_fks = self.nodes_matching(|k| matches!(k, OpKey::DropForeignKey { .. }));
@@ -681,6 +682,12 @@ impl MigrationGraph {
         self.edges_all_to_all(&add_columns, &add_fks);
         self.edges_all_to_all(&add_columns, &add_checks);
 
+        // Columns before objects that may reference new columns
+        self.edges_all_to_all(&add_columns, &views);
+        self.edges_all_to_all(&add_columns, &alter_views);
+        self.edges_all_to_all(&add_columns, &policies);
+        self.edges_all_to_all(&add_columns, &triggers);
+
         // Enable RLS before policies
         self.edges_all_to_all(&enable_rls, &policies);
 
@@ -742,6 +749,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&alter_columns, &policies);
         self.edges_all_to_all(&alter_columns, &triggers);
         self.edges_all_to_all(&alter_columns, &views);
+        self.edges_all_to_all(&alter_columns, &alter_views);
 
         // === MODIFICATION patterns (drop before create/alter) ===
         // When objects are modified (dropped and recreated), drop must come before create
@@ -785,6 +793,7 @@ impl MigrationGraph {
             &views,
             &version_views,
             &alter_columns,
+            &alter_views,
             &alter_sequences,
         ]
         .into_iter()
@@ -4651,6 +4660,129 @@ mod tests {
             "CreateView",
             |op| matches!(op, MigrationOp::CreateTable(_)),
             |op| matches!(op, MigrationOp::CreateView(_)),
+        );
+    }
+
+    #[test]
+    fn add_column_before_create_view_referencing_column() {
+        // Reproduces #126: functions→add_columns pushes AddColumn later, while
+        // CreateFunction→CreateView pulls the view earlier. Without add_columns→views,
+        // the view can appear before AddColumn.
+        let ops = vec![
+            MigrationOp::CreateView(make_view(
+                "supplier_users_view",
+                "public",
+                "SELECT public.some_func(s.is_active) FROM public.suppliers s",
+            )),
+            MigrationOp::AddColumn {
+                table: "public.suppliers".to_string(),
+                column: Column {
+                    name: "is_active".to_string(),
+                    data_type: PgType::Boolean,
+                    nullable: false,
+                    default: Some("true".to_string()),
+                    comment: None,
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("some_func", "public")),
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "AddColumn",
+            "CreateView",
+            |op| matches!(op, MigrationOp::AddColumn { .. }),
+            |op| matches!(op, MigrationOp::CreateView(_)),
+        );
+    }
+
+    #[test]
+    fn add_column_before_alter_view_referencing_column() {
+        let ops = vec![
+            MigrationOp::AlterView {
+                name: "public.supplier_users_view".to_string(),
+                new_view: make_view(
+                    "supplier_users_view",
+                    "public",
+                    "SELECT public.some_func(s.is_active) FROM public.suppliers s",
+                ),
+            },
+            MigrationOp::AddColumn {
+                table: "public.suppliers".to_string(),
+                column: Column {
+                    name: "is_active".to_string(),
+                    data_type: PgType::Boolean,
+                    nullable: false,
+                    default: Some("true".to_string()),
+                    comment: None,
+                },
+            },
+            MigrationOp::CreateFunction(make_simple_function("some_func", "public")),
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "AddColumn",
+            "AlterView",
+            |op| matches!(op, MigrationOp::AddColumn { .. }),
+            |op| matches!(op, MigrationOp::AlterView { .. }),
+        );
+    }
+
+    #[test]
+    fn add_column_before_policy_referencing_column() {
+        let mut policy = make_policy("active_only", "public", "suppliers");
+        policy.using_expr = Some("is_active = true".to_string());
+        let ops = vec![
+            MigrationOp::CreatePolicy(policy),
+            MigrationOp::AddColumn {
+                table: "public.suppliers".to_string(),
+                column: Column {
+                    name: "is_active".to_string(),
+                    data_type: PgType::Boolean,
+                    nullable: false,
+                    default: Some("true".to_string()),
+                    comment: None,
+                },
+            },
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "AddColumn",
+            "CreatePolicy",
+            |op| matches!(op, MigrationOp::AddColumn { .. }),
+            |op| matches!(op, MigrationOp::CreatePolicy(_)),
+        );
+    }
+
+    #[test]
+    fn add_column_before_trigger_referencing_column() {
+        let ops = vec![
+            MigrationOp::CreateTrigger(make_trigger(
+                "check_active",
+                "public",
+                "suppliers",
+                "check_fn",
+            )),
+            MigrationOp::AddColumn {
+                table: "public.suppliers".to_string(),
+                column: Column {
+                    name: "is_active".to_string(),
+                    data_type: PgType::Boolean,
+                    nullable: false,
+                    default: Some("true".to_string()),
+                    comment: None,
+                },
+            },
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "AddColumn",
+            "CreateTrigger",
+            |op| matches!(op, MigrationOp::AddColumn { .. }),
+            |op| matches!(op, MigrationOp::CreateTrigger(_)),
         );
     }
 
