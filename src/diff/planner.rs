@@ -682,9 +682,11 @@ impl MigrationGraph {
         self.edges_all_to_all(&add_columns, &add_fks);
         self.edges_all_to_all(&add_columns, &add_checks);
 
-        // Columns before views that may reference new columns
+        // Columns before objects that may reference new columns
         self.edges_all_to_all(&add_columns, &views);
         self.edges_all_to_all(&add_columns, &alter_views);
+        self.edges_all_to_all(&add_columns, &policies);
+        self.edges_all_to_all(&add_columns, &triggers);
 
         // Enable RLS before policies
         self.edges_all_to_all(&enable_rls, &policies);
@@ -4663,10 +4665,9 @@ mod tests {
 
     #[test]
     fn add_column_before_create_view_referencing_column() {
-        // Reproduces issue #126: when a function is also being created, the
-        // type-level edge functions→add_columns pushes AddColumn later, while
-        // the content-aware edge CreateFunction→CreateView pulls the view earlier.
-        // Without an add_columns→views edge, the view can appear before AddColumn.
+        // Reproduces #126: functions→add_columns pushes AddColumn later, while
+        // CreateFunction→CreateView pulls the view earlier. Without add_columns→views,
+        // the view can appear before AddColumn.
         let ops = vec![
             MigrationOp::CreateView(make_view(
                 "supplier_users_view",
@@ -4686,37 +4687,25 @@ mod tests {
             MigrationOp::CreateFunction(make_simple_function("some_func", "public")),
         ];
         let planned = plan_migration(ops);
-
-        let add_column_pos = planned
-            .iter()
-            .position(|op| matches!(op, MigrationOp::AddColumn { .. }))
-            .unwrap();
-        let create_view_pos = planned
-            .iter()
-            .position(|op| matches!(op, MigrationOp::CreateView(_)))
-            .unwrap();
-
-        assert!(
-            add_column_pos < create_view_pos,
-            "AddColumn ({add_column_pos}) must come before CreateView ({create_view_pos})"
+        assert_op_position(
+            &planned,
+            "AddColumn",
+            "CreateView",
+            |op| matches!(op, MigrationOp::AddColumn { .. }),
+            |op| matches!(op, MigrationOp::CreateView(_)),
         );
     }
 
     #[test]
     fn add_column_before_alter_view_referencing_column() {
-        // Same as above but with AlterView instead of CreateView
         let ops = vec![
             MigrationOp::AlterView {
                 name: "public.supplier_users_view".to_string(),
-                new_view: View {
-                    name: "supplier_users_view".to_string(),
-                    schema: "public".to_string(),
-                    query: "SELECT public.some_func(s.is_active) FROM public.suppliers s"
-                        .to_string(),
-                    materialized: false,
-                    owner: None,
-                    grants: Vec::new(),
-                },
+                new_view: make_view(
+                    "supplier_users_view",
+                    "public",
+                    "SELECT public.some_func(s.is_active) FROM public.suppliers s",
+                ),
             },
             MigrationOp::AddColumn {
                 table: "public.suppliers".to_string(),
@@ -4731,19 +4720,69 @@ mod tests {
             MigrationOp::CreateFunction(make_simple_function("some_func", "public")),
         ];
         let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "AddColumn",
+            "AlterView",
+            |op| matches!(op, MigrationOp::AddColumn { .. }),
+            |op| matches!(op, MigrationOp::AlterView { .. }),
+        );
+    }
 
-        let add_column_pos = planned
-            .iter()
-            .position(|op| matches!(op, MigrationOp::AddColumn { .. }))
-            .unwrap();
-        let alter_view_pos = planned
-            .iter()
-            .position(|op| matches!(op, MigrationOp::AlterView { .. }))
-            .unwrap();
+    #[test]
+    fn add_column_before_policy_referencing_column() {
+        let mut policy = make_policy("active_only", "public", "suppliers");
+        policy.using_expr = Some("is_active = true".to_string());
+        let ops = vec![
+            MigrationOp::CreatePolicy(policy),
+            MigrationOp::AddColumn {
+                table: "public.suppliers".to_string(),
+                column: Column {
+                    name: "is_active".to_string(),
+                    data_type: PgType::Boolean,
+                    nullable: false,
+                    default: Some("true".to_string()),
+                    comment: None,
+                },
+            },
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "AddColumn",
+            "CreatePolicy",
+            |op| matches!(op, MigrationOp::AddColumn { .. }),
+            |op| matches!(op, MigrationOp::CreatePolicy(_)),
+        );
+    }
 
-        assert!(
-            add_column_pos < alter_view_pos,
-            "AddColumn ({add_column_pos}) must come before AlterView ({alter_view_pos})"
+    #[test]
+    fn add_column_before_trigger_referencing_column() {
+        let ops = vec![
+            MigrationOp::CreateTrigger(make_trigger(
+                "check_active",
+                "public",
+                "suppliers",
+                "check_fn",
+            )),
+            MigrationOp::AddColumn {
+                table: "public.suppliers".to_string(),
+                column: Column {
+                    name: "is_active".to_string(),
+                    data_type: PgType::Boolean,
+                    nullable: false,
+                    default: Some("true".to_string()),
+                    comment: None,
+                },
+            },
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "AddColumn",
+            "CreateTrigger",
+            |op| matches!(op, MigrationOp::AddColumn { .. }),
+            |op| matches!(op, MigrationOp::CreateTrigger(_)),
         );
     }
 
