@@ -30,7 +30,7 @@ fn emit_ownership_change(
     args: Option<String>,
 ) {
     if options.manage_ownership && from_owner != to_owner {
-        if let Some(ref new_owner) = to_owner {
+        if let Some(new_owner) = to_owner {
             ops.push(MigrationOp::AlterOwner {
                 object_kind,
                 schema: schema.to_string(),
@@ -233,14 +233,19 @@ pub(super) fn diff_domains(from: &Schema, to: &Schema, options: &DiffOptions) ->
     for (name, to_domain) in &to.domains {
         let (schema, domain_name) = parse_qualified_name(name);
         if let Some(from_domain) = from.domains.get(name) {
-            let mut changes = DomainChanges::default();
-            if !optional_expressions_equal(&from_domain.default, &to_domain.default) {
-                changes.default = Some(to_domain.default.clone());
-            }
-            if from_domain.not_null != to_domain.not_null {
-                changes.not_null = Some(to_domain.not_null);
-            }
-            if changes != DomainChanges::default() {
+            let changes = DomainChanges {
+                default: if !optional_expressions_equal(&from_domain.default, &to_domain.default) {
+                    Some(to_domain.default.clone())
+                } else {
+                    None
+                },
+                not_null: if from_domain.not_null != to_domain.not_null {
+                    Some(to_domain.not_null)
+                } else {
+                    None
+                },
+            };
+            if changes.default.is_some() || changes.not_null.is_some() {
                 ops.push(MigrationOp::AlterDomain {
                     name: name.clone(),
                     changes,
@@ -698,35 +703,40 @@ pub(super) fn diff_sequences(
 
 pub(super) fn compute_sequence_changes(from: &Sequence, to: &Sequence) -> Option<SequenceChanges> {
     let mut changes = SequenceChanges::default();
+    let mut has_changes = false;
 
     if from.data_type != to.data_type {
         changes.data_type = Some(to.data_type.clone());
+        has_changes = true;
     }
     if from.increment != to.increment {
         changes.increment = to.increment;
+        has_changes = true;
     }
     if from.min_value != to.min_value {
         changes.min_value = Some(to.min_value);
+        has_changes = true;
     }
     if from.max_value != to.max_value {
         changes.max_value = Some(to.max_value);
+        has_changes = true;
     }
     if from.start != to.start {
         changes.restart = to.start;
+        has_changes = true;
     }
     if from.cache != to.cache {
         changes.cache = to.cache;
+        has_changes = true;
     }
     if from.cycle != to.cycle {
         changes.cycle = Some(to.cycle);
+        has_changes = true;
     }
     if from.owned_by != to.owned_by {
         changes.owned_by = Some(to.owned_by.clone());
+        has_changes = true;
     }
 
-    if changes != SequenceChanges::default() {
-        Some(changes)
-    } else {
-        None
-    }
+    has_changes.then_some(changes)
 }

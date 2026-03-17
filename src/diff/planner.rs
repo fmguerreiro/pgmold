@@ -466,15 +466,9 @@ fn add_privilege_dependency_edge(
     }
 }
 
-/// Vertex in the dependency graph, wrapping a MigrationOp.
-#[derive(Clone)]
-struct OpVertex {
-    op: MigrationOp,
-}
-
 /// Graph-based migration planner using explicit dependency edges.
 pub struct MigrationGraph {
-    graph: DiGraph<OpVertex, ()>,
+    graph: DiGraph<MigrationOp, ()>,
     nodes: HashMap<OpKey, NodeIndex>,
 }
 
@@ -491,7 +485,7 @@ impl MigrationGraph {
     /// Returns the NodeIndex for the new vertex.
     pub fn add_vertex(&mut self, op: MigrationOp) -> NodeIndex {
         let key = OpKey::from_op(&op);
-        let node = self.graph.add_node(OpVertex { op });
+        let node = self.graph.add_node(op);
         self.nodes.insert(key, node);
         node
     }
@@ -623,7 +617,7 @@ impl MigrationGraph {
         // the specific tables the function depends on, not all tables.
         // AlterFunction carries no body, so %ROWTYPE/SETOF detection is not needed for it.
         for &func_idx in &functions {
-            if let MigrationOp::CreateFunction(f) = &self.graph[func_idx].op {
+            if let MigrationOp::CreateFunction(f) = &self.graph[func_idx] {
                 let setof_table = extract_setof_type_ref(&f.return_type).map(|type_ref| {
                     let (s, n) = parse_type_ref(type_ref, &f.schema);
                     qualified_name(&s, &n)
@@ -638,7 +632,7 @@ impl MigrationGraph {
                     if func_idx == table_idx {
                         continue;
                     }
-                    let table_qualified = match &self.graph[table_idx].op {
+                    let table_qualified = match &self.graph[table_idx] {
                         MigrationOp::CreateTable(t) => qualified_name(&t.schema, &t.name),
                         _ => continue,
                     };
@@ -816,7 +810,7 @@ impl MigrationGraph {
 
     /// Get the MigrationOp for a given key.
     fn get_op(&self, key: &OpKey) -> Option<&MigrationOp> {
-        self.nodes.get(key).map(|&idx| &self.graph[idx].op)
+        self.nodes.get(key).map(|&idx| &self.graph[idx])
     }
 
     /// Add content-aware dependency edges (specific op A before specific op B based on content).
@@ -1233,7 +1227,7 @@ impl MigrationGraph {
         // Get topological order - fails if there's a cycle
         let sorted = toposort(&self.graph, None).map_err(|cycle| {
             let node = cycle.node_id();
-            let op = &self.graph[node].op;
+            let op = &self.graph[node];
             PlanError::CyclicDependency(format!("{op:?}"))
         })?;
 
@@ -1241,7 +1235,7 @@ impl MigrationGraph {
         // Priority is encoded in type-level edges, not post-hoc sorting
         Ok(sorted
             .into_iter()
-            .map(|node| self.graph[node].op.clone())
+            .map(|node| self.graph[node].clone())
             .collect())
     }
 }
@@ -1322,20 +1316,17 @@ fn preprocess_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     for op in ops {
         match op {
-            // Split CreateSequence with owned_by into CreateSequence + AlterSequence
             MigrationOp::CreateSequence(ref seq) if seq.owned_by.is_some() => {
-                let owned_by = seq.owned_by.as_ref().unwrap();
+                let owned_by = seq.owned_by.clone().unwrap();
                 let mut seq_without_owner = seq.clone();
                 seq_without_owner.owned_by = None;
                 result.push(MigrationOp::CreateSequence(seq_without_owner));
-
-                let changes = super::SequenceChanges {
-                    owned_by: Some(Some(owned_by.clone())),
-                    ..Default::default()
-                };
                 result.push(MigrationOp::AlterSequence {
                     name: qualified_name(&seq.schema, &seq.name),
-                    changes,
+                    changes: super::SequenceChanges {
+                        owned_by: Some(Some(owned_by)),
+                        ..Default::default()
+                    },
                 });
             }
             _ => result.push(op),

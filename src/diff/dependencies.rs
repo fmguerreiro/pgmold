@@ -373,21 +373,12 @@ fn policy_references_functions(policy: &Policy, function_names: &HashSet<String>
 
 /// Extract function references from a policy's USING and WITH CHECK expressions.
 fn extract_function_references_from_policy(policy: &Policy) -> HashSet<String> {
-    let mut refs = HashSet::new();
-
-    if let Some(ref using_expr) = policy.using_expr {
-        for func_ref in extract_function_references(using_expr, &policy.table_schema) {
-            refs.insert(qualified_name(&func_ref.schema, &func_ref.name));
-        }
-    }
-
-    if let Some(ref check_expr) = policy.check_expr {
-        for func_ref in extract_function_references(check_expr, &policy.table_schema) {
-            refs.insert(qualified_name(&func_ref.schema, &func_ref.name));
-        }
-    }
-
-    refs
+    [&policy.using_expr, &policy.check_expr]
+        .into_iter()
+        .flatten()
+        .flat_map(|expr| extract_function_references(expr, &policy.table_schema))
+        .map(|func_ref| qualified_name(&func_ref.schema, &func_ref.name))
+        .collect()
 }
 
 /// Check if two function names match (handles schema qualification).
@@ -396,14 +387,12 @@ fn function_names_match(dropped_name: &str, referenced_name: &str) -> bool {
         return true;
     }
 
-    let dropped_parts: Vec<&str> = dropped_name.split('.').collect();
-    let ref_parts: Vec<&str> = referenced_name.split('.').collect();
+    let dropped_func = dropped_name.rsplit('.').next().unwrap_or("");
+    let ref_func = referenced_name.rsplit('.').next().unwrap_or("");
 
-    let dropped_func = dropped_parts.last().unwrap_or(&"");
-    let ref_func = ref_parts.last().unwrap_or(&"");
-
-    if dropped_parts.len() == 2 && ref_parts.len() == 2 {
-        return dropped_parts[0] == ref_parts[0] && dropped_func == ref_func;
+    let both_qualified = dropped_name.contains('.') && referenced_name.contains('.');
+    if both_qualified {
+        return false;
     }
 
     dropped_func == ref_func

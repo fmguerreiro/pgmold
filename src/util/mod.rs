@@ -503,7 +503,7 @@ fn find_matching_paren(s: &str, open_pos: usize) -> Option<usize> {
 /// Removes two single-byte characters at the given byte positions from a string.
 /// `first` must be less than `second`. Both positions must be valid byte boundaries.
 fn remove_byte_pair(s: &str, first: usize, second: usize) -> String {
-    debug_assert!(first < second);
+    assert!(first < second);
     format!(
         "{}{}{}",
         &s[..first],
