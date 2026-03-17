@@ -124,7 +124,7 @@ pub fn compute_diff_with_flags(
 pub(super) mod test_helpers {
     use std::collections::BTreeMap;
 
-    use crate::model::{Column, PgType, Schema, Table};
+    use crate::model::{Column, ForeignKey, PgType, Schema, Table};
 
     pub fn empty_schema() -> Schema {
         Schema::new()
@@ -132,6 +132,13 @@ pub(super) mod test_helpers {
 
     pub fn simple_table(name: &str) -> Table {
         simple_table_with_schema(name, "public")
+    }
+
+    pub fn simple_table_with_fks(name: &str, foreign_keys: Vec<ForeignKey>) -> Table {
+        Table {
+            foreign_keys,
+            ..simple_table(name)
+        }
     }
 
     pub fn simple_table_with_schema(name: &str, schema: &str) -> Table {

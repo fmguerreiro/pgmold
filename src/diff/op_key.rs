@@ -1,5 +1,7 @@
 use super::{GrantObjectKind, MigrationOp, OwnerObjectKind};
 use crate::model::{qualified_name, QualifiedName};
+use crate::parser::extract_table_references;
+use std::collections::HashSet;
 
 /// Extracts the type reference from a SETOF return type, if present.
 /// Returns the raw type string after "SETOF " (trimmed but preserving quotes).
@@ -27,8 +29,6 @@ pub(crate) fn parse_type_ref(type_ref: &str, default_schema: &str) -> (String, S
     }
 }
 
-/// Unique key for identifying each MigrationOp in the dependency graph.
-/// Used for edge lookup and duplicate detection.
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub(crate) enum OpKey {
     CreateSchema(String),
@@ -188,7 +188,6 @@ pub(crate) enum OpKey {
 }
 
 impl OpKey {
-    /// Create an OpKey from a MigrationOp.
     pub(crate) fn from_op(op: &MigrationOp) -> Self {
         match op {
             MigrationOp::CreateSchema(s) => OpKey::CreateSchema(s.name.clone()),
@@ -420,8 +419,7 @@ impl OpKey {
     }
 }
 
-/// Helper to add dependency edge from a Create op to a Grant/Revoke op.
-/// Used for both GrantPrivileges and RevokePrivileges to ensure objects exist before granting.
+/// Adds edge: Create<object> → Grant/Revoke, so objects exist before granting.
 pub(crate) fn add_privilege_dependency_edge(
     edges: &mut Vec<(OpKey, OpKey)>,
     object_kind: &GrantObjectKind,
@@ -450,4 +448,11 @@ pub(crate) fn add_privilege_dependency_edge(
             }
         }
     }
+}
+
+pub(crate) fn extract_relation_references(query: &str) -> HashSet<String> {
+    extract_table_references(query, "public")
+        .into_iter()
+        .map(|r| r.qualified_name())
+        .collect()
 }

@@ -1,10 +1,9 @@
-use super::planner::extract_relation_references;
+use super::op_key::extract_relation_references;
 use super::MigrationOp;
 use crate::model::qualified_name;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-/// Plan operations for a schema dump (not migration).
-/// Unlike plan_migration, this keeps OWNED BY inline in CREATE SEQUENCE
+/// Unlike plan_migration, keeps OWNED BY inline in CREATE SEQUENCE
 /// by placing sequences after tables they reference.
 pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut create_schemas = Vec::new();
@@ -118,7 +117,7 @@ fn order_view_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
         })
         .collect();
 
-    let mut view_ops: HashMap<String, MigrationOp> = HashMap::new();
+    let mut ops_by_name: HashMap<String, MigrationOp> = HashMap::new();
     let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
 
     for op in ops {
@@ -131,11 +130,11 @@ fn order_view_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
                 .collect();
 
             dependencies.insert(view_name.clone(), deps);
-            view_ops.insert(view_name, op);
+            ops_by_name.insert(view_name, op);
         }
     }
 
-    topological_sort(&view_ops, &dependencies)
+    kahn_sort(&ops_by_name, &dependencies)
 }
 
 fn order_table_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
@@ -143,7 +142,7 @@ fn order_table_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
         return ops;
     }
 
-    let mut table_ops: HashMap<String, MigrationOp> = HashMap::new();
+    let mut ops_by_name: HashMap<String, MigrationOp> = HashMap::new();
     let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
 
     for op in ops {
@@ -158,35 +157,35 @@ fn order_table_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
                 .collect();
 
             dependencies.insert(table_name.clone(), deps);
-            table_ops.insert(table_name, op);
+            ops_by_name.insert(table_name, op);
         }
     }
 
-    topological_sort(&table_ops, &dependencies)
+    kahn_sort(&ops_by_name, &dependencies)
 }
 
-/// Perform Kahn's algorithm for topological sort.
-fn topological_sort(
-    table_ops: &HashMap<String, MigrationOp>,
+/// Kahn's algorithm topological sort over named operations and their dependencies.
+fn kahn_sort(
+    named_ops: &HashMap<String, MigrationOp>,
     dependencies: &HashMap<String, HashSet<String>>,
 ) -> Vec<MigrationOp> {
     let mut in_degree: HashMap<String, usize> = HashMap::new();
     let mut reverse_deps: HashMap<String, Vec<String>> = HashMap::new();
 
-    for name in table_ops.keys() {
+    for name in named_ops.keys() {
         in_degree.insert(name.clone(), 0);
         reverse_deps.insert(name.clone(), Vec::new());
     }
 
-    for (table, deps) in dependencies {
-        let count = deps.iter().filter(|d| table_ops.contains_key(*d)).count();
-        in_degree.insert(table.clone(), count);
+    for (name, deps) in dependencies {
+        let count = deps.iter().filter(|d| named_ops.contains_key(*d)).count();
+        in_degree.insert(name.clone(), count);
         for dep in deps {
-            if table_ops.contains_key(dep) {
+            if named_ops.contains_key(dep) {
                 reverse_deps
                     .entry(dep.clone())
                     .or_default()
-                    .push(table.clone());
+                    .push(name.clone());
             }
         }
     }
@@ -213,7 +212,7 @@ fn topological_sort(
         }
     }
 
-    let unsorted: Vec<String> = table_ops
+    let unsorted: Vec<String> = named_ops
         .keys()
         .filter(|name| !sorted_names.contains(name))
         .cloned()
@@ -222,41 +221,22 @@ fn topological_sort(
 
     sorted_names
         .into_iter()
-        .filter_map(|name| table_ops.get(&name).cloned())
+        .filter_map(|name| named_ops.get(&name).cloned())
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diff::test_helpers::simple_table_with_fks;
     use crate::model::*;
-    use std::collections::BTreeMap;
-
-    fn make_table(name: &str, foreign_keys: Vec<ForeignKey>) -> Table {
-        Table {
-            name: name.to_string(),
-            schema: "public".to_string(),
-            columns: BTreeMap::new(),
-            indexes: Vec::new(),
-            primary_key: None,
-            foreign_keys,
-            check_constraints: Vec::new(),
-            comment: None,
-            row_level_security: false,
-            policies: Vec::new(),
-            partition_by: None,
-
-            owner: None,
-            grants: Vec::new(),
-        }
-    }
 
     #[test]
     fn plan_dump_orders_default_privileges_at_end() {
         use crate::diff::GrantObjectKind;
         use crate::model::{DefaultPrivilegeObjectType, Privilege};
 
-        let table = make_table("users", vec![]);
+        let table = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
             MigrationOp::AlterDefaultPrivileges {

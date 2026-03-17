@@ -1,15 +1,17 @@
-use super::op_key::{add_privilege_dependency_edge, extract_setof_type_ref, parse_type_ref, OpKey};
+use super::op_key::{
+    add_privilege_dependency_edge, extract_relation_references, extract_setof_type_ref,
+    parse_type_ref, OpKey,
+};
 use super::{MigrationOp, OwnerObjectKind};
 use crate::model::{parse_qualified_name, qualified_name, QualifiedName};
 use crate::parser::{
-    extract_function_references, extract_rowtype_references, extract_table_references,
+    extract_function_references, extract_rowtype_references,
 };
 use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
-/// Error returned when migration planning fails.
 #[derive(Debug, Error)]
 pub enum PlanError {
     #[error("Circular dependency detected involving: {0}")]
@@ -23,7 +25,6 @@ pub(crate) struct MigrationGraph {
 }
 
 impl MigrationGraph {
-    /// Create a new empty migration graph.
     pub fn new() -> Self {
         Self {
             graph: DiGraph::new(),
@@ -31,8 +32,6 @@ impl MigrationGraph {
         }
     }
 
-    /// Add an operation to the graph as a vertex.
-    /// Returns the NodeIndex for the new vertex.
     pub fn add_vertex(&mut self, op: MigrationOp) -> NodeIndex {
         let key = OpKey::from_op(&op);
         assert!(!self.nodes.contains_key(&key), "duplicate OpKey: {key:?}");
@@ -41,8 +40,7 @@ impl MigrationGraph {
         node
     }
 
-    /// Add a directed edge from one operation to another (from must run before to).
-    /// Returns true if both nodes exist and the edge was added.
+    /// Returns true if both nodes exist and the edge was added (from runs before to).
     pub fn add_edge(&mut self, from: &OpKey, to: &OpKey) -> bool {
         if let (Some(&from_node), Some(&to_node)) = (self.nodes.get(from), self.nodes.get(to)) {
             self.graph.add_edge(from_node, to_node, ());
@@ -52,7 +50,6 @@ impl MigrationGraph {
         }
     }
 
-    /// Get all NodeIndexes for operations matching a predicate.
     fn nodes_matching<F>(&self, predicate: F) -> Vec<NodeIndex>
     where
         F: Fn(&OpKey) -> bool,
@@ -64,7 +61,6 @@ impl MigrationGraph {
             .collect()
     }
 
-    /// Add edges from all nodes in `from` to all nodes in `to`.
     fn edges_all_to_all(&mut self, from: &[NodeIndex], to: &[NodeIndex]) {
         for &f in from {
             for &t in to {
@@ -75,7 +71,6 @@ impl MigrationGraph {
         }
     }
 
-    /// Add type-level dependency edges (all ops of type A before all ops of type B).
     pub fn add_type_level_edges(&mut self) {
         self.add_schema_infrastructure_edges();
         self.add_type_system_edges();
@@ -461,17 +456,12 @@ impl MigrationGraph {
         self.edges_all_to_all(&all_creates, &final_drops);
     }
 
-    /// Get the MigrationOp for a given key.
     fn get_op(&self, key: &OpKey) -> Option<&MigrationOp> {
         self.nodes.get(key).map(|&idx| &self.graph[idx])
     }
 
-    /// Add content-aware dependency edges (specific op A before specific op B based on content).
     pub fn add_content_aware_edges(&mut self) {
-        // Clone keys to avoid borrow issues during iteration
         let keys: Vec<_> = self.nodes.keys().cloned().collect();
-
-        // Collect edges to add to avoid borrow issues
         let mut edges_to_add: Vec<(OpKey, OpKey)> = Vec::new();
 
         for key in &keys {
@@ -862,19 +852,13 @@ impl MigrationGraph {
         }
     }
 
-    /// Perform topological sort and return operations in dependency order.
-    /// Type-level edges establish priority relationships (schemas before tables, etc.).
-    /// Content-aware edges handle specific dependencies (FK ordering, etc.).
     pub fn topological_sort(&self) -> Result<Vec<MigrationOp>, PlanError> {
-        // Get topological order - fails if there's a cycle
         let sorted = toposort(&self.graph, None).map_err(|cycle| {
             let node = cycle.node_id();
             let op = &self.graph[node];
             PlanError::CyclicDependency(format!("{op:?}"))
         })?;
 
-        // Return operations in topological order
-        // Priority is encoded in type-level edges, not post-hoc sorting
         Ok(sorted
             .into_iter()
             .map(|node| self.graph[node].clone())
@@ -931,28 +915,19 @@ fn drop_targets_table(other: &OpKey, table: &QualifiedName) -> bool {
     }
 }
 
-/// Plan migration operations using graph-based dependency ordering.
-/// Returns an error if a circular dependency is detected.
 pub fn plan_migration_checked(ops: Vec<MigrationOp>) -> Result<Vec<MigrationOp>, PlanError> {
-    // Pre-process: Split sequences with owned_by into CreateSequence + AlterSequence
     let processed_ops = preprocess_ops(ops);
 
     let mut graph = MigrationGraph::new();
-
-    // Add all ops as vertices
     for op in processed_ops {
         graph.add_vertex(op);
     }
-
-    // Add dependency edges
     graph.add_type_level_edges();
     graph.add_content_aware_edges();
 
-    // Sort and return
     graph.topological_sort()
 }
 
-/// Pre-process operations to handle special cases.
 fn preprocess_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut result = Vec::new();
 
@@ -983,38 +958,13 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     plan_migration_checked(ops).expect("Circular dependency detected in migration operations")
 }
 
-pub(crate) fn extract_relation_references(query: &str) -> HashSet<String> {
-    extract_table_references(query, "public")
-        .into_iter()
-        .map(|r| r.qualified_name())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diff::test_helpers::simple_table_with_fks;
     use crate::diff::{ColumnChanges, OwnerObjectKind, PolicyChanges};
     use crate::model::*;
     use std::collections::BTreeMap;
-
-    fn make_table(name: &str, foreign_keys: Vec<ForeignKey>) -> Table {
-        Table {
-            name: name.to_string(),
-            schema: "public".to_string(),
-            columns: BTreeMap::new(),
-            indexes: Vec::new(),
-            primary_key: None,
-            foreign_keys,
-            check_constraints: Vec::new(),
-            comment: None,
-            row_level_security: false,
-            policies: Vec::new(),
-            partition_by: None,
-
-            owner: None,
-            grants: Vec::new(),
-        }
-    }
 
     fn make_fk(referenced_table: &str) -> ForeignKey {
         ForeignKey {
@@ -1030,9 +980,9 @@ mod tests {
 
     #[test]
     fn create_tables_ordered_by_fk_dependencies() {
-        let posts = make_table("posts", vec![make_fk("users")]);
-        let users = make_table("users", vec![]);
-        let comments = make_table("comments", vec![make_fk("posts"), make_fk("users")]);
+        let posts = simple_table_with_fks("posts", vec![make_fk("users")]);
+        let users = simple_table_with_fks("users", vec![]);
+        let comments = simple_table_with_fks("comments", vec![make_fk("posts"), make_fk("users")]);
 
         let ops = vec![
             MigrationOp::CreateTable(comments),
@@ -1070,7 +1020,7 @@ mod tests {
 
     #[test]
     fn creates_before_drops() {
-        let users = make_table("users", vec![]);
+        let users = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
             MigrationOp::DropTable("old_table".to_string()),
@@ -1196,7 +1146,7 @@ mod tests {
     #[test]
     fn enums_created_before_tables() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
             MigrationOp::CreateEnum(EnumType {
                 name: "user_role".to_string(),
                 schema: "public".to_string(),
@@ -1234,7 +1184,7 @@ mod tests {
     #[test]
     fn add_enum_value_ordered_after_create_enum_before_tables() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
             MigrationOp::AddEnumValue {
                 enum_name: "user_role".to_string(),
                 value: "guest".to_string(),
@@ -1387,7 +1337,7 @@ mod tests {
                 column_name: "id".to_string(),
             }),
         };
-        let table = make_table("users", vec![]);
+        let table = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
             MigrationOp::CreateSequence(seq.clone()),
@@ -1748,7 +1698,7 @@ mod tests {
 
     #[test]
     fn v2_basic_create_table() {
-        let users = make_table("users", vec![]);
+        let users = simple_table_with_fks("users", vec![]);
         let ops = vec![MigrationOp::CreateTable(users)];
 
         let v2_result = plan_migration_checked(ops.clone()).unwrap();
@@ -1759,8 +1709,8 @@ mod tests {
 
     #[test]
     fn v2_fk_dependencies() {
-        let posts = make_table("posts", vec![make_fk("users")]);
-        let users = make_table("users", vec![]);
+        let posts = simple_table_with_fks("posts", vec![make_fk("users")]);
+        let users = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
             MigrationOp::CreateTable(posts),
@@ -1794,7 +1744,7 @@ mod tests {
             owner: None,
             grants: vec![],
         };
-        let users = make_table("users", vec![]);
+        let users = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
             MigrationOp::CreateTable(users),
@@ -1852,8 +1802,8 @@ mod tests {
 
     #[test]
     fn v2_no_cycle_for_simple_ops() {
-        let users = make_table("users", vec![]);
-        let posts = make_table("posts", vec![make_fk("users")]);
+        let users = simple_table_with_fks("users", vec![]);
+        let posts = simple_table_with_fks("posts", vec![make_fk("users")]);
 
         let ops = vec![
             MigrationOp::CreateTable(users),
@@ -1876,9 +1826,9 @@ mod tests {
             grants: vec![],
         };
 
-        let users = make_table("users", vec![]);
-        let posts = make_table("posts", vec![make_fk("users")]);
-        let comments = make_table("comments", vec![make_fk("posts"), make_fk("users")]);
+        let users = simple_table_with_fks("users", vec![]);
+        let posts = simple_table_with_fks("posts", vec![make_fk("users")]);
+        let comments = simple_table_with_fks("comments", vec![make_fk("posts"), make_fk("users")]);
 
         let ops = vec![
             MigrationOp::CreateEnum(my_enum),
@@ -1970,7 +1920,7 @@ mod tests {
     fn planner_orders_default_privileges_at_end() {
         use crate::model::{DefaultPrivilegeObjectType, Privilege};
 
-        let table = make_table("users", vec![]);
+        let table = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
             MigrationOp::AlterDefaultPrivileges {
@@ -2100,7 +2050,7 @@ mod tests {
         use crate::diff::GrantObjectKind;
         use crate::model::Privilege;
 
-        let table = make_table("users", vec![]);
+        let table = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
             MigrationOp::GrantPrivileges {
@@ -2751,7 +2701,7 @@ mod tests {
             grants: Vec::new(),
         };
 
-        let mut table = make_table("ProcurementFacility", vec![]);
+        let mut table = simple_table_with_fks("ProcurementFacility", vec![]);
         table.schema = "mrv".to_string();
 
         let ops = vec![
@@ -2792,7 +2742,7 @@ mod tests {
             grants: Vec::new(),
         };
 
-        let table = make_table("Users", vec![]);
+        let table = simple_table_with_fks("Users", vec![]);
 
         let ops = vec![
             MigrationOp::CreateFunction(func),
@@ -2834,7 +2784,7 @@ mod tests {
             grants: Vec::new(),
         };
 
-        let mut unrelated_table = make_table("Parcel", vec![]);
+        let mut unrelated_table = simple_table_with_fks("Parcel", vec![]);
         unrelated_table.schema = "mrv".to_string();
 
         let ops = vec![
@@ -2882,7 +2832,7 @@ mod tests {
             grants: Vec::new(),
         };
 
-        let table = make_table("orders", vec![]);
+        let table = simple_table_with_fks("orders", vec![]);
 
         let ops = vec![
             MigrationOp::CreateTable(table),
@@ -3164,7 +3114,7 @@ mod tests {
 
     #[test]
     fn schema_before_table() {
-        let mut table = make_table("users", vec![]);
+        let mut table = simple_table_with_fks("users", vec![]);
         table.schema = "api".to_string();
         let ops = vec![
             MigrationOp::CreateTable(table),
@@ -3217,7 +3167,7 @@ mod tests {
     #[test]
     fn extension_before_table() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
             MigrationOp::CreateExtension(make_extension("uuid-ossp")),
         ];
         let planned = plan_migration(ops);
@@ -3235,7 +3185,7 @@ mod tests {
     #[test]
     fn enum_before_table() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
             MigrationOp::CreateEnum(make_enum("role", "public")),
         ];
         let planned = plan_migration(ops);
@@ -3251,7 +3201,7 @@ mod tests {
     #[test]
     fn domain_before_table() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
             MigrationOp::CreateDomain(make_domain("email", "public")),
         ];
         let planned = plan_migration(ops);
@@ -3267,7 +3217,7 @@ mod tests {
     #[test]
     fn sequence_before_table() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
             MigrationOp::CreateSequence(make_sequence("users_id_seq", "public")),
         ];
         let planned = plan_migration(ops);
@@ -3285,7 +3235,7 @@ mod tests {
     #[test]
     fn function_before_table_default() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("orders", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("orders", vec![])),
             MigrationOp::CreateFunction(make_simple_function("gen_id", "public")),
         ];
         let planned = plan_migration(ops);
@@ -3308,7 +3258,7 @@ mod tests {
         );
         let ops = vec![
             MigrationOp::CreateFunction(func),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3339,7 +3289,7 @@ mod tests {
         );
         let ops = vec![
             MigrationOp::CreateFunction(func),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3365,7 +3315,7 @@ mod tests {
             "#,
             "integer",
         );
-        let mut table = make_table("MyTable", vec![]);
+        let mut table = simple_table_with_fks("MyTable", vec![]);
         table.schema = "myschema".to_string();
         let ops = vec![
             MigrationOp::CreateFunction(func),
@@ -3397,7 +3347,7 @@ mod tests {
         );
         let ops = vec![
             MigrationOp::CreateFunction(func),
-            MigrationOp::CreateTable(make_table("orders", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("orders", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3426,8 +3376,8 @@ mod tests {
         );
         let ops = vec![
             MigrationOp::CreateFunction(func),
-            MigrationOp::CreateTable(make_table("users", vec![])),
-            MigrationOp::CreateTable(make_table("posts", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("posts", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3462,7 +3412,7 @@ mod tests {
         );
         let ops = vec![
             MigrationOp::CreateFunction(func),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3488,7 +3438,7 @@ mod tests {
             "#,
             "integer",
         );
-        let table = make_table("unrelated", vec![]);
+        let table = simple_table_with_fks("unrelated", vec![]);
         let ops = vec![
             MigrationOp::CreateFunction(func),
             MigrationOp::CreateTable(table),
@@ -3507,7 +3457,7 @@ mod tests {
 
     #[test]
     fn table_before_partition() {
-        let parent = make_table("events", vec![]);
+        let parent = simple_table_with_fks("events", vec![]);
         let partition = crate::model::Partition {
             name: "events_2024".to_string(),
             schema: "public".to_string(),
@@ -3542,7 +3492,7 @@ mod tests {
                 table: QualifiedName::new("public", "users"),
                 column: make_column("email"),
             },
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3568,7 +3518,7 @@ mod tests {
                     is_constraint: false,
                 },
             },
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3586,7 +3536,7 @@ mod tests {
             MigrationOp::EnableRls {
                 table: QualifiedName::new("public", "users"),
             },
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3605,7 +3555,7 @@ mod tests {
             MigrationOp::EnableRls {
                 table: QualifiedName::new("public", "users"),
             },
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -3630,7 +3580,7 @@ mod tests {
     fn table_before_trigger() {
         let ops = vec![
             MigrationOp::CreateTrigger(make_trigger("audit_insert", "public", "users", "audit_fn")),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -3647,7 +3597,7 @@ mod tests {
         let ops = vec![
             MigrationOp::CreateTrigger(make_trigger("audit_insert", "public", "users", "audit_fn")),
             MigrationOp::CreateFunction(make_simple_function("audit_fn", "public")),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -3697,7 +3647,7 @@ mod tests {
         let ops = vec![
             MigrationOp::CreatePolicy(policy),
             MigrationOp::CreateFunction(make_simple_function("user_owns_entity", "auth")),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -3724,7 +3674,7 @@ mod tests {
         let ops = vec![
             MigrationOp::CreatePolicy(policy),
             MigrationOp::CreateFunction(make_simple_function("can_insert", "auth")),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -3750,7 +3700,7 @@ mod tests {
         let ops = vec![
             MigrationOp::CreateTrigger(trigger),
             MigrationOp::CreateFunction(make_simple_function("log_changes", "audit")),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -3778,7 +3728,7 @@ mod tests {
                 "SELECT auth.is_active(id) FROM public.users",
             )),
             MigrationOp::CreateFunction(make_simple_function("is_active", "auth")),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -3808,7 +3758,7 @@ mod tests {
                 },
             },
             MigrationOp::CreateFunction(make_simple_function("validate_item", "auth")),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -3842,7 +3792,7 @@ mod tests {
                 },
             },
             MigrationOp::CreateFunction(make_simple_function("normalize_name", "auth")),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -3876,7 +3826,7 @@ mod tests {
                 },
             },
             MigrationOp::CreateFunction(make_simple_function("is_active", "auth")),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -3909,7 +3859,7 @@ mod tests {
                 },
             },
             MigrationOp::CreateFunction(make_simple_function("generate_tracking_id", "auth")),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -4033,7 +3983,7 @@ mod tests {
                 "public",
                 "SELECT * FROM public.users WHERE active",
             )),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4487,7 +4437,7 @@ mod tests {
         let schema = make_schema("api");
         let my_enum = make_enum("status", "api");
         let func = make_simple_function("auth_check", "api");
-        let mut table = make_table("users", vec![]);
+        let mut table = simple_table_with_fks("users", vec![]);
         table.schema = "api".to_string();
         let view = make_view("user_view", "api", "SELECT * FROM api.users");
         let trigger = make_trigger("audit", "api", "users", "auth_check");
@@ -4538,7 +4488,7 @@ mod tests {
 
     #[test]
     fn cross_schema_fk_ordering() {
-        let mut users = make_table("users", vec![]);
+        let mut users = simple_table_with_fks("users", vec![]);
         users.schema = "auth".to_string();
 
         let mut fk = make_fk("users");
@@ -4546,7 +4496,7 @@ mod tests {
         fk.columns = vec!["author_id".to_string()];
         fk.referenced_schema = "auth".to_string();
 
-        let mut posts = make_table("posts", vec![fk]);
+        let mut posts = simple_table_with_fks("posts", vec![fk]);
         posts.schema = "api".to_string();
 
         let ops = vec![
@@ -4722,7 +4672,7 @@ mod tests {
                 args: None,
                 new_owner: "app_admin".to_string(),
             },
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4950,7 +4900,7 @@ mod tests {
     fn creates_before_final_drops() {
         let ops = vec![
             MigrationOp::DropTable("public.old_table".to_string()),
-            MigrationOp::CreateTable(make_table("new_table", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("new_table", vec![])),
             MigrationOp::DropEnum("public.old_status".to_string()),
             MigrationOp::CreateEnum(make_enum("new_status", "public")),
         ];
@@ -4982,7 +4932,7 @@ mod tests {
                 args: "".to_string(),
             },
             MigrationOp::CreateFunction(make_simple_function("old_fn", "public")),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
