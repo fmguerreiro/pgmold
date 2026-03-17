@@ -15,12 +15,10 @@ pub fn load_schema_from_sources(sources: &[String]) -> Result<Schema> {
         ));
     }
 
-    let mut schemas: Vec<Schema> = Vec::new();
-
-    for source in sources {
-        let schema = load_single_source(source)?;
-        schemas.push(schema);
-    }
+    let schemas: Vec<Schema> = sources
+        .iter()
+        .map(|source| load_single_source(source))
+        .collect::<Result<_>>()?;
 
     merge_schemas(schemas)
 }
@@ -42,6 +40,29 @@ fn load_sql_source(path: &str) -> Result<Schema> {
     load_schema_sources(&[path.to_string()])
 }
 
+fn merge_collection<V>(
+    target: &mut std::collections::BTreeMap<String, V>,
+    source: std::collections::BTreeMap<String, V>,
+    object_type: &str,
+) -> Result<()> {
+    use std::collections::btree_map::Entry;
+
+    for (name, value) in source {
+        match target.entry(name) {
+            Entry::Occupied(entry) => {
+                return Err(SchemaError::ParseError(format!(
+                    "Duplicate {object_type} \"{}\" from multiple sources",
+                    entry.key()
+                )));
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(value);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn merge_schemas(schemas: Vec<Schema>) -> Result<Schema> {
     if schemas.is_empty() {
         return Err(SchemaError::ParseError("No schemas to merge".to_string()));
@@ -56,95 +77,16 @@ fn merge_schemas(schemas: Vec<Schema>) -> Result<Schema> {
     let mut merged = Schema::new();
 
     for schema in schemas {
-        for (name, table) in schema.tables {
-            if merged.tables.contains_key(&name) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate table \"{name}\" from multiple sources"
-                )));
-            }
-            merged.tables.insert(name, table);
-        }
-
-        for (name, enum_type) in schema.enums {
-            if merged.enums.contains_key(&name) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate enum \"{name}\" from multiple sources"
-                )));
-            }
-            merged.enums.insert(name, enum_type);
-        }
-
-        for (sig, func) in schema.functions {
-            if merged.functions.contains_key(&sig) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate function \"{sig}\" from multiple sources"
-                )));
-            }
-            merged.functions.insert(sig, func);
-        }
-
-        for (name, view) in schema.views {
-            if merged.views.contains_key(&name) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate view \"{name}\" from multiple sources"
-                )));
-            }
-            merged.views.insert(name, view);
-        }
-
-        for (name, trigger) in schema.triggers {
-            if merged.triggers.contains_key(&name) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate trigger \"{name}\" from multiple sources"
-                )));
-            }
-            merged.triggers.insert(name, trigger);
-        }
-
-        for (name, sequence) in schema.sequences {
-            if merged.sequences.contains_key(&name) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate sequence \"{name}\" from multiple sources"
-                )));
-            }
-            merged.sequences.insert(name, sequence);
-        }
-
-        for (name, domain) in schema.domains {
-            if merged.domains.contains_key(&name) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate domain \"{name}\" from multiple sources"
-                )));
-            }
-            merged.domains.insert(name, domain);
-        }
-
-        for (name, extension) in schema.extensions {
-            if merged.extensions.contains_key(&name) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate extension \"{name}\" from multiple sources"
-                )));
-            }
-            merged.extensions.insert(name, extension);
-        }
-
-        for (name, pg_schema) in schema.schemas {
-            if merged.schemas.contains_key(&name) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate schema \"{name}\" from multiple sources"
-                )));
-            }
-            merged.schemas.insert(name, pg_schema);
-        }
-
-        for (name, partition) in schema.partitions {
-            if merged.partitions.contains_key(&name) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate partition \"{name}\" from multiple sources"
-                )));
-            }
-            merged.partitions.insert(name, partition);
-        }
+        merge_collection(&mut merged.tables, schema.tables, "table")?;
+        merge_collection(&mut merged.enums, schema.enums, "enum")?;
+        merge_collection(&mut merged.functions, schema.functions, "function")?;
+        merge_collection(&mut merged.views, schema.views, "view")?;
+        merge_collection(&mut merged.triggers, schema.triggers, "trigger")?;
+        merge_collection(&mut merged.sequences, schema.sequences, "sequence")?;
+        merge_collection(&mut merged.domains, schema.domains, "domain")?;
+        merge_collection(&mut merged.extensions, schema.extensions, "extension")?;
+        merge_collection(&mut merged.schemas, schema.schemas, "schema")?;
+        merge_collection(&mut merged.partitions, schema.partitions, "partition")?;
 
         merged.pending_policies.extend(schema.pending_policies);
         merged.pending_owners.extend(schema.pending_owners);
