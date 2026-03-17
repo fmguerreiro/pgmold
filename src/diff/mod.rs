@@ -9,8 +9,8 @@ use std::collections::HashSet;
 
 use crate::model::{qualified_name, Schema};
 pub use types::{
-    ColumnChanges, DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp, OwnerObjectKind,
-    PolicyChanges, SequenceChanges,
+    ColumnChanges, DiffOptions, DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp,
+    OwnerObjectKind, PolicyChanges, SequenceChanges,
 };
 
 use dependencies::{
@@ -39,54 +39,23 @@ pub fn compute_diff_with_flags(
     manage_grants: bool,
     excluded_grant_roles: &HashSet<String>,
 ) -> Vec<MigrationOp> {
+    let options = DiffOptions {
+        manage_ownership,
+        manage_grants,
+        excluded_grant_roles,
+    };
     let mut ops = Vec::new();
 
-    ops.extend(diff_schemas(from, to, manage_grants, excluded_grant_roles));
+    ops.extend(diff_schemas(from, to, &options));
     ops.extend(diff_extensions(from, to));
-    ops.extend(diff_enums(
-        from,
-        to,
-        manage_ownership,
-        manage_grants,
-        excluded_grant_roles,
-    ));
-    ops.extend(diff_domains(
-        from,
-        to,
-        manage_ownership,
-        manage_grants,
-        excluded_grant_roles,
-    ));
-    ops.extend(diff_tables(
-        from,
-        to,
-        manage_ownership,
-        manage_grants,
-        excluded_grant_roles,
-    ));
-    ops.extend(diff_partitions(from, to, manage_ownership));
-    ops.extend(diff_functions(
-        from,
-        to,
-        manage_ownership,
-        manage_grants,
-        excluded_grant_roles,
-    ));
-    ops.extend(diff_views(
-        from,
-        to,
-        manage_ownership,
-        manage_grants,
-        excluded_grant_roles,
-    ));
+    ops.extend(diff_enums(from, to, &options));
+    ops.extend(diff_domains(from, to, &options));
+    ops.extend(diff_tables(from, to, &options));
+    ops.extend(diff_partitions(from, to, &options));
+    ops.extend(diff_functions(from, to, &options));
+    ops.extend(diff_views(from, to, &options));
     ops.extend(diff_triggers(from, to));
-    ops.extend(diff_sequences(
-        from,
-        to,
-        manage_ownership,
-        manage_grants,
-        excluded_grant_roles,
-    ));
+    ops.extend(diff_sequences(from, to, &options));
 
     for (name, to_table) in &to.tables {
         if let Some(from_table) = from.tables.get(name) {
@@ -624,7 +593,6 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
 
-        // Should generate DROP + CREATE, not ALTER
         assert_eq!(ops.len(), 2, "Should have DROP and CREATE operations");
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "public.my_func"),
@@ -691,7 +659,6 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
 
-        // Should use ALTER (CREATE OR REPLACE)
         assert_eq!(ops.len(), 1, "Should have only ALTER operation");
         assert!(
             matches!(&ops[0], MigrationOp::AlterFunction { name, .. } if name == "public.my_func"),
@@ -2254,7 +2221,6 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
             "new_table_name mismatch"
         );
 
-        // Verify semantic equality
         assert!(
             triggers_semantically_equal(&db_trigger, parsed_trigger),
             "Triggers should be semantically equal"
