@@ -1,5 +1,5 @@
 use super::{GrantObjectKind, MigrationOp, OwnerObjectKind};
-use crate::model::{qualified_name, QualifiedName};
+use crate::model::{parse_qualified_name, qualified_name, QualifiedName};
 use crate::parser::{
     extract_function_references, extract_rowtype_references, extract_table_references,
 };
@@ -138,7 +138,7 @@ pub enum OpKey {
     DropView(String),
     AlterView(String),
     CreateTrigger {
-        target: String,
+        target: QualifiedName,
         name: String,
     },
     DropTrigger {
@@ -146,7 +146,7 @@ pub enum OpKey {
         name: String,
     },
     AlterTriggerEnabled {
-        target: String,
+        target: QualifiedName,
         name: String,
     },
     CreateSequence(String),
@@ -326,7 +326,7 @@ impl OpKey {
             MigrationOp::DropView { name, .. } => OpKey::DropView(name.clone()),
             MigrationOp::AlterView { name, .. } => OpKey::AlterView(name.clone()),
             MigrationOp::CreateTrigger(t) => OpKey::CreateTrigger {
-                target: qualified_name(&t.target_schema, &t.target_name),
+                target: QualifiedName::new(&t.target_schema, &t.target_name),
                 name: t.name.clone(),
             },
             MigrationOp::DropTrigger {
@@ -343,7 +343,7 @@ impl OpKey {
                 name,
                 ..
             } => OpKey::AlterTriggerEnabled {
-                target: qualified_name(target_schema, target_name),
+                target: QualifiedName::new(target_schema, target_name),
                 name: name.clone(),
             },
             MigrationOp::CreateSequence(s) => {
@@ -485,7 +485,7 @@ impl MigrationGraph {
     /// Returns the NodeIndex for the new vertex.
     pub fn add_vertex(&mut self, op: MigrationOp) -> NodeIndex {
         let key = OpKey::from_op(&op);
-        debug_assert!(!self.nodes.contains_key(&key), "duplicate OpKey: {key:?}");
+        assert!(!self.nodes.contains_key(&key), "duplicate OpKey: {key:?}");
         let node = self.graph.add_node(op);
         self.nodes.insert(key, node);
         node
@@ -1020,7 +1020,10 @@ impl MigrationGraph {
 
                 // Trigger depends on its target table and its trigger function
                 OpKey::CreateTrigger { target, .. } => {
-                    edges_to_add.push((OpKey::CreateTable(target.clone()), key.clone()));
+                    edges_to_add.push((
+                        OpKey::CreateTable(target.to_qualified_string()),
+                        key.clone(),
+                    ));
 
                     if let Some(MigrationOp::CreateTrigger(trigger)) = self.get_op(key) {
                         let func_qualified =
@@ -1125,7 +1128,7 @@ impl MigrationGraph {
 
                 // DropTable must happen after dropping all table objects
                 OpKey::DropTable(table) => {
-                    let (schema, name) = parse_qualified_name_str(table);
+                    let (schema, name) = parse_qualified_name(table);
                     let qualified = QualifiedName::new(&schema, &name);
                     for other in &keys {
                         if drop_targets_table(other, &qualified) {
@@ -1368,13 +1371,6 @@ fn push_function_ref_edges(
     for ref_obj in extract_function_references(expression, default_schema) {
         let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
         push_function_edges(edges, keys, &ref_qualified, consumer_key);
-    }
-}
-
-fn parse_qualified_name_str(qname: &str) -> (String, String) {
-    match qname.split_once('.') {
-        Some((schema, name)) => (schema.to_string(), name.to_string()),
-        None => ("public".to_string(), qname.to_string()),
     }
 }
 
