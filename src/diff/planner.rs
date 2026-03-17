@@ -944,6 +944,12 @@ fn split_sequence_owned_by_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result
 }
 
+/// Test-only convenience wrapper that panics on circular dependencies.
+/// Production code should use [`plan_migration_checked`] instead.
+pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+    plan_migration_checked(ops).expect("Circular dependency detected in migration operations")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -951,10 +957,6 @@ mod tests {
     use crate::diff::{ColumnChanges, OwnerObjectKind, PolicyChanges};
     use crate::model::*;
     use std::collections::BTreeMap;
-
-    fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
-        plan_migration_checked(ops).expect("Circular dependency detected in migration operations")
-    }
 
     fn make_fk(referenced_table: &str) -> ForeignKey {
         ForeignKey {
