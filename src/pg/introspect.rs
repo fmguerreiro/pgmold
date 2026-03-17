@@ -1767,6 +1767,39 @@ fn collect_grants(
         .collect()
 }
 
+async fn query_grants<F>(
+    connection: &PgConnection,
+    target_schemas: &[String],
+    sql: &str,
+    context: &str,
+    extract_key: F,
+) -> Result<BTreeMap<String, Vec<Grant>>>
+where
+    F: Fn(&sqlx::postgres::PgRow) -> String,
+{
+    let rows = sqlx::query(sql)
+        .bind(target_schemas)
+        .fetch_all(connection.pool())
+        .await
+        .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch {context}: {e}")))?;
+
+    let mut grants_by_object: BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>> =
+        BTreeMap::new();
+
+    for row in rows {
+        let key = extract_key(&row);
+        let grantee: String = row.get("grantee");
+        let privilege_type: String = row.get("privilege_type");
+        let is_grantable: bool = row.get("is_grantable");
+
+        if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
+            accumulate_grant(&mut grants_by_object, key, grantee, is_grantable, privilege);
+        }
+    }
+
+    Ok(collect_grants(grants_by_object))
+}
+
 fn privilege_from_pg_string(s: &str) -> Option<Privilege> {
     match s {
         "SELECT" => Some(Privilege::Select),
@@ -1787,7 +1820,9 @@ async fn introspect_table_view_grants(
     connection: &PgConnection,
     target_schemas: &[String],
 ) -> Result<BTreeMap<String, Vec<Grant>>> {
-    let rows = sqlx::query(
+    query_grants(
+        connection,
+        target_schemas,
         r#"
         SELECT
             n.nspname AS schema_name,
@@ -1806,41 +1841,23 @@ async fn introspect_table_view_grants(
           AND c.relacl IS NOT NULL
           AND acl.grantee != c.relowner
         "#,
+        "table/view grants",
+        |row| {
+            let schema_name: String = row.get("schema_name");
+            let object_name: String = row.get("object_name");
+            qualified_name(&schema_name, &object_name)
+        },
     )
-    .bind(target_schemas)
-    .fetch_all(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch grants: {e}")))?;
-
-    let mut grants_by_object: BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>> =
-        BTreeMap::new();
-
-    for row in rows {
-        let schema_name: String = row.get("schema_name");
-        let object_name: String = row.get("object_name");
-        let grantee: String = row.get("grantee");
-        let privilege_type: String = row.get("privilege_type");
-        let is_grantable: bool = row.get("is_grantable");
-
-        if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            accumulate_grant(
-                &mut grants_by_object,
-                qualified_name(&schema_name, &object_name),
-                grantee,
-                is_grantable,
-                privilege,
-            );
-        }
-    }
-
-    Ok(collect_grants(grants_by_object))
 }
 
 async fn introspect_sequence_grants(
     connection: &PgConnection,
     target_schemas: &[String],
 ) -> Result<BTreeMap<String, Vec<Grant>>> {
-    let rows = sqlx::query(
+    query_grants(
+        connection,
+        target_schemas,
         r#"
         SELECT
             n.nspname AS schema_name,
@@ -1859,41 +1876,23 @@ async fn introspect_sequence_grants(
           AND c.relacl IS NOT NULL
           AND acl.grantee != c.relowner
         "#,
+        "sequence grants",
+        |row| {
+            let schema_name: String = row.get("schema_name");
+            let object_name: String = row.get("object_name");
+            qualified_name(&schema_name, &object_name)
+        },
     )
-    .bind(target_schemas)
-    .fetch_all(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch sequence grants: {e}")))?;
-
-    let mut grants_by_object: BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>> =
-        BTreeMap::new();
-
-    for row in rows {
-        let schema_name: String = row.get("schema_name");
-        let object_name: String = row.get("object_name");
-        let grantee: String = row.get("grantee");
-        let privilege_type: String = row.get("privilege_type");
-        let is_grantable: bool = row.get("is_grantable");
-
-        if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            accumulate_grant(
-                &mut grants_by_object,
-                qualified_name(&schema_name, &object_name),
-                grantee,
-                is_grantable,
-                privilege,
-            );
-        }
-    }
-
-    Ok(collect_grants(grants_by_object))
 }
 
 async fn introspect_function_grants(
     connection: &PgConnection,
     target_schemas: &[String],
 ) -> Result<BTreeMap<String, Vec<Grant>>> {
-    let rows = sqlx::query(
+    query_grants(
+        connection,
+        target_schemas,
         r#"
         SELECT
             n.nspname AS schema_name,
@@ -1912,43 +1911,30 @@ async fn introspect_function_grants(
           AND p.proacl IS NOT NULL
           AND acl.grantee != p.proowner
         "#,
-    )
-    .bind(target_schemas)
-    .fetch_all(connection.pool())
-    .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch function grants: {e}")))?;
-
-    let mut grants_by_object: BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>> =
-        BTreeMap::new();
-
-    for row in rows {
-        let schema_name: String = row.get("schema_name");
-        let function_name: String = row.get("function_name");
-        let args_str: String = row.get("args");
-        let grantee: String = row.get("grantee");
-        let privilege_type: String = row.get("privilege_type");
-        let is_grantable: bool = row.get("is_grantable");
-
-        if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
+        "function grants",
+        |row| {
+            let schema_name: String = row.get("schema_name");
+            let function_name: String = row.get("function_name");
+            let args_str: String = row.get("args");
             let parsed_args = parse_function_arguments(&args_str);
             let type_signature = parsed_args
                 .iter()
                 .map(|arg| crate::model::normalize_pg_type(&arg.data_type))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let key = format!("{schema_name}.{function_name}({type_signature})");
-            accumulate_grant(&mut grants_by_object, key, grantee, is_grantable, privilege);
-        }
-    }
-
-    Ok(collect_grants(grants_by_object))
+            format!("{schema_name}.{function_name}({type_signature})")
+        },
+    )
+    .await
 }
 
 async fn introspect_schema_grants(
     connection: &PgConnection,
     target_schemas: &[String],
 ) -> Result<BTreeMap<String, Vec<Grant>>> {
-    let rows = sqlx::query(
+    query_grants(
+        connection,
+        target_schemas,
         r#"
         SELECT
             n.nspname AS schema_name,
@@ -1964,40 +1950,19 @@ async fn introspect_schema_grants(
           AND n.nspacl IS NOT NULL
           AND acl.grantee != n.nspowner
         "#,
+        "schema grants",
+        |row| row.get("schema_name"),
     )
-    .bind(target_schemas)
-    .fetch_all(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch schema grants: {e}")))?;
-
-    let mut grants_by_schema: BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>> =
-        BTreeMap::new();
-
-    for row in rows {
-        let schema_name: String = row.get("schema_name");
-        let grantee: String = row.get("grantee");
-        let privilege_type: String = row.get("privilege_type");
-        let is_grantable: bool = row.get("is_grantable");
-
-        if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            accumulate_grant(
-                &mut grants_by_schema,
-                schema_name,
-                grantee,
-                is_grantable,
-                privilege,
-            );
-        }
-    }
-
-    Ok(collect_grants(grants_by_schema))
 }
 
 async fn introspect_type_grants(
     connection: &PgConnection,
     target_schemas: &[String],
 ) -> Result<BTreeMap<String, Vec<Grant>>> {
-    let rows = sqlx::query(
+    query_grants(
+        connection,
+        target_schemas,
         r#"
         SELECT
             n.nspname AS schema_name,
@@ -2016,34 +1981,14 @@ async fn introspect_type_grants(
           AND t.typacl IS NOT NULL
           AND acl.grantee != t.typowner
         "#,
+        "type grants",
+        |row| {
+            let schema_name: String = row.get("schema_name");
+            let type_name: String = row.get("type_name");
+            qualified_name(&schema_name, &type_name)
+        },
     )
-    .bind(target_schemas)
-    .fetch_all(connection.pool())
     .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch type grants: {e}")))?;
-
-    let mut grants_by_type: BTreeMap<String, BTreeMap<(String, bool), BTreeSet<Privilege>>> =
-        BTreeMap::new();
-
-    for row in rows {
-        let schema_name: String = row.get("schema_name");
-        let type_name: String = row.get("type_name");
-        let grantee: String = row.get("grantee");
-        let privilege_type: String = row.get("privilege_type");
-        let is_grantable: bool = row.get("is_grantable");
-
-        if let Some(privilege) = privilege_from_pg_string(&privilege_type) {
-            accumulate_grant(
-                &mut grants_by_type,
-                qualified_name(&schema_name, &type_name),
-                grantee,
-                is_grantable,
-                privilege,
-            );
-        }
-    }
-
-    Ok(collect_grants(grants_by_type))
 }
 
 async fn introspect_default_privileges(

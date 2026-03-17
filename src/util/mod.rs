@@ -190,19 +190,11 @@ pub fn normalize_type_casts(expr: &str) -> String {
 pub fn canonicalize_expression(expr: &str) -> String {
     let dialect = PostgreSqlDialect {};
 
-    // Try to parse as a standalone expression
-    let result = match Parser::new(&dialect).try_with_sql(expr) {
-        Ok(mut parser) => match parser.parse_expr() {
-            Ok(ast) => {
-                // Recursively strip ALL Nested nodes (parentheses) throughout the AST
-                // and strip numeric literal casts, then convert to string
-                let unwrapped = strip_all_nested(ast);
-                unwrapped.to_string()
-            }
-            Err(_) => normalize_expression_regex(expr),
-        },
-        Err(_) => normalize_expression_regex(expr),
-    };
+    let result = Parser::new(&dialect)
+        .try_with_sql(expr)
+        .and_then(|mut parser| parser.parse_expr())
+        .map(|ast| strip_all_nested(ast).to_string())
+        .unwrap_or_else(|_| normalize_expression_regex(expr));
 
     // Post-process: remove any remaining casts on numeric literals that weren't caught by AST
     // (e.g., if regex fallback was used or parser produced different format)
@@ -612,10 +604,12 @@ fn remove_where_outer_parens(s: &str) -> String {
     result
 }
 
-pub fn normalize_view_query(query: &str) -> String {
-    let without_text_cast = RE_STRING_TEXT_CAST_CI.replace_all(query, "'$1'");
-    let mut result = apply_common_normalizations(&without_text_cast);
+fn strip_text_cast_from_string_literals(query: &str) -> String {
+    RE_STRING_TEXT_CAST_CI.replace_all(query, "'$1'").to_string()
+}
 
+fn collapse_double_parens(query: &str) -> String {
+    let mut result = query.to_string();
     loop {
         let new_result = RE_DOUBLE_PAREN.replace_all(&result, "($1)").to_string();
         if new_result == result {
@@ -623,9 +617,15 @@ pub fn normalize_view_query(query: &str) -> String {
         }
         result = new_result;
     }
+    result
+}
 
-    result = RE_ON_PARENS.replace_all(&result, "ON $1").to_string();
+fn strip_on_clause_parens(query: &str) -> String {
+    RE_ON_PARENS.replace_all(query, "ON $1").to_string()
+}
 
+fn remove_parens_around_and_groups_in_or(query: &str) -> String {
+    let mut result = query.to_string();
     loop {
         let mut found = false;
         if let Some(mat) = RE_OR_PAREN.find(&result) {
@@ -642,7 +642,11 @@ pub fn normalize_view_query(query: &str) -> String {
             break;
         }
     }
+    result
+}
 
+fn remove_simple_expression_parens(query: &str) -> String {
+    let mut result = query.to_string();
     loop {
         let before = result.clone();
         result = RE_SIMPLE_PAREN
@@ -663,12 +667,23 @@ pub fn normalize_view_query(query: &str) -> String {
             break;
         }
     }
-
-    result = remove_outer_parens_around_pattern(&result, "EXISTS");
-    result = remove_from_join_parens(&result);
-    result = remove_where_outer_parens(&result);
-
     result
+}
+
+fn remove_structural_parens(query: &str) -> String {
+    let result = remove_outer_parens_around_pattern(query, "EXISTS");
+    let result = remove_from_join_parens(&result);
+    remove_where_outer_parens(&result)
+}
+
+pub fn normalize_view_query(query: &str) -> String {
+    let result = strip_text_cast_from_string_literals(query);
+    let result = apply_common_normalizations(&result);
+    let result = collapse_double_parens(&result);
+    let result = strip_on_clause_parens(&result);
+    let result = remove_parens_around_and_groups_in_or(&result);
+    let result = remove_simple_expression_parens(&result);
+    remove_structural_parens(&result)
 }
 
 /// Compares two SQL view queries semantically using AST comparison.

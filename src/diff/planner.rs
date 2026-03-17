@@ -1175,36 +1175,22 @@ impl MigrationGraph {
                     }
                 }
 
-                // GrantPrivileges depends on the object existing
+                // Grant/RevokePrivileges depend on the object existing
                 OpKey::GrantPrivileges {
                     object_kind,
                     schema,
                     name,
                     ..
-                } => {
-                    let args = match self.get_op(key) {
-                        Some(MigrationOp::GrantPrivileges { args: Some(a), .. }) => Some(a.clone()),
-                        _ => None,
-                    };
-                    add_privilege_dependency_edge(
-                        &mut edges_to_add,
-                        object_kind,
-                        schema,
-                        name,
-                        args.as_ref(),
-                        key,
-                    );
                 }
-
-                // RevokePrivileges depends on the object existing
-                OpKey::RevokePrivileges {
+                | OpKey::RevokePrivileges {
                     object_kind,
                     schema,
                     name,
                     ..
                 } => {
                     let args = match self.get_op(key) {
-                        Some(MigrationOp::RevokePrivileges { args: Some(a), .. }) => {
+                        Some(MigrationOp::GrantPrivileges { args: Some(a), .. })
+                        | Some(MigrationOp::RevokePrivileges { args: Some(a), .. }) => {
                             Some(a.clone())
                         }
                         _ => None,
@@ -1345,10 +1331,8 @@ fn preprocess_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result
 }
 
-/// Plan and order migration operations for safe execution.
-/// Uses graph-based dependency ordering for correct operation sequencing.
-/// Panics if a circular dependency is detected (use `plan_migration_checked` to handle errors).
-pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+#[cfg(test)]
+pub(crate) fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     plan_migration_checked(ops).expect("Circular dependency detected in migration operations")
 }
 
@@ -1389,7 +1373,44 @@ pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::AlterOwner { .. } => alter_owners.push(op),
             MigrationOp::GrantPrivileges { .. } => grant_privileges.push(op),
             MigrationOp::AlterDefaultPrivileges { .. } => alter_default_privileges.push(op),
-            _ => {}
+            MigrationOp::DropSchema(_)
+            | MigrationOp::DropExtension(_)
+            | MigrationOp::DropEnum(_)
+            | MigrationOp::AddEnumValue { .. }
+            | MigrationOp::DropDomain(_)
+            | MigrationOp::AlterDomain { .. }
+            | MigrationOp::DropTable(_)
+            | MigrationOp::DropPartition(_)
+            | MigrationOp::AddColumn { .. }
+            | MigrationOp::DropColumn { .. }
+            | MigrationOp::AlterColumn { .. }
+            | MigrationOp::AddPrimaryKey { .. }
+            | MigrationOp::DropPrimaryKey { .. }
+            | MigrationOp::AddIndex { .. }
+            | MigrationOp::DropIndex { .. }
+            | MigrationOp::DropUniqueConstraint { .. }
+            | MigrationOp::AddForeignKey { .. }
+            | MigrationOp::DropForeignKey { .. }
+            | MigrationOp::AddCheckConstraint { .. }
+            | MigrationOp::DropCheckConstraint { .. }
+            | MigrationOp::DisableRls { .. }
+            | MigrationOp::DropPolicy { .. }
+            | MigrationOp::AlterPolicy { .. }
+            | MigrationOp::DropFunction { .. }
+            | MigrationOp::AlterFunction { .. }
+            | MigrationOp::DropView { .. }
+            | MigrationOp::AlterView { .. }
+            | MigrationOp::DropTrigger { .. }
+            | MigrationOp::AlterTriggerEnabled { .. }
+            | MigrationOp::DropSequence(_)
+            | MigrationOp::AlterSequence { .. }
+            | MigrationOp::BackfillHint { .. }
+            | MigrationOp::SetColumnNotNull { .. }
+            | MigrationOp::RevokePrivileges { .. }
+            | MigrationOp::CreateVersionSchema { .. }
+            | MigrationOp::DropVersionSchema { .. }
+            | MigrationOp::CreateVersionView { .. }
+            | MigrationOp::DropVersionView { .. } => {}
         }
     }
 
