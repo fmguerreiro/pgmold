@@ -48,8 +48,7 @@ pub(super) fn parse_create_table(
 
     for col_def in columns {
         for option in &col_def.options {
-            let option_str = format!("{:?}", option.option);
-            if option_str.contains("PRIMARY") || option_str.contains("Primary") {
+            if matches!(option.option, ColumnOption::PrimaryKey(_)) {
                 let pk_col = col_def.name.to_string().trim_matches('"').to_string();
                 table.primary_key = Some(PrimaryKey {
                     columns: vec![pk_col.clone()],

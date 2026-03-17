@@ -1,47 +1,118 @@
-use std::collections::HashSet;
-
-use crate::model::{parse_qualified_name, qualified_name, EnumType, Schema, Sequence, Trigger};
+use crate::model::{
+    parse_qualified_name, qualified_name, EnumType, Function, Grant, Schema, Sequence, Trigger,
+};
 use crate::util::optional_expressions_equal;
 
 use super::grants::{create_grants_for_new_object, diff_grants_for_object};
 use super::{
-    DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp, OwnerObjectKind,
+    DiffOptions, DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp, OwnerObjectKind,
     SequenceChanges,
 };
 
-pub(super) fn diff_schemas(
-    from: &Schema,
-    to: &Schema,
-    manage_grants: bool,
-    excluded_grant_roles: &HashSet<String>,
-) -> Vec<MigrationOp> {
+fn function_args_string(function: &Function) -> String {
+    function
+        .arguments
+        .iter()
+        .map(|a| a.data_type.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_ownership_change(
+    ops: &mut Vec<MigrationOp>,
+    options: &DiffOptions,
+    from_owner: &Option<String>,
+    to_owner: &Option<String>,
+    object_kind: OwnerObjectKind,
+    schema: &str,
+    name: &str,
+    args: Option<String>,
+) {
+    if options.manage_ownership && from_owner != to_owner {
+        if let Some(new_owner) = to_owner {
+            ops.push(MigrationOp::AlterOwner {
+                object_kind,
+                schema: schema.to_string(),
+                name: name.to_string(),
+                args,
+                new_owner: new_owner.clone(),
+            });
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_grants_diff(
+    ops: &mut Vec<MigrationOp>,
+    options: &DiffOptions,
+    from_grants: &[Grant],
+    to_grants: &[Grant],
+    object_kind: GrantObjectKind,
+    schema: &str,
+    name: &str,
+    args: Option<String>,
+) {
+    if options.manage_grants {
+        ops.extend(diff_grants_for_object(
+            from_grants,
+            to_grants,
+            object_kind,
+            schema,
+            name,
+            args,
+            options.excluded_grant_roles,
+        ));
+    }
+}
+
+fn emit_grants_for_new_object(
+    ops: &mut Vec<MigrationOp>,
+    options: &DiffOptions,
+    grants: &[Grant],
+    object_kind: GrantObjectKind,
+    schema: &str,
+    name: &str,
+    args: Option<String>,
+) {
+    if options.manage_grants {
+        ops.extend(create_grants_for_new_object(
+            grants,
+            object_kind,
+            schema,
+            name,
+            args,
+            options.excluded_grant_roles,
+        ));
+    }
+}
+
+pub(super) fn diff_schemas(from: &Schema, to: &Schema, options: &DiffOptions) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, pg_schema) in &to.schemas {
         if let Some(from_schema) = from.schemas.get(name) {
-            if manage_grants {
-                ops.extend(diff_grants_for_object(
-                    &from_schema.grants,
-                    &pg_schema.grants,
-                    GrantObjectKind::Schema,
-                    name,
-                    name,
-                    None,
-                    excluded_grant_roles,
-                ));
-            }
+            emit_grants_diff(
+                &mut ops,
+                options,
+                &from_schema.grants,
+                &pg_schema.grants,
+                GrantObjectKind::Schema,
+                name,
+                name,
+                None,
+            );
         } else {
             ops.push(MigrationOp::CreateSchema(pg_schema.clone()));
-            if manage_grants {
-                ops.extend(create_grants_for_new_object(
-                    &pg_schema.grants,
-                    GrantObjectKind::Schema,
-                    name,
-                    name,
-                    None,
-                    excluded_grant_roles,
-                ));
-            }
+            emit_grants_for_new_object(
+                &mut ops,
+                options,
+                &pg_schema.grants,
+                GrantObjectKind::Schema,
+                name,
+                name,
+                None,
+            );
         }
     }
 
@@ -72,67 +143,54 @@ pub(super) fn diff_extensions(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     ops
 }
 
-pub(super) fn diff_enums(
-    from: &Schema,
-    to: &Schema,
-    manage_ownership: bool,
-    manage_grants: bool,
-    excluded_grant_roles: &HashSet<String>,
-) -> Vec<MigrationOp> {
+pub(super) fn diff_enums(from: &Schema, to: &Schema, options: &DiffOptions) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, to_enum) in &to.enums {
+        let (schema, enum_name) = parse_qualified_name(name);
         if let Some(from_enum) = from.enums.get(name) {
             ops.extend(diff_enum_values(name, from_enum, to_enum));
-            if manage_ownership && from_enum.owner != to_enum.owner {
-                if let Some(ref new_owner) = to_enum.owner {
-                    let (schema, enum_name) = parse_qualified_name(name);
-                    ops.push(MigrationOp::AlterOwner {
-                        object_kind: OwnerObjectKind::Type,
-                        schema,
-                        name: enum_name,
-                        args: None,
-                        new_owner: new_owner.clone(),
-                    });
-                }
-            }
-            if manage_grants {
-                let (schema, enum_name) = parse_qualified_name(name);
-                ops.extend(diff_grants_for_object(
-                    &from_enum.grants,
-                    &to_enum.grants,
-                    GrantObjectKind::Type,
-                    &schema,
-                    &enum_name,
-                    None,
-                    excluded_grant_roles,
-                ));
-            }
+            emit_ownership_change(
+                &mut ops,
+                options,
+                &from_enum.owner,
+                &to_enum.owner,
+                OwnerObjectKind::Type,
+                &schema,
+                &enum_name,
+                None,
+            );
+            emit_grants_diff(
+                &mut ops,
+                options,
+                &from_enum.grants,
+                &to_enum.grants,
+                GrantObjectKind::Type,
+                &schema,
+                &enum_name,
+                None,
+            );
         } else {
             ops.push(MigrationOp::CreateEnum(to_enum.clone()));
-            if manage_ownership {
-                if let Some(ref owner) = to_enum.owner {
-                    let (schema, enum_name) = parse_qualified_name(name);
-                    ops.push(MigrationOp::AlterOwner {
-                        object_kind: OwnerObjectKind::Type,
-                        schema,
-                        name: enum_name,
-                        args: None,
-                        new_owner: owner.clone(),
-                    });
-                }
-            }
-            if manage_grants {
-                let (schema, enum_name) = parse_qualified_name(name);
-                ops.extend(create_grants_for_new_object(
-                    &to_enum.grants,
-                    GrantObjectKind::Type,
-                    &schema,
-                    &enum_name,
-                    None,
-                    excluded_grant_roles,
-                ));
-            }
+            emit_ownership_change(
+                &mut ops,
+                options,
+                &None,
+                &to_enum.owner,
+                OwnerObjectKind::Type,
+                &schema,
+                &enum_name,
+                None,
+            );
+            emit_grants_for_new_object(
+                &mut ops,
+                options,
+                &to_enum.grants,
+                GrantObjectKind::Type,
+                &schema,
+                &enum_name,
+                None,
+            );
         }
     }
 
@@ -169,79 +227,71 @@ pub(super) fn diff_enum_values(name: &str, from: &EnumType, to: &EnumType) -> Ve
     ops
 }
 
-pub(super) fn diff_domains(
-    from: &Schema,
-    to: &Schema,
-    manage_ownership: bool,
-    manage_grants: bool,
-    excluded_grant_roles: &HashSet<String>,
-) -> Vec<MigrationOp> {
+pub(super) fn diff_domains(from: &Schema, to: &Schema, options: &DiffOptions) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, to_domain) in &to.domains {
+        let (schema, domain_name) = parse_qualified_name(name);
         if let Some(from_domain) = from.domains.get(name) {
-            let mut changes = DomainChanges::default();
-            if !optional_expressions_equal(&from_domain.default, &to_domain.default) {
-                changes.default = Some(to_domain.default.clone());
-            }
-            if from_domain.not_null != to_domain.not_null {
-                changes.not_null = Some(to_domain.not_null);
-            }
-            if changes != DomainChanges::default() {
+            let changes = DomainChanges {
+                default: if !optional_expressions_equal(&from_domain.default, &to_domain.default) {
+                    Some(to_domain.default.clone())
+                } else {
+                    None
+                },
+                not_null: if from_domain.not_null != to_domain.not_null {
+                    Some(to_domain.not_null)
+                } else {
+                    None
+                },
+            };
+            if changes.default.is_some() || changes.not_null.is_some() {
                 ops.push(MigrationOp::AlterDomain {
                     name: name.clone(),
                     changes,
                 });
             }
-            if manage_ownership && from_domain.owner != to_domain.owner {
-                if let Some(ref new_owner) = to_domain.owner {
-                    let (schema, domain_name) = parse_qualified_name(name);
-                    ops.push(MigrationOp::AlterOwner {
-                        object_kind: OwnerObjectKind::Domain,
-                        schema,
-                        name: domain_name,
-                        args: None,
-                        new_owner: new_owner.clone(),
-                    });
-                }
-            }
-            if manage_grants {
-                let (schema, domain_name) = parse_qualified_name(name);
-                ops.extend(diff_grants_for_object(
-                    &from_domain.grants,
-                    &to_domain.grants,
-                    GrantObjectKind::Domain,
-                    &schema,
-                    &domain_name,
-                    None,
-                    excluded_grant_roles,
-                ));
-            }
+            emit_ownership_change(
+                &mut ops,
+                options,
+                &from_domain.owner,
+                &to_domain.owner,
+                OwnerObjectKind::Domain,
+                &schema,
+                &domain_name,
+                None,
+            );
+            emit_grants_diff(
+                &mut ops,
+                options,
+                &from_domain.grants,
+                &to_domain.grants,
+                GrantObjectKind::Domain,
+                &schema,
+                &domain_name,
+                None,
+            );
         } else {
             ops.push(MigrationOp::CreateDomain(to_domain.clone()));
-            if manage_ownership {
-                if let Some(ref owner) = to_domain.owner {
-                    let (schema, domain_name) = parse_qualified_name(name);
-                    ops.push(MigrationOp::AlterOwner {
-                        object_kind: OwnerObjectKind::Domain,
-                        schema,
-                        name: domain_name,
-                        args: None,
-                        new_owner: owner.clone(),
-                    });
-                }
-            }
-            if manage_grants {
-                let (schema, domain_name) = parse_qualified_name(name);
-                ops.extend(create_grants_for_new_object(
-                    &to_domain.grants,
-                    GrantObjectKind::Domain,
-                    &schema,
-                    &domain_name,
-                    None,
-                    excluded_grant_roles,
-                ));
-            }
+            emit_ownership_change(
+                &mut ops,
+                options,
+                &None,
+                &to_domain.owner,
+                OwnerObjectKind::Domain,
+                &schema,
+                &domain_name,
+                None,
+            );
+            emit_grants_for_new_object(
+                &mut ops,
+                options,
+                &to_domain.grants,
+                GrantObjectKind::Domain,
+                &schema,
+                &domain_name,
+                None,
+            );
         }
     }
 
@@ -254,66 +304,53 @@ pub(super) fn diff_domains(
     ops
 }
 
-pub(super) fn diff_tables(
-    from: &Schema,
-    to: &Schema,
-    manage_ownership: bool,
-    manage_grants: bool,
-    excluded_grant_roles: &HashSet<String>,
-) -> Vec<MigrationOp> {
+pub(super) fn diff_tables(from: &Schema, to: &Schema, options: &DiffOptions) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, table) in &to.tables {
+        let (schema, table_name) = parse_qualified_name(name);
         if let Some(from_table) = from.tables.get(name) {
-            if manage_ownership && from_table.owner != table.owner {
-                if let Some(ref new_owner) = table.owner {
-                    let (schema, table_name) = parse_qualified_name(name);
-                    ops.push(MigrationOp::AlterOwner {
-                        object_kind: OwnerObjectKind::Table,
-                        schema,
-                        name: table_name,
-                        args: None,
-                        new_owner: new_owner.clone(),
-                    });
-                }
-            }
-            if manage_grants {
-                let (schema, table_name) = parse_qualified_name(name);
-                ops.extend(diff_grants_for_object(
-                    &from_table.grants,
-                    &table.grants,
-                    GrantObjectKind::Table,
-                    &schema,
-                    &table_name,
-                    None,
-                    excluded_grant_roles,
-                ));
-            }
+            emit_ownership_change(
+                &mut ops,
+                options,
+                &from_table.owner,
+                &table.owner,
+                OwnerObjectKind::Table,
+                &schema,
+                &table_name,
+                None,
+            );
+            emit_grants_diff(
+                &mut ops,
+                options,
+                &from_table.grants,
+                &table.grants,
+                GrantObjectKind::Table,
+                &schema,
+                &table_name,
+                None,
+            );
         } else {
             ops.push(MigrationOp::CreateTable(table.clone()));
-            if manage_ownership {
-                if let Some(ref owner) = table.owner {
-                    let (schema, table_name) = parse_qualified_name(name);
-                    ops.push(MigrationOp::AlterOwner {
-                        object_kind: OwnerObjectKind::Table,
-                        schema,
-                        name: table_name,
-                        args: None,
-                        new_owner: owner.clone(),
-                    });
-                }
-            }
-            if manage_grants {
-                let (schema, table_name) = parse_qualified_name(name);
-                ops.extend(create_grants_for_new_object(
-                    &table.grants,
-                    GrantObjectKind::Table,
-                    &schema,
-                    &table_name,
-                    None,
-                    excluded_grant_roles,
-                ));
-            }
+            emit_ownership_change(
+                &mut ops,
+                options,
+                &None,
+                &table.owner,
+                OwnerObjectKind::Table,
+                &schema,
+                &table_name,
+                None,
+            );
+            emit_grants_for_new_object(
+                &mut ops,
+                options,
+                &table.grants,
+                GrantObjectKind::Table,
+                &schema,
+                &table_name,
+                None,
+            );
         }
     }
 
@@ -329,38 +366,35 @@ pub(super) fn diff_tables(
 pub(super) fn diff_partitions(
     from: &Schema,
     to: &Schema,
-    manage_ownership: bool,
+    options: &DiffOptions,
 ) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, partition) in &to.partitions {
+        let (schema, partition_name) = parse_qualified_name(name);
         if let Some(from_partition) = from.partitions.get(name) {
-            if manage_ownership && from_partition.owner != partition.owner {
-                if let Some(ref new_owner) = partition.owner {
-                    let (schema, partition_name) = parse_qualified_name(name);
-                    ops.push(MigrationOp::AlterOwner {
-                        object_kind: OwnerObjectKind::Partition,
-                        schema,
-                        name: partition_name,
-                        args: None,
-                        new_owner: new_owner.clone(),
-                    });
-                }
-            }
+            emit_ownership_change(
+                &mut ops,
+                options,
+                &from_partition.owner,
+                &partition.owner,
+                OwnerObjectKind::Partition,
+                &schema,
+                &partition_name,
+                None,
+            );
         } else {
             ops.push(MigrationOp::CreatePartition(partition.clone()));
-            if manage_ownership {
-                if let Some(ref owner) = partition.owner {
-                    let (schema, partition_name) = parse_qualified_name(name);
-                    ops.push(MigrationOp::AlterOwner {
-                        object_kind: OwnerObjectKind::Partition,
-                        schema,
-                        name: partition_name,
-                        args: None,
-                        new_owner: owner.clone(),
-                    });
-                }
-            }
+            emit_ownership_change(
+                &mut ops,
+                options,
+                &None,
+                &partition.owner,
+                OwnerObjectKind::Partition,
+                &schema,
+                &partition_name,
+                None,
+            );
         }
     }
 
@@ -376,31 +410,19 @@ pub(super) fn diff_partitions(
 pub(super) fn diff_functions(
     from: &Schema,
     to: &Schema,
-    manage_ownership: bool,
-    manage_grants: bool,
-    excluded_grant_roles: &HashSet<String>,
+    options: &DiffOptions,
 ) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (sig, func) in &to.functions {
-        let args_str = func
-            .arguments
-            .iter()
-            .map(|a| a.data_type.clone())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let args_str = function_args_string(func);
 
         if let Some(from_func) = from.functions.get(sig) {
             if !from_func.semantically_equals(func) {
                 if from_func.requires_drop_recreate(func) {
                     ops.push(MigrationOp::DropFunction {
                         name: qualified_name(&from_func.schema, &from_func.name),
-                        args: from_func
-                            .arguments
-                            .iter()
-                            .map(|a| a.data_type.clone())
-                            .collect::<Vec<_>>()
-                            .join(", "),
+                        args: function_args_string(from_func),
                     });
                     ops.push(MigrationOp::CreateFunction(func.clone()));
                 } else {
@@ -411,51 +433,47 @@ pub(super) fn diff_functions(
                     });
                 }
             }
-            if manage_ownership && from_func.owner != func.owner {
-                if let Some(ref new_owner) = func.owner {
-                    ops.push(MigrationOp::AlterOwner {
-                        object_kind: OwnerObjectKind::Function,
-                        schema: func.schema.clone(),
-                        name: func.name.clone(),
-                        args: Some(args_str.clone()),
-                        new_owner: new_owner.clone(),
-                    });
-                }
-            }
-            if manage_grants {
-                ops.extend(diff_grants_for_object(
-                    &from_func.grants,
-                    &func.grants,
-                    GrantObjectKind::Function,
-                    &func.schema,
-                    &func.name,
-                    Some(args_str.clone()),
-                    excluded_grant_roles,
-                ));
-            }
+            emit_ownership_change(
+                &mut ops,
+                options,
+                &from_func.owner,
+                &func.owner,
+                OwnerObjectKind::Function,
+                &func.schema,
+                &func.name,
+                Some(args_str.clone()),
+            );
+            emit_grants_diff(
+                &mut ops,
+                options,
+                &from_func.grants,
+                &func.grants,
+                GrantObjectKind::Function,
+                &func.schema,
+                &func.name,
+                Some(args_str),
+            );
         } else {
             ops.push(MigrationOp::CreateFunction(func.clone()));
-            if manage_ownership {
-                if let Some(ref owner) = func.owner {
-                    ops.push(MigrationOp::AlterOwner {
-                        object_kind: OwnerObjectKind::Function,
-                        schema: func.schema.clone(),
-                        name: func.name.clone(),
-                        args: Some(args_str.clone()),
-                        new_owner: owner.clone(),
-                    });
-                }
-            }
-            if manage_grants {
-                ops.extend(create_grants_for_new_object(
-                    &func.grants,
-                    GrantObjectKind::Function,
-                    &func.schema,
-                    &func.name,
-                    Some(args_str.clone()),
-                    excluded_grant_roles,
-                ));
-            }
+            emit_ownership_change(
+                &mut ops,
+                options,
+                &None,
+                &func.owner,
+                OwnerObjectKind::Function,
+                &func.schema,
+                &func.name,
+                Some(args_str.clone()),
+            );
+            emit_grants_for_new_object(
+                &mut ops,
+                options,
+                &func.grants,
+                GrantObjectKind::Function,
+                &func.schema,
+                &func.name,
+                Some(args_str),
+            );
         }
     }
 
@@ -463,12 +481,7 @@ pub(super) fn diff_functions(
         if !to.functions.contains_key(sig) {
             ops.push(MigrationOp::DropFunction {
                 name: qualified_name(&func.schema, &func.name),
-                args: func
-                    .arguments
-                    .iter()
-                    .map(|a| a.data_type.clone())
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                args: function_args_string(func),
             });
         }
     }
@@ -484,16 +497,11 @@ fn view_owner_kind(materialized: bool) -> OwnerObjectKind {
     }
 }
 
-pub(super) fn diff_views(
-    from: &Schema,
-    to: &Schema,
-    manage_ownership: bool,
-    manage_grants: bool,
-    excluded_grant_roles: &HashSet<String>,
-) -> Vec<MigrationOp> {
+pub(super) fn diff_views(from: &Schema, to: &Schema, options: &DiffOptions) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, view) in &to.views {
+        let (schema, view_name) = parse_qualified_name(name);
         if let Some(from_view) = from.views.get(name) {
             if !from_view.semantically_equals(view) {
                 ops.push(MigrationOp::AlterView {
@@ -501,55 +509,47 @@ pub(super) fn diff_views(
                     new_view: view.clone(),
                 });
             }
-            if manage_ownership && from_view.owner != view.owner {
-                if let Some(ref new_owner) = view.owner {
-                    let (schema, view_name) = parse_qualified_name(name);
-                    ops.push(MigrationOp::AlterOwner {
-                        object_kind: view_owner_kind(view.materialized),
-                        schema,
-                        name: view_name,
-                        args: None,
-                        new_owner: new_owner.clone(),
-                    });
-                }
-            }
-            if manage_grants {
-                let (schema, view_name) = parse_qualified_name(name);
-                ops.extend(diff_grants_for_object(
-                    &from_view.grants,
-                    &view.grants,
-                    GrantObjectKind::View,
-                    &schema,
-                    &view_name,
-                    None,
-                    excluded_grant_roles,
-                ));
-            }
+            emit_ownership_change(
+                &mut ops,
+                options,
+                &from_view.owner,
+                &view.owner,
+                view_owner_kind(view.materialized),
+                &schema,
+                &view_name,
+                None,
+            );
+            emit_grants_diff(
+                &mut ops,
+                options,
+                &from_view.grants,
+                &view.grants,
+                GrantObjectKind::View,
+                &schema,
+                &view_name,
+                None,
+            );
         } else {
             ops.push(MigrationOp::CreateView(view.clone()));
-            if manage_ownership {
-                if let Some(ref owner) = view.owner {
-                    let (schema, view_name) = parse_qualified_name(name);
-                    ops.push(MigrationOp::AlterOwner {
-                        object_kind: view_owner_kind(view.materialized),
-                        schema,
-                        name: view_name,
-                        args: None,
-                        new_owner: owner.clone(),
-                    });
-                }
-            }
-            if manage_grants {
-                let (schema, view_name) = parse_qualified_name(name);
-                ops.extend(create_grants_for_new_object(
-                    &view.grants,
-                    GrantObjectKind::View,
-                    &schema,
-                    &view_name,
-                    None,
-                    excluded_grant_roles,
-                ));
-            }
+            emit_ownership_change(
+                &mut ops,
+                options,
+                &None,
+                &view.owner,
+                view_owner_kind(view.materialized),
+                &schema,
+                &view_name,
+                None,
+            );
+            emit_grants_for_new_object(
+                &mut ops,
+                options,
+                &view.grants,
+                GrantObjectKind::View,
+                &schema,
+                &view_name,
+                None,
+            );
         }
     }
 
@@ -632,39 +632,34 @@ fn only_enabled_differs(from: &Trigger, to: &Trigger) -> bool {
 pub(super) fn diff_sequences(
     from: &Schema,
     to: &Schema,
-    manage_ownership: bool,
-    manage_grants: bool,
-    excluded_grant_roles: &HashSet<String>,
+    options: &DiffOptions,
 ) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
     for (name, to_seq) in &to.sequences {
+        let (schema, seq_name) = parse_qualified_name(name);
         match from.sequences.get(name) {
             None => {
                 ops.push(MigrationOp::CreateSequence(to_seq.clone()));
-                if manage_ownership {
-                    if let Some(ref owner) = to_seq.owner {
-                        let (schema, seq_name) = parse_qualified_name(name);
-                        ops.push(MigrationOp::AlterOwner {
-                            object_kind: OwnerObjectKind::Sequence,
-                            schema,
-                            name: seq_name,
-                            args: None,
-                            new_owner: owner.clone(),
-                        });
-                    }
-                }
-                if manage_grants {
-                    let (schema, seq_name) = parse_qualified_name(name);
-                    ops.extend(create_grants_for_new_object(
-                        &to_seq.grants,
-                        GrantObjectKind::Sequence,
-                        &schema,
-                        &seq_name,
-                        None,
-                        excluded_grant_roles,
-                    ));
-                }
+                emit_ownership_change(
+                    &mut ops,
+                    options,
+                    &None,
+                    &to_seq.owner,
+                    OwnerObjectKind::Sequence,
+                    &schema,
+                    &seq_name,
+                    None,
+                );
+                emit_grants_for_new_object(
+                    &mut ops,
+                    options,
+                    &to_seq.grants,
+                    GrantObjectKind::Sequence,
+                    &schema,
+                    &seq_name,
+                    None,
+                );
             }
             Some(from_seq) => {
                 if let Some(changes) = compute_sequence_changes(from_seq, to_seq) {
@@ -673,30 +668,26 @@ pub(super) fn diff_sequences(
                         changes,
                     });
                 }
-                if manage_ownership && from_seq.owner != to_seq.owner {
-                    if let Some(ref new_owner) = to_seq.owner {
-                        let (schema, seq_name) = parse_qualified_name(name);
-                        ops.push(MigrationOp::AlterOwner {
-                            object_kind: OwnerObjectKind::Sequence,
-                            schema,
-                            name: seq_name,
-                            args: None,
-                            new_owner: new_owner.clone(),
-                        });
-                    }
-                }
-                if manage_grants {
-                    let (schema, seq_name) = parse_qualified_name(name);
-                    ops.extend(diff_grants_for_object(
-                        &from_seq.grants,
-                        &to_seq.grants,
-                        GrantObjectKind::Sequence,
-                        &schema,
-                        &seq_name,
-                        None,
-                        excluded_grant_roles,
-                    ));
-                }
+                emit_ownership_change(
+                    &mut ops,
+                    options,
+                    &from_seq.owner,
+                    &to_seq.owner,
+                    OwnerObjectKind::Sequence,
+                    &schema,
+                    &seq_name,
+                    None,
+                );
+                emit_grants_diff(
+                    &mut ops,
+                    options,
+                    &from_seq.grants,
+                    &to_seq.grants,
+                    GrantObjectKind::Sequence,
+                    &schema,
+                    &seq_name,
+                    None,
+                );
             }
         }
     }
@@ -747,9 +738,5 @@ pub(super) fn compute_sequence_changes(from: &Sequence, to: &Sequence) -> Option
         has_changes = true;
     }
 
-    if has_changes {
-        Some(changes)
-    } else {
-        None
-    }
+    has_changes.then_some(changes)
 }

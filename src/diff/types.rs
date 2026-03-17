@@ -1,10 +1,18 @@
+use std::collections::HashSet;
+
 use crate::model::{
     CheckConstraint, Column, Domain, EnumType, Extension, ForeignKey, Function, Index, Partition,
     PgSchema, PgType, Policy, PrimaryKey, Privilege, Sequence, SequenceDataType, SequenceOwner,
     Table, Trigger, TriggerEnabled, VersionView, View,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffOptions<'a> {
+    pub manage_ownership: bool,
+    pub manage_grants: bool,
+    pub excluded_grant_roles: &'a HashSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum OwnerObjectKind {
     Table,
     Partition,
@@ -16,7 +24,7 @@ pub enum OwnerObjectKind {
     Domain,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum GrantObjectKind {
     Table,
     View,

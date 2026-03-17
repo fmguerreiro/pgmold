@@ -1,8 +1,76 @@
+use std::sync::LazyLock;
+
 use regex::Regex;
 use sqlparser::ast::{BinaryOperator, DataType, Expr, Query, Select, SetExpr, Statement};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use thiserror::Error;
+
+static RE_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").expect("valid regex"));
+
+static RE_TYPE_CAST: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").expect("valid regex"));
+
+static RE_STRING_TEXT_CAST: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"'([^']*)'::text").expect("valid regex"));
+
+static RE_STRING_TEXT_CAST_CI: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)'([^']*)'::text").expect("valid regex"));
+
+static RE_STRING_CUSTOM_CAST: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"'([^']*)'::(?:[a-z_][a-z0-9_]*\.)?"?[A-Za-z_][A-Za-z0-9_]*"?"#)
+        .expect("valid regex")
+});
+
+static RE_NULL_CAST: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)\bNULL::[a-zA-Z0-9_."]+(?:\.[a-zA-Z0-9_."]+)?"#).expect("valid regex")
+});
+
+static RE_NOT_ILIKE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s*!~~\*\s*").expect("valid regex"));
+
+static RE_ILIKE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s*~~\*\s*").expect("valid regex"));
+
+static RE_NOT_LIKE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s*!~~\s*").expect("valid regex"));
+
+static RE_LIKE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*~~\s*").expect("valid regex"));
+
+static RE_PAREN_OPEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\(\s+").expect("valid regex"));
+
+static RE_PAREN_CLOSE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s+\)").expect("valid regex"));
+
+static RE_NUMERIC_LITERAL_CAST: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\((\d+(?:\.\d+)?)\)::(numeric|integer|bigint|smallint|real|double precision)")
+        .expect("valid regex")
+});
+
+static RE_FROM_PAREN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bFROM\s*\(").expect("valid regex"));
+
+static RE_JOIN_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*\w+\s+\w*\s*JOIN\b").expect("valid regex"));
+
+static RE_WHERE_DOUBLE_PAREN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bWHERE\s*\(\(").expect("valid regex"));
+
+static RE_WHERE_SINGLE_PAREN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bWHERE\s*\(").expect("valid regex"));
+
+static RE_DOUBLE_PAREN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\(\(([^()]*)\)\)").expect("valid regex"));
+
+static RE_ON_PARENS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bON\s*\(([^()]+)\)").expect("valid regex"));
+
+static RE_OR_PAREN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bOR\s*\(").expect("valid regex"));
+
+static RE_SIMPLE_PAREN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\(([^()]+)\)").expect("valid regex"));
 
 /// Returns (colon_position, at_position) for the password span in a connection URL.
 /// The password occupies `url[colon_position+1..at_position]`.
@@ -92,8 +160,7 @@ fn simple_percent_decode(input: &str) -> String {
 }
 
 pub fn normalize_sql_whitespace(sql: &str) -> String {
-    let re = Regex::new(r"\s+").unwrap();
-    re.replace_all(sql.trim(), " ").to_string()
+    RE_WHITESPACE.replace_all(sql.trim(), " ").to_string()
 }
 
 /// Normalizes SQL expression type casts to lowercase.
@@ -110,11 +177,11 @@ pub fn normalize_sql_whitespace(sql: &str) -> String {
 /// assert_eq!(normalize_type_casts("now()::date"), "now()::date");
 /// ```
 pub fn normalize_type_casts(expr: &str) -> String {
-    let re = Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").unwrap();
-    re.replace_all(expr, |caps: &regex::Captures| {
-        format!("::{}", caps[1].to_lowercase())
-    })
-    .to_string()
+    RE_TYPE_CAST
+        .replace_all(expr, |caps: &regex::Captures| {
+            format!("::{}", caps[1].to_lowercase())
+        })
+        .to_string()
 }
 
 /// Canonicalizes a SQL expression by parsing it with sqlparser and converting back to string.
@@ -376,71 +443,52 @@ fn is_numeric_value(v: &sqlparser::ast::ValueWithSpan) -> bool {
 
 /// Strips casts on numeric literals, e.g., (0)::numeric -> 0, (123)::integer -> 123
 fn strip_numeric_literal_casts(expr: &str) -> String {
-    // Pattern: (number)::type where type is numeric, integer, bigint, etc. (case-insensitive)
-    let re = Regex::new(
-        r"(?i)\((\d+(?:\.\d+)?)\)::(numeric|integer|bigint|smallint|real|double precision)",
-    )
-    .unwrap();
-    re.replace_all(expr, "$1").to_string()
+    RE_NUMERIC_LITERAL_CAST.replace_all(expr, "$1").to_string()
 }
 
-/// Regex-based normalization fallback for expressions that sqlparser can't parse.
-fn normalize_expression_regex(expr: &str) -> String {
-    // Strip casts from string literals to schema-qualified types (enum casts)
-    // Matches: 'value'::schema."EnumName", 'value'::schema.enumname, 'value'::"EnumName"
-    // PostgreSQL adds these explicit casts that aren't in the original DDL
-    let re_string_custom_cast =
-        Regex::new(r#"'([^']*)'::(?:[a-z_][a-z0-9_]*\.)?"?[A-Za-z_][A-Za-z0-9_]*"?"#).unwrap();
-    let result = re_string_custom_cast.replace_all(expr, "'$1'");
+/// Applies the normalization steps shared by both `normalize_expression_regex` and
+/// `normalize_view_query`: operator aliases, type cast lowercasing, whitespace collapse,
+/// and paren-spacing normalization.
+///
+/// The caller is responsible for stripping `::text` from string literals beforehand
+/// (using either the case-sensitive or case-insensitive variant as appropriate).
+fn apply_common_normalizations(expr: &str) -> String {
+    let result = RE_NOT_ILIKE.replace_all(expr, " NOT ILIKE ");
+    let result = RE_ILIKE.replace_all(&result, " ILIKE ");
+    let result = RE_NOT_LIKE.replace_all(&result, " NOT LIKE ");
+    let result = RE_LIKE.replace_all(&result, " LIKE ");
 
-    let re_string_text_cast = Regex::new(r"'([^']*)'::text").unwrap();
-    let result = re_string_text_cast.replace_all(&result, "'$1'");
-
-    // Strip casts from NULL values
-    // PostgreSQL adds explicit casts like NULL::uuid, NULL::text, NULL::schema."Type"
-    let re_null_cast = Regex::new(r#"(?i)\bNULL::[a-zA-Z0-9_."]+(?:\.[a-zA-Z0-9_."]+)?"#).unwrap();
-    let result = re_null_cast.replace_all(&result, "NULL");
-
-    // ILIKE variants must come before LIKE variants
-    let re_not_ilike = Regex::new(r"\s*!~~\*\s*").unwrap();
-    let result = re_not_ilike.replace_all(&result, " NOT ILIKE ");
-
-    let re_ilike = Regex::new(r"\s*~~\*\s*").unwrap();
-    let result = re_ilike.replace_all(&result, " ILIKE ");
-
-    let re_not_like = Regex::new(r"\s*!~~\s*").unwrap();
-    let result = re_not_like.replace_all(&result, " NOT LIKE ");
-
-    let re_like = Regex::new(r"\s*~~\s*").unwrap();
-    let result = re_like.replace_all(&result, " LIKE ");
-
-    let re_type_cast = Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").unwrap();
-    let result = re_type_cast
+    let result = RE_TYPE_CAST
         .replace_all(&result, |caps: &regex::Captures| {
             format!("::{}", caps[1].to_lowercase())
         })
         .to_string();
 
-    let re_ws = Regex::new(r"\s+").unwrap();
-    let result = re_ws.replace_all(result.trim(), " ");
-
-    let re_paren_open = Regex::new(r"\(\s+").unwrap();
-    let re_paren_close = Regex::new(r"\s+\)").unwrap();
-    let result = re_paren_open.replace_all(&result, "(");
-    re_paren_close.replace_all(&result, ")").to_string()
+    let result = RE_WHITESPACE.replace_all(result.trim(), " ");
+    let result = RE_PAREN_OPEN.replace_all(&result, "(");
+    RE_PAREN_CLOSE.replace_all(&result, ")").to_string()
 }
 
-/// Finds the position of the matching closing paren for an opening paren at `open_pos`
+/// Regex-based normalization fallback for expressions that sqlparser can't parse.
+fn normalize_expression_regex(expr: &str) -> String {
+    let result = RE_STRING_CUSTOM_CAST.replace_all(expr, "'$1'");
+    let result = RE_STRING_TEXT_CAST.replace_all(&result, "'$1'");
+    let result = RE_NULL_CAST.replace_all(&result, "NULL");
+    apply_common_normalizations(&result)
+}
+
+/// Finds the byte position of the matching closing paren for an opening paren at `open_pos`.
+/// All callers use byte-based indexing (regex `.end()`, string slicing) so this must too.
 fn find_matching_paren(s: &str, open_pos: usize) -> Option<usize> {
-    let chars: Vec<char> = s.chars().collect();
-    if open_pos >= chars.len() || chars[open_pos] != '(' {
+    let bytes = s.as_bytes();
+    if bytes.get(open_pos).copied() != Some(b'(') {
         return None;
     }
-    let mut depth = 0;
-    for (i, c) in chars.iter().enumerate().skip(open_pos) {
-        match c {
-            '(' => depth += 1,
-            ')' => {
+    let mut depth: u32 = 0;
+    for (i, &byte) in bytes.iter().enumerate().skip(open_pos) {
+        match byte {
+            b'(' => depth += 1,
+            b')' => {
                 depth -= 1;
                 if depth == 0 {
                     return Some(i);
@@ -452,19 +500,26 @@ fn find_matching_paren(s: &str, open_pos: usize) -> Option<usize> {
     None
 }
 
+/// Removes two single-byte characters at the given byte positions from a string.
+/// `first` must be less than `second`. Both positions must be valid byte boundaries.
+fn remove_byte_pair(s: &str, first: usize, second: usize) -> String {
+    assert!(first < second);
+    format!(
+        "{}{}{}",
+        &s[..first],
+        &s[first + 1..second],
+        &s[second + 1..]
+    )
+}
+
 /// Removes outer parens around a pattern like EXISTS
 /// (EXISTS (...)) -> EXISTS (...)
 fn remove_outer_parens_around_pattern(s: &str, pattern: &str) -> String {
     let search = format!("({pattern}");
     let mut result = s.to_string();
     while let Some(pos) = result.find(&search) {
-        // Find the matching closing paren for the opening paren at pos
         if let Some(close_pos) = find_matching_paren(&result, pos) {
-            // Remove the outer parens: remove char at close_pos first, then at pos
-            let mut chars: Vec<char> = result.chars().collect();
-            chars.remove(close_pos);
-            chars.remove(pos);
-            result = chars.into_iter().collect();
+            result = remove_byte_pair(&result, pos, close_pos);
         } else {
             break;
         }
@@ -475,26 +530,16 @@ fn remove_outer_parens_around_pattern(s: &str, pattern: &str) -> String {
 /// Removes parens around JOINs in FROM clause
 /// FROM (table1 JOIN table2 ON (...)) -> FROM table1 JOIN table2 ON (...)
 fn remove_from_join_parens(s: &str) -> String {
-    let re = Regex::new(r"\bFROM\s*\(").unwrap();
-    let re_join_pattern = Regex::new(r"^\s*\w+\s+\w*\s*JOIN\b").unwrap();
     let mut result = s.to_string();
 
-    // We need to process iteratively since each removal changes positions
     loop {
         let mut found = false;
-        if let Some(mat) = re.find(&result) {
-            // The open paren position is at mat.end() - 1
+        if let Some(mat) = RE_FROM_PAREN.find(&result) {
             let open_pos = mat.end() - 1;
-
-            // Check if this is followed by a JOIN pattern (not a subquery)
             let after_paren = &result[mat.end()..];
-            // Check if it looks like "identifier identifier JOIN" or "identifier JOIN"
-            if re_join_pattern.is_match(after_paren) {
+            if RE_JOIN_PATTERN.is_match(after_paren) {
                 if let Some(close_pos) = find_matching_paren(&result, open_pos) {
-                    let mut chars: Vec<char> = result.chars().collect();
-                    chars.remove(close_pos);
-                    chars.remove(open_pos);
-                    result = chars.into_iter().collect();
+                    result = remove_byte_pair(&result, open_pos, close_pos);
                     found = true;
                 }
             }
@@ -512,11 +557,9 @@ fn remove_from_join_parens(s: &str) -> String {
 fn remove_where_outer_parens(s: &str) -> String {
     let mut result = s.to_string();
 
-    // First pass: remove double outer parens WHERE ((...) ...)
-    let re_double = Regex::new(r"\bWHERE\s*\(\(").unwrap();
     loop {
         let mut found = false;
-        if let Some(mat) = re_double.find(&result) {
+        if let Some(mat) = RE_WHERE_DOUBLE_PAREN.find(&result) {
             let outer_open_pos = mat.end() - 2;
 
             if let Some(outer_close_pos) = find_matching_paren(&result, outer_open_pos) {
@@ -525,10 +568,7 @@ fn remove_where_outer_parens(s: &str) -> String {
                     let trimmed = between.trim();
                     if trimmed.is_empty() || trimmed.starts_with("AND") || trimmed.starts_with("OR")
                     {
-                        let mut chars: Vec<char> = result.chars().collect();
-                        chars.remove(outer_close_pos);
-                        chars.remove(outer_open_pos);
-                        result = chars.into_iter().collect();
+                        result = remove_byte_pair(&result, outer_open_pos, outer_close_pos);
                         found = true;
                     }
                 }
@@ -539,15 +579,12 @@ fn remove_where_outer_parens(s: &str) -> String {
         }
     }
 
-    // Second pass: remove single outer parens WHERE (...) when parens wrap entire condition
-    let re_single = Regex::new(r"\bWHERE\s*\(").unwrap();
     loop {
         let mut found = false;
-        for mat in re_single.find_iter(&result.clone()) {
+        for mat in RE_WHERE_SINGLE_PAREN.find_iter(&result.clone()) {
             let open_pos = mat.end() - 1;
 
             if let Some(close_pos) = find_matching_paren(&result, open_pos) {
-                // Check if the closing paren is followed by end of clause
                 let after_close = result[close_pos + 1..].trim_start();
                 if after_close.is_empty()
                     || after_close.starts_with("ORDER")
@@ -561,10 +598,7 @@ fn remove_where_outer_parens(s: &str) -> String {
                     || after_close.starts_with(")")
                     || after_close.starts_with(";")
                 {
-                    let mut chars: Vec<char> = result.chars().collect();
-                    chars.remove(close_pos);
-                    chars.remove(open_pos);
-                    result = chars.into_iter().collect();
+                    result = remove_byte_pair(&result, open_pos, close_pos);
                     found = true;
                     break;
                 }
@@ -579,83 +613,27 @@ fn remove_where_outer_parens(s: &str) -> String {
 }
 
 pub fn normalize_view_query(query: &str) -> String {
-    // Step 1: Strip ::text from string literals (case-insensitive)
-    // PostgreSQL adds ::text to string literals like 'value'::text or 'value'::TEXT
-    let re_string_text_cast = Regex::new(r"(?i)'([^']*)'::text").unwrap();
-    let without_text_cast = re_string_text_cast.replace_all(query, "'$1'");
+    let without_text_cast = RE_STRING_TEXT_CAST_CI.replace_all(query, "'$1'");
+    let mut result = apply_common_normalizations(&without_text_cast);
 
-    // Step 2: Normalize !~~* to NOT ILIKE (must come BEFORE ~~ handling)
-    // PostgreSQL uses !~~* internally for NOT ILIKE (case-insensitive NOT LIKE)
-    let re_not_ilike_op = Regex::new(r"\s*!~~\*\s*").unwrap();
-    let with_not_ilike = re_not_ilike_op.replace_all(&without_text_cast, " NOT ILIKE ");
-
-    // Step 3: Normalize ~~* to ILIKE (must come BEFORE ~~ handling)
-    // PostgreSQL uses ~~* internally for ILIKE (case-insensitive LIKE)
-    let re_ilike_op = Regex::new(r"\s*~~\*\s*").unwrap();
-    let with_ilike = re_ilike_op.replace_all(&with_not_ilike, " ILIKE ");
-
-    // Step 4: Normalize !~~ to NOT LIKE (must come BEFORE ~~ handling)
-    // PostgreSQL uses !~~ internally for NOT LIKE
-    let re_not_like_op = Regex::new(r"\s*!~~\s*").unwrap();
-    let with_not_like = re_not_like_op.replace_all(&with_ilike, " NOT LIKE ");
-
-    // Step 5: Normalize ~~ to LIKE (PostgreSQL uses ~~ internally for LIKE)
-    let re_like_op = Regex::new(r"\s*~~\s*").unwrap();
-    let with_like = re_like_op.replace_all(&with_not_like, " LIKE ");
-
-    // Step 6: Normalize type casts to lowercase (single-word types only, multiword like 'character varying' are handled consistently by PostgreSQL)
-    let re_type_cast = Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").unwrap();
-    let lowercased_casts = re_type_cast
-        .replace_all(&with_like, |caps: &regex::Captures| {
-            format!("::{}", caps[1].to_lowercase())
-        })
-        .to_string();
-
-    // Step 7: Collapse whitespace
-    let re_ws = Regex::new(r"\s+").unwrap();
-    let collapsed = re_ws.replace_all(lowercased_casts.trim(), " ");
-
-    // Step 8: Normalize whitespace around parentheses
-    let re_paren_open = Regex::new(r"\(\s+").unwrap();
-    let re_paren_close = Regex::new(r"\s+\)").unwrap();
-    let no_space_after_open = re_paren_open.replace_all(&collapsed, "(");
-    let normalized_paren_space = re_paren_close.replace_all(&no_space_after_open, ")");
-
-    // Step 9: Normalize double parentheses to single
-    // PostgreSQL adds extra parens around conditions in JOINs: ON ((a = b)) -> ON (a = b)
-    // We iteratively remove double parens until stable
-    let re_double_paren = Regex::new(r"\(\(([^()]*)\)\)").unwrap();
-    let mut result = normalized_paren_space.to_string();
     loop {
-        let new_result = re_double_paren.replace_all(&result, "($1)").to_string();
+        let new_result = RE_DOUBLE_PAREN.replace_all(&result, "($1)").to_string();
         if new_result == result {
             break;
         }
         result = new_result;
     }
 
-    // Step 9b: Remove outer parens from ON clause conditions
-    // PostgreSQL stores ON a = b without parens, but schema may have ON (a = b) or ON ((a = b))
-    // After double-paren removal, we still have single parens - remove those too for ON clauses
-    let re_on_parens = Regex::new(r"\bON\s*\(([^()]+)\)").unwrap();
-    result = re_on_parens.replace_all(&result, "ON $1").to_string();
+    result = RE_ON_PARENS.replace_all(&result, "ON $1").to_string();
 
-    // Step 9c: Remove parens around AND-only groups when preceded by OR
-    // These parens are redundant because AND has higher precedence than OR
-    // Use balanced paren matching to handle nested parens
-    let re_or_paren = Regex::new(r"\bOR\s*\(").unwrap();
     loop {
         let mut found = false;
-        if let Some(mat) = re_or_paren.find(&result) {
+        if let Some(mat) = RE_OR_PAREN.find(&result) {
             let open_pos = mat.end() - 1;
             if let Some(close_pos) = find_matching_paren(&result, open_pos) {
                 let content = &result[open_pos + 1..close_pos];
-                // Only remove if content contains AND but not OR (AND-only group)
                 if content.contains(" AND ") && !content.contains(" OR ") {
-                    let mut chars: Vec<char> = result.chars().collect();
-                    chars.remove(close_pos);
-                    chars.remove(open_pos);
-                    result = chars.into_iter().collect();
+                    result = remove_byte_pair(&result, open_pos, close_pos);
                     found = true;
                 }
             }
@@ -665,17 +643,11 @@ pub fn normalize_view_query(query: &str) -> String {
         }
     }
 
-    // Step 9d: Remove parens around simple conditions (no AND/OR inside)
-    // PostgreSQL doesn't add parens around simple comparisons like a = 'x'
-    // This handles: (a = 'x') -> a = 'x', (b = 'y') -> b = 'y'
-    let re_simple_paren = Regex::new(r"\(([^()]+)\)").unwrap();
     loop {
         let before = result.clone();
-        result = re_simple_paren
+        result = RE_SIMPLE_PAREN
             .replace_all(&result, |caps: &regex::Captures| {
                 let content = &caps[1];
-                // Only remove if content doesn't contain AND/OR (simple expression)
-                // and isn't a function call (check for comma) or subquery (SELECT)
                 if !content.contains(" AND ")
                     && !content.contains(" OR ")
                     && !content.contains(',')
@@ -692,16 +664,8 @@ pub fn normalize_view_query(query: &str) -> String {
         }
     }
 
-    // Step 10: Remove outer parens around EXISTS with balanced paren matching
-    // PostgreSQL wraps EXISTS in extra parens: (EXISTS (...)) -> EXISTS (...)
     result = remove_outer_parens_around_pattern(&result, "EXISTS");
-
-    // Step 11: Remove parens around JOINs in FROM clause with balanced matching
-    // PostgreSQL adds parens: FROM (table1 JOIN table2 ON ...) -> FROM table1 JOIN table2 ON ...
     result = remove_from_join_parens(&result);
-
-    // Step 12: Remove outer parens in WHERE clauses with compound conditions
-    // PostgreSQL adds: WHERE ((...) AND (...)) -> WHERE (...) AND (...)
     result = remove_where_outer_parens(&result);
 
     result

@@ -1,5 +1,5 @@
-use super::MigrationOp;
-use crate::model::qualified_name;
+use super::{GrantObjectKind, MigrationOp, OwnerObjectKind};
+use crate::model::{parse_qualified_name, qualified_name};
 use crate::parser::{
     extract_function_references, extract_rowtype_references, extract_table_references,
 };
@@ -153,7 +153,7 @@ pub enum OpKey {
     DropSequence(String),
     AlterSequence(String),
     AlterOwner {
-        object_kind: String,
+        object_kind: OwnerObjectKind,
         schema: String,
         name: String,
     },
@@ -166,13 +166,13 @@ pub enum OpKey {
         column: String,
     },
     GrantPrivileges {
-        object_kind: String,
+        object_kind: GrantObjectKind,
         schema: String,
         name: String,
         grantee: String,
     },
     RevokePrivileges {
-        object_kind: String,
+        object_kind: GrantObjectKind,
         schema: String,
         name: String,
         grantee: String,
@@ -357,7 +357,7 @@ impl OpKey {
                 name,
                 ..
             } => OpKey::AlterOwner {
-                object_kind: format!("{object_kind:?}"),
+                object_kind: object_kind.clone(),
                 schema: schema.clone(),
                 name: name.clone(),
             },
@@ -376,7 +376,7 @@ impl OpKey {
                 grantee,
                 ..
             } => OpKey::GrantPrivileges {
-                object_kind: format!("{object_kind:?}"),
+                object_kind: object_kind.clone(),
                 schema: schema.clone(),
                 name: name.clone(),
                 grantee: grantee.clone(),
@@ -388,7 +388,7 @@ impl OpKey {
                 grantee,
                 ..
             } => OpKey::RevokePrivileges {
-                object_kind: format!("{object_kind:?}"),
+                object_kind: object_kind.clone(),
                 schema: schema.clone(),
                 name: name.clone(),
                 grantee: grantee.clone(),
@@ -438,7 +438,7 @@ impl OpKey {
 /// Used for both GrantPrivileges and RevokePrivileges to ensure objects exist before granting.
 fn add_privilege_dependency_edge(
     edges: &mut Vec<(OpKey, OpKey)>,
-    object_kind: &str,
+    object_kind: &GrantObjectKind,
     schema: &str,
     name: &str,
     args: Option<&String>,
@@ -446,13 +446,13 @@ fn add_privilege_dependency_edge(
 ) {
     let qualified = qualified_name(schema, name);
     match object_kind {
-        "Table" => edges.push((OpKey::CreateTable(qualified), key.clone())),
-        "View" => edges.push((OpKey::CreateView(qualified), key.clone())),
-        "Sequence" => edges.push((OpKey::CreateSequence(qualified), key.clone())),
-        "Type" => edges.push((OpKey::CreateEnum(qualified), key.clone())),
-        "Domain" => edges.push((OpKey::CreateDomain(qualified), key.clone())),
-        "Schema" => edges.push((OpKey::CreateSchema(name.to_string()), key.clone())),
-        "Function" => {
+        GrantObjectKind::Table => edges.push((OpKey::CreateTable(qualified), key.clone())),
+        GrantObjectKind::View => edges.push((OpKey::CreateView(qualified), key.clone())),
+        GrantObjectKind::Sequence => edges.push((OpKey::CreateSequence(qualified), key.clone())),
+        GrantObjectKind::Type => edges.push((OpKey::CreateEnum(qualified), key.clone())),
+        GrantObjectKind::Domain => edges.push((OpKey::CreateDomain(qualified), key.clone())),
+        GrantObjectKind::Schema => edges.push((OpKey::CreateSchema(name.to_string()), key.clone())),
+        GrantObjectKind::Function => {
             if let Some(args) = args {
                 edges.push((
                     OpKey::CreateFunction {
@@ -463,19 +463,12 @@ fn add_privilege_dependency_edge(
                 ));
             }
         }
-        _ => {}
     }
-}
-
-/// Vertex in the dependency graph, wrapping a MigrationOp.
-#[derive(Clone)]
-struct OpVertex {
-    op: MigrationOp,
 }
 
 /// Graph-based migration planner using explicit dependency edges.
 pub struct MigrationGraph {
-    graph: DiGraph<OpVertex, ()>,
+    graph: DiGraph<MigrationOp, ()>,
     nodes: HashMap<OpKey, NodeIndex>,
 }
 
@@ -492,7 +485,7 @@ impl MigrationGraph {
     /// Returns the NodeIndex for the new vertex.
     pub fn add_vertex(&mut self, op: MigrationOp) -> NodeIndex {
         let key = OpKey::from_op(&op);
-        let node = self.graph.add_node(OpVertex { op });
+        let node = self.graph.add_node(op);
         self.nodes.insert(key, node);
         node
     }
@@ -538,7 +531,6 @@ impl MigrationGraph {
 
     /// Add type-level dependency edges (all ops of type A before all ops of type B).
     pub fn add_type_level_edges(&mut self) {
-        // Collect nodes by type using pattern matching
         let schemas = self.nodes_matching(|k| matches!(k, OpKey::CreateSchema(_)));
         let version_schemas =
             self.nodes_matching(|k| matches!(k, OpKey::CreateVersionSchema { .. }));
@@ -626,7 +618,7 @@ impl MigrationGraph {
         // the specific tables the function depends on, not all tables.
         // AlterFunction carries no body, so %ROWTYPE/SETOF detection is not needed for it.
         for &func_idx in &functions {
-            if let MigrationOp::CreateFunction(f) = &self.graph[func_idx].op {
+            if let MigrationOp::CreateFunction(f) = &self.graph[func_idx] {
                 let setof_table = extract_setof_type_ref(&f.return_type).map(|type_ref| {
                     let (s, n) = parse_type_ref(type_ref, &f.schema);
                     qualified_name(&s, &n)
@@ -641,7 +633,7 @@ impl MigrationGraph {
                     if func_idx == table_idx {
                         continue;
                     }
-                    let table_qualified = match &self.graph[table_idx].op {
+                    let table_qualified = match &self.graph[table_idx] {
                         MigrationOp::CreateTable(t) => qualified_name(&t.schema, &t.name),
                         _ => continue,
                     };
@@ -827,7 +819,7 @@ impl MigrationGraph {
 
     /// Get the MigrationOp for a given key.
     fn get_op(&self, key: &OpKey) -> Option<&MigrationOp> {
-        self.nodes.get(key).map(|&idx| &self.graph[idx].op)
+        self.nodes.get(key).map(|&idx| &self.graph[idx])
     }
 
     /// Add content-aware dependency edges (specific op A before specific op B based on content).
@@ -837,53 +829,6 @@ impl MigrationGraph {
 
         // Collect edges to add to avoid borrow issues
         let mut edges_to_add: Vec<(OpKey, OpKey)> = Vec::new();
-
-        /// Add edges from all CreateFunction ops matching `ref_qualified` to `consumer_key`.
-        /// Multiple overloads may match (we can't resolve which without type info).
-        fn push_function_edges(
-            edges: &mut Vec<(OpKey, OpKey)>,
-            keys: &[OpKey],
-            ref_qualified: &str,
-            consumer_key: &OpKey,
-        ) {
-            for other_key in keys {
-                if let OpKey::CreateFunction {
-                    name: other_name, ..
-                } = other_key
-                {
-                    if *other_name == ref_qualified {
-                        edges.push((other_key.clone(), consumer_key.clone()));
-                    }
-                }
-            }
-        }
-
-        /// Extract function references from an expression and add dependency edges.
-        fn push_function_ref_edges(
-            edges: &mut Vec<(OpKey, OpKey)>,
-            keys: &[OpKey],
-            expression: &str,
-            default_schema: &str,
-            consumer_key: &OpKey,
-        ) {
-            for ref_obj in extract_function_references(expression, default_schema) {
-                let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                push_function_edges(edges, keys, &ref_qualified, consumer_key);
-            }
-        }
-
-        /// Check if a drop-level OpKey targets the given table.
-        fn drop_targets_table(other: &OpKey, table: &str) -> bool {
-            match other {
-                OpKey::DropForeignKey { table: t, .. }
-                | OpKey::DropIndex { table: t, .. }
-                | OpKey::DropCheckConstraint { table: t, .. }
-                | OpKey::DropColumn { table: t, .. }
-                | OpKey::DropPolicy { table: t, .. }
-                | OpKey::DropTrigger { target: t, .. } => t == table,
-                _ => false,
-            }
-        }
 
         for key in &keys {
             match key {
@@ -1005,16 +950,16 @@ impl MigrationGraph {
                     edges_to_add.push((OpKey::CreateTable(table.clone()), key.clone()));
 
                     if let Some(MigrationOp::AddIndex { table, index }) = self.get_op(key) {
-                        let schema = table.split('.').next().unwrap_or("public");
+                        let schema = parse_qualified_name(table).0;
                         for col in &index.columns {
-                            push_function_ref_edges(&mut edges_to_add, &keys, col, schema, key);
+                            push_function_ref_edges(&mut edges_to_add, &keys, col, &schema, key);
                         }
                         if let Some(predicate) = &index.predicate {
                             push_function_ref_edges(
                                 &mut edges_to_add,
                                 &keys,
                                 predicate,
-                                schema,
+                                &schema,
                                 key,
                             );
                         }
@@ -1027,8 +972,14 @@ impl MigrationGraph {
 
                     if let Some(MigrationOp::AddColumn { table, column }) = self.get_op(key) {
                         if let Some(default) = &column.default {
-                            let schema = table.split('.').next().unwrap_or("public");
-                            push_function_ref_edges(&mut edges_to_add, &keys, default, schema, key);
+                            let schema = parse_qualified_name(table).0;
+                            push_function_ref_edges(
+                                &mut edges_to_add,
+                                &keys,
+                                default,
+                                &schema,
+                                key,
+                            );
                         }
                     }
                 }
@@ -1042,12 +993,12 @@ impl MigrationGraph {
                         check_constraint,
                     }) = self.get_op(key)
                     {
-                        let schema = table.split('.').next().unwrap_or("public");
+                        let schema = parse_qualified_name(table).0;
                         push_function_ref_edges(
                             &mut edges_to_add,
                             &keys,
                             &check_constraint.expression,
-                            schema,
+                            &schema,
                             key,
                         );
                     }
@@ -1087,12 +1038,12 @@ impl MigrationGraph {
                 // AlterPolicy depends on functions in new expressions
                 OpKey::AlterPolicy { table, .. } => {
                     if let Some(MigrationOp::AlterPolicy { changes, .. }) = self.get_op(key) {
-                        let schema = table.split('.').next().unwrap_or("public");
+                        let schema = parse_qualified_name(table).0;
                         if let Some(Some(expr)) = &changes.using_expr {
-                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
+                            push_function_ref_edges(&mut edges_to_add, &keys, expr, &schema, key);
                         }
                         if let Some(Some(expr)) = &changes.check_expr {
-                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
+                            push_function_ref_edges(&mut edges_to_add, &keys, expr, &schema, key);
                         }
                     }
                 }
@@ -1138,12 +1089,12 @@ impl MigrationGraph {
                     if let Some(MigrationOp::AlterColumn { table, changes, .. }) = self.get_op(key)
                     {
                         if let Some(Some(default_expr)) = &changes.default {
-                            let schema = table.split('.').next().unwrap_or("public");
+                            let schema = parse_qualified_name(table).0;
                             push_function_ref_edges(
                                 &mut edges_to_add,
                                 &keys,
                                 default_expr,
-                                schema,
+                                &schema,
                                 key,
                             );
                         }
@@ -1188,28 +1139,26 @@ impl MigrationGraph {
                     name,
                 } => {
                     let qualified = qualified_name(schema, name);
-                    match object_kind.as_str() {
-                        "Table" => {
+                    match object_kind {
+                        OwnerObjectKind::Table => {
                             edges_to_add.push((OpKey::CreateTable(qualified), key.clone()));
                         }
-                        "Partition" => {
+                        OwnerObjectKind::Partition => {
                             edges_to_add.push((OpKey::CreatePartition(qualified), key.clone()));
                         }
-                        "View" | "MaterializedView" => {
+                        OwnerObjectKind::View | OwnerObjectKind::MaterializedView => {
                             edges_to_add.push((OpKey::CreateView(qualified), key.clone()));
                         }
-                        "Sequence" => {
+                        OwnerObjectKind::Sequence => {
                             edges_to_add.push((OpKey::CreateSequence(qualified), key.clone()));
                         }
-                        "Type" => {
+                        OwnerObjectKind::Type => {
                             edges_to_add.push((OpKey::CreateEnum(qualified), key.clone()));
                         }
-                        "Domain" => {
+                        OwnerObjectKind::Domain => {
                             edges_to_add.push((OpKey::CreateDomain(qualified), key.clone()));
                         }
-                        "Function" => {
-                            // For functions, we need to find the matching CreateFunction
-                            // by looking at the MigrationOp to get the args signature
+                        OwnerObjectKind::Function => {
                             if let Some(MigrationOp::AlterOwner {
                                 args: Some(args), ..
                             }) = self.get_op(key)
@@ -1223,7 +1172,6 @@ impl MigrationGraph {
                                 ));
                             }
                         }
-                        _ => {}
                     }
                 }
 
@@ -1288,7 +1236,7 @@ impl MigrationGraph {
         // Get topological order - fails if there's a cycle
         let sorted = toposort(&self.graph, None).map_err(|cycle| {
             let node = cycle.node_id();
-            let op = &self.graph[node].op;
+            let op = &self.graph[node];
             PlanError::CyclicDependency(format!("{op:?}"))
         })?;
 
@@ -1296,7 +1244,7 @@ impl MigrationGraph {
         // Priority is encoded in type-level edges, not post-hoc sorting
         Ok(sorted
             .into_iter()
-            .map(|node| self.graph[node].op.clone())
+            .map(|node| self.graph[node].clone())
             .collect())
     }
 }
@@ -1304,6 +1252,49 @@ impl MigrationGraph {
 impl Default for MigrationGraph {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn push_function_edges(
+    edges: &mut Vec<(OpKey, OpKey)>,
+    keys: &[OpKey],
+    ref_qualified: &str,
+    consumer_key: &OpKey,
+) {
+    for other_key in keys {
+        if let OpKey::CreateFunction {
+            name: other_name, ..
+        } = other_key
+        {
+            if *other_name == ref_qualified {
+                edges.push((other_key.clone(), consumer_key.clone()));
+            }
+        }
+    }
+}
+
+fn push_function_ref_edges(
+    edges: &mut Vec<(OpKey, OpKey)>,
+    keys: &[OpKey],
+    expression: &str,
+    default_schema: &str,
+    consumer_key: &OpKey,
+) {
+    for ref_obj in extract_function_references(expression, default_schema) {
+        let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
+        push_function_edges(edges, keys, &ref_qualified, consumer_key);
+    }
+}
+
+fn drop_targets_table(other: &OpKey, table: &str) -> bool {
+    match other {
+        OpKey::DropForeignKey { table: t, .. }
+        | OpKey::DropIndex { table: t, .. }
+        | OpKey::DropCheckConstraint { table: t, .. }
+        | OpKey::DropColumn { table: t, .. }
+        | OpKey::DropPolicy { table: t, .. }
+        | OpKey::DropTrigger { target: t, .. } => t == table,
+        _ => false,
     }
 }
 
@@ -1334,20 +1325,17 @@ fn preprocess_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
     for op in ops {
         match op {
-            // Split CreateSequence with owned_by into CreateSequence + AlterSequence
             MigrationOp::CreateSequence(ref seq) if seq.owned_by.is_some() => {
-                let owned_by = seq.owned_by.as_ref().unwrap();
+                let owned_by = seq.owned_by.clone().unwrap();
                 let mut seq_without_owner = seq.clone();
                 seq_without_owner.owned_by = None;
                 result.push(MigrationOp::CreateSequence(seq_without_owner));
-
-                let changes = super::SequenceChanges {
-                    owned_by: Some(Some(owned_by.clone())),
-                    ..Default::default()
-                };
                 result.push(MigrationOp::AlterSequence {
                     name: qualified_name(&seq.schema, &seq.name),
-                    changes,
+                    changes: super::SequenceChanges {
+                        owned_by: Some(Some(owned_by)),
+                        ..Default::default()
+                    },
                 });
             }
             _ => result.push(op),
