@@ -86,127 +86,34 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
     let mut merged = Schema::new();
     let mut object_sources: HashMap<String, PathBuf> = HashMap::new();
 
+    macro_rules! merge_objects {
+        ($sources:ident, $path:ident, $merged:ident, $kind:literal, $field:ident, $schema:ident) => {
+            for (name, value) in $schema.$field {
+                if let Some(existing_path) = $sources.get(&format!("{}:{name}", $kind)) {
+                    return Err(SchemaError::ParseError(format!(
+                        "Duplicate {} \"{name}\" defined in:\n  - {}\n  - {}",
+                        $kind,
+                        existing_path.display(),
+                        $path.display()
+                    )));
+                }
+                $sources.insert(format!("{}:{name}", $kind), $path.clone());
+                $merged.$field.insert(name, value);
+            }
+        };
+    }
+
     for (path, schema) in file_schemas {
-        // Check tables
-        for (name, table) in schema.tables {
-            if let Some(existing_path) = object_sources.get(&format!("table:{name}")) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate table \"{name}\" defined in:\n  - {}\n  - {}",
-                    existing_path.display(),
-                    path.display()
-                )));
-            }
-            object_sources.insert(format!("table:{name}"), path.clone());
-            merged.tables.insert(name, table);
-        }
-
-        for (name, enum_type) in schema.enums {
-            if let Some(existing_path) = object_sources.get(&format!("enum:{name}")) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate enum \"{name}\" defined in:\n  - {}\n  - {}",
-                    existing_path.display(),
-                    path.display()
-                )));
-            }
-            object_sources.insert(format!("enum:{name}"), path.clone());
-            merged.enums.insert(name, enum_type);
-        }
-
-        for (sig, func) in schema.functions {
-            if let Some(existing_path) = object_sources.get(&format!("func:{sig}")) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate function \"{sig}\" defined in:\n  - {}\n  - {}",
-                    existing_path.display(),
-                    path.display()
-                )));
-            }
-            object_sources.insert(format!("func:{sig}"), path.clone());
-            merged.functions.insert(sig, func);
-        }
-
-        for (name, view) in schema.views {
-            if let Some(existing_path) = object_sources.get(&format!("view:{name}")) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate view \"{name}\" defined in:\n  - {}\n  - {}",
-                    existing_path.display(),
-                    path.display()
-                )));
-            }
-            object_sources.insert(format!("view:{name}"), path.clone());
-            merged.views.insert(name, view);
-        }
-
-        for (name, trigger) in schema.triggers {
-            if let Some(existing_path) = object_sources.get(&format!("trigger:{name}")) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate trigger \"{name}\" defined in:\n  - {}\n  - {}",
-                    existing_path.display(),
-                    path.display()
-                )));
-            }
-            object_sources.insert(format!("trigger:{name}"), path.clone());
-            merged.triggers.insert(name, trigger);
-        }
-
-        for (name, sequence) in schema.sequences {
-            if let Some(existing_path) = object_sources.get(&format!("sequence:{name}")) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate sequence \"{name}\" defined in:\n  - {}\n  - {}",
-                    existing_path.display(),
-                    path.display()
-                )));
-            }
-            object_sources.insert(format!("sequence:{name}"), path.clone());
-            merged.sequences.insert(name, sequence);
-        }
-
-        for (name, domain) in schema.domains {
-            if let Some(existing_path) = object_sources.get(&format!("domain:{name}")) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate domain \"{name}\" defined in:\n  - {}\n  - {}",
-                    existing_path.display(),
-                    path.display()
-                )));
-            }
-            object_sources.insert(format!("domain:{name}"), path.clone());
-            merged.domains.insert(name, domain);
-        }
-
-        for (name, extension) in schema.extensions {
-            if let Some(existing_path) = object_sources.get(&format!("extension:{name}")) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate extension \"{name}\" defined in:\n  - {}\n  - {}",
-                    existing_path.display(),
-                    path.display()
-                )));
-            }
-            object_sources.insert(format!("extension:{name}"), path.clone());
-            merged.extensions.insert(name, extension);
-        }
-
-        for (name, pg_schema) in schema.schemas {
-            if let Some(existing_path) = object_sources.get(&format!("schema:{name}")) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate schema \"{name}\" defined in:\n  - {}\n  - {}",
-                    existing_path.display(),
-                    path.display()
-                )));
-            }
-            object_sources.insert(format!("schema:{name}"), path.clone());
-            merged.schemas.insert(name, pg_schema);
-        }
-
-        for (name, partition) in schema.partitions {
-            if let Some(existing_path) = object_sources.get(&format!("partition:{name}")) {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate partition \"{name}\" defined in:\n  - {}\n  - {}",
-                    existing_path.display(),
-                    path.display()
-                )));
-            }
-            object_sources.insert(format!("partition:{name}"), path.clone());
-            merged.partitions.insert(name, partition);
-        }
+        merge_objects!(object_sources, path, merged, "table", tables, schema);
+        merge_objects!(object_sources, path, merged, "enum", enums, schema);
+        merge_objects!(object_sources, path, merged, "function", functions, schema);
+        merge_objects!(object_sources, path, merged, "view", views, schema);
+        merge_objects!(object_sources, path, merged, "trigger", triggers, schema);
+        merge_objects!(object_sources, path, merged, "sequence", sequences, schema);
+        merge_objects!(object_sources, path, merged, "domain", domains, schema);
+        merge_objects!(object_sources, path, merged, "extension", extensions, schema);
+        merge_objects!(object_sources, path, merged, "schema", schemas, schema);
+        merge_objects!(object_sources, path, merged, "partition", partitions, schema);
 
         merged.pending_policies.extend(schema.pending_policies);
         merged.pending_owners.extend(schema.pending_owners);
