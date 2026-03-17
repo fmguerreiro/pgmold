@@ -143,8 +143,9 @@ pub(super) fn generate_policy_ops_for_type_changes(
                     table: qualified_table.clone(),
                     name: policy.name.clone(),
                 });
-                additional_ops
-                    .push(MigrationOp::CreatePolicy(target_policy.unwrap_or(policy).clone()));
+                additional_ops.push(MigrationOp::CreatePolicy(
+                    target_policy.unwrap_or(policy).clone(),
+                ));
             }
         }
     }
@@ -262,8 +263,7 @@ pub(super) fn generate_view_ops_for_type_changes(
                 name: qualified_view_name.clone(),
                 materialized: view.materialized,
             });
-            additional_ops
-                .push(MigrationOp::CreateView(target_view.unwrap_or(view).clone()));
+            additional_ops.push(MigrationOp::CreateView(target_view.unwrap_or(view).clone()));
         }
     }
 
@@ -328,8 +328,9 @@ pub(super) fn generate_policy_ops_for_function_changes(
                     table: qualified_table.clone(),
                     name: policy.name.clone(),
                 });
-                additional_ops
-                    .push(MigrationOp::CreatePolicy(target_policy.unwrap_or(policy).clone()));
+                additional_ops.push(MigrationOp::CreatePolicy(
+                    target_policy.unwrap_or(policy).clone(),
+                ));
             }
         }
     }
