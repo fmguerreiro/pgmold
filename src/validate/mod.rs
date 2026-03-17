@@ -1,5 +1,5 @@
 use crate::diff::compute_diff;
-use crate::diff::planner::plan_dump;
+use crate::diff::dump_planner::plan_dump;
 use crate::diff::MigrationOp;
 use crate::dump::schema_to_create_ops;
 use crate::model::Schema;

@@ -1,6 +1,8 @@
 mod dependencies;
+pub(crate) mod dump_planner;
 mod grants;
 mod objects;
+mod op_key;
 pub mod planner;
 mod table_elements;
 mod types;
