@@ -1,479 +1,28 @@
-use super::{GrantObjectKind, MigrationOp, OwnerObjectKind};
-use crate::model::{parse_qualified_name, qualified_name, QualifiedName};
-use crate::parser::{
-    extract_function_references, extract_rowtype_references, extract_table_references,
+use super::op_key::{
+    add_privilege_dependency_edge, extract_relation_references, extract_setof_type_ref,
+    parse_type_ref, OpKey,
 };
+use super::{MigrationOp, OwnerObjectKind};
+use crate::model::{parse_qualified_name, qualified_name, QualifiedName};
+use crate::parser::{extract_function_references, extract_rowtype_references};
 use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
-/// Error returned when migration planning fails.
 #[derive(Debug, Error)]
 pub enum PlanError {
     #[error("Circular dependency detected involving: {0}")]
     CyclicDependency(String),
 }
 
-/// Extracts the type reference from a SETOF return type, if present.
-/// Returns the raw type string after "SETOF " (trimmed but preserving quotes).
-fn extract_setof_type_ref(return_type: &str) -> Option<&str> {
-    let rt = return_type.trim();
-    if rt.to_lowercase().starts_with("setof ") {
-        Some(rt["setof ".len()..].trim())
-    } else {
-        None
-    }
-}
-
-/// Parses a possibly-qualified type reference into (schema, name).
-/// Falls back to `default_schema` when no dot is present.
-fn parse_type_ref(type_ref: &str, default_schema: &str) -> (String, String) {
-    if let Some(dot_pos) = type_ref.find('.') {
-        let schema = type_ref[..dot_pos].trim().trim_matches('"');
-        let name = type_ref[dot_pos + 1..].trim().trim_matches('"');
-        (schema.to_string(), name.to_string())
-    } else {
-        (
-            default_schema.to_string(),
-            type_ref.trim_matches('"').to_string(),
-        )
-    }
-}
-
-/// Unique key for identifying each MigrationOp in the dependency graph.
-/// Used for edge lookup and duplicate detection.
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub enum OpKey {
-    CreateSchema(String),
-    DropSchema(String),
-    CreateExtension(String),
-    DropExtension(String),
-    CreateEnum(String),
-    DropEnum(String),
-    AddEnumValue {
-        enum_name: String,
-        value: String,
-    },
-    CreateDomain(String),
-    DropDomain(String),
-    AlterDomain(String),
-    CreateTable(String),
-    DropTable(String),
-    CreatePartition(String),
-    DropPartition(String),
-    AddColumn {
-        table: QualifiedName,
-        column: String,
-    },
-    DropColumn {
-        table: QualifiedName,
-        column: String,
-    },
-    AlterColumn {
-        table: QualifiedName,
-        column: String,
-    },
-    AddPrimaryKey {
-        table: QualifiedName,
-    },
-    DropPrimaryKey {
-        table: QualifiedName,
-    },
-    AddIndex {
-        table: QualifiedName,
-        name: String,
-    },
-    DropIndex {
-        table: QualifiedName,
-        name: String,
-    },
-    AddForeignKey {
-        table: QualifiedName,
-        name: String,
-    },
-    DropForeignKey {
-        table: QualifiedName,
-        name: String,
-    },
-    AddCheckConstraint {
-        table: QualifiedName,
-        name: String,
-    },
-    DropCheckConstraint {
-        table: QualifiedName,
-        name: String,
-    },
-    EnableRls {
-        table: QualifiedName,
-    },
-    DisableRls {
-        table: QualifiedName,
-    },
-    CreatePolicy {
-        table: QualifiedName,
-        name: String,
-    },
-    DropPolicy {
-        table: QualifiedName,
-        name: String,
-    },
-    AlterPolicy {
-        table: QualifiedName,
-        name: String,
-    },
-    CreateFunction {
-        name: String,
-        args: String,
-    },
-    DropFunction {
-        name: String,
-        args: String,
-    },
-    AlterFunction {
-        name: String,
-        args: String,
-    },
-    CreateView(String),
-    DropView(String),
-    AlterView(String),
-    CreateTrigger {
-        target: QualifiedName,
-        name: String,
-    },
-    DropTrigger {
-        target: QualifiedName,
-        name: String,
-    },
-    AlterTriggerEnabled {
-        target: QualifiedName,
-        name: String,
-    },
-    CreateSequence(String),
-    DropSequence(String),
-    AlterSequence(String),
-    AlterOwner {
-        object_kind: OwnerObjectKind,
-        schema: String,
-        name: String,
-    },
-    BackfillHint {
-        table: QualifiedName,
-        column: String,
-    },
-    SetColumnNotNull {
-        table: QualifiedName,
-        column: String,
-    },
-    GrantPrivileges {
-        object_kind: GrantObjectKind,
-        schema: String,
-        name: String,
-        grantee: String,
-    },
-    RevokePrivileges {
-        object_kind: GrantObjectKind,
-        schema: String,
-        name: String,
-        grantee: String,
-    },
-    AlterDefaultPrivileges {
-        target_role: String,
-        schema: Option<String>,
-        object_type: String,
-        grantee: String,
-    },
-    CreateVersionSchema {
-        base_schema: String,
-        version: String,
-    },
-    DropVersionSchema {
-        base_schema: String,
-        version: String,
-    },
-    CreateVersionView {
-        version_schema: String,
-        name: String,
-    },
-    DropVersionView {
-        version_schema: String,
-        name: String,
-    },
-}
-
-impl OpKey {
-    /// Create an OpKey from a MigrationOp.
-    pub fn from_op(op: &MigrationOp) -> Self {
-        match op {
-            MigrationOp::CreateSchema(s) => OpKey::CreateSchema(s.name.clone()),
-            MigrationOp::DropSchema(name) => OpKey::DropSchema(name.clone()),
-            MigrationOp::CreateExtension(ext) => OpKey::CreateExtension(ext.name.clone()),
-            MigrationOp::DropExtension(name) => OpKey::DropExtension(name.clone()),
-            MigrationOp::CreateEnum(e) => OpKey::CreateEnum(qualified_name(&e.schema, &e.name)),
-            MigrationOp::DropEnum(name) => OpKey::DropEnum(name.clone()),
-            MigrationOp::AddEnumValue {
-                enum_name, value, ..
-            } => OpKey::AddEnumValue {
-                enum_name: enum_name.clone(),
-                value: value.clone(),
-            },
-            MigrationOp::CreateDomain(d) => OpKey::CreateDomain(qualified_name(&d.schema, &d.name)),
-            MigrationOp::DropDomain(name) => OpKey::DropDomain(name.clone()),
-            MigrationOp::AlterDomain { name, .. } => OpKey::AlterDomain(name.clone()),
-            MigrationOp::CreateTable(t) => OpKey::CreateTable(qualified_name(&t.schema, &t.name)),
-            MigrationOp::DropTable(name) => OpKey::DropTable(name.clone()),
-            MigrationOp::CreatePartition(p) => {
-                OpKey::CreatePartition(qualified_name(&p.schema, &p.name))
-            }
-            MigrationOp::DropPartition(name) => OpKey::DropPartition(name.clone()),
-            MigrationOp::AddColumn { table, column } => OpKey::AddColumn {
-                table: table.clone(),
-                column: column.name.clone(),
-            },
-            MigrationOp::DropColumn { table, column } => OpKey::DropColumn {
-                table: table.clone(),
-                column: column.clone(),
-            },
-            MigrationOp::AlterColumn { table, column, .. } => OpKey::AlterColumn {
-                table: table.clone(),
-                column: column.clone(),
-            },
-            MigrationOp::AddPrimaryKey { table, .. } => OpKey::AddPrimaryKey {
-                table: table.clone(),
-            },
-            MigrationOp::DropPrimaryKey { table } => OpKey::DropPrimaryKey {
-                table: table.clone(),
-            },
-            MigrationOp::AddIndex { table, index } => OpKey::AddIndex {
-                table: table.clone(),
-                name: index.name.clone(),
-            },
-            MigrationOp::DropIndex { table, index_name } => OpKey::DropIndex {
-                table: table.clone(),
-                name: index_name.clone(),
-            },
-            // DropUniqueConstraint maps to OpKey::DropIndex intentionally:
-            // both need identical ordering (run before DropTable/DropColumn,
-            // after AddIndex in replace-in-place scenarios).
-            MigrationOp::DropUniqueConstraint {
-                table,
-                constraint_name,
-            } => OpKey::DropIndex {
-                table: table.clone(),
-                name: constraint_name.clone(),
-            },
-            MigrationOp::AddForeignKey { table, foreign_key } => OpKey::AddForeignKey {
-                table: table.clone(),
-                name: foreign_key.name.clone(),
-            },
-            MigrationOp::DropForeignKey {
-                table,
-                foreign_key_name,
-            } => OpKey::DropForeignKey {
-                table: table.clone(),
-                name: foreign_key_name.clone(),
-            },
-            MigrationOp::AddCheckConstraint {
-                table,
-                check_constraint,
-            } => OpKey::AddCheckConstraint {
-                table: table.clone(),
-                name: check_constraint.name.clone(),
-            },
-            MigrationOp::DropCheckConstraint {
-                table,
-                constraint_name,
-            } => OpKey::DropCheckConstraint {
-                table: table.clone(),
-                name: constraint_name.clone(),
-            },
-            MigrationOp::EnableRls { table } => OpKey::EnableRls {
-                table: table.clone(),
-            },
-            MigrationOp::DisableRls { table } => OpKey::DisableRls {
-                table: table.clone(),
-            },
-            MigrationOp::CreatePolicy(p) => OpKey::CreatePolicy {
-                table: QualifiedName::new(&p.table_schema, &p.table),
-                name: p.name.clone(),
-            },
-            MigrationOp::DropPolicy { table, name } => OpKey::DropPolicy {
-                table: table.clone(),
-                name: name.clone(),
-            },
-            MigrationOp::AlterPolicy { table, name, .. } => OpKey::AlterPolicy {
-                table: table.clone(),
-                name: name.clone(),
-            },
-            MigrationOp::CreateFunction(f) => OpKey::CreateFunction {
-                name: qualified_name(&f.schema, &f.name),
-                args: f
-                    .arguments
-                    .iter()
-                    .map(|a| a.data_type.clone())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            },
-            MigrationOp::DropFunction { name, args } => OpKey::DropFunction {
-                name: name.clone(),
-                args: args.clone(),
-            },
-            MigrationOp::AlterFunction { name, args, .. } => OpKey::AlterFunction {
-                name: name.clone(),
-                args: args.clone(),
-            },
-            MigrationOp::CreateView(v) => OpKey::CreateView(qualified_name(&v.schema, &v.name)),
-            MigrationOp::DropView { name, .. } => OpKey::DropView(name.clone()),
-            MigrationOp::AlterView { name, .. } => OpKey::AlterView(name.clone()),
-            MigrationOp::CreateTrigger(t) => OpKey::CreateTrigger {
-                target: QualifiedName::new(&t.target_schema, &t.target_name),
-                name: t.name.clone(),
-            },
-            MigrationOp::DropTrigger {
-                target_schema,
-                target_name,
-                name,
-            } => OpKey::DropTrigger {
-                target: QualifiedName::new(target_schema, target_name),
-                name: name.clone(),
-            },
-            MigrationOp::AlterTriggerEnabled {
-                target_schema,
-                target_name,
-                name,
-                ..
-            } => OpKey::AlterTriggerEnabled {
-                target: QualifiedName::new(target_schema, target_name),
-                name: name.clone(),
-            },
-            MigrationOp::CreateSequence(s) => {
-                OpKey::CreateSequence(qualified_name(&s.schema, &s.name))
-            }
-            MigrationOp::DropSequence(name) => OpKey::DropSequence(name.clone()),
-            MigrationOp::AlterSequence { name, .. } => OpKey::AlterSequence(name.clone()),
-            MigrationOp::AlterOwner {
-                object_kind,
-                schema,
-                name,
-                ..
-            } => OpKey::AlterOwner {
-                object_kind: *object_kind,
-                schema: schema.clone(),
-                name: name.clone(),
-            },
-            MigrationOp::BackfillHint { table, column, .. } => OpKey::BackfillHint {
-                table: table.clone(),
-                column: column.clone(),
-            },
-            MigrationOp::SetColumnNotNull { table, column } => OpKey::SetColumnNotNull {
-                table: table.clone(),
-                column: column.clone(),
-            },
-            MigrationOp::GrantPrivileges {
-                object_kind,
-                schema,
-                name,
-                grantee,
-                ..
-            } => OpKey::GrantPrivileges {
-                object_kind: *object_kind,
-                schema: schema.clone(),
-                name: name.clone(),
-                grantee: grantee.clone(),
-            },
-            MigrationOp::RevokePrivileges {
-                object_kind,
-                schema,
-                name,
-                grantee,
-                ..
-            } => OpKey::RevokePrivileges {
-                object_kind: *object_kind,
-                schema: schema.clone(),
-                name: name.clone(),
-                grantee: grantee.clone(),
-            },
-            MigrationOp::AlterDefaultPrivileges {
-                target_role,
-                schema,
-                object_type,
-                grantee,
-                ..
-            } => OpKey::AlterDefaultPrivileges {
-                target_role: target_role.clone(),
-                schema: schema.clone(),
-                object_type: object_type.as_sql_str().to_string(),
-                grantee: grantee.clone(),
-            },
-            MigrationOp::CreateVersionSchema {
-                base_schema,
-                version,
-            } => OpKey::CreateVersionSchema {
-                base_schema: base_schema.clone(),
-                version: version.clone(),
-            },
-            MigrationOp::DropVersionSchema {
-                base_schema,
-                version,
-            } => OpKey::DropVersionSchema {
-                base_schema: base_schema.clone(),
-                version: version.clone(),
-            },
-            MigrationOp::CreateVersionView { view } => OpKey::CreateVersionView {
-                version_schema: view.version_schema.clone(),
-                name: view.name.clone(),
-            },
-            MigrationOp::DropVersionView {
-                version_schema,
-                name,
-            } => OpKey::DropVersionView {
-                version_schema: version_schema.clone(),
-                name: name.clone(),
-            },
-        }
-    }
-}
-
-/// Helper to add dependency edge from a Create op to a Grant/Revoke op.
-/// Used for both GrantPrivileges and RevokePrivileges to ensure objects exist before granting.
-fn add_privilege_dependency_edge(
-    edges: &mut Vec<(OpKey, OpKey)>,
-    object_kind: &GrantObjectKind,
-    schema: &str,
-    name: &str,
-    args: Option<&String>,
-    key: &OpKey,
-) {
-    let qualified = qualified_name(schema, name);
-    match object_kind {
-        GrantObjectKind::Table => edges.push((OpKey::CreateTable(qualified), key.clone())),
-        GrantObjectKind::View => edges.push((OpKey::CreateView(qualified), key.clone())),
-        GrantObjectKind::Sequence => edges.push((OpKey::CreateSequence(qualified), key.clone())),
-        GrantObjectKind::Type => edges.push((OpKey::CreateEnum(qualified), key.clone())),
-        GrantObjectKind::Domain => edges.push((OpKey::CreateDomain(qualified), key.clone())),
-        GrantObjectKind::Schema => edges.push((OpKey::CreateSchema(name.to_string()), key.clone())),
-        GrantObjectKind::Function => {
-            if let Some(args) = args {
-                edges.push((
-                    OpKey::CreateFunction {
-                        name: qualified,
-                        args: args.clone(),
-                    },
-                    key.clone(),
-                ));
-            }
-        }
-    }
-}
-
 /// Graph-based migration planner using explicit dependency edges.
-pub struct MigrationGraph {
+pub(crate) struct MigrationGraph {
     graph: DiGraph<MigrationOp, ()>,
     nodes: HashMap<OpKey, NodeIndex>,
 }
 
 impl MigrationGraph {
-    /// Create a new empty migration graph.
     pub fn new() -> Self {
         Self {
             graph: DiGraph::new(),
@@ -481,8 +30,6 @@ impl MigrationGraph {
         }
     }
 
-    /// Add an operation to the graph as a vertex.
-    /// Returns the NodeIndex for the new vertex.
     pub fn add_vertex(&mut self, op: MigrationOp) -> NodeIndex {
         let key = OpKey::from_op(&op);
         assert!(!self.nodes.contains_key(&key), "duplicate OpKey: {key:?}");
@@ -491,8 +38,7 @@ impl MigrationGraph {
         node
     }
 
-    /// Add a directed edge from one operation to another (from must run before to).
-    /// Returns true if both nodes exist and the edge was added.
+    /// Returns true if both nodes exist and the edge was added (from runs before to).
     pub fn add_edge(&mut self, from: &OpKey, to: &OpKey) -> bool {
         if let (Some(&from_node), Some(&to_node)) = (self.nodes.get(from), self.nodes.get(to)) {
             self.graph.add_edge(from_node, to_node, ());
@@ -502,12 +48,6 @@ impl MigrationGraph {
         }
     }
 
-    /// Get all OpKeys currently in the graph.
-    pub fn keys(&self) -> impl Iterator<Item = &OpKey> {
-        self.nodes.keys()
-    }
-
-    /// Get all NodeIndexes for operations matching a predicate.
     fn nodes_matching<F>(&self, predicate: F) -> Vec<NodeIndex>
     where
         F: Fn(&OpKey) -> bool,
@@ -519,7 +59,6 @@ impl MigrationGraph {
             .collect()
     }
 
-    /// Add edges from all nodes in `from` to all nodes in `to`.
     fn edges_all_to_all(&mut self, from: &[NodeIndex], to: &[NodeIndex]) {
         for &f in from {
             for &t in to {
@@ -530,7 +69,6 @@ impl MigrationGraph {
         }
     }
 
-    /// Add type-level dependency edges (all ops of type A before all ops of type B).
     pub fn add_type_level_edges(&mut self) {
         self.add_schema_infrastructure_edges();
         self.add_type_system_edges();
@@ -916,17 +454,12 @@ impl MigrationGraph {
         self.edges_all_to_all(&all_creates, &final_drops);
     }
 
-    /// Get the MigrationOp for a given key.
     fn get_op(&self, key: &OpKey) -> Option<&MigrationOp> {
         self.nodes.get(key).map(|&idx| &self.graph[idx])
     }
 
-    /// Add content-aware dependency edges (specific op A before specific op B based on content).
     pub fn add_content_aware_edges(&mut self) {
-        // Clone keys to avoid borrow issues during iteration
         let keys: Vec<_> = self.nodes.keys().cloned().collect();
-
-        // Collect edges to add to avoid borrow issues
         let mut edges_to_add: Vec<(OpKey, OpKey)> = Vec::new();
 
         for key in &keys {
@@ -1317,19 +850,13 @@ impl MigrationGraph {
         }
     }
 
-    /// Perform topological sort and return operations in dependency order.
-    /// Type-level edges establish priority relationships (schemas before tables, etc.).
-    /// Content-aware edges handle specific dependencies (FK ordering, etc.).
     pub fn topological_sort(&self) -> Result<Vec<MigrationOp>, PlanError> {
-        // Get topological order - fails if there's a cycle
         let sorted = toposort(&self.graph, None).map_err(|cycle| {
             let node = cycle.node_id();
             let op = &self.graph[node];
             PlanError::CyclicDependency(format!("{op:?}"))
         })?;
 
-        // Return operations in topological order
-        // Priority is encoded in type-level edges, not post-hoc sorting
         Ok(sorted
             .into_iter()
             .map(|node| self.graph[node].clone())
@@ -1386,28 +913,19 @@ fn drop_targets_table(other: &OpKey, table: &QualifiedName) -> bool {
     }
 }
 
-/// Plan migration operations using graph-based dependency ordering.
-/// Returns an error if a circular dependency is detected.
 pub fn plan_migration_checked(ops: Vec<MigrationOp>) -> Result<Vec<MigrationOp>, PlanError> {
-    // Pre-process: Split sequences with owned_by into CreateSequence + AlterSequence
     let processed_ops = preprocess_ops(ops);
 
     let mut graph = MigrationGraph::new();
-
-    // Add all ops as vertices
     for op in processed_ops {
         graph.add_vertex(op);
     }
-
-    // Add dependency edges
     graph.add_type_level_edges();
     graph.add_content_aware_edges();
 
-    // Sort and return
     graph.topological_sort()
 }
 
-/// Pre-process operations to handle special cases.
 fn preprocess_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut result = Vec::new();
 
@@ -1438,261 +956,13 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     plan_migration_checked(ops).expect("Circular dependency detected in migration operations")
 }
 
-/// Plan operations for a schema dump (not migration).
-/// Unlike plan_migration, this keeps OWNED BY inline in CREATE SEQUENCE
-/// by placing sequences after tables they reference.
-pub fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
-    let mut create_schemas = Vec::new();
-    let mut create_extensions = Vec::new();
-    let mut create_enums = Vec::new();
-    let mut create_domains = Vec::new();
-    let mut create_tables = Vec::new();
-    let mut create_sequences = Vec::new();
-    let mut create_partitions = Vec::new();
-    let mut create_functions = Vec::new();
-    let mut create_views = Vec::new();
-    let mut create_triggers = Vec::new();
-    let mut enable_rls = Vec::new();
-    let mut create_policies = Vec::new();
-    let mut alter_owners = Vec::new();
-    let mut grant_privileges = Vec::new();
-    let mut alter_default_privileges = Vec::new();
-
-    for op in ops {
-        match op {
-            MigrationOp::CreateSchema(_) => create_schemas.push(op),
-            MigrationOp::CreateExtension(_) => create_extensions.push(op),
-            MigrationOp::CreateEnum(_) => create_enums.push(op),
-            MigrationOp::CreateDomain(_) => create_domains.push(op),
-            MigrationOp::CreateTable(_) => create_tables.push(op),
-            MigrationOp::CreateSequence(_) => create_sequences.push(op),
-            MigrationOp::CreatePartition(_) => create_partitions.push(op),
-            MigrationOp::CreateFunction(_) => create_functions.push(op),
-            MigrationOp::CreateView(_) => create_views.push(op),
-            MigrationOp::CreateTrigger(_) => create_triggers.push(op),
-            MigrationOp::EnableRls { .. } => enable_rls.push(op),
-            MigrationOp::CreatePolicy(_) => create_policies.push(op),
-            MigrationOp::AlterOwner { .. } => alter_owners.push(op),
-            MigrationOp::GrantPrivileges { .. } => grant_privileges.push(op),
-            MigrationOp::AlterDefaultPrivileges { .. } => alter_default_privileges.push(op),
-            MigrationOp::DropSchema(_)
-            | MigrationOp::DropExtension(_)
-            | MigrationOp::DropEnum(_)
-            | MigrationOp::AddEnumValue { .. }
-            | MigrationOp::DropDomain(_)
-            | MigrationOp::AlterDomain { .. }
-            | MigrationOp::DropTable(_)
-            | MigrationOp::DropPartition(_)
-            | MigrationOp::AddColumn { .. }
-            | MigrationOp::DropColumn { .. }
-            | MigrationOp::AlterColumn { .. }
-            | MigrationOp::AddPrimaryKey { .. }
-            | MigrationOp::DropPrimaryKey { .. }
-            | MigrationOp::AddIndex { .. }
-            | MigrationOp::DropIndex { .. }
-            | MigrationOp::DropUniqueConstraint { .. }
-            | MigrationOp::AddForeignKey { .. }
-            | MigrationOp::DropForeignKey { .. }
-            | MigrationOp::AddCheckConstraint { .. }
-            | MigrationOp::DropCheckConstraint { .. }
-            | MigrationOp::DisableRls { .. }
-            | MigrationOp::DropPolicy { .. }
-            | MigrationOp::AlterPolicy { .. }
-            | MigrationOp::DropFunction { .. }
-            | MigrationOp::AlterFunction { .. }
-            | MigrationOp::DropView { .. }
-            | MigrationOp::AlterView { .. }
-            | MigrationOp::DropTrigger { .. }
-            | MigrationOp::AlterTriggerEnabled { .. }
-            | MigrationOp::DropSequence(_)
-            | MigrationOp::AlterSequence { .. }
-            | MigrationOp::BackfillHint { .. }
-            | MigrationOp::SetColumnNotNull { .. }
-            | MigrationOp::RevokePrivileges { .. }
-            | MigrationOp::CreateVersionSchema { .. }
-            | MigrationOp::DropVersionSchema { .. }
-            | MigrationOp::CreateVersionView { .. }
-            | MigrationOp::DropVersionView { .. } => {}
-        }
-    }
-
-    let create_tables = order_table_creates(create_tables);
-    let create_views = order_view_creates(create_views);
-
-    let mut result = Vec::new();
-
-    result.extend(create_schemas);
-    result.extend(create_extensions);
-    result.extend(create_enums);
-    result.extend(create_domains);
-    result.extend(create_functions);
-    result.extend(create_tables);
-    result.extend(create_partitions);
-    result.extend(create_sequences);
-    result.extend(enable_rls);
-    result.extend(create_policies);
-    result.extend(create_views);
-    result.extend(create_triggers);
-    result.extend(alter_owners);
-    result.extend(grant_privileges);
-    result.extend(alter_default_privileges);
-
-    result
-}
-
-fn extract_relation_references(query: &str) -> HashSet<String> {
-    extract_table_references(query, "public")
-        .into_iter()
-        .map(|r| r.qualified_name())
-        .collect()
-}
-
-fn order_view_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
-    if ops.is_empty() {
-        return ops;
-    }
-
-    let view_names: HashSet<String> = ops
-        .iter()
-        .filter_map(|op| match op {
-            MigrationOp::CreateView(view) => Some(qualified_name(&view.schema, &view.name)),
-            _ => None,
-        })
-        .collect();
-
-    let mut view_ops: HashMap<String, MigrationOp> = HashMap::new();
-    let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
-
-    for op in ops {
-        if let MigrationOp::CreateView(ref view) = op {
-            let view_name = qualified_name(&view.schema, &view.name);
-
-            let deps: HashSet<String> = extract_relation_references(&view.query)
-                .into_iter()
-                .filter(|r| view_names.contains(r) && *r != view_name)
-                .collect();
-
-            dependencies.insert(view_name.clone(), deps);
-            view_ops.insert(view_name, op);
-        }
-    }
-
-    topological_sort(&view_ops, &dependencies)
-}
-
-fn order_table_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
-    if ops.is_empty() {
-        return ops;
-    }
-
-    let mut table_ops: HashMap<String, MigrationOp> = HashMap::new();
-    let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
-
-    for op in ops {
-        if let MigrationOp::CreateTable(ref table) = op {
-            let table_name = qualified_name(&table.schema, &table.name);
-
-            let deps: HashSet<String> = table
-                .foreign_keys
-                .iter()
-                .map(|fk| qualified_name(&fk.referenced_schema, &fk.referenced_table))
-                .filter(|r| *r != table_name)
-                .collect();
-
-            dependencies.insert(table_name.clone(), deps);
-            table_ops.insert(table_name, op);
-        }
-    }
-
-    topological_sort(&table_ops, &dependencies)
-}
-
-/// Perform Kahn's algorithm for topological sort.
-fn topological_sort(
-    table_ops: &HashMap<String, MigrationOp>,
-    dependencies: &HashMap<String, HashSet<String>>,
-) -> Vec<MigrationOp> {
-    let mut in_degree: HashMap<String, usize> = HashMap::new();
-    let mut reverse_deps: HashMap<String, Vec<String>> = HashMap::new();
-
-    for name in table_ops.keys() {
-        in_degree.insert(name.clone(), 0);
-        reverse_deps.insert(name.clone(), Vec::new());
-    }
-
-    for (table, deps) in dependencies {
-        let count = deps.iter().filter(|d| table_ops.contains_key(*d)).count();
-        in_degree.insert(table.clone(), count);
-        for dep in deps {
-            if table_ops.contains_key(dep) {
-                reverse_deps
-                    .entry(dep.clone())
-                    .or_default()
-                    .push(table.clone());
-            }
-        }
-    }
-
-    let mut queue: VecDeque<String> = in_degree
-        .iter()
-        .filter(|(_, &count)| count == 0)
-        .map(|(name, _)| name.clone())
-        .collect();
-
-    let mut sorted_names: Vec<String> = Vec::new();
-
-    while let Some(name) = queue.pop_front() {
-        sorted_names.push(name.clone());
-        if let Some(dependents) = reverse_deps.get(&name) {
-            for dependent in dependents {
-                if let Some(count) = in_degree.get_mut(dependent) {
-                    *count -= 1;
-                    if *count == 0 {
-                        queue.push_back(dependent.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    let unsorted: Vec<String> = table_ops
-        .keys()
-        .filter(|name| !sorted_names.contains(name))
-        .cloned()
-        .collect();
-    sorted_names.extend(unsorted);
-
-    sorted_names
-        .into_iter()
-        .filter_map(|name| table_ops.get(&name).cloned())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diff::test_helpers::simple_table_with_fks;
     use crate::diff::{ColumnChanges, OwnerObjectKind, PolicyChanges};
     use crate::model::*;
     use std::collections::BTreeMap;
-
-    fn make_table(name: &str, foreign_keys: Vec<ForeignKey>) -> Table {
-        Table {
-            name: name.to_string(),
-            schema: "public".to_string(),
-            columns: BTreeMap::new(),
-            indexes: Vec::new(),
-            primary_key: None,
-            foreign_keys,
-            check_constraints: Vec::new(),
-            comment: None,
-            row_level_security: false,
-            policies: Vec::new(),
-            partition_by: None,
-
-            owner: None,
-            grants: Vec::new(),
-        }
-    }
 
     fn make_fk(referenced_table: &str) -> ForeignKey {
         ForeignKey {
@@ -1708,9 +978,9 @@ mod tests {
 
     #[test]
     fn create_tables_ordered_by_fk_dependencies() {
-        let posts = make_table("posts", vec![make_fk("users")]);
-        let users = make_table("users", vec![]);
-        let comments = make_table("comments", vec![make_fk("posts"), make_fk("users")]);
+        let posts = simple_table_with_fks("posts", vec![make_fk("users")]);
+        let users = simple_table_with_fks("users", vec![]);
+        let comments = simple_table_with_fks("comments", vec![make_fk("posts"), make_fk("users")]);
 
         let ops = vec![
             MigrationOp::CreateTable(comments),
@@ -1748,7 +1018,7 @@ mod tests {
 
     #[test]
     fn creates_before_drops() {
-        let users = make_table("users", vec![]);
+        let users = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
             MigrationOp::DropTable("old_table".to_string()),
@@ -1874,7 +1144,7 @@ mod tests {
     #[test]
     fn enums_created_before_tables() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
             MigrationOp::CreateEnum(EnumType {
                 name: "user_role".to_string(),
                 schema: "public".to_string(),
@@ -1912,7 +1182,7 @@ mod tests {
     #[test]
     fn add_enum_value_ordered_after_create_enum_before_tables() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
             MigrationOp::AddEnumValue {
                 enum_name: "user_role".to_string(),
                 value: "guest".to_string(),
@@ -2065,7 +1335,7 @@ mod tests {
                 column_name: "id".to_string(),
             }),
         };
-        let table = make_table("users", vec![]);
+        let table = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
             MigrationOp::CreateSequence(seq.clone()),
@@ -2426,7 +1696,7 @@ mod tests {
 
     #[test]
     fn v2_basic_create_table() {
-        let users = make_table("users", vec![]);
+        let users = simple_table_with_fks("users", vec![]);
         let ops = vec![MigrationOp::CreateTable(users)];
 
         let v2_result = plan_migration_checked(ops.clone()).unwrap();
@@ -2437,8 +1707,8 @@ mod tests {
 
     #[test]
     fn v2_fk_dependencies() {
-        let posts = make_table("posts", vec![make_fk("users")]);
-        let users = make_table("users", vec![]);
+        let posts = simple_table_with_fks("posts", vec![make_fk("users")]);
+        let users = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
             MigrationOp::CreateTable(posts),
@@ -2472,7 +1742,7 @@ mod tests {
             owner: None,
             grants: vec![],
         };
-        let users = make_table("users", vec![]);
+        let users = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
             MigrationOp::CreateTable(users),
@@ -2530,8 +1800,8 @@ mod tests {
 
     #[test]
     fn v2_no_cycle_for_simple_ops() {
-        let users = make_table("users", vec![]);
-        let posts = make_table("posts", vec![make_fk("users")]);
+        let users = simple_table_with_fks("users", vec![]);
+        let posts = simple_table_with_fks("posts", vec![make_fk("users")]);
 
         let ops = vec![
             MigrationOp::CreateTable(users),
@@ -2554,9 +1824,9 @@ mod tests {
             grants: vec![],
         };
 
-        let users = make_table("users", vec![]);
-        let posts = make_table("posts", vec![make_fk("users")]);
-        let comments = make_table("comments", vec![make_fk("posts"), make_fk("users")]);
+        let users = simple_table_with_fks("users", vec![]);
+        let posts = simple_table_with_fks("posts", vec![make_fk("users")]);
+        let comments = simple_table_with_fks("comments", vec![make_fk("posts"), make_fk("users")]);
 
         let ops = vec![
             MigrationOp::CreateEnum(my_enum),
@@ -2648,7 +1918,7 @@ mod tests {
     fn planner_orders_default_privileges_at_end() {
         use crate::model::{DefaultPrivilegeObjectType, Privilege};
 
-        let table = make_table("users", vec![]);
+        let table = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
             MigrationOp::AlterDefaultPrivileges {
@@ -2675,57 +1945,6 @@ mod tests {
         assert!(
             create_idx.unwrap() < adp_idx.unwrap(),
             "CreateTable should come before AlterDefaultPrivileges"
-        );
-    }
-
-    #[test]
-    fn plan_dump_orders_default_privileges_at_end() {
-        use crate::diff::GrantObjectKind;
-        use crate::model::{DefaultPrivilegeObjectType, Privilege};
-
-        let table = make_table("users", vec![]);
-
-        let ops = vec![
-            MigrationOp::AlterDefaultPrivileges {
-                target_role: "admin".to_string(),
-                schema: Some("public".to_string()),
-                object_type: DefaultPrivilegeObjectType::Tables,
-                grantee: "app_user".to_string(),
-                privileges: vec![Privilege::Select],
-                with_grant_option: false,
-                revoke: false,
-            },
-            MigrationOp::GrantPrivileges {
-                object_kind: GrantObjectKind::Table,
-                schema: "public".to_string(),
-                name: "users".to_string(),
-                args: None,
-                grantee: "reader".to_string(),
-                privileges: vec![Privilege::Select],
-                with_grant_option: false,
-            },
-            MigrationOp::CreateTable(table),
-        ];
-
-        let ordered = plan_dump(ops);
-
-        let create_idx = ordered
-            .iter()
-            .position(|op| matches!(op, MigrationOp::CreateTable(_)));
-        let grant_idx = ordered
-            .iter()
-            .position(|op| matches!(op, MigrationOp::GrantPrivileges { .. }));
-        let adp_idx = ordered
-            .iter()
-            .position(|op| matches!(op, MigrationOp::AlterDefaultPrivileges { .. }));
-
-        assert!(
-            create_idx.unwrap() < grant_idx.unwrap(),
-            "CreateTable should come before GrantPrivileges in dump"
-        );
-        assert!(
-            grant_idx.unwrap() < adp_idx.unwrap(),
-            "GrantPrivileges should come before AlterDefaultPrivileges in dump"
         );
     }
 
@@ -2829,7 +2048,7 @@ mod tests {
         use crate::diff::GrantObjectKind;
         use crate::model::Privilege;
 
-        let table = make_table("users", vec![]);
+        let table = simple_table_with_fks("users", vec![]);
 
         let ops = vec![
             MigrationOp::GrantPrivileges {
@@ -3480,7 +2699,7 @@ mod tests {
             grants: Vec::new(),
         };
 
-        let mut table = make_table("ProcurementFacility", vec![]);
+        let mut table = simple_table_with_fks("ProcurementFacility", vec![]);
         table.schema = "mrv".to_string();
 
         let ops = vec![
@@ -3521,7 +2740,7 @@ mod tests {
             grants: Vec::new(),
         };
 
-        let table = make_table("Users", vec![]);
+        let table = simple_table_with_fks("Users", vec![]);
 
         let ops = vec![
             MigrationOp::CreateFunction(func),
@@ -3563,7 +2782,7 @@ mod tests {
             grants: Vec::new(),
         };
 
-        let mut unrelated_table = make_table("Parcel", vec![]);
+        let mut unrelated_table = simple_table_with_fks("Parcel", vec![]);
         unrelated_table.schema = "mrv".to_string();
 
         let ops = vec![
@@ -3611,7 +2830,7 @@ mod tests {
             grants: Vec::new(),
         };
 
-        let table = make_table("orders", vec![]);
+        let table = simple_table_with_fks("orders", vec![]);
 
         let ops = vec![
             MigrationOp::CreateTable(table),
@@ -3893,7 +3112,7 @@ mod tests {
 
     #[test]
     fn schema_before_table() {
-        let mut table = make_table("users", vec![]);
+        let mut table = simple_table_with_fks("users", vec![]);
         table.schema = "api".to_string();
         let ops = vec![
             MigrationOp::CreateTable(table),
@@ -3946,7 +3165,7 @@ mod tests {
     #[test]
     fn extension_before_table() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
             MigrationOp::CreateExtension(make_extension("uuid-ossp")),
         ];
         let planned = plan_migration(ops);
@@ -3964,7 +3183,7 @@ mod tests {
     #[test]
     fn enum_before_table() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
             MigrationOp::CreateEnum(make_enum("role", "public")),
         ];
         let planned = plan_migration(ops);
@@ -3980,7 +3199,7 @@ mod tests {
     #[test]
     fn domain_before_table() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
             MigrationOp::CreateDomain(make_domain("email", "public")),
         ];
         let planned = plan_migration(ops);
@@ -3996,7 +3215,7 @@ mod tests {
     #[test]
     fn sequence_before_table() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
             MigrationOp::CreateSequence(make_sequence("users_id_seq", "public")),
         ];
         let planned = plan_migration(ops);
@@ -4014,7 +3233,7 @@ mod tests {
     #[test]
     fn function_before_table_default() {
         let ops = vec![
-            MigrationOp::CreateTable(make_table("orders", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("orders", vec![])),
             MigrationOp::CreateFunction(make_simple_function("gen_id", "public")),
         ];
         let planned = plan_migration(ops);
@@ -4037,7 +3256,7 @@ mod tests {
         );
         let ops = vec![
             MigrationOp::CreateFunction(func),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4068,7 +3287,7 @@ mod tests {
         );
         let ops = vec![
             MigrationOp::CreateFunction(func),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4094,7 +3313,7 @@ mod tests {
             "#,
             "integer",
         );
-        let mut table = make_table("MyTable", vec![]);
+        let mut table = simple_table_with_fks("MyTable", vec![]);
         table.schema = "myschema".to_string();
         let ops = vec![
             MigrationOp::CreateFunction(func),
@@ -4126,7 +3345,7 @@ mod tests {
         );
         let ops = vec![
             MigrationOp::CreateFunction(func),
-            MigrationOp::CreateTable(make_table("orders", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("orders", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4155,8 +3374,8 @@ mod tests {
         );
         let ops = vec![
             MigrationOp::CreateFunction(func),
-            MigrationOp::CreateTable(make_table("users", vec![])),
-            MigrationOp::CreateTable(make_table("posts", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("posts", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4191,7 +3410,7 @@ mod tests {
         );
         let ops = vec![
             MigrationOp::CreateFunction(func),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4217,7 +3436,7 @@ mod tests {
             "#,
             "integer",
         );
-        let table = make_table("unrelated", vec![]);
+        let table = simple_table_with_fks("unrelated", vec![]);
         let ops = vec![
             MigrationOp::CreateFunction(func),
             MigrationOp::CreateTable(table),
@@ -4236,7 +3455,7 @@ mod tests {
 
     #[test]
     fn table_before_partition() {
-        let parent = make_table("events", vec![]);
+        let parent = simple_table_with_fks("events", vec![]);
         let partition = crate::model::Partition {
             name: "events_2024".to_string(),
             schema: "public".to_string(),
@@ -4271,7 +3490,7 @@ mod tests {
                 table: QualifiedName::new("public", "users"),
                 column: make_column("email"),
             },
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4297,7 +3516,7 @@ mod tests {
                     is_constraint: false,
                 },
             },
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4315,7 +3534,7 @@ mod tests {
             MigrationOp::EnableRls {
                 table: QualifiedName::new("public", "users"),
             },
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4334,7 +3553,7 @@ mod tests {
             MigrationOp::EnableRls {
                 table: QualifiedName::new("public", "users"),
             },
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -4359,7 +3578,7 @@ mod tests {
     fn table_before_trigger() {
         let ops = vec![
             MigrationOp::CreateTrigger(make_trigger("audit_insert", "public", "users", "audit_fn")),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -4376,7 +3595,7 @@ mod tests {
         let ops = vec![
             MigrationOp::CreateTrigger(make_trigger("audit_insert", "public", "users", "audit_fn")),
             MigrationOp::CreateFunction(make_simple_function("audit_fn", "public")),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -4426,7 +3645,7 @@ mod tests {
         let ops = vec![
             MigrationOp::CreatePolicy(policy),
             MigrationOp::CreateFunction(make_simple_function("user_owns_entity", "auth")),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -4453,7 +3672,7 @@ mod tests {
         let ops = vec![
             MigrationOp::CreatePolicy(policy),
             MigrationOp::CreateFunction(make_simple_function("can_insert", "auth")),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -4479,7 +3698,7 @@ mod tests {
         let ops = vec![
             MigrationOp::CreateTrigger(trigger),
             MigrationOp::CreateFunction(make_simple_function("log_changes", "audit")),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -4507,7 +3726,7 @@ mod tests {
                 "SELECT auth.is_active(id) FROM public.users",
             )),
             MigrationOp::CreateFunction(make_simple_function("is_active", "auth")),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -4537,7 +3756,7 @@ mod tests {
                 },
             },
             MigrationOp::CreateFunction(make_simple_function("validate_item", "auth")),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -4571,7 +3790,7 @@ mod tests {
                 },
             },
             MigrationOp::CreateFunction(make_simple_function("normalize_name", "auth")),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -4605,7 +3824,7 @@ mod tests {
                 },
             },
             MigrationOp::CreateFunction(make_simple_function("is_active", "auth")),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -4638,7 +3857,7 @@ mod tests {
                 },
             },
             MigrationOp::CreateFunction(make_simple_function("generate_tracking_id", "auth")),
-            MigrationOp::CreateTable(make_table("items", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("items", vec![])),
         ];
         let planned = plan_migration(ops);
 
@@ -4762,7 +3981,7 @@ mod tests {
                 "public",
                 "SELECT * FROM public.users WHERE active",
             )),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -5216,7 +4435,7 @@ mod tests {
         let schema = make_schema("api");
         let my_enum = make_enum("status", "api");
         let func = make_simple_function("auth_check", "api");
-        let mut table = make_table("users", vec![]);
+        let mut table = simple_table_with_fks("users", vec![]);
         table.schema = "api".to_string();
         let view = make_view("user_view", "api", "SELECT * FROM api.users");
         let trigger = make_trigger("audit", "api", "users", "auth_check");
@@ -5267,7 +4486,7 @@ mod tests {
 
     #[test]
     fn cross_schema_fk_ordering() {
-        let mut users = make_table("users", vec![]);
+        let mut users = simple_table_with_fks("users", vec![]);
         users.schema = "auth".to_string();
 
         let mut fk = make_fk("users");
@@ -5275,7 +4494,7 @@ mod tests {
         fk.columns = vec!["author_id".to_string()];
         fk.referenced_schema = "auth".to_string();
 
-        let mut posts = make_table("posts", vec![fk]);
+        let mut posts = simple_table_with_fks("posts", vec![fk]);
         posts.schema = "api".to_string();
 
         let ops = vec![
@@ -5451,7 +4670,7 @@ mod tests {
                 args: None,
                 new_owner: "app_admin".to_string(),
             },
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(
@@ -5679,7 +4898,7 @@ mod tests {
     fn creates_before_final_drops() {
         let ops = vec![
             MigrationOp::DropTable("public.old_table".to_string()),
-            MigrationOp::CreateTable(make_table("new_table", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("new_table", vec![])),
             MigrationOp::DropEnum("public.old_status".to_string()),
             MigrationOp::CreateEnum(make_enum("new_status", "public")),
         ];
@@ -5711,7 +4930,7 @@ mod tests {
                 args: "".to_string(),
             },
             MigrationOp::CreateFunction(make_simple_function("old_fn", "public")),
-            MigrationOp::CreateTable(make_table("users", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
         ];
         let planned = plan_migration(ops);
         assert_op_position(

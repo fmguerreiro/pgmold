@@ -1,4 +1,4 @@
-use crate::diff::planner::plan_dump;
+use crate::diff::dump_planner::plan_dump;
 use crate::diff::{GrantObjectKind, MigrationOp, OwnerObjectKind};
 use crate::model::{Grant, QualifiedName, Schema};
 use crate::pg::sqlgen::generate_sql;
