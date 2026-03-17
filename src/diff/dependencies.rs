@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::model::{qualified_name, Policy, QualifiedName, Schema};
+use crate::model::{parse_qualified_name, qualified_name, Policy, QualifiedName, Schema};
 use crate::parser::{extract_function_references, extract_table_references};
 
 use super::MigrationOp;
@@ -188,10 +188,7 @@ pub(super) fn generate_trigger_ops_for_type_changes(
         .collect();
 
     for table_name in affected_tables {
-        let (table_schema, table_only_name) = table_name
-            .split_once('.')
-            .map(|(s, n)| (s.to_string(), n.to_string()))
-            .unwrap_or_else(|| ("public".to_string(), table_name.clone()));
+        let (table_schema, table_only_name) = parse_qualified_name(table_name);
 
         for trigger in from.triggers.values() {
             if trigger.target_schema == table_schema && trigger.target_name == table_only_name {
