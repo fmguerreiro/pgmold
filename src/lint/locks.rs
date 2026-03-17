@@ -31,7 +31,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DropColumn { table, column } => {
                 warnings.push(LockWarning {
                     operation: "DropColumn".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP COLUMN acquires ACCESS EXCLUSIVE lock on table {table} (column {column})"
@@ -46,7 +46,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                 if changes.data_type.is_some() || changes.nullable == Some(false) {
                     warnings.push(LockWarning {
                         operation: "AlterColumn".to_string(),
-                        table: table.to_qualified_string(),
+                        table: table.to_string(),
                         lock_level: LockLevel::AccessExclusive,
                         message: format!(
                             "ALTER COLUMN acquires ACCESS EXCLUSIVE lock on table {table} (column {column})"
@@ -57,7 +57,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::AddIndex { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "AddIndex".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "CREATE INDEX acquires ACCESS EXCLUSIVE lock on table {table} (use CREATE INDEX CONCURRENTLY to avoid blocking)"
@@ -67,7 +67,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::AddPrimaryKey { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "AddPrimaryKey".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "ADD PRIMARY KEY acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -77,7 +77,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DropPrimaryKey { table } => {
                 warnings.push(LockWarning {
                     operation: "DropPrimaryKey".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP PRIMARY KEY acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -87,7 +87,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::AddForeignKey { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "AddForeignKey".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "ADD FOREIGN KEY acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -97,7 +97,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DropForeignKey { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "DropForeignKey".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP FOREIGN KEY acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -107,7 +107,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::AddCheckConstraint { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "AddCheckConstraint".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "ADD CHECK CONSTRAINT acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -117,7 +117,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DropCheckConstraint { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "DropCheckConstraint".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP CHECK CONSTRAINT acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -127,7 +127,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DropIndex { table, index_name } => {
                 warnings.push(LockWarning {
                     operation: "DropIndex".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP INDEX acquires ACCESS EXCLUSIVE lock on table {table} (index {index_name})"
@@ -140,7 +140,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             } => {
                 warnings.push(LockWarning {
                     operation: "DropUniqueConstraint".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP CONSTRAINT acquires ACCESS EXCLUSIVE lock on table {table} (constraint {constraint_name})"
@@ -150,7 +150,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::EnableRls { table } => {
                 warnings.push(LockWarning {
                     operation: "EnableRls".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "ENABLE ROW LEVEL SECURITY acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -160,7 +160,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DisableRls { table } => {
                 warnings.push(LockWarning {
                     operation: "DisableRls".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DISABLE ROW LEVEL SECURITY acquires ACCESS EXCLUSIVE lock on table {table}"
@@ -181,7 +181,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::DropPolicy { table, name } => {
                 warnings.push(LockWarning {
                     operation: "DropPolicy".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "DROP POLICY acquires ACCESS EXCLUSIVE lock on table {table} (policy {name})"
@@ -191,7 +191,7 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
             MigrationOp::AlterPolicy { table, name, .. } => {
                 warnings.push(LockWarning {
                     operation: "AlterPolicy".to_string(),
-                    table: table.to_qualified_string(),
+                    table: table.to_string(),
                     lock_level: LockLevel::AccessExclusive,
                     message: format!(
                         "ALTER POLICY acquires ACCESS EXCLUSIVE lock on table {table} (policy {name})"

@@ -637,11 +637,11 @@ fn parse_partition_bound(expr: &str) -> PartitionBound {
                 let param_upper = param.to_uppercase();
                 if param_upper.contains("MODULUS") {
                     if let Some(val) = param.split_whitespace().last() {
-                        modulus = val.parse().unwrap_or(0);
+                        modulus = val.parse().expect("PostgreSQL hash partition bound must be a valid integer");
                     }
                 } else if param_upper.contains("REMAINDER") {
                     if let Some(val) = param.split_whitespace().last() {
-                        remainder = val.parse().unwrap_or(0);
+                        remainder = val.parse().expect("PostgreSQL hash partition bound must be a valid integer");
                     }
                 }
             }

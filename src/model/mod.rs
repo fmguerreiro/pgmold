@@ -17,7 +17,7 @@ use std::fmt;
 /// let name = QualifiedName::new("public", "users");
 /// assert_eq!(name.schema, "public");
 /// assert_eq!(name.name, "users");
-/// assert_eq!(name.to_qualified_string(), "public.users");
+/// assert_eq!(name.to_string(), "public.users");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct QualifiedName {
@@ -32,10 +32,6 @@ impl QualifiedName {
             name: name.to_string(),
         }
     }
-
-    pub fn to_qualified_string(&self) -> String {
-        format!("{}.{}", self.schema, self.name)
-    }
 }
 
 impl fmt::Display for QualifiedName {
@@ -46,13 +42,13 @@ impl fmt::Display for QualifiedName {
 
 impl PartialEq<str> for QualifiedName {
     fn eq(&self, other: &str) -> bool {
-        self.to_qualified_string() == other
+        self.to_string() == other
     }
 }
 
 impl PartialEq<&str> for QualifiedName {
     fn eq(&self, other: &&str) -> bool {
-        self.to_qualified_string() == *other
+        self.to_string() == *other
     }
 }
 

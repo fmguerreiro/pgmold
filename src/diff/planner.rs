@@ -554,7 +554,7 @@ impl MigrationGraph {
                 // Trigger depends on its target table and its trigger function
                 OpKey::CreateTrigger { target, .. } => {
                     edges_to_add.push((
-                        OpKey::CreateTable(target.to_qualified_string()),
+                        OpKey::CreateTable(target.to_string()),
                         key.clone(),
                     ));
 
@@ -568,7 +568,7 @@ impl MigrationGraph {
                 // Policy depends on its table and functions referenced in expressions
                 OpKey::CreatePolicy { table, .. } => {
                     edges_to_add
-                        .push((OpKey::CreateTable(table.to_qualified_string()), key.clone()));
+                        .push((OpKey::CreateTable(table.to_string()), key.clone()));
 
                     if let Some(MigrationOp::CreatePolicy(policy)) = self.get_op(key) {
                         let schema = &policy.table_schema;
@@ -584,7 +584,7 @@ impl MigrationGraph {
                 // Index depends on its table and functions in expressions/predicates
                 OpKey::AddIndex { table, .. } => {
                     edges_to_add
-                        .push((OpKey::CreateTable(table.to_qualified_string()), key.clone()));
+                        .push((OpKey::CreateTable(table.to_string()), key.clone()));
 
                     if let Some(MigrationOp::AddIndex { table, index }) = self.get_op(key) {
                         let schema = &table.schema;
@@ -606,7 +606,7 @@ impl MigrationGraph {
                 // AddColumn depends on table and functions in defaults
                 OpKey::AddColumn { table, .. } => {
                     edges_to_add
-                        .push((OpKey::CreateTable(table.to_qualified_string()), key.clone()));
+                        .push((OpKey::CreateTable(table.to_string()), key.clone()));
 
                     if let Some(MigrationOp::AddColumn { table, column }) = self.get_op(key) {
                         if let Some(default) = &column.default {
@@ -619,7 +619,7 @@ impl MigrationGraph {
                 // AddCheckConstraint depends on table and functions in expression
                 OpKey::AddCheckConstraint { table, .. } => {
                     edges_to_add
-                        .push((OpKey::CreateTable(table.to_qualified_string()), key.clone()));
+                        .push((OpKey::CreateTable(table.to_string()), key.clone()));
 
                     if let Some(MigrationOp::AddCheckConstraint {
                         table,
