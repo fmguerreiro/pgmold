@@ -914,7 +914,7 @@ fn drop_targets_table(other: &OpKey, table: &QualifiedName) -> bool {
 }
 
 pub fn plan_migration_checked(ops: Vec<MigrationOp>) -> Result<Vec<MigrationOp>, PlanError> {
-    let processed_ops = preprocess_ops(ops);
+    let processed_ops = split_sequence_owned_by_ops(ops);
 
     let mut graph = MigrationGraph::new();
     for op in processed_ops {
@@ -926,13 +926,15 @@ pub fn plan_migration_checked(ops: Vec<MigrationOp>) -> Result<Vec<MigrationOp>,
     graph.topological_sort()
 }
 
-fn preprocess_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+fn split_sequence_owned_by_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut result = Vec::new();
 
     for op in ops {
         match op {
-            MigrationOp::CreateSequence(ref seq) if seq.owned_by.is_some() => {
-                let owned_by = seq.owned_by.clone().unwrap();
+            MigrationOp::CreateSequence(ref seq)
+                if seq.owned_by.is_some() =>
+            {
+                let owned_by = seq.owned_by.clone().expect("guarded by is_some()");
                 let mut seq_without_owner = seq.clone();
                 seq_without_owner.owned_by = None;
                 result.push(MigrationOp::CreateSequence(seq_without_owner));
@@ -951,11 +953,6 @@ fn preprocess_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result
 }
 
-/// Panics on circular dependency. Prefer [`plan_migration_checked`] for recoverable error handling.
-pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
-    plan_migration_checked(ops).expect("Circular dependency detected in migration operations")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -963,6 +960,10 @@ mod tests {
     use crate::diff::{ColumnChanges, OwnerObjectKind, PolicyChanges};
     use crate::model::*;
     use std::collections::BTreeMap;
+
+    fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+        plan_migration_checked(ops).expect("Circular dependency detected in migration operations")
+    }
 
     fn make_fk(referenced_table: &str) -> ForeignKey {
         ForeignKey {
