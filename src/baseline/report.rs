@@ -125,7 +125,7 @@ pub fn generate_text_report(report: &BaselineReport) -> String {
 }
 
 pub fn generate_json_report(report: &BaselineReport) -> String {
-    serde_json::to_string_pretty(report).unwrap()
+    serde_json::to_string_pretty(report).expect("BaselineReport serialization failed")
 }
 
 fn status_text(ok: bool) -> &'static str {

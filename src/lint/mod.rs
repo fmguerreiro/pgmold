@@ -192,7 +192,83 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
             }
         }
 
-        _ => {}
+        MigrationOp::DropSchema(name) => {
+            if !options.allow_destructive {
+                results.push(LintResult {
+                    rule: "deny_drop_schema".to_string(),
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping schema \"{name}\" requires --allow-destructive flag"
+                    ),
+                });
+            }
+        }
+
+        MigrationOp::DropExtension(name) => {
+            if !options.allow_destructive {
+                results.push(LintResult {
+                    rule: "deny_drop_extension".to_string(),
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping extension \"{name}\" requires --allow-destructive flag"
+                    ),
+                });
+            }
+        }
+
+        MigrationOp::DropDomain(name) => {
+            if !options.allow_destructive {
+                results.push(LintResult {
+                    rule: "deny_drop_domain".to_string(),
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping domain \"{name}\" requires --allow-destructive flag"
+                    ),
+                });
+            }
+        }
+
+        MigrationOp::CreateSchema(_)
+        | MigrationOp::CreateExtension(_)
+        | MigrationOp::CreateEnum(_)
+        | MigrationOp::AddEnumValue { .. }
+        | MigrationOp::CreateDomain(_)
+        | MigrationOp::AlterDomain { .. }
+        | MigrationOp::CreateTable(_)
+        | MigrationOp::CreatePartition(_)
+        | MigrationOp::DropPartition(_)
+        | MigrationOp::AddColumn { .. }
+        | MigrationOp::AddPrimaryKey { .. }
+        | MigrationOp::DropPrimaryKey { .. }
+        | MigrationOp::AddIndex { .. }
+        | MigrationOp::DropIndex { .. }
+        | MigrationOp::AddForeignKey { .. }
+        | MigrationOp::DropForeignKey { .. }
+        | MigrationOp::AddCheckConstraint { .. }
+        | MigrationOp::DropCheckConstraint { .. }
+        | MigrationOp::EnableRls { .. }
+        | MigrationOp::DisableRls { .. }
+        | MigrationOp::CreatePolicy(_)
+        | MigrationOp::DropPolicy { .. }
+        | MigrationOp::AlterPolicy { .. }
+        | MigrationOp::CreateFunction(_)
+        | MigrationOp::DropFunction { .. }
+        | MigrationOp::AlterFunction { .. }
+        | MigrationOp::CreateView(_)
+        | MigrationOp::AlterView { .. }
+        | MigrationOp::CreateTrigger(_)
+        | MigrationOp::AlterTriggerEnabled { .. }
+        | MigrationOp::CreateSequence(_)
+        | MigrationOp::AlterOwner { .. }
+        | MigrationOp::SetColumnNotNull { .. }
+        | MigrationOp::GrantPrivileges { .. }
+        | MigrationOp::RevokePrivileges { .. }
+        | MigrationOp::AlterDefaultPrivileges { .. }
+        | MigrationOp::CreateVersionSchema { .. }
+        | MigrationOp::DropVersionSchema { .. }
+        | MigrationOp::CreateVersionView { .. }
+        | MigrationOp::DropVersionView { .. }
+        | MigrationOp::BackfillHint { .. } => {}
     }
 
     results
@@ -503,6 +579,81 @@ mod tests {
             table: QualifiedName::new("auth", "users"),
             constraint_name: "users_email_unique".to_string(),
         }];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!has_errors(&results));
+    }
+
+    #[test]
+    fn blocks_drop_schema_without_flag() {
+        let ops = vec![MigrationOp::DropSchema("auth".to_string())];
+        let options = LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_schema");
+    }
+
+    #[test]
+    fn allows_drop_schema_with_flag() {
+        let ops = vec![MigrationOp::DropSchema("auth".to_string())];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!has_errors(&results));
+    }
+
+    #[test]
+    fn blocks_drop_extension_without_flag() {
+        let ops = vec![MigrationOp::DropExtension("uuid-ossp".to_string())];
+        let options = LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_extension");
+    }
+
+    #[test]
+    fn allows_drop_extension_with_flag() {
+        let ops = vec![MigrationOp::DropExtension("uuid-ossp".to_string())];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!has_errors(&results));
+    }
+
+    #[test]
+    fn blocks_drop_domain_without_flag() {
+        let ops = vec![MigrationOp::DropDomain("email_address".to_string())];
+        let options = LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_domain");
+    }
+
+    #[test]
+    fn allows_drop_domain_with_flag() {
+        let ops = vec![MigrationOp::DropDomain("email_address".to_string())];
         let options = LintOptions {
             allow_destructive: true,
             is_production: false,
