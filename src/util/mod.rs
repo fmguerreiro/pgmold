@@ -2,6 +2,9 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use sqlparser::ast::{BinaryOperator, DataType, Expr, Query, Select, SetExpr, Statement};
+use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::parser::Parser;
+use thiserror::Error;
 
 static RE_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").expect("valid regex"));
 
@@ -68,9 +71,6 @@ static RE_OR_PAREN: LazyLock<Regex> =
 
 static RE_SIMPLE_PAREN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\(([^()]+)\)").expect("valid regex"));
-use sqlparser::dialect::PostgreSqlDialect;
-use sqlparser::parser::Parser;
-use thiserror::Error;
 
 /// Returns (colon_position, at_position) for the password span in a connection URL.
 /// The password occupies `url[colon_position+1..at_position]`.
@@ -478,7 +478,7 @@ fn normalize_expression_regex(expr: &str) -> String {
 }
 
 /// Finds the byte position of the matching closing paren for an opening paren at `open_pos`.
-/// Operates on raw bytes since normalized SQL is ASCII-only.
+/// All callers use byte-based indexing (regex `.end()`, string slicing) so this must too.
 fn find_matching_paren(s: &str, open_pos: usize) -> Option<usize> {
     let bytes = s.as_bytes();
     if bytes.get(open_pos).copied() != Some(b'(') {
@@ -500,6 +500,18 @@ fn find_matching_paren(s: &str, open_pos: usize) -> Option<usize> {
     None
 }
 
+/// Removes two single-byte characters at the given byte positions from a string.
+/// `first` must be less than `second`. Both positions must be valid byte boundaries.
+fn remove_byte_pair(s: &str, first: usize, second: usize) -> String {
+    debug_assert!(first < second);
+    format!(
+        "{}{}{}",
+        &s[..first],
+        &s[first + 1..second],
+        &s[second + 1..]
+    )
+}
+
 /// Removes outer parens around a pattern like EXISTS
 /// (EXISTS (...)) -> EXISTS (...)
 fn remove_outer_parens_around_pattern(s: &str, pattern: &str) -> String {
@@ -507,10 +519,7 @@ fn remove_outer_parens_around_pattern(s: &str, pattern: &str) -> String {
     let mut result = s.to_string();
     while let Some(pos) = result.find(&search) {
         if let Some(close_pos) = find_matching_paren(&result, pos) {
-            let mut chars: Vec<char> = result.chars().collect();
-            chars.remove(close_pos);
-            chars.remove(pos);
-            result = chars.into_iter().collect();
+            result = remove_byte_pair(&result, pos, close_pos);
         } else {
             break;
         }
@@ -530,10 +539,7 @@ fn remove_from_join_parens(s: &str) -> String {
             let after_paren = &result[mat.end()..];
             if RE_JOIN_PATTERN.is_match(after_paren) {
                 if let Some(close_pos) = find_matching_paren(&result, open_pos) {
-                    let mut chars: Vec<char> = result.chars().collect();
-                    chars.remove(close_pos);
-                    chars.remove(open_pos);
-                    result = chars.into_iter().collect();
+                    result = remove_byte_pair(&result, open_pos, close_pos);
                     found = true;
                 }
             }
@@ -562,10 +568,7 @@ fn remove_where_outer_parens(s: &str) -> String {
                     let trimmed = between.trim();
                     if trimmed.is_empty() || trimmed.starts_with("AND") || trimmed.starts_with("OR")
                     {
-                        let mut chars: Vec<char> = result.chars().collect();
-                        chars.remove(outer_close_pos);
-                        chars.remove(outer_open_pos);
-                        result = chars.into_iter().collect();
+                        result = remove_byte_pair(&result, outer_open_pos, outer_close_pos);
                         found = true;
                     }
                 }
@@ -595,10 +598,7 @@ fn remove_where_outer_parens(s: &str) -> String {
                     || after_close.starts_with(")")
                     || after_close.starts_with(";")
                 {
-                    let mut chars: Vec<char> = result.chars().collect();
-                    chars.remove(close_pos);
-                    chars.remove(open_pos);
-                    result = chars.into_iter().collect();
+                    result = remove_byte_pair(&result, open_pos, close_pos);
                     found = true;
                     break;
                 }
@@ -633,10 +633,7 @@ pub fn normalize_view_query(query: &str) -> String {
             if let Some(close_pos) = find_matching_paren(&result, open_pos) {
                 let content = &result[open_pos + 1..close_pos];
                 if content.contains(" AND ") && !content.contains(" OR ") {
-                    let mut chars: Vec<char> = result.chars().collect();
-                    chars.remove(close_pos);
-                    chars.remove(open_pos);
-                    result = chars.into_iter().collect();
+                    result = remove_byte_pair(&result, open_pos, close_pos);
                     found = true;
                 }
             }

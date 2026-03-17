@@ -446,7 +446,7 @@ pub(super) fn diff_functions(
                 GrantObjectKind::Function,
                 &func.schema,
                 &func.name,
-                Some(args_str.clone()),
+                Some(args_str),
             );
         } else {
             ops.push(MigrationOp::CreateFunction(func.clone()));
@@ -467,7 +467,7 @@ pub(super) fn diff_functions(
                 GrantObjectKind::Function,
                 &func.schema,
                 &func.name,
-                Some(args_str.clone()),
+                Some(args_str),
             );
         }
     }
