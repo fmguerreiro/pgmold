@@ -970,7 +970,13 @@ impl MigrationGraph {
                     if let Some(MigrationOp::AddColumn { table, column }) = self.get_op(key) {
                         if let Some(default) = &column.default {
                             let schema = parse_qualified_name(table).0;
-                            push_function_ref_edges(&mut edges_to_add, &keys, default, &schema, key);
+                            push_function_ref_edges(
+                                &mut edges_to_add,
+                                &keys,
+                                default,
+                                &schema,
+                                key,
+                            );
                         }
                     }
                 }

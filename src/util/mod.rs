@@ -3,8 +3,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use sqlparser::ast::{BinaryOperator, DataType, Expr, Query, Select, SetExpr, Statement};
 
-static RE_WHITESPACE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\s+").expect("valid regex"));
+static RE_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").expect("valid regex"));
 
 static RE_TYPE_CAST: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").expect("valid regex"));
@@ -33,8 +32,7 @@ static RE_ILIKE: LazyLock<Regex> =
 static RE_NOT_LIKE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\s*!~~\s*").expect("valid regex"));
 
-static RE_LIKE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\s*~~\s*").expect("valid regex"));
+static RE_LIKE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*~~\s*").expect("valid regex"));
 
 static RE_PAREN_OPEN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\(\s+").expect("valid regex"));
