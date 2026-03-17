@@ -1767,6 +1767,9 @@ fn collect_grants(
         .collect()
 }
 
+/// Query and collect grants from a SQL query. The query must SELECT columns:
+/// `grantee`, `privilege_type`, `is_grantable`. `extract_key` builds the
+/// object key from each row.
 async fn query_grants<F>(
     connection: &PgConnection,
     target_schemas: &[String],

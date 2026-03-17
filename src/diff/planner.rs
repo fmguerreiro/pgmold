@@ -1331,6 +1331,7 @@ fn preprocess_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result
 }
 
+/// Panics on circular dependency. Prefer [`plan_migration_checked`] for recoverable error handling.
 pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     plan_migration_checked(ops).expect("Circular dependency detected in migration operations")
 }
