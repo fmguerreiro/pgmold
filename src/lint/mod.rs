@@ -13,6 +13,15 @@ impl Default for LintOptions {
     fn default() -> Self {
         Self {
             allow_destructive: false,
+            is_production: false,
+        }
+    }
+}
+
+impl LintOptions {
+    pub fn from_env(allow_destructive: bool) -> Self {
+        Self {
+            allow_destructive,
             is_production: std::env::var("PGMOLD_PROD")
                 .map(|v| v == "1")
                 .unwrap_or(false),

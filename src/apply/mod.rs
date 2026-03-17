@@ -76,12 +76,7 @@ pub async fn apply_migration(
     let ops = plan_migration_checked(compute_diff(&current, &target))
         .map_err(|e| SchemaError::ValidationError(e.to_string()))?;
 
-    let lint_options = LintOptions {
-        allow_destructive: options.allow_destructive,
-        is_production: std::env::var("PGMOLD_PROD")
-            .map(|v| v == "1")
-            .unwrap_or(false),
-    };
+    let lint_options = LintOptions::from_env(options.allow_destructive);
     let lint_results = lint_migration_plan(&ops, &lint_options);
 
     let error_messages: Vec<String> = lint_results
