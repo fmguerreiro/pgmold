@@ -4,9 +4,7 @@ use super::op_key::{
 };
 use super::{MigrationOp, OwnerObjectKind};
 use crate::model::{parse_qualified_name, qualified_name, QualifiedName};
-use crate::parser::{
-    extract_function_references, extract_rowtype_references,
-};
+use crate::parser::{extract_function_references, extract_rowtype_references};
 use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet};
