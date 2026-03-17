@@ -1153,7 +1153,7 @@ fn normalize_table_column(col: &str) -> String {
                 };
                 (name, col[end..].trim())
             }
-            None => panic!("unclosed quote in TABLE column: {col}"),
+            None => panic!("BUG: unclosed quote in TABLE column definition: {col}"),
         }
     } else {
         match col.find(' ') {
