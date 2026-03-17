@@ -229,12 +229,11 @@ fn kahn_sort(
 mod tests {
     use super::*;
     use crate::diff::test_helpers::simple_table_with_fks;
-    use crate::model::*;
+    use crate::diff::GrantObjectKind;
+    use crate::model::{DefaultPrivilegeObjectType, Privilege};
 
     #[test]
     fn plan_dump_orders_default_privileges_at_end() {
-        use crate::diff::GrantObjectKind;
-        use crate::model::{DefaultPrivilegeObjectType, Privilege};
 
         let table = simple_table_with_fks("users", vec![]);
 
