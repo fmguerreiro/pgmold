@@ -991,17 +991,15 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
         Volatility::Volatile => "VOLATILE",
     };
 
-    let mut parts = vec![
-        format!(
-            "{} {}({}) RETURNS {} LANGUAGE {} {}",
-            create_stmt,
-            quote_qualified(&func.schema, &func.name),
-            args,
-            func.return_type,
-            func.language,
-            volatility,
-        ),
-    ];
+    let mut parts = vec![format!(
+        "{} {}({}) RETURNS {} LANGUAGE {} {}",
+        create_stmt,
+        quote_qualified(&func.schema, &func.name),
+        args,
+        func.return_type,
+        func.language,
+        volatility,
+    )];
 
     if matches!(func.security, SecurityType::Definer) {
         parts.push("SECURITY DEFINER".to_string());
