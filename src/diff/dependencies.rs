@@ -58,14 +58,13 @@ pub(super) fn generate_fk_ops_for_type_changes(
         return additional_ops;
     }
 
-    let existing_fk_drops: HashSet<(String, String)> =
-        collect_existing_drops(ops, |op| match op {
-            MigrationOp::DropForeignKey {
-                table,
-                foreign_key_name,
-            } => Some((table.to_string(), foreign_key_name.clone())),
-            _ => None,
-        });
+    let existing_fk_drops: HashSet<(String, String)> = collect_existing_drops(ops, |op| match op {
+        MigrationOp::DropForeignKey {
+            table,
+            foreign_key_name,
+        } => Some((table.to_string(), foreign_key_name.clone())),
+        _ => None,
+    });
 
     for (table_name, table) in &from.tables {
         for fk in &table.foreign_keys {
