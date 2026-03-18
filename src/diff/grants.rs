@@ -4,6 +4,10 @@ use crate::model::{DefaultPrivilege, Grant, Privilege, Schema};
 
 use super::{GrantObjectKind, MigrationOp};
 
+fn collect_privileges(set: &BTreeSet<Privilege>) -> Vec<Privilege> {
+    set.iter().cloned().collect()
+}
+
 struct GrantOptionChange {
     revoke_grant_option: Option<Vec<Privilege>>,
     regrant_with_option: Option<Vec<Privilege>>,
@@ -133,7 +137,7 @@ pub(super) fn diff_grants_for_object(
                 }
             }
             None => {
-                let privs: Vec<Privilege> = from_grant.privileges.iter().cloned().collect();
+                let privs = collect_privileges(&from_grant.privileges);
                 if !privs.is_empty() {
                     ops.push(MigrationOp::RevokePrivileges {
                         object_kind,
@@ -151,7 +155,7 @@ pub(super) fn diff_grants_for_object(
 
     for (grantee, to_grant) in &to_by_grantee {
         if !from_by_grantee.contains_key(grantee) {
-            let privs: Vec<Privilege> = to_grant.privileges.iter().cloned().collect();
+            let privs = collect_privileges(&to_grant.privileges);
             if !privs.is_empty() {
                 ops.push(MigrationOp::GrantPrivileges {
                     object_kind,
@@ -181,7 +185,7 @@ pub(super) fn create_grants_for_new_object(
         .iter()
         .filter(|grant| !excluded_grant_roles.contains(&grant.grantee.to_lowercase()))
         .filter_map(|grant| {
-            let privs: Vec<Privilege> = grant.privileges.iter().cloned().collect();
+            let privs = collect_privileges(&grant.privileges);
             if privs.is_empty() {
                 return None;
             }
@@ -225,7 +229,7 @@ pub(super) fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<Migrati
 
     for (key, from_dp) in &from_map {
         if !to_map.contains_key(key) {
-            let privs: Vec<Privilege> = from_dp.privileges.iter().cloned().collect();
+            let privs = collect_privileges(&from_dp.privileges);
             if !privs.is_empty() {
                 ops.push(MigrationOp::AlterDefaultPrivileges {
                     target_role: from_dp.target_role.clone(),
@@ -242,7 +246,7 @@ pub(super) fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<Migrati
 
     for (key, to_dp) in &to_map {
         if !from_map.contains_key(key) {
-            let privs: Vec<Privilege> = to_dp.privileges.iter().cloned().collect();
+            let privs = collect_privileges(&to_dp.privileges);
             if !privs.is_empty() {
                 ops.push(MigrationOp::AlterDefaultPrivileges {
                     target_role: to_dp.target_role.clone(),

@@ -517,29 +517,8 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
 }
 
 fn normalize_sql_body(body: &str) -> String {
-    let stripped = strip_dollar_quotes(body);
+    let stripped = crate::util::strip_dollar_quotes(body);
     stripped.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// Strips dollar-quote delimiters from a function body.
-/// Handles both `$$...$$` and `$tag$...$tag$` formats.
-fn strip_dollar_quotes(body: &str) -> String {
-    let trimmed = body.trim();
-
-    if !trimmed.starts_with('$') {
-        return body.to_string();
-    }
-
-    if let Some(tag_end) = trimmed[1..].find('$') {
-        let tag = &trimmed[..=tag_end + 1];
-        if let Some(content) = trimmed.strip_prefix(tag) {
-            if let Some(inner) = content.strip_suffix(tag) {
-                return inner.to_string();
-            }
-        }
-    }
-
-    body.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1177,6 +1156,7 @@ fn normalize_table_column(col: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::strip_dollar_quotes;
 
     #[test]
     fn same_schema_produces_same_fingerprint() {

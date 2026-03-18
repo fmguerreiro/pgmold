@@ -6,24 +6,7 @@ use sqlparser::ast::{
     FunctionDefinitionSetParam, FunctionSecurity, FunctionSetValue, Ident, OperateFunctionArg,
 };
 
-fn strip_dollar_quotes(body: &str) -> String {
-    let trimmed = body.trim();
-
-    if !trimmed.starts_with('$') {
-        return body.to_string();
-    }
-
-    if let Some(tag_end) = trimmed[1..].find('$') {
-        let tag = &trimmed[..=tag_end + 1];
-        if let Some(content) = trimmed.strip_prefix(tag) {
-            if let Some(inner) = content.strip_suffix(tag) {
-                return inner.to_string();
-            }
-        }
-    }
-
-    body.to_string()
-}
+use crate::util::strip_dollar_quotes;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn parse_create_function(
