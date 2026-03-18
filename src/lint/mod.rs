@@ -107,15 +107,10 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
 
         MigrationOp::DropView { name, materialized } => {
             if !options.allow_destructive {
-                let rule = if *materialized {
-                    "deny_drop_materialized_view"
+                let (rule, view_type) = if *materialized {
+                    ("deny_drop_materialized_view", "materialized view")
                 } else {
-                    "deny_drop_view"
-                };
-                let view_type = if *materialized {
-                    "materialized view"
-                } else {
-                    "view"
+                    ("deny_drop_view", "view")
                 };
                 results.push(LintResult {
                     rule: rule.to_string(),

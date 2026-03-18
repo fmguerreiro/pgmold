@@ -1068,6 +1068,14 @@ impl Default for Schema {
 }
 
 impl Function {
+    pub fn args_string(&self) -> String {
+        self.arguments
+            .iter()
+            .map(|a| a.data_type.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     pub fn signature(&self) -> String {
         let args = self
             .arguments

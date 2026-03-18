@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::model::{
-    parse_qualified_name, qualified_name, EnumType, Function, Grant, Schema, Sequence, Trigger,
+    parse_qualified_name, qualified_name, EnumType, Grant, Schema, Sequence, Trigger,
 };
 use crate::util::optional_expressions_equal;
 
@@ -10,15 +10,6 @@ use super::{
     DiffOptions, DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp, OwnerObjectKind,
     SequenceChanges,
 };
-
-fn function_args_string(function: &Function) -> String {
-    function
-        .arguments
-        .iter()
-        .map(|a| a.data_type.as_str())
-        .collect::<Vec<_>>()
-        .join(", ")
-}
 
 fn emit_ownership_change(
     ops: &mut Vec<MigrationOp>,
@@ -363,13 +354,13 @@ pub(super) fn diff_functions(
                 if from_func.requires_drop_recreate(to_func) {
                     ops.push(MigrationOp::DropFunction {
                         name: qualified_name(&from_func.schema, &from_func.name),
-                        args: function_args_string(from_func),
+                        args: from_func.args_string(),
                     });
                     ops.push(MigrationOp::CreateFunction(to_func.clone()));
                 } else {
                     ops.push(MigrationOp::AlterFunction {
                         name: qualified_name(&to_func.schema, &to_func.name),
-                        args: function_args_string(to_func),
+                        args: to_func.args_string(),
                         new_function: to_func.clone(),
                     });
                 }
@@ -377,12 +368,12 @@ pub(super) fn diff_functions(
         },
         |_key, func| MigrationOp::DropFunction {
             name: qualified_name(&func.schema, &func.name),
-            args: function_args_string(func),
+            args: func.args_string(),
         },
         |_key, func| ObjectCoords {
             schema: func.schema.clone(),
             name: func.name.clone(),
-            args: Some(function_args_string(func)),
+            args: Some(func.args_string()),
         },
         Some(GrantObjectKind::Function),
         |_val| Some(OwnerObjectKind::Function),
