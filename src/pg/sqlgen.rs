@@ -1281,9 +1281,7 @@ fn generate_alter_domain(name: &str, changes: &DomainChanges) -> Vec<String> {
     statements
 }
 
-fn generate_create_trigger(trigger: &Trigger) -> String {
-    let mut sql = format!("CREATE TRIGGER {}", quote_ident(&trigger.name));
-
+fn trigger_timing_and_events(trigger: &Trigger) -> String {
     let timing = match trigger.timing {
         TriggerTiming::Before => "BEFORE",
         TriggerTiming::After => "AFTER",
@@ -1315,9 +1313,47 @@ fn generate_create_trigger(trigger: &Trigger) -> String {
         })
         .collect();
 
-    sql.push_str(&format!(" {} {}", timing, events.join(" OR ")));
+    format!("{} {}", timing, events.join(" OR "))
+}
+
+fn trigger_referencing_clause(trigger: &Trigger) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(ref name) = trigger.old_table_name {
+        parts.push(format!("OLD TABLE AS {}", quote_ident(name)));
+    }
+    if let Some(ref name) = trigger.new_table_name {
+        parts.push(format!("NEW TABLE AS {}", quote_ident(name)));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(format!("REFERENCING {}", parts.join(" ")))
+    }
+}
+
+fn trigger_execute_clause(trigger: &Trigger) -> String {
+    let mut sql = String::new();
+    if let Some(ref when_clause) = trigger.when_clause {
+        sql.push_str(&format!(" WHEN ({when_clause})"));
+    }
     sql.push_str(&format!(
-        " ON {}",
+        " EXECUTE FUNCTION {}",
+        quote_qualified(&trigger.function_schema, &trigger.function_name)
+    ));
+    if trigger.function_args.is_empty() {
+        sql.push_str("();");
+    } else {
+        sql.push_str(&format!("({});", trigger.function_args.join(", ")));
+    }
+    sql
+}
+
+fn generate_create_trigger(trigger: &Trigger) -> String {
+    let mut sql = format!("CREATE TRIGGER {}", quote_ident(&trigger.name));
+
+    sql.push_str(&format!(
+        " {} ON {}",
+        trigger_timing_and_events(trigger),
         quote_qualified(&trigger.target_schema, &trigger.target_name)
     ));
 
@@ -1327,32 +1363,11 @@ fn generate_create_trigger(trigger: &Trigger) -> String {
         sql.push_str(" FOR EACH STATEMENT");
     }
 
-    // Generate REFERENCING clause for transition tables
-    let mut referencing_parts = Vec::new();
-    if let Some(ref name) = trigger.old_table_name {
-        referencing_parts.push(format!("OLD TABLE AS {}", quote_ident(name)));
-    }
-    if let Some(ref name) = trigger.new_table_name {
-        referencing_parts.push(format!("NEW TABLE AS {}", quote_ident(name)));
-    }
-    if !referencing_parts.is_empty() {
-        sql.push_str(&format!(" REFERENCING {}", referencing_parts.join(" ")));
+    if let Some(referencing) = trigger_referencing_clause(trigger) {
+        sql.push_str(&format!(" {referencing}"));
     }
 
-    if let Some(ref when_clause) = trigger.when_clause {
-        sql.push_str(&format!(" WHEN ({when_clause})"));
-    }
-
-    sql.push_str(&format!(
-        " EXECUTE FUNCTION {}",
-        quote_qualified(&trigger.function_schema, &trigger.function_name)
-    ));
-
-    if trigger.function_args.is_empty() {
-        sql.push_str("();");
-    } else {
-        sql.push_str(&format!("({});", trigger.function_args.join(", ")));
-    }
+    sql.push_str(&trigger_execute_clause(trigger));
 
     sql
 }

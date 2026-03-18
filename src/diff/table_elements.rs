@@ -92,7 +92,7 @@ pub(super) fn indexes_semantically_equal(from: &Index, to: &Index) -> bool {
 pub(super) fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
     let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
-    let from_qualified_table_name = QualifiedName::new(&from_table.schema, &from_table.name);
+    let from_qualified_table_name = || QualifiedName::new(&from_table.schema, &from_table.name);
 
     for index in &to_table.indexes {
         let existing = from_table.indexes.iter().find(|i| i.name == index.name);
@@ -104,7 +104,7 @@ pub(super) fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<Migratio
                 });
             }
             Some(from_index) if !indexes_semantically_equal(from_index, index) => {
-                ops.push(drop_index_op(from_qualified_table_name.clone(), from_index));
+                ops.push(drop_index_op(from_qualified_table_name(), from_index));
                 ops.push(MigrationOp::AddIndex {
                     table: qualified_table_name.clone(),
                     index: index.clone(),
@@ -116,7 +116,7 @@ pub(super) fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<Migratio
 
     for index in &from_table.indexes {
         if !to_table.indexes.iter().any(|i| i.name == index.name) {
-            ops.push(drop_index_op(from_qualified_table_name.clone(), index));
+            ops.push(drop_index_op(from_qualified_table_name(), index));
         }
     }
 

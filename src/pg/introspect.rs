@@ -600,10 +600,10 @@ fn parse_partition_bound(expr: &str) -> Result<PartitionBound> {
 
     if expr_upper.contains("FROM") && expr_upper.contains("TO") {
         if let Some(from_start) = expr_upper.find("FROM ") {
-            let after_from_orig = &expr[from_start + 5..];
-            if let Some(to_pos) = after_from_orig.to_uppercase().find(" TO ") {
-                let from_part_raw = &after_from_orig[..to_pos];
-                let to_part_raw = &after_from_orig[to_pos + 4..];
+            let after_from_upper = &expr_upper[from_start + 5..];
+            if let Some(to_pos) = after_from_upper.find(" TO ") {
+                let from_part_raw = &expr[from_start + 5..from_start + 5 + to_pos];
+                let to_part_raw = &expr[from_start + 5 + to_pos + 4..];
                 let from_values = extract_paren_values(from_part_raw.trim());
                 let to_values = extract_paren_values(to_part_raw.trim());
                 return Ok(PartitionBound::Range {
