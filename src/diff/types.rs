@@ -271,6 +271,19 @@ pub struct SequenceChanges {
     pub owned_by: Option<Option<SequenceOwner>>,
 }
 
+impl SequenceChanges {
+    pub fn has_changes(&self) -> bool {
+        self.data_type.is_some()
+            || self.increment.is_some()
+            || self.min_value.is_some()
+            || self.max_value.is_some()
+            || self.restart.is_some()
+            || self.cache.is_some()
+            || self.cycle.is_some()
+            || self.owned_by.is_some()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnumValuePosition {
     Before(String),

@@ -2,6 +2,8 @@ use crate::model::*;
 use crate::util::Result;
 use sqlparser::ast::{DataType, Expr, ObjectName, SequenceOptions, UnaryOperator, Value};
 
+use super::util::unquote_ident;
+
 pub(super) fn parse_create_sequence(
     schema: &str,
     name: &str,
@@ -53,7 +55,7 @@ pub(super) fn parse_create_sequence(
         let parts: Vec<String> = obj_name
             .0
             .iter()
-            .map(|part| part.to_string().trim_matches('"').to_string())
+            .map(|part| unquote_ident(&part.to_string()).to_string())
             .collect();
         match parts.as_slice() {
             [table_schema, table_name, column_name] => Some(SequenceOwner {

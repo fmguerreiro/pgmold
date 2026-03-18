@@ -3,6 +3,8 @@ use crate::util::Result;
 use regex::Regex;
 use std::collections::BTreeSet;
 
+use super::util::unquote_ident;
+
 fn parse_privileges(privileges_str: &str, object_type: Option<&str>) -> BTreeSet<Privilege> {
     let mut privileges = BTreeSet::new();
     for priv_str in privileges_str.split(',') {
@@ -78,8 +80,8 @@ fn parse_grant_all_in_schema(sql: &str, schema: &mut Schema) {
     for cap in re.captures_iter(sql) {
         let privileges_str = cap.get(1).unwrap().as_str();
         let object_kind = cap.get(2).unwrap().as_str().to_uppercase();
-        let schema_name = cap.get(3).unwrap().as_str().trim_matches('"');
-        let grantee = cap.get(4).unwrap().as_str().trim_matches('"');
+        let schema_name = unquote_ident(cap.get(3).unwrap().as_str());
+        let grantee = unquote_ident(cap.get(4).unwrap().as_str());
         let with_grant_option = cap.get(5).is_some();
 
         let inferred_type = match object_kind.as_str() {
@@ -167,7 +169,7 @@ pub(super) fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<(
         let privileges_str = cap.get(1).unwrap().as_str();
         let object_type = cap.get(2).map(|m| m.as_str().to_uppercase());
         let object_name_raw = cap.get(3).unwrap().as_str();
-        let grantee = cap.get(4).unwrap().as_str().trim_matches('"');
+        let grantee = unquote_ident(cap.get(4).unwrap().as_str());
         let with_grant_option = cap.get(5).is_some();
 
         if object_name_raw.to_uppercase().starts_with("ALL ") {
@@ -233,7 +235,7 @@ pub(super) fn parse_grant_statements(sql: &str, schema: &mut Schema) -> Result<(
                 }
             }
             "SCHEMA" => {
-                let schema_name = object_name_raw.trim().trim_matches('"');
+                let schema_name = unquote_ident(object_name_raw.trim());
                 if let Some(pg_schema) = schema.schemas.get_mut(schema_name) {
                     pg_schema.grants.push(grant);
                 } else {
@@ -277,7 +279,7 @@ pub(super) fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<
         let privileges_str = cap.get(2).unwrap().as_str();
         let object_type = cap.get(3).map(|m| m.as_str().to_uppercase());
         let object_name_raw = cap.get(4).unwrap().as_str();
-        let grantee = cap.get(5).unwrap().as_str().trim_matches('"');
+        let grantee = unquote_ident(cap.get(5).unwrap().as_str());
 
         if object_name_raw.to_uppercase().starts_with("ALL ") {
             continue;
@@ -347,7 +349,7 @@ pub(super) fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<
                 }
             }
             "SCHEMA" => {
-                let schema_name = object_name_raw.trim().trim_matches('"');
+                let schema_name = unquote_ident(object_name_raw.trim());
                 if let Some(pg_schema) = schema.schemas.get_mut(schema_name) {
                     revoke_from_grants(
                         &mut pg_schema.grants,
@@ -566,11 +568,11 @@ pub(super) fn parse_alter_default_privileges(sql: &str, schema: &mut Schema) -> 
 }
 
 fn parse_object_name(name: &str) -> (String, String) {
-    let trimmed = name.trim().trim_matches('"');
+    let trimmed = unquote_ident(name.trim());
     match trimmed.split_once('.') {
         Some((schema, obj)) => (
-            schema.trim_matches('"').to_string(),
-            obj.trim_matches('"').to_string(),
+            unquote_ident(schema).to_string(),
+            unquote_ident(obj).to_string(),
         ),
         None => ("public".to_string(), trimmed.to_string()),
     }
@@ -584,16 +586,16 @@ fn parse_function_signature(sig: &str) -> String {
         let args_part = &trimmed[paren_pos..];
 
         if let Some(dot_pos) = before_paren.rfind('.') {
-            let schema_part = &before_paren[..dot_pos].trim_matches('"');
-            let func_name = &before_paren[dot_pos + 1..].trim_matches('"');
+            let schema_part = unquote_ident(&before_paren[..dot_pos]);
+            let func_name = unquote_ident(&before_paren[dot_pos + 1..]);
             format!("{schema_part}.{func_name}{args_part}")
         } else {
-            let name = before_paren.trim_matches('"');
+            let name = unquote_ident(before_paren);
             format!("public.{name}{args_part}")
         }
     } else if trimmed.contains('.') {
         trimmed.to_string()
     } else {
-        format!("public.{}", trimmed.trim_matches('"'))
+        format!("public.{}", unquote_ident(trimmed))
     }
 }

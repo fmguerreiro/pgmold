@@ -12,6 +12,8 @@ use sqlparser::parser::Parser;
 use std::collections::{HashSet, VecDeque};
 use std::sync::LazyLock;
 
+use super::util::unquote_ident;
+
 static ROWTYPE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)(?:(\w+|"[^"]+")\s*\.\s*)?(\w+|"[^"]+")%ROWTYPE"#).unwrap());
 
@@ -38,7 +40,7 @@ impl ObjectRef {
         let parts: Vec<String> = name
             .0
             .iter()
-            .map(|p| p.to_string().trim_matches('"').to_string())
+            .map(|p| unquote_ident(&p.to_string()).to_string())
             .collect();
 
         if parts.len() == 1 {
@@ -501,9 +503,9 @@ pub fn extract_rowtype_references(body: &str, default_schema: &str) -> HashSet<O
     for cap in ROWTYPE_RE.captures_iter(body) {
         let schema = cap
             .get(1)
-            .map(|m| m.as_str().trim_matches('"'))
+            .map(|m| unquote_ident(m.as_str()))
             .unwrap_or(default_schema);
-        let name = cap[2].trim_matches('"');
+        let name = unquote_ident(&cap[2]);
         refs.insert(ObjectRef::new(schema, name));
     }
 
