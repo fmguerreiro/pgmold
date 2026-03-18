@@ -3688,4 +3688,30 @@ mod tests {
             "ALTER MATERIALIZED VIEW \"public\".\"summary\" OWNER TO analytics_user;"
         );
     }
+
+    #[test]
+    fn alter_materialized_view_emits_separate_drop_and_create() {
+        let ops = vec![MigrationOp::AlterView {
+            name: "public.summary".to_string(),
+            new_view: View {
+                name: "summary".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT count(*) FROM orders".to_string(),
+                materialized: true,
+                owner: None,
+                grants: vec![],
+            },
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 2);
+        assert_eq!(
+            sql[0],
+            "DROP MATERIALIZED VIEW IF EXISTS \"public\".\"summary\";"
+        );
+        assert_eq!(
+            sql[1],
+            "CREATE MATERIALIZED VIEW \"public\".\"summary\" AS SELECT count(*) FROM orders;"
+        );
+    }
 }
