@@ -28,7 +28,7 @@ pub enum LintSeverity {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LintResult {
-    pub rule: String,
+    pub rule: &'static str,
     pub severity: LintSeverity,
     pub message: String,
 }
@@ -50,7 +50,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         MigrationOp::DropColumn { table, column } => {
             if !options.allow_destructive {
                 results.push(LintResult {
-                    rule: "deny_drop_column".to_string(),
+                    rule: "deny_drop_column",
                     severity: LintSeverity::Error,
                     message: format!(
                         "Dropping column {table}.{column} requires --allow-destructive flag"
@@ -62,7 +62,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         MigrationOp::DropTable(name) => {
             if options.is_production {
                 results.push(LintResult {
-                    rule: "deny_drop_table_in_prod".to_string(),
+                    rule: "deny_drop_table_in_prod",
                     severity: LintSeverity::Error,
                     message: format!(
                         "Dropping table {name} is not allowed in production (PGMOLD_PROD=1)"
@@ -70,7 +70,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
                 });
             } else if !options.allow_destructive {
                 results.push(LintResult {
-                    rule: "deny_drop_table".to_string(),
+                    rule: "deny_drop_table",
                     severity: LintSeverity::Error,
                     message: format!("Dropping table {name} requires --allow-destructive flag"),
                 });
@@ -85,7 +85,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
             if let Some(ref new_type) = changes.data_type {
                 if is_type_narrowing(new_type) {
                     results.push(LintResult {
-                        rule: "warn_type_narrowing".to_string(),
+                        rule: "warn_type_narrowing",
                         severity: LintSeverity::Warning,
                         message: format!(
                             "Altering column {table}.{column} to a smaller type may cause data loss"
@@ -96,7 +96,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
 
             if changes.nullable == Some(false) {
                 results.push(LintResult {
-                    rule: "warn_set_not_null".to_string(),
+                    rule: "warn_set_not_null",
                     severity: LintSeverity::Warning,
                     message: format!(
                         "Setting column {table}.{column} to NOT NULL may fail if existing rows have NULL values"
@@ -113,7 +113,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
                     ("deny_drop_view", "view")
                 };
                 results.push(LintResult {
-                    rule: rule.to_string(),
+                    rule,
                     severity: LintSeverity::Error,
                     message: format!(
                         "Dropping {view_type} {name} requires --allow-destructive flag"
@@ -125,7 +125,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         MigrationOp::DropEnum(name) => {
             if !options.allow_destructive {
                 results.push(LintResult {
-                    rule: "deny_drop_enum".to_string(),
+                    rule: "deny_drop_enum",
                     severity: LintSeverity::Error,
                     message: format!("Dropping enum {name} requires --allow-destructive flag"),
                 });
@@ -139,7 +139,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         } => {
             if !options.allow_destructive {
                 results.push(LintResult {
-                    rule: "deny_drop_trigger".to_string(),
+                    rule: "deny_drop_trigger",
                     severity: LintSeverity::Error,
                     message: format!(
                         "Dropping trigger \"{target_schema}\".\"{target_name}\".{name} requires --allow-destructive flag"
@@ -151,7 +151,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         MigrationOp::DropSequence(name) => {
             if !options.allow_destructive {
                 results.push(LintResult {
-                    rule: "deny_drop_sequence".to_string(),
+                    rule: "deny_drop_sequence",
                     severity: LintSeverity::Error,
                     message: format!(
                         "Dropping sequence \"{name}\" requires --allow-destructive flag"
@@ -166,7 +166,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         } => {
             if !options.allow_destructive {
                 results.push(LintResult {
-                    rule: "deny_drop_unique_constraint".to_string(),
+                    rule: "deny_drop_unique_constraint",
                     severity: LintSeverity::Error,
                     message: format!(
                         "Dropping unique constraint \"{constraint_name}\" on \"{table}\" requires --allow-destructive flag"
@@ -178,7 +178,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         MigrationOp::AlterSequence { name, changes } => {
             if changes.restart.is_some() {
                 results.push(LintResult {
-                    rule: "warn_sequence_restart".to_string(),
+                    rule: "warn_sequence_restart",
                     severity: LintSeverity::Warning,
                     message: format!(
                         "Restarting sequence \"{name}\" may cause duplicate key violations"
@@ -190,7 +190,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         MigrationOp::DropSchema(name) => {
             if !options.allow_destructive {
                 results.push(LintResult {
-                    rule: "deny_drop_schema".to_string(),
+                    rule: "deny_drop_schema",
                     severity: LintSeverity::Error,
                     message: format!(
                         "Dropping schema \"{name}\" requires --allow-destructive flag"
@@ -202,7 +202,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         MigrationOp::DropExtension(name) => {
             if !options.allow_destructive {
                 results.push(LintResult {
-                    rule: "deny_drop_extension".to_string(),
+                    rule: "deny_drop_extension",
                     severity: LintSeverity::Error,
                     message: format!(
                         "Dropping extension \"{name}\" requires --allow-destructive flag"
@@ -214,7 +214,7 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         MigrationOp::DropDomain(name) => {
             if !options.allow_destructive {
                 results.push(LintResult {
-                    rule: "deny_drop_domain".to_string(),
+                    rule: "deny_drop_domain",
                     severity: LintSeverity::Error,
                     message: format!(
                         "Dropping domain \"{name}\" requires --allow-destructive flag"
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn has_errors_returns_false_for_warnings_only() {
         let results = vec![LintResult {
-            rule: "warn_something".to_string(),
+            rule: "warn_something",
             severity: LintSeverity::Warning,
             message: "Just a warning".to_string(),
         }];
