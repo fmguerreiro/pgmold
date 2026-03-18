@@ -270,7 +270,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             vec![generate_create_or_replace_function(new_function)]
         }
 
-        MigrationOp::CreateView(view) => vec![generate_create_view(view)],
+        MigrationOp::CreateView(view) => generate_create_view(view),
 
         MigrationOp::DropView { name, materialized } => {
             let (schema, view_name) = parse_qualified_name(name);
@@ -286,9 +286,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             )]
         }
 
-        MigrationOp::AlterView { new_view, .. } => {
-            vec![generate_create_or_replace_view(new_view)]
-        }
+        MigrationOp::AlterView { new_view, .. } => generate_create_or_replace_view(new_view),
 
         MigrationOp::CreateTrigger(trigger) => {
             let mut statements = vec![generate_create_trigger(trigger)];
@@ -1025,27 +1023,30 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
     )
 }
 
-fn generate_create_view(view: &View) -> String {
+fn generate_create_view(view: &View) -> Vec<String> {
     generate_view_ddl(view, false)
 }
 
-fn generate_create_or_replace_view(view: &View) -> String {
+fn generate_create_or_replace_view(view: &View) -> Vec<String> {
     generate_view_ddl(view, true)
 }
 
-fn generate_view_ddl(view: &View, replace: bool) -> String {
+fn generate_view_ddl(view: &View, replace: bool) -> Vec<String> {
     let qualified_name = quote_qualified(&view.schema, &view.name);
     if view.materialized {
         if replace {
-            format!(
-                "DROP MATERIALIZED VIEW IF EXISTS {}; CREATE MATERIALIZED VIEW {} AS {};",
-                qualified_name, qualified_name, view.query
-            )
+            vec![
+                format!("DROP MATERIALIZED VIEW IF EXISTS {};", qualified_name),
+                format!(
+                    "CREATE MATERIALIZED VIEW {} AS {};",
+                    qualified_name, view.query
+                ),
+            ]
         } else {
-            format!(
+            vec![format!(
                 "CREATE MATERIALIZED VIEW {} AS {};",
                 qualified_name, view.query
-            )
+            )]
         }
     } else {
         let create_stmt = if replace {
@@ -1053,7 +1054,7 @@ fn generate_view_ddl(view: &View, replace: bool) -> String {
         } else {
             "CREATE VIEW"
         };
-        format!("{} {} AS {};", create_stmt, qualified_name, view.query)
+        vec![format!("{} {} AS {};", create_stmt, qualified_name, view.query)]
     }
 }
 
