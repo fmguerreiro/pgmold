@@ -18,7 +18,7 @@ pub use types::{
 use dependencies::{
     generate_fk_ops_for_type_changes, generate_policy_ops_for_function_changes,
     generate_policy_ops_for_type_changes, generate_trigger_ops_for_type_changes,
-    generate_view_ops_for_type_changes, tables_with_type_changes,
+    generate_view_ops_for_type_changes, type_changed_columns,
 };
 use grants::diff_default_privileges;
 use objects::{
@@ -80,8 +80,17 @@ pub fn compute_diff_with_flags(
         }
     }
 
-    let affected_tables = tables_with_type_changes(&ops);
-    ops.extend(generate_fk_ops_for_type_changes(&ops, from, to));
+    let type_change_columns = type_changed_columns(&ops);
+    let affected_tables: std::collections::HashSet<String> = type_change_columns
+        .iter()
+        .map(|(table, _)| table.clone())
+        .collect();
+    ops.extend(generate_fk_ops_for_type_changes(
+        &ops,
+        from,
+        to,
+        &type_change_columns,
+    ));
     ops.extend(generate_policy_ops_for_type_changes(
         &ops,
         from,
