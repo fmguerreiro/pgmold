@@ -6,7 +6,7 @@ use sqlparser::ast::{
 };
 use std::collections::BTreeMap;
 
-use super::util::{extract_qualified_name, normalize_expr, parse_data_type};
+use super::util::{extract_qualified_name, normalize_expr, parse_data_type, unquote_ident};
 
 pub(super) struct ParsedTable {
     pub(super) table: Table,
@@ -49,7 +49,7 @@ pub(super) fn parse_create_table(
     for col_def in columns {
         for option in &col_def.options {
             if matches!(option.option, ColumnOption::PrimaryKey(_)) {
-                let pk_col = col_def.name.to_string().trim_matches('"').to_string();
+                let pk_col = unquote_ident(&col_def.name.to_string()).to_string();
                 table.primary_key = Some(PrimaryKey {
                     columns: vec![pk_col.clone()],
                 });
@@ -66,7 +66,7 @@ pub(super) fn parse_create_table(
                 let pk_columns: Vec<String> = pk
                     .columns
                     .iter()
-                    .map(|c| c.to_string().trim_matches('"').to_string())
+                    .map(|c| unquote_ident(&c.to_string()).to_string())
                     .collect();
                 table.primary_key = Some(PrimaryKey {
                     columns: pk_columns.clone(),
@@ -81,12 +81,12 @@ pub(super) fn parse_create_table(
                 let fk_name = fk
                     .name
                     .as_ref()
-                    .map(|n| n.to_string().trim_matches('"').to_string())
+                    .map(|n| unquote_ident(&n.to_string()).to_string())
                     .unwrap_or_else(|| {
                         format!(
                             "{}_{}_fkey",
                             table.name,
-                            fk.columns[0].to_string().trim_matches('"')
+                            unquote_ident(&fk.columns[0].to_string())
                         )
                     });
 
@@ -96,14 +96,14 @@ pub(super) fn parse_create_table(
                     columns: fk
                         .columns
                         .iter()
-                        .map(|c| c.to_string().trim_matches('"').to_string())
+                        .map(|c| unquote_ident(&c.to_string()).to_string())
                         .collect(),
                     referenced_schema: ref_schema,
                     referenced_table: ref_table,
                     referenced_columns: fk
                         .referred_columns
                         .iter()
-                        .map(|c| c.to_string().trim_matches('"').to_string())
+                        .map(|c| unquote_ident(&c.to_string()).to_string())
                         .collect(),
                     on_delete: parse_referential_action(&fk.on_delete),
                     on_update: parse_referential_action(&fk.on_update),
@@ -113,7 +113,7 @@ pub(super) fn parse_create_table(
                 let constraint_name = chk
                     .name
                     .as_ref()
-                    .map(|n| n.to_string().trim_matches('"').to_string())
+                    .map(|n| unquote_ident(&n.to_string()).to_string())
                     .unwrap_or_else(|| format!("{}_check", table.name));
 
                 table.check_constraints.push(CheckConstraint {
@@ -125,7 +125,7 @@ pub(super) fn parse_create_table(
                 let constraint_name = uniq
                     .name
                     .as_ref()
-                    .map(|n| n.to_string().trim_matches('"').to_string())
+                    .map(|n| unquote_ident(&n.to_string()).to_string())
                     .unwrap_or_else(|| format!("{}_unique", table.name));
 
                 table.indexes.push(Index {
@@ -133,7 +133,7 @@ pub(super) fn parse_create_table(
                     columns: uniq
                         .columns
                         .iter()
-                        .map(|c| c.column.expr.to_string().trim_matches('"').to_string())
+                        .map(|c| unquote_ident(&c.column.expr.to_string()).to_string())
                         .collect(),
                     unique: true,
                     index_type: IndexType::BTree,
@@ -171,7 +171,7 @@ pub(super) fn parse_column_with_serial(
         }
     }
 
-    let col_name = col_def.name.to_string().trim_matches('"').to_string();
+    let col_name = unquote_ident(&col_def.name.to_string()).to_string();
 
     if let Some(seq_data_type) = detect_serial_type(&col_def.data_type) {
         let seq_name = format!("{table_name}_{col_name}_seq");

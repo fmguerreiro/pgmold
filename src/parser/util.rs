@@ -5,6 +5,10 @@ use sqlparser::ast::{
     PartitionBoundValue, TimezoneInfo,
 };
 
+pub(super) fn unquote_ident(s: &str) -> &str {
+    s.trim_matches('"')
+}
+
 pub(super) fn normalize_expr(expr: &str) -> String {
     normalize_type_casts(expr)
 }
@@ -13,7 +17,7 @@ pub(super) fn extract_qualified_name(name: &ObjectName) -> (String, String) {
     let parts: Vec<String> = name
         .0
         .iter()
-        .map(|part| part.to_string().trim_matches('"').to_string())
+        .map(|part| unquote_ident(&part.to_string()).to_string())
         .collect();
     match parts.as_slice() {
         [schema, table] => (schema.clone(), table.clone()),
@@ -98,7 +102,7 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
             let parts: Vec<String> = name
                 .0
                 .iter()
-                .map(|part| part.to_string().trim_matches('"').to_string())
+                .map(|part| unquote_ident(&part.to_string()).to_string())
                 .collect();
 
             let type_name_raw = parts.last().map(|s| s.as_str()).unwrap_or("");

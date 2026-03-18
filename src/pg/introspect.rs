@@ -514,9 +514,7 @@ async fn introspect_partition_keys(
             _ => continue,
         };
 
-        // key_def is like "RANGE (logdate)" or "LIST (status)"
-        // Extract the columns by parsing the parentheses
-        let columns = parse_partition_key_columns(&key_def);
+        let columns = extract_paren_values(&key_def);
 
         let partition_key = PartitionKey {
             strategy,
@@ -666,21 +664,6 @@ fn extract_paren_values(s: &str) -> Vec<String> {
         if let Some(end) = s.rfind(')') {
             let inner = &s[start + 1..end];
             return inner.split(',').map(|v| v.trim().to_string()).collect();
-        }
-    }
-    Vec::new()
-}
-
-/// Parse column names from a partition key definition like "RANGE (col1, col2)"
-fn parse_partition_key_columns(key_def: &str) -> Vec<String> {
-    // Find content between parentheses
-    if let Some(start) = key_def.find('(') {
-        if let Some(end) = key_def.rfind(')') {
-            let columns_str = &key_def[start + 1..end];
-            return columns_str
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect();
         }
     }
     Vec::new()
@@ -1366,10 +1349,9 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
         .map(|arg| {
             let arg = arg.trim();
 
-            // Find the DEFAULT keyword case-insensitively outside of quotes,
-            // then extract the value from the original string to preserve its case.
             let (arg_without_default, default) = if let Some(idx) = find_default_keyword(arg) {
-                let default_value = arg[idx + 9..].trim().to_string();
+                let keyword = " DEFAULT ";
+                let default_value = arg[idx + keyword.len()..].trim().to_string();
                 (arg[..idx].trim(), Some(default_value))
             } else {
                 (arg, None)
@@ -1406,6 +1388,40 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
         .collect()
 }
 
+async fn fetch_views(
+    connection: &PgConnection,
+    target_schemas: &[String],
+    include_extension_objects: bool,
+    query: &str,
+    name_column: &str,
+    materialized: bool,
+) -> Result<Vec<View>> {
+    let rows = sqlx::query(query)
+        .bind(target_schemas)
+        .bind(include_extension_objects)
+        .fetch_all(connection.pool())
+        .await
+        .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch views: {e}")))?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        let schema: String = row.get("schemaname");
+        let name: String = row.get(name_column);
+        let definition: String = row.get("definition");
+        let owner: String = row.get("owner");
+
+        result.push(View {
+            name,
+            schema,
+            query: normalize_sql_whitespace(definition.trim_end_matches(';')),
+            materialized,
+            owner: Some(owner),
+            grants: Vec::new(),
+        });
+    }
+    Ok(result)
+}
+
 async fn introspect_views(
     connection: &PgConnection,
     target_schemas: &[String],
@@ -1413,7 +1429,10 @@ async fn introspect_views(
 ) -> Result<BTreeMap<String, View>> {
     let mut views = BTreeMap::new();
 
-    let regular_views = sqlx::query(
+    let regular_views = fetch_views(
+        connection,
+        target_schemas,
+        include_extension_objects,
         r#"
         SELECT v.schemaname, v.viewname, v.definition, r.rolname AS owner
         FROM pg_views v
@@ -1427,31 +1446,19 @@ async fn introspect_views(
               AND d.deptype = 'e'
           ))
         "#,
+        "viewname",
+        false,
     )
-    .bind(target_schemas)
-    .bind(include_extension_objects)
-    .fetch_all(connection.pool())
-    .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch views: {e}")))?;
+    .await?;
 
-    for row in regular_views {
-        let schema: String = row.get("schemaname");
-        let name: String = row.get("viewname");
-        let definition: String = row.get("definition");
-        let owner: String = row.get("owner");
-
-        let view = View {
-            name: name.clone(),
-            schema: schema.clone(),
-            query: normalize_sql_whitespace(definition.trim_end_matches(';')),
-            materialized: false,
-            owner: Some(owner),
-            grants: Vec::new(),
-        };
-        views.insert(qualified_name(&schema, &name), view);
+    for view in regular_views {
+        views.insert(qualified_name(&view.schema, &view.name), view);
     }
 
-    let materialized_views = sqlx::query(
+    let materialized_views = fetch_views(
+        connection,
+        target_schemas,
+        include_extension_objects,
         r#"
         SELECT v.schemaname, v.matviewname, v.definition, r.rolname AS owner
         FROM pg_matviews v
@@ -1465,32 +1472,25 @@ async fn introspect_views(
               AND d.deptype = 'e'
           ))
         "#,
+        "matviewname",
+        true,
     )
-    .bind(target_schemas)
-    .bind(include_extension_objects)
-    .fetch_all(connection.pool())
-    .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch materialized views: {e}")))?;
+    .await?;
 
-    for row in materialized_views {
-        let schema: String = row.get("schemaname");
-        let name: String = row.get("matviewname");
-        let definition: String = row.get("definition");
-        let owner: String = row.get("owner");
-
-        let view = View {
-            name: name.clone(),
-            schema: schema.clone(),
-            query: normalize_sql_whitespace(definition.trim_end_matches(';')),
-            materialized: true,
-            owner: Some(owner),
-            grants: Vec::new(),
-        };
-        views.insert(qualified_name(&schema, &name), view);
+    for view in materialized_views {
+        views.insert(qualified_name(&view.schema, &view.name), view);
     }
 
     Ok(views)
 }
+
+const TRIGGER_TYPE_ROW: i16 = 0x0001;
+const TRIGGER_TYPE_BEFORE: i16 = 0x0002;
+const TRIGGER_TYPE_INSERT: i16 = 0x0004;
+const TRIGGER_TYPE_DELETE: i16 = 0x0008;
+const TRIGGER_TYPE_UPDATE: i16 = 0x0010;
+const TRIGGER_TYPE_TRUNCATE: i16 = 0x0020;
+const TRIGGER_TYPE_INSTEAD: i16 = 0x0040;
 
 async fn introspect_triggers(
     connection: &PgConnection,
@@ -1552,27 +1552,27 @@ async fn introspect_triggers(
         let old_table_name: Option<String> = row.get("old_table_name");
         let new_table_name: Option<String> = row.get("new_table_name");
 
-        let timing = if tgtype & 0x0040 != 0 {
+        let timing = if tgtype & TRIGGER_TYPE_INSTEAD != 0 {
             TriggerTiming::InsteadOf
-        } else if tgtype & 0x0002 != 0 {
+        } else if tgtype & TRIGGER_TYPE_BEFORE != 0 {
             TriggerTiming::Before
         } else {
             TriggerTiming::After
         };
 
-        let for_each_row = tgtype & 0x0001 != 0;
+        let for_each_row = tgtype & TRIGGER_TYPE_ROW != 0;
 
         let mut events = Vec::new();
-        if tgtype & 0x0004 != 0 {
+        if tgtype & TRIGGER_TYPE_INSERT != 0 {
             events.push(TriggerEvent::Insert);
         }
-        if tgtype & 0x0010 != 0 {
+        if tgtype & TRIGGER_TYPE_UPDATE != 0 {
             events.push(TriggerEvent::Update);
         }
-        if tgtype & 0x0008 != 0 {
+        if tgtype & TRIGGER_TYPE_DELETE != 0 {
             events.push(TriggerEvent::Delete);
         }
-        if tgtype & 0x0020 != 0 {
+        if tgtype & TRIGGER_TYPE_TRUNCATE != 0 {
             events.push(TriggerEvent::Truncate);
         }
 

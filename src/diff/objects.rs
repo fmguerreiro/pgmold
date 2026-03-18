@@ -524,41 +524,17 @@ pub(super) fn diff_sequences(
 }
 
 pub(super) fn compute_sequence_changes(from: &Sequence, to: &Sequence) -> Option<SequenceChanges> {
-    let mut changes = SequenceChanges::default();
-    let mut has_changes = false;
-
-    if from.data_type != to.data_type {
-        changes.data_type = Some(to.data_type.clone());
-        has_changes = true;
-    }
-    if from.increment != to.increment {
-        changes.increment = to.increment;
-        has_changes = true;
-    }
-    if from.min_value != to.min_value {
-        changes.min_value = Some(to.min_value);
-        has_changes = true;
-    }
-    if from.max_value != to.max_value {
-        changes.max_value = Some(to.max_value);
-        has_changes = true;
-    }
-    if from.start != to.start {
-        changes.restart = to.start;
-        has_changes = true;
-    }
-    if from.cache != to.cache {
-        changes.cache = to.cache;
-        has_changes = true;
-    }
-    if from.cycle != to.cycle {
-        changes.cycle = Some(to.cycle);
-        has_changes = true;
-    }
-    if from.owned_by != to.owned_by {
-        changes.owned_by = Some(to.owned_by.clone());
-        has_changes = true;
-    }
-
-    has_changes.then_some(changes)
+    let changes = SequenceChanges {
+        data_type: (from.data_type != to.data_type).then(|| to.data_type.clone()),
+        increment: (from.increment != to.increment)
+            .then_some(to.increment)
+            .flatten(),
+        min_value: (from.min_value != to.min_value).then_some(to.min_value),
+        max_value: (from.max_value != to.max_value).then_some(to.max_value),
+        restart: (from.start != to.start).then_some(to.start).flatten(),
+        cache: (from.cache != to.cache).then_some(to.cache).flatten(),
+        cycle: (from.cycle != to.cycle).then_some(to.cycle),
+        owned_by: (from.owned_by != to.owned_by).then(|| to.owned_by.clone()),
+    };
+    changes.has_changes().then_some(changes)
 }
