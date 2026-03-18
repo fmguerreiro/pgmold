@@ -136,7 +136,14 @@ fn diff_objects<K, V, FCreate, FUpdate, FDrop, FCoords, FOwnerKind, FOwner, FGra
                 );
             }
             if let Some(gk) = grant_kind {
-                emit_grants_diff(ops, options, get_grants(from_val), get_grants(to_val), gk, &c);
+                emit_grants_diff(
+                    ops,
+                    options,
+                    get_grants(from_val),
+                    get_grants(to_val),
+                    gk,
+                    &c,
+                );
             }
         } else {
             ops.push(on_create(key, to_val));
