@@ -20,7 +20,7 @@ use pgmold::pg::introspect::introspect_schema;
 use pgmold::pg::sqlgen::generate_sql;
 use pgmold::plan::{compute_migration_plan, PlanOptions};
 use pgmold::provider::load_schema_from_sources;
-use pgmold::validate::validate_migration_on_temp_db;
+use pgmold::validate::{validate_migration_on_temp_db, ValidationResult};
 
 #[derive(Serialize)]
 struct PlanOutput {
@@ -415,6 +415,59 @@ fn load_schema(sources: &[String]) -> Result<Schema> {
     load_schema_from_sources(sources).map_err(|e| anyhow!("{e}"))
 }
 
+async fn run_validation(
+    ops: &[pgmold::diff::MigrationOp],
+    validate_db_url: &str,
+    filtered_db_schema: &Schema,
+    filtered_target: &Schema,
+    target_schemas: &[String],
+    json: bool,
+    error_suffix: &str,
+) -> Result<ValidationResult> {
+    let validate_url = parse_db_source(validate_db_url)?;
+    let validation_result = validate_migration_on_temp_db(
+        ops,
+        &validate_url,
+        filtered_db_schema,
+        filtered_target,
+        target_schemas,
+    )
+    .await
+    .map_err(|e| anyhow!("Validation failed: {e}"))?;
+
+    if !validation_result.success {
+        if !json {
+            eprintln!("\n\u{274C} Validation failed on temp database:");
+            for error in &validation_result.execution_errors {
+                eprintln!("  Statement {}: {}", error.statement_index + 1, error.sql);
+                eprintln!("    Error: {}", error.error_message);
+            }
+        }
+        let error_count = validation_result.execution_errors.len();
+        return Err(anyhow!(
+            "Migration validation failed with {error_count} error(s){error_suffix}",
+            error_suffix = error_suffix,
+        ));
+    }
+
+    if !ops.is_empty() && !json {
+        println!("\u{2705} Migration validated successfully on temp database");
+        if validation_result.idempotent {
+            println!("\u{2713} Idempotency check passed: resulting schema matches target");
+        } else {
+            println!(
+                "\u{2717} Idempotency check failed: {} residual operations needed",
+                validation_result.residual_ops.len()
+            );
+            for op in &validation_result.residual_ops {
+                println!("  - {op:?}");
+            }
+        }
+    }
+
+    Ok(validation_result)
+}
+
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
@@ -514,44 +567,17 @@ pub async fn run() -> Result<()> {
             };
 
             let validation_info = if let Some(validate_db_url) = &validate {
-                let validate_url = parse_db_source(validate_db_url)?;
-                let validation_result = validate_migration_on_temp_db(
+                let result = run_validation(
                     &ops,
-                    &validate_url,
+                    validate_db_url,
                     &filtered_db_schema,
                     &filtered_target,
                     &target_schemas,
+                    json,
+                    "",
                 )
-                .await
-                .map_err(|e| anyhow!("Validation failed: {e}"))?;
-
-                if !validation_result.success {
-                    eprintln!("\n\u{274C} Validation failed on temp database:");
-                    for error in &validation_result.execution_errors {
-                        eprintln!("  Statement {}: {}", error.statement_index + 1, error.sql);
-                        eprintln!("    Error: {}", error.error_message);
-                    }
-                    return Err(anyhow!(
-                        "Migration validation failed with {} error(s)",
-                        validation_result.execution_errors.len()
-                    ));
-                } else if !ops.is_empty() && !json {
-                    println!("\u{2705} Migration validated successfully on temp database");
-                    if validation_result.idempotent {
-                        println!(
-                            "\u{2713} Idempotency check passed: resulting schema matches target"
-                        );
-                    } else {
-                        println!(
-                            "\u{2717} Idempotency check failed: {} residual operations needed",
-                            validation_result.residual_ops.len()
-                        );
-                        for op in &validation_result.residual_ops {
-                            println!("  - {op:?}");
-                        }
-                    }
-                }
-                Some(validation_result)
+                .await?;
+                Some(result)
             } else {
                 None
             };
@@ -751,53 +777,25 @@ pub async fn run() -> Result<()> {
             }
 
             let validation_info = if let Some(validate_db_url) = &validate {
-                let validate_url = parse_db_source(validate_db_url)?;
-                let validation_result = validate_migration_on_temp_db(
+                let result = run_validation(
                     &ops,
-                    &validate_url,
+                    validate_db_url,
                     &filtered_db_schema,
                     &filtered_target,
                     &target_schemas,
+                    json,
+                    ". Apply aborted.",
                 )
                 .await
-                .map_err(|e| anyhow!("Validation failed: {e}"))?;
-
-                if !validation_result.success {
-                    if !json {
-                        eprintln!("\n\u{274C} Validation failed on temp database:");
-                        for error in &validation_result.execution_errors {
-                            eprintln!("  Statement {}: {}", error.statement_index + 1, error.sql);
-                            eprintln!("    Error: {}", error.error_message);
-                        }
-                    }
+                .inspect_err(|e| {
                     if json {
-                        let error_output = serde_json::json!({
+                        let _ = print_json(&serde_json::json!({
                             "success": false,
-                            "error": format!("Migration validation failed with {} error(s)", validation_result.execution_errors.len())
-                        });
-                        print_json(&error_output)?;
+                            "error": e.to_string(),
+                        }));
                     }
-                    return Err(anyhow!(
-                        "Migration validation failed with {} error(s). Apply aborted.",
-                        validation_result.execution_errors.len()
-                    ));
-                } else if !ops.is_empty() && !json {
-                    println!("\u{2705} Migration validated successfully on temp database");
-                    if validation_result.idempotent {
-                        println!(
-                            "\u{2713} Idempotency check passed: resulting schema matches target"
-                        );
-                    } else {
-                        println!(
-                            "\u{2717} Idempotency check failed: {} residual operations needed",
-                            validation_result.residual_ops.len()
-                        );
-                        for op in &validation_result.residual_ops {
-                            println!("  - {op:?}");
-                        }
-                    }
-                }
-                Some(validation_result)
+                })?;
+                Some(result)
             } else {
                 None
             };

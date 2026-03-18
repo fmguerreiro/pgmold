@@ -1,8 +1,48 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::model::{DefaultPrivilege, Grant, Privilege, Schema};
 
 use super::{GrantObjectKind, MigrationOp};
+
+struct GrantOptionChange {
+    revoke_grant_option: Option<Vec<Privilege>>,
+    regrant_with_option: Option<Vec<Privilege>>,
+}
+
+fn compute_grant_option_changes(
+    from_privileges: &BTreeSet<Privilege>,
+    to_privileges: &BTreeSet<Privilege>,
+    from_with_grant_option: bool,
+    to_with_grant_option: bool,
+) -> GrantOptionChange {
+    if from_with_grant_option == to_with_grant_option {
+        return GrantOptionChange {
+            revoke_grant_option: None,
+            regrant_with_option: None,
+        };
+    }
+    let common_privs: Vec<Privilege> = from_privileges
+        .intersection(to_privileges)
+        .cloned()
+        .collect();
+    if common_privs.is_empty() {
+        return GrantOptionChange {
+            revoke_grant_option: None,
+            regrant_with_option: None,
+        };
+    }
+    if from_with_grant_option && !to_with_grant_option {
+        GrantOptionChange {
+            revoke_grant_option: Some(common_privs),
+            regrant_with_option: None,
+        }
+    } else {
+        GrantOptionChange {
+            revoke_grant_option: None,
+            regrant_with_option: Some(common_privs),
+        }
+    }
+}
 
 pub(super) fn diff_grants_for_object(
     from_grants: &[Grant],
@@ -63,40 +103,33 @@ pub(super) fn diff_grants_for_object(
                     });
                 }
 
-                if from_grant.with_grant_option && !to_grant.with_grant_option {
-                    let common_privs: Vec<Privilege> = from_grant
-                        .privileges
-                        .intersection(&to_grant.privileges)
-                        .cloned()
-                        .collect();
-                    if !common_privs.is_empty() {
-                        ops.push(MigrationOp::RevokePrivileges {
-                            object_kind,
-                            schema: schema.to_string(),
-                            name: name.to_string(),
-                            args: args.clone(),
-                            grantee: grantee.to_string(),
-                            privileges: common_privs,
-                            revoke_grant_option: true,
-                        });
-                    }
-                } else if !from_grant.with_grant_option && to_grant.with_grant_option {
-                    let common_privs: Vec<Privilege> = from_grant
-                        .privileges
-                        .intersection(&to_grant.privileges)
-                        .cloned()
-                        .collect();
-                    if !common_privs.is_empty() {
-                        ops.push(MigrationOp::GrantPrivileges {
-                            object_kind,
-                            schema: schema.to_string(),
-                            name: name.to_string(),
-                            args: args.clone(),
-                            grantee: grantee.to_string(),
-                            privileges: common_privs,
-                            with_grant_option: true,
-                        });
-                    }
+                let grant_option_change = compute_grant_option_changes(
+                    &from_grant.privileges,
+                    &to_grant.privileges,
+                    from_grant.with_grant_option,
+                    to_grant.with_grant_option,
+                );
+                if let Some(privs) = grant_option_change.revoke_grant_option {
+                    ops.push(MigrationOp::RevokePrivileges {
+                        object_kind,
+                        schema: schema.to_string(),
+                        name: name.to_string(),
+                        args: args.clone(),
+                        grantee: grantee.to_string(),
+                        privileges: privs,
+                        revoke_grant_option: true,
+                    });
+                }
+                if let Some(privs) = grant_option_change.regrant_with_option {
+                    ops.push(MigrationOp::GrantPrivileges {
+                        object_kind,
+                        schema: schema.to_string(),
+                        name: name.to_string(),
+                        args: args.clone(),
+                        grantee: grantee.to_string(),
+                        privileges: privs,
+                        with_grant_option: true,
+                    });
                 }
             }
             None => {

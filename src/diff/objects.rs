@@ -20,49 +20,43 @@ fn function_args_string(function: &Function) -> String {
         .join(", ")
 }
 
-#[allow(clippy::too_many_arguments)]
 fn emit_ownership_change(
     ops: &mut Vec<MigrationOp>,
     options: &DiffOptions,
     from_owner: &Option<String>,
     to_owner: &Option<String>,
     object_kind: OwnerObjectKind,
-    schema: &str,
-    name: &str,
-    args: Option<String>,
+    coords: &ObjectCoords,
 ) {
     if options.manage_ownership && from_owner != to_owner {
         if let Some(new_owner) = to_owner {
             ops.push(MigrationOp::AlterOwner {
                 object_kind,
-                schema: schema.to_string(),
-                name: name.to_string(),
-                args,
+                schema: coords.schema.clone(),
+                name: coords.name.clone(),
+                args: coords.args.clone(),
                 new_owner: new_owner.clone(),
             });
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn emit_grants_diff(
     ops: &mut Vec<MigrationOp>,
     options: &DiffOptions,
     from_grants: &[Grant],
     to_grants: &[Grant],
     object_kind: GrantObjectKind,
-    schema: &str,
-    name: &str,
-    args: Option<String>,
+    coords: &ObjectCoords,
 ) {
     if options.manage_grants {
         ops.extend(diff_grants_for_object(
             from_grants,
             to_grants,
             object_kind,
-            schema,
-            name,
-            args,
+            &coords.schema,
+            &coords.name,
+            coords.args.clone(),
             options.excluded_grant_roles,
         ));
     }
@@ -73,17 +67,15 @@ fn emit_grants_for_new_object(
     options: &DiffOptions,
     grants: &[Grant],
     object_kind: GrantObjectKind,
-    schema: &str,
-    name: &str,
-    args: Option<String>,
+    coords: &ObjectCoords,
 ) {
     if options.manage_grants {
         ops.extend(create_grants_for_new_object(
             grants,
             object_kind,
-            schema,
-            name,
-            args,
+            &coords.schema,
+            &coords.name,
+            coords.args.clone(),
             options.excluded_grant_roles,
         ));
     }
@@ -96,32 +88,17 @@ struct ObjectCoords {
     args: Option<String>,
 }
 
-/// Configuration for ownership/grant management on an object type.
-#[derive(Copy, Clone)]
-struct OwnerGrantConfig {
-    owner_kind: Option<OwnerObjectKind>,
-    grant_kind: Option<GrantObjectKind>,
-}
-
-impl OwnerGrantConfig {
-    fn none() -> Self {
-        Self {
-            owner_kind: None,
-            grant_kind: None,
-        }
-    }
-}
-
 /// Generic helper that iterates two BTreeMaps and emits create/update/drop ops.
 ///
 /// `on_create` is called for objects in `to` but not `from`.
 /// `on_update` is called for objects present in both maps; return value extends ops.
 /// `on_drop` is called for objects in `from` but not `to`.
 /// `coords` extracts the schema/name/args for ownership and grant calls.
-/// `owner_grant` configures which ownership/grant kinds to use (None skips that category).
+/// `get_owner_kind` returns the OwnerObjectKind for a value (None skips ownership).
+/// `grant_kind` configures which grant kind to use (None skips grants).
 /// `get_owner` and `get_grants` extract the owner/grants fields from a value.
 #[allow(clippy::too_many_arguments)]
-fn diff_objects<K, V, FCreate, FUpdate, FDrop, FCoords, FOwner, FGrants>(
+fn diff_objects<K, V, FCreate, FUpdate, FDrop, FCoords, FOwnerKind, FOwner, FGrants>(
     ops: &mut Vec<MigrationOp>,
     options: &DiffOptions,
     from: &BTreeMap<K, V>,
@@ -130,7 +107,8 @@ fn diff_objects<K, V, FCreate, FUpdate, FDrop, FCoords, FOwner, FGrants>(
     on_update: FUpdate,
     on_drop: FDrop,
     coords: FCoords,
-    owner_grant: OwnerGrantConfig,
+    grant_kind: Option<GrantObjectKind>,
+    get_owner_kind: FOwnerKind,
     get_owner: FOwner,
     get_grants: FGrants,
 ) where
@@ -139,6 +117,7 @@ fn diff_objects<K, V, FCreate, FUpdate, FDrop, FCoords, FOwner, FGrants>(
     FUpdate: Fn(&mut Vec<MigrationOp>, &K, &V, &V),
     FDrop: Fn(&K, &V) -> MigrationOp,
     FCoords: Fn(&str, &V) -> ObjectCoords,
+    FOwnerKind: Fn(&V) -> Option<OwnerObjectKind>,
     FOwner: Fn(&V) -> &Option<String>,
     FGrants: Fn(&V) -> &[Grant],
 {
@@ -146,54 +125,26 @@ fn diff_objects<K, V, FCreate, FUpdate, FDrop, FCoords, FOwner, FGrants>(
         let c = coords(key.as_ref(), to_val);
         if let Some(from_val) = from.get(key) {
             on_update(ops, key, from_val, to_val);
-            if let Some(owner_kind) = owner_grant.owner_kind {
+            if let Some(owner_kind) = get_owner_kind(to_val) {
                 emit_ownership_change(
                     ops,
                     options,
                     get_owner(from_val),
                     get_owner(to_val),
                     owner_kind,
-                    &c.schema,
-                    &c.name,
-                    c.args.clone(),
+                    &c,
                 );
             }
-            if let Some(grant_kind) = owner_grant.grant_kind {
-                emit_grants_diff(
-                    ops,
-                    options,
-                    get_grants(from_val),
-                    get_grants(to_val),
-                    grant_kind,
-                    &c.schema,
-                    &c.name,
-                    c.args,
-                );
+            if let Some(gk) = grant_kind {
+                emit_grants_diff(ops, options, get_grants(from_val), get_grants(to_val), gk, &c);
             }
         } else {
             ops.push(on_create(key, to_val));
-            if let Some(owner_kind) = owner_grant.owner_kind {
-                emit_ownership_change(
-                    ops,
-                    options,
-                    &None,
-                    get_owner(to_val),
-                    owner_kind,
-                    &c.schema,
-                    &c.name,
-                    c.args.clone(),
-                );
+            if let Some(owner_kind) = get_owner_kind(to_val) {
+                emit_ownership_change(ops, options, &None, get_owner(to_val), owner_kind, &c);
             }
-            if let Some(grant_kind) = owner_grant.grant_kind {
-                emit_grants_for_new_object(
-                    ops,
-                    options,
-                    get_grants(to_val),
-                    grant_kind,
-                    &c.schema,
-                    &c.name,
-                    c.args,
-                );
+            if let Some(gk) = grant_kind {
+                emit_grants_for_new_object(ops, options, get_grants(to_val), gk, &c);
             }
         }
     }
@@ -230,10 +181,8 @@ pub(super) fn diff_schemas(from: &Schema, to: &Schema, options: &DiffOptions) ->
             name: name.to_string(),
             args: None,
         },
-        OwnerGrantConfig {
-            owner_kind: None,
-            grant_kind: Some(GrantObjectKind::Schema),
-        },
+        Some(GrantObjectKind::Schema),
+        |_val| None,
         |_val| &None,
         |val| &val.grants,
     );
@@ -259,7 +208,8 @@ pub(super) fn diff_extensions(
             name: name.to_string(),
             args: None,
         },
-        OwnerGrantConfig::none(),
+        None,
+        |_val| None,
         |_val| &None,
         |_val| &[],
     );
@@ -277,10 +227,8 @@ pub(super) fn diff_enums(from: &Schema, to: &Schema, options: &DiffOptions) -> V
         |ops, name, from_enum, to_enum| ops.extend(diff_enum_values(name, from_enum, to_enum)),
         |name, _val| MigrationOp::DropEnum(name.clone()),
         qualified_coords,
-        OwnerGrantConfig {
-            owner_kind: Some(OwnerObjectKind::Type),
-            grant_kind: Some(GrantObjectKind::Type),
-        },
+        Some(GrantObjectKind::Type),
+        |_val| Some(OwnerObjectKind::Type),
         |val| &val.owner,
         |val| &val.grants,
     );
@@ -341,10 +289,8 @@ pub(super) fn diff_domains(from: &Schema, to: &Schema, options: &DiffOptions) ->
         },
         |name, _val| MigrationOp::DropDomain(name.clone()),
         qualified_coords,
-        OwnerGrantConfig {
-            owner_kind: Some(OwnerObjectKind::Domain),
-            grant_kind: Some(GrantObjectKind::Domain),
-        },
+        Some(GrantObjectKind::Domain),
+        |_val| Some(OwnerObjectKind::Domain),
         |val| &val.owner,
         |val| &val.grants,
     );
@@ -362,10 +308,8 @@ pub(super) fn diff_tables(from: &Schema, to: &Schema, options: &DiffOptions) -> 
         |_ops, _key, _from_table, _to_table| {},
         |name, _val| MigrationOp::DropTable(name.clone()),
         qualified_coords,
-        OwnerGrantConfig {
-            owner_kind: Some(OwnerObjectKind::Table),
-            grant_kind: Some(GrantObjectKind::Table),
-        },
+        Some(GrantObjectKind::Table),
+        |_val| Some(OwnerObjectKind::Table),
         |val| &val.owner,
         |val| &val.grants,
     );
@@ -387,10 +331,8 @@ pub(super) fn diff_partitions(
         |_ops, _key, _from_partition, _to_partition| {},
         |name, _val| MigrationOp::DropPartition(name.clone()),
         qualified_coords,
-        OwnerGrantConfig {
-            owner_kind: Some(OwnerObjectKind::Partition),
-            grant_kind: None,
-        },
+        None,
+        |_val| Some(OwnerObjectKind::Partition),
         |val| &val.owner,
         |_val| &[],
     );
@@ -403,79 +345,43 @@ pub(super) fn diff_functions(
     options: &DiffOptions,
 ) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-
-    for (sig, func) in &to.functions {
-        let args_str = function_args_string(func);
-
-        if let Some(from_func) = from.functions.get(sig) {
-            if !from_func.semantically_equals(func) {
-                if from_func.requires_drop_recreate(func) {
+    diff_objects(
+        &mut ops,
+        options,
+        &from.functions,
+        &to.functions,
+        |_key, func| MigrationOp::CreateFunction(func.clone()),
+        |ops, _key, from_func, to_func| {
+            if !from_func.semantically_equals(to_func) {
+                if from_func.requires_drop_recreate(to_func) {
                     ops.push(MigrationOp::DropFunction {
                         name: qualified_name(&from_func.schema, &from_func.name),
                         args: function_args_string(from_func),
                     });
-                    ops.push(MigrationOp::CreateFunction(func.clone()));
+                    ops.push(MigrationOp::CreateFunction(to_func.clone()));
                 } else {
                     ops.push(MigrationOp::AlterFunction {
-                        name: qualified_name(&func.schema, &func.name),
-                        args: args_str.clone(),
-                        new_function: func.clone(),
+                        name: qualified_name(&to_func.schema, &to_func.name),
+                        args: function_args_string(to_func),
+                        new_function: to_func.clone(),
                     });
                 }
             }
-            emit_ownership_change(
-                &mut ops,
-                options,
-                &from_func.owner,
-                &func.owner,
-                OwnerObjectKind::Function,
-                &func.schema,
-                &func.name,
-                Some(args_str.clone()),
-            );
-            emit_grants_diff(
-                &mut ops,
-                options,
-                &from_func.grants,
-                &func.grants,
-                GrantObjectKind::Function,
-                &func.schema,
-                &func.name,
-                Some(args_str),
-            );
-        } else {
-            ops.push(MigrationOp::CreateFunction(func.clone()));
-            emit_ownership_change(
-                &mut ops,
-                options,
-                &None,
-                &func.owner,
-                OwnerObjectKind::Function,
-                &func.schema,
-                &func.name,
-                Some(args_str.clone()),
-            );
-            emit_grants_for_new_object(
-                &mut ops,
-                options,
-                &func.grants,
-                GrantObjectKind::Function,
-                &func.schema,
-                &func.name,
-                Some(args_str),
-            );
-        }
-    }
-
-    for (sig, func) in &from.functions {
-        if !to.functions.contains_key(sig) {
-            ops.push(MigrationOp::DropFunction {
-                name: qualified_name(&func.schema, &func.name),
-                args: function_args_string(func),
-            });
-        }
-    }
-
+        },
+        |_key, func| MigrationOp::DropFunction {
+            name: qualified_name(&func.schema, &func.name),
+            args: function_args_string(func),
+        },
+        |_key, func| ObjectCoords {
+            schema: func.schema.clone(),
+            name: func.name.clone(),
+            args: Some(function_args_string(func)),
+        },
+        Some(GrantObjectKind::Function),
+        |_val| Some(OwnerObjectKind::Function),
+        |val| &val.owner,
+        |val| &val.grants,
+    );
     ops
 }
 
@@ -489,69 +395,30 @@ fn view_owner_kind(materialized: bool) -> OwnerObjectKind {
 
 pub(super) fn diff_views(from: &Schema, to: &Schema, options: &DiffOptions) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-
-    for (name, view) in &to.views {
-        let (schema, view_name) = parse_qualified_name(name);
-        if let Some(from_view) = from.views.get(name) {
-            if !from_view.semantically_equals(view) {
+    diff_objects(
+        &mut ops,
+        options,
+        &from.views,
+        &to.views,
+        |_key, view| MigrationOp::CreateView(view.clone()),
+        |ops, _key, from_view, to_view| {
+            if !from_view.semantically_equals(to_view) {
                 ops.push(MigrationOp::AlterView {
-                    name: qualified_name(&view.schema, &view.name),
-                    new_view: view.clone(),
+                    name: qualified_name(&to_view.schema, &to_view.name),
+                    new_view: to_view.clone(),
                 });
             }
-            emit_ownership_change(
-                &mut ops,
-                options,
-                &from_view.owner,
-                &view.owner,
-                view_owner_kind(view.materialized),
-                &schema,
-                &view_name,
-                None,
-            );
-            emit_grants_diff(
-                &mut ops,
-                options,
-                &from_view.grants,
-                &view.grants,
-                GrantObjectKind::View,
-                &schema,
-                &view_name,
-                None,
-            );
-        } else {
-            ops.push(MigrationOp::CreateView(view.clone()));
-            emit_ownership_change(
-                &mut ops,
-                options,
-                &None,
-                &view.owner,
-                view_owner_kind(view.materialized),
-                &schema,
-                &view_name,
-                None,
-            );
-            emit_grants_for_new_object(
-                &mut ops,
-                options,
-                &view.grants,
-                GrantObjectKind::View,
-                &schema,
-                &view_name,
-                None,
-            );
-        }
-    }
-
-    for (name, view) in &from.views {
-        if !to.views.contains_key(name) {
-            ops.push(MigrationOp::DropView {
-                name: qualified_name(&view.schema, &view.name),
-                materialized: view.materialized,
-            });
-        }
-    }
-
+        },
+        |_key, view| MigrationOp::DropView {
+            name: qualified_name(&view.schema, &view.name),
+            materialized: view.materialized,
+        },
+        qualified_coords,
+        Some(GrantObjectKind::View),
+        |val| Some(view_owner_kind(val.materialized)),
+        |val| &val.owner,
+        |val| &val.grants,
+    );
     ops
 }
 
@@ -641,10 +508,8 @@ pub(super) fn diff_sequences(
         },
         |name, _val| MigrationOp::DropSequence(name.clone()),
         qualified_coords,
-        OwnerGrantConfig {
-            owner_kind: Some(OwnerObjectKind::Sequence),
-            grant_kind: Some(GrantObjectKind::Sequence),
-        },
+        Some(GrantObjectKind::Sequence),
+        |_val| Some(OwnerObjectKind::Sequence),
         |val| &val.owner,
         |val| &val.grants,
     );
