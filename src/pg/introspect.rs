@@ -301,6 +301,14 @@ async fn introspect_domains(
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch domains: {e}")))?;
 
+    if rows.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let all_constraints =
+        introspect_all_domain_constraints(connection, target_schemas, include_extension_objects)
+            .await?;
+
     let mut domains = BTreeMap::new();
     for row in rows {
         let schema: String = row.get("schema_name");
@@ -312,8 +320,6 @@ async fn introspect_domains(
             .get::<Option<String>, &str>("default_expr")
             .filter(|s| !s.is_empty());
         let owner: String = row.get("owner");
-
-        let check_constraints = introspect_domain_constraints(connection, &schema, &name).await?;
 
         let data_type = if base_category == "A" {
             let base_udt = base_type.strip_prefix('_').ok_or_else(|| {
@@ -358,7 +364,10 @@ async fn introspect_domains(
             default: default_expr,
             not_null,
             collation: None,
-            check_constraints,
+            check_constraints: all_constraints
+                .get(&qualified_name(&schema, &name))
+                .cloned()
+                .unwrap_or_default(),
             owner: Some(owner),
             grants: Vec::new(),
         };
@@ -368,32 +377,40 @@ async fn introspect_domains(
     Ok(domains)
 }
 
-async fn introspect_domain_constraints(
+async fn introspect_all_domain_constraints(
     connection: &PgConnection,
-    schema: &str,
-    domain_name: &str,
-) -> Result<Vec<DomainConstraint>> {
+    target_schemas: &[String],
+    include_extension_objects: bool,
+) -> Result<BTreeMap<String, Vec<DomainConstraint>>> {
     let rows = sqlx::query(
         r#"
         SELECT
+            n.nspname AS schema_name,
+            t.typname AS domain_name,
             con.conname AS constraint_name,
             pg_get_constraintdef(con.oid) AS constraint_def
         FROM pg_constraint con
         JOIN pg_type t ON con.contypid = t.oid
         JOIN pg_namespace n ON t.typnamespace = n.oid
         WHERE con.contype = 'c'
-            AND n.nspname = $1
-            AND t.typname = $2
+            AND n.nspname = ANY($1::text[])
+            AND ($2::boolean OR NOT EXISTS (
+                SELECT 1 FROM pg_depend d
+                WHERE d.objid = t.oid
+                AND d.deptype = 'e'
+            ))
         "#,
     )
-    .bind(schema)
-    .bind(domain_name)
+    .bind(target_schemas)
+    .bind(include_extension_objects)
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch domain constraints: {e}")))?;
 
-    let mut constraints = Vec::new();
+    let mut constraints_by_domain: BTreeMap<String, Vec<DomainConstraint>> = BTreeMap::new();
     for row in rows {
+        let schema: String = row.get("schema_name");
+        let domain_name: String = row.get("domain_name");
         let name: String = row.get("constraint_name");
         let def: String = row.get("constraint_def");
         let mut expression = def
@@ -414,13 +431,16 @@ async fn introspect_domain_constraints(
             Some(name)
         };
 
-        constraints.push(DomainConstraint {
-            name: constraint_name,
-            expression,
-        });
+        constraints_by_domain
+            .entry(qualified_name(&schema, &domain_name))
+            .or_default()
+            .push(DomainConstraint {
+                name: constraint_name,
+                expression,
+            });
     }
 
-    Ok(constraints)
+    Ok(constraints_by_domain)
 }
 
 async fn introspect_tables(
