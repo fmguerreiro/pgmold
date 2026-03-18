@@ -255,7 +255,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         // Note: We don't generate ALTER FUNCTION ... OWNER TO for new functions.
         // PostgreSQL automatically sets the owner to the creating user.
         // Changing ownership requires schema ownership which the user may not have.
-        MigrationOp::CreateFunction(func) => vec![generate_create_function(func)],
+        MigrationOp::CreateFunction(func) => vec![generate_function_ddl(func, false)],
 
         MigrationOp::DropFunction { name, args } => {
             let (schema, func_name) = parse_qualified_name(name);
@@ -267,10 +267,10 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         }
 
         MigrationOp::AlterFunction { new_function, .. } => {
-            vec![generate_create_or_replace_function(new_function)]
+            vec![generate_function_ddl(new_function, true)]
         }
 
-        MigrationOp::CreateView(view) => generate_create_view(view),
+        MigrationOp::CreateView(view) => generate_view_ddl(view, false),
 
         MigrationOp::DropView { name, materialized } => {
             let (schema, view_name) = parse_qualified_name(name);
@@ -286,7 +286,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             )]
         }
 
-        MigrationOp::AlterView { new_view, .. } => generate_create_or_replace_view(new_view),
+        MigrationOp::AlterView { new_view, .. } => generate_view_ddl(new_view, true),
 
         MigrationOp::CreateTrigger(trigger) => {
             let mut statements = vec![generate_create_trigger(trigger)];
@@ -953,14 +953,6 @@ fn format_policy_command(command: &PolicyCommand) -> &'static str {
     }
 }
 
-fn generate_create_function(func: &Function) -> String {
-    generate_function_ddl(func, false)
-}
-
-fn generate_create_or_replace_function(func: &Function) -> String {
-    generate_function_ddl(func, true)
-}
-
 fn generate_function_ddl(func: &Function, replace: bool) -> String {
     let create_stmt = if replace {
         "CREATE OR REPLACE FUNCTION"
@@ -1012,14 +1004,6 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
     parts.push(format!("AS $${}$$;", func.body));
 
     parts.join(" ")
-}
-
-fn generate_create_view(view: &View) -> Vec<String> {
-    generate_view_ddl(view, false)
-}
-
-fn generate_create_or_replace_view(view: &View) -> Vec<String> {
-    generate_view_ddl(view, true)
 }
 
 fn generate_view_ddl(view: &View, replace: bool) -> Vec<String> {
@@ -2628,7 +2612,7 @@ mod tests {
             grants: Vec::new(),
         };
 
-        let ddl = generate_create_function(&func);
+        let ddl = generate_function_ddl(&func, false);
 
         assert!(
             ddl.contains("\"p_role_name\" text"),
@@ -2705,7 +2689,7 @@ mod tests {
             grants: Vec::new(),
         };
 
-        let ddl = generate_create_function(&func);
+        let ddl = generate_function_ddl(&func, false);
 
         assert!(
             ddl.contains("SET search_path = public"),
@@ -2731,7 +2715,7 @@ mod tests {
             grants: Vec::new(),
         };
 
-        let ddl = generate_create_function(&func);
+        let ddl = generate_function_ddl(&func, false);
 
         assert!(
             ddl.contains("SET search_path = ''"),
@@ -2760,7 +2744,7 @@ mod tests {
             grants: Vec::new(),
         };
 
-        let ddl = generate_create_function(&func);
+        let ddl = generate_function_ddl(&func, false);
 
         assert!(
             ddl.contains("SET search_path = public SET work_mem = '64MB'"),

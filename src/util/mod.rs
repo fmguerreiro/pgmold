@@ -620,15 +620,12 @@ fn strip_text_cast_from_string_literals(query: &str) -> String {
 }
 
 fn collapse_double_parens(query: &str) -> String {
-    let mut result = query.to_string();
-    loop {
-        let new_result = RE_DOUBLE_PAREN.replace_all(&result, "($1)").to_string();
-        if new_result == result {
-            break;
+    apply_until_stable(query.to_string(), |input| {
+        match RE_DOUBLE_PAREN.replace_all(input, "($1)") {
+            std::borrow::Cow::Borrowed(_) => None,
+            std::borrow::Cow::Owned(s) => Some(s),
         }
-        result = new_result;
-    }
-    result
+    })
 }
 
 fn strip_on_clause_parens(query: &str) -> String {

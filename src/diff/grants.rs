@@ -212,6 +212,18 @@ pub(super) fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<Migrati
         )
     }
 
+    let emit_dp = |dp: &DefaultPrivilege, privileges: Vec<Privilege>, revoke: bool| {
+        MigrationOp::AlterDefaultPrivileges {
+            target_role: dp.target_role.clone(),
+            schema: dp.schema.clone(),
+            object_type: dp.object_type.clone(),
+            grantee: dp.grantee.clone(),
+            privileges,
+            with_grant_option: dp.with_grant_option,
+            revoke,
+        }
+    };
+
     let from_map: BTreeMap<DpKey, &DefaultPrivilege> = from
         .default_privileges
         .iter()
@@ -227,15 +239,7 @@ pub(super) fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<Migrati
         if !to_map.contains_key(key) {
             let privs: Vec<Privilege> = from_dp.privileges.iter().cloned().collect();
             if !privs.is_empty() {
-                ops.push(MigrationOp::AlterDefaultPrivileges {
-                    target_role: from_dp.target_role.clone(),
-                    schema: from_dp.schema.clone(),
-                    object_type: from_dp.object_type.clone(),
-                    grantee: from_dp.grantee.clone(),
-                    privileges: privs,
-                    with_grant_option: from_dp.with_grant_option,
-                    revoke: true,
-                });
+                ops.push(emit_dp(from_dp, privs, true));
             }
         }
     }
@@ -254,27 +258,11 @@ pub(super) fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<Migrati
                 .collect();
 
             if !privs_to_revoke.is_empty() {
-                ops.push(MigrationOp::AlterDefaultPrivileges {
-                    target_role: from_dp.target_role.clone(),
-                    schema: from_dp.schema.clone(),
-                    object_type: from_dp.object_type.clone(),
-                    grantee: from_dp.grantee.clone(),
-                    privileges: privs_to_revoke,
-                    with_grant_option: from_dp.with_grant_option,
-                    revoke: true,
-                });
+                ops.push(emit_dp(from_dp, privs_to_revoke, true));
             }
 
             if !privs_to_grant.is_empty() {
-                ops.push(MigrationOp::AlterDefaultPrivileges {
-                    target_role: to_dp.target_role.clone(),
-                    schema: to_dp.schema.clone(),
-                    object_type: to_dp.object_type.clone(),
-                    grantee: to_dp.grantee.clone(),
-                    privileges: privs_to_grant,
-                    with_grant_option: to_dp.with_grant_option,
-                    revoke: false,
-                });
+                ops.push(emit_dp(to_dp, privs_to_grant, false));
             }
 
             if from_dp.with_grant_option != to_dp.with_grant_option {
@@ -284,38 +272,14 @@ pub(super) fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<Migrati
                     .cloned()
                     .collect();
                 if !common_privs.is_empty() {
-                    ops.push(MigrationOp::AlterDefaultPrivileges {
-                        target_role: from_dp.target_role.clone(),
-                        schema: from_dp.schema.clone(),
-                        object_type: from_dp.object_type.clone(),
-                        grantee: from_dp.grantee.clone(),
-                        privileges: common_privs.clone(),
-                        with_grant_option: from_dp.with_grant_option,
-                        revoke: true,
-                    });
-                    ops.push(MigrationOp::AlterDefaultPrivileges {
-                        target_role: to_dp.target_role.clone(),
-                        schema: to_dp.schema.clone(),
-                        object_type: to_dp.object_type.clone(),
-                        grantee: to_dp.grantee.clone(),
-                        privileges: common_privs,
-                        with_grant_option: to_dp.with_grant_option,
-                        revoke: false,
-                    });
+                    ops.push(emit_dp(from_dp, common_privs.clone(), true));
+                    ops.push(emit_dp(to_dp, common_privs, false));
                 }
             }
         } else {
             let privs: Vec<Privilege> = to_dp.privileges.iter().cloned().collect();
             if !privs.is_empty() {
-                ops.push(MigrationOp::AlterDefaultPrivileges {
-                    target_role: to_dp.target_role.clone(),
-                    schema: to_dp.schema.clone(),
-                    object_type: to_dp.object_type.clone(),
-                    grantee: to_dp.grantee.clone(),
-                    privileges: privs,
-                    with_grant_option: to_dp.with_grant_option,
-                    revoke: false,
-                });
+                ops.push(emit_dp(to_dp, privs, false));
             }
         }
     }

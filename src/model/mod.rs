@@ -369,14 +369,20 @@ impl DefaultPrivilegeObjectType {
 
     /// Parse from SQL keyword string
     pub fn from_sql_str(s: &str) -> Option<Self> {
-        match s.to_uppercase().as_str() {
-            "TABLES" => Some(DefaultPrivilegeObjectType::Tables),
-            "SEQUENCES" => Some(DefaultPrivilegeObjectType::Sequences),
-            "FUNCTIONS" => Some(DefaultPrivilegeObjectType::Functions),
-            "ROUTINES" => Some(DefaultPrivilegeObjectType::Routines),
-            "TYPES" => Some(DefaultPrivilegeObjectType::Types),
-            "SCHEMAS" => Some(DefaultPrivilegeObjectType::Schemas),
-            _ => None,
+        if s.eq_ignore_ascii_case("TABLES") {
+            Some(DefaultPrivilegeObjectType::Tables)
+        } else if s.eq_ignore_ascii_case("SEQUENCES") {
+            Some(DefaultPrivilegeObjectType::Sequences)
+        } else if s.eq_ignore_ascii_case("FUNCTIONS") {
+            Some(DefaultPrivilegeObjectType::Functions)
+        } else if s.eq_ignore_ascii_case("ROUTINES") {
+            Some(DefaultPrivilegeObjectType::Routines)
+        } else if s.eq_ignore_ascii_case("TYPES") {
+            Some(DefaultPrivilegeObjectType::Types)
+        } else if s.eq_ignore_ascii_case("SCHEMAS") {
+            Some(DefaultPrivilegeObjectType::Schemas)
+        } else {
+            None
         }
     }
 }
@@ -1107,8 +1113,12 @@ pub fn normalize_pg_type(type_name: &str) -> String {
         return format!("table({})", normalized_cols.join(", "));
     }
 
-    let lower = trimmed.to_lowercase();
-    match lower.as_str() {
+    let lower: std::borrow::Cow<str> = if trimmed.bytes().any(|b| b.is_ascii_uppercase()) {
+        std::borrow::Cow::Owned(trimmed.to_lowercase())
+    } else {
+        std::borrow::Cow::Borrowed(trimmed)
+    };
+    match lower.as_ref() {
         "int" | "int4" => "integer".to_string(),
         "int8" => "bigint".to_string(),
         "int2" => "smallint".to_string(),
@@ -1120,7 +1130,7 @@ pub fn normalize_pg_type(type_name: &str) -> String {
         "timestamptz" => "timestamp with time zone".to_string(),
         "time" => "time without time zone".to_string(),
         "timetz" => "time with time zone".to_string(),
-        _ => lower,
+        _ => lower.into_owned(),
     }
 }
 

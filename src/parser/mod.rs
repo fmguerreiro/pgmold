@@ -185,30 +185,26 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                             }
                         }
                         AlterTableOperation::EnableTrigger { name: trig_name } => {
-                            let trigger_key =
-                                format!("{}.{}.{}", tbl_schema, tbl_name, trig_name.value);
-                            if let Some(trigger) = schema.triggers.get_mut(&trigger_key) {
+                            let key = make_trigger_key(&tbl_schema, &tbl_name, &trig_name.value);
+                            if let Some(trigger) = schema.triggers.get_mut(&key) {
                                 trigger.enabled = TriggerEnabled::Origin;
                             }
                         }
                         AlterTableOperation::DisableTrigger { name: trig_name } => {
-                            let trigger_key =
-                                format!("{}.{}.{}", tbl_schema, tbl_name, trig_name.value);
-                            if let Some(trigger) = schema.triggers.get_mut(&trigger_key) {
+                            let key = make_trigger_key(&tbl_schema, &tbl_name, &trig_name.value);
+                            if let Some(trigger) = schema.triggers.get_mut(&key) {
                                 trigger.enabled = TriggerEnabled::Disabled;
                             }
                         }
                         AlterTableOperation::EnableReplicaTrigger { name: trig_name } => {
-                            let trigger_key =
-                                format!("{}.{}.{}", tbl_schema, tbl_name, trig_name.value);
-                            if let Some(trigger) = schema.triggers.get_mut(&trigger_key) {
+                            let key = make_trigger_key(&tbl_schema, &tbl_name, &trig_name.value);
+                            if let Some(trigger) = schema.triggers.get_mut(&key) {
                                 trigger.enabled = TriggerEnabled::Replica;
                             }
                         }
                         AlterTableOperation::EnableAlwaysTrigger { name: trig_name } => {
-                            let trigger_key =
-                                format!("{}.{}.{}", tbl_schema, tbl_name, trig_name.value);
-                            if let Some(trigger) = schema.triggers.get_mut(&trigger_key) {
+                            let key = make_trigger_key(&tbl_schema, &tbl_name, &trig_name.value);
+                            if let Some(trigger) = schema.triggers.get_mut(&key) {
                                 trigger.enabled = TriggerEnabled::Always;
                             }
                         }
@@ -761,4 +757,8 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
     schema.pending_policies = schema.finalize_partial();
 
     Ok(schema)
+}
+
+fn make_trigger_key(schema: &str, table: &str, trigger_name: &str) -> String {
+    format!("{}.{}.{}", schema, table, trigger_name)
 }
