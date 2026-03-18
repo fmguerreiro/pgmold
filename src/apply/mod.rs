@@ -6,7 +6,7 @@ use crate::diff::{
     compute_diff, compute_diff_with_flags, planner::plan_migration_checked, MigrationOp,
 };
 use crate::filter::{filter_by_target_schemas, filter_schema, Filter};
-use crate::lint::{lint_migration_plan, LintOptions, LintResult};
+use crate::lint::{lint_migration_plan, LintOptions, LintResult, LintSeverity};
 use crate::parser::load_schema_sources;
 use crate::pg::connection::PgConnection;
 use crate::pg::introspect::introspect_schema;
@@ -96,7 +96,7 @@ pub async fn apply_migration_with_schemas(
 
     let error_messages: Vec<String> = lint_results
         .iter()
-        .filter(|r| matches!(r.severity, crate::lint::LintSeverity::Error))
+        .filter(|r| matches!(r.severity, LintSeverity::Error))
         .map(|r| format!("[{}] {}", r.rule, r.message))
         .collect();
     if !error_messages.is_empty() {

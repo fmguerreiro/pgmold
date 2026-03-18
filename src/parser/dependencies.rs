@@ -33,7 +33,7 @@ impl ObjectRef {
     }
 
     pub fn qualified_name(&self) -> String {
-        format!("{}.{}", self.schema, self.name)
+        crate::model::qualified_name(&self.schema, &self.name)
     }
 
     fn from_object_name(name: &sqlparser::ast::ObjectName, default_schema: &str) -> Self {

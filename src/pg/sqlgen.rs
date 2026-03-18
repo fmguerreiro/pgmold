@@ -991,36 +991,29 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
         Volatility::Volatile => "VOLATILE",
     };
 
-    let security = match func.security {
-        SecurityType::Definer => "SECURITY DEFINER",
-        SecurityType::Invoker => "SECURITY INVOKER",
-    };
-
-    let config_clause = if func.config_params.is_empty() {
-        String::new()
-    } else {
+    let mut parts = vec![
         format!(
-            " {}",
-            func.config_params
-                .iter()
-                .map(|(k, v)| format!("SET {k} = {v}"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        )
-    };
+            "{} {}({}) RETURNS {} LANGUAGE {} {}",
+            create_stmt,
+            quote_qualified(&func.schema, &func.name),
+            args,
+            func.return_type,
+            func.language,
+            volatility,
+        ),
+    ];
 
-    format!(
-        "{} {}({}) RETURNS {} LANGUAGE {} {} {}{} AS $${}$$;",
-        create_stmt,
-        quote_qualified(&func.schema, &func.name),
-        args,
-        func.return_type,
-        func.language,
-        volatility,
-        security,
-        config_clause,
-        func.body
-    )
+    if matches!(func.security, SecurityType::Definer) {
+        parts.push("SECURITY DEFINER".to_string());
+    }
+
+    for (k, v) in &func.config_params {
+        parts.push(format!("SET {k} = {v}"));
+    }
+
+    parts.push(format!("AS $${}$$;", func.body));
+
+    parts.join(" ")
 }
 
 fn generate_create_view(view: &View) -> Vec<String> {

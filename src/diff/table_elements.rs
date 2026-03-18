@@ -39,21 +39,10 @@ pub(super) fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<Migratio
 
 pub(super) fn compute_column_changes(from: &Column, to: &Column) -> ColumnChanges {
     ColumnChanges {
-        data_type: if from.data_type != to.data_type {
-            Some(to.data_type.clone())
-        } else {
-            None
-        },
-        nullable: if from.nullable != to.nullable {
-            Some(to.nullable)
-        } else {
-            None
-        },
-        default: if !optional_expressions_equal(&from.default, &to.default) {
-            Some(to.default.clone())
-        } else {
-            None
-        },
+        data_type: (from.data_type != to.data_type).then(|| to.data_type.clone()),
+        nullable: (from.nullable != to.nullable).then_some(to.nullable),
+        default: (!optional_expressions_equal(&from.default, &to.default))
+            .then(|| to.default.clone()),
     }
 }
 
@@ -279,20 +268,10 @@ pub(super) fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<Migrati
 
 pub(super) fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChanges {
     PolicyChanges {
-        roles: if from.roles != to.roles {
-            Some(to.roles.clone())
-        } else {
-            None
-        },
-        using_expr: if !optional_expressions_equal(&from.using_expr, &to.using_expr) {
-            Some(to.using_expr.clone())
-        } else {
-            None
-        },
-        check_expr: if !optional_expressions_equal(&from.check_expr, &to.check_expr) {
-            Some(to.check_expr.clone())
-        } else {
-            None
-        },
+        roles: (from.roles != to.roles).then(|| to.roles.clone()),
+        using_expr: (!optional_expressions_equal(&from.using_expr, &to.using_expr))
+            .then(|| to.using_expr.clone()),
+        check_expr: (!optional_expressions_equal(&from.check_expr, &to.check_expr))
+            .then(|| to.check_expr.clone()),
     }
 }

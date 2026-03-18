@@ -429,6 +429,8 @@ pub(super) fn diff_views(from: &Schema, to: &Schema, options: &DiffOptions) -> V
     ops
 }
 
+// diff_triggers cannot use diff_objects because trigger diffing has a special case:
+// when only the enabled state differs, it emits AlterTriggerEnabled instead of Drop+Create.
 pub(super) fn diff_triggers(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 

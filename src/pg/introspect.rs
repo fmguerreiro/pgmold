@@ -599,17 +599,18 @@ fn parse_partition_bound(expr: &str) -> Result<PartitionBound> {
     }
 
     if expr_upper.contains("FROM") && expr_upper.contains("TO") {
-        if let (Some(from_start), Some(to_start)) = (expr.find("FROM"), expr.find("TO")) {
-            let from_part = &expr[from_start + 4..to_start].trim();
-            let to_part = &expr[to_start + 2..].trim();
-
-            let from_values = extract_paren_values(from_part);
-            let to_values = extract_paren_values(to_part);
-
-            return Ok(PartitionBound::Range {
-                from: from_values,
-                to: to_values,
-            });
+        if let Some(from_start) = expr_upper.find("FROM ") {
+            let after_from_orig = &expr[from_start + 5..];
+            if let Some(to_pos) = after_from_orig.to_uppercase().find(" TO ") {
+                let from_part_raw = &after_from_orig[..to_pos];
+                let to_part_raw = &after_from_orig[to_pos + 4..];
+                let from_values = extract_paren_values(from_part_raw.trim());
+                let to_values = extract_paren_values(to_part_raw.trim());
+                return Ok(PartitionBound::Range {
+                    from: from_values,
+                    to: to_values,
+                });
+            }
         }
     }
 
