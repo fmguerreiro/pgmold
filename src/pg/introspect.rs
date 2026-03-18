@@ -755,6 +755,34 @@ async fn introspect_all_columns(
     Ok(result)
 }
 
+fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i32>) -> PgType {
+    match udt_name {
+        "bool" => PgType::Boolean,
+        "int4" | "int" => PgType::Integer,
+        "int8" => PgType::BigInt,
+        "int2" => PgType::SmallInt,
+        "float4" => PgType::Real,
+        "float8" => PgType::DoublePrecision,
+        "text" => PgType::Text,
+        "varchar" => {
+            let length = atttypmod.and_then(|m| if m > 0 { Some((m - 4) as u32) } else { None });
+            PgType::Varchar(length)
+        }
+        "uuid" => PgType::Uuid,
+        "timestamptz" => PgType::TimestampTz,
+        "timestamp" => PgType::Timestamp,
+        "date" => PgType::Date,
+        "json" => PgType::Json,
+        "jsonb" => PgType::Jsonb,
+        "numeric" => PgType::BuiltinNamed("numeric".to_string()),
+        "inet" => PgType::Inet,
+        "cidr" => PgType::Cidr,
+        "macaddr" => PgType::Macaddr,
+        "macaddr8" => PgType::Macaddr8,
+        _ => PgType::UserDefined(format!("{udt_schema}.{udt_name}")),
+    }
+}
+
 fn map_pg_type(
     data_type: &str,
     char_max_length: Option<i32>,
@@ -803,35 +831,8 @@ fn map_pg_type(
                     "expected array udt_name to start with '_', got: {udt_name}"
                 ))
             })?;
-            let element_type = match base_udt {
-                "bool" => PgType::Boolean,
-                "int4" | "int" => PgType::Integer,
-                "int8" => PgType::BigInt,
-                "int2" => PgType::SmallInt,
-                "float4" => PgType::Real,
-                "float8" => PgType::DoublePrecision,
-                "text" => PgType::Text,
-                "varchar" => {
-                    let length = if atttypmod > 0 {
-                        Some((atttypmod - 4) as u32)
-                    } else {
-                        None
-                    };
-                    PgType::Varchar(length)
-                }
-                "uuid" => PgType::Uuid,
-                "timestamptz" => PgType::TimestampTz,
-                "timestamp" => PgType::Timestamp,
-                "date" => PgType::Date,
-                "json" => PgType::Json,
-                "jsonb" => PgType::Jsonb,
-                "numeric" => PgType::BuiltinNamed("numeric".to_string()),
-                "inet" => PgType::Inet,
-                "cidr" => PgType::Cidr,
-                "macaddr" => PgType::Macaddr,
-                "macaddr8" => PgType::Macaddr8,
-                _ => PgType::UserDefined(format!("{udt_schema}.{base_udt}")),
-            };
+            let element_type =
+                map_udt_name_to_pg_type(base_udt, udt_schema, Some(atttypmod));
             Ok(PgType::Array(Box::new(element_type)))
         }
         other => Err(SchemaError::ParseError(format!(
@@ -841,28 +842,7 @@ fn map_pg_type(
 }
 
 fn map_domain_element_type(base_udt: &str, domain_schema: &str) -> PgType {
-    match base_udt {
-        "bool" => PgType::Boolean,
-        "int4" | "int" => PgType::Integer,
-        "int8" => PgType::BigInt,
-        "int2" => PgType::SmallInt,
-        "float4" => PgType::Real,
-        "float8" => PgType::DoublePrecision,
-        "text" => PgType::Text,
-        "varchar" => PgType::Varchar(None),
-        "uuid" => PgType::Uuid,
-        "timestamptz" => PgType::TimestampTz,
-        "timestamp" => PgType::Timestamp,
-        "date" => PgType::Date,
-        "json" => PgType::Json,
-        "jsonb" => PgType::Jsonb,
-        "numeric" => PgType::BuiltinNamed("numeric".to_string()),
-        "inet" => PgType::Inet,
-        "cidr" => PgType::Cidr,
-        "macaddr" => PgType::Macaddr,
-        "macaddr8" => PgType::Macaddr8,
-        _ => PgType::UserDefined(format!("{domain_schema}.{base_udt}")),
-    }
+    map_udt_name_to_pg_type(base_udt, domain_schema, None)
 }
 
 async fn introspect_all_primary_keys(

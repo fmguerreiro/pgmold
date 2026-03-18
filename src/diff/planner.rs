@@ -16,6 +16,105 @@ pub enum PlanError {
     CyclicDependency(String),
 }
 
+/// Pre-collected node sets used across multiple edge-building methods.
+/// Built once in `add_type_level_edges` to avoid repeated traversals.
+///
+/// ⚠️ When adding a new `OpKey` variant to the planner, add a corresponding field here
+/// and populate it in `NodeSets::new`.
+struct NodeSets {
+    schemas: Vec<NodeIndex>,
+    version_schemas: Vec<NodeIndex>,
+    extensions: Vec<NodeIndex>,
+    enums: Vec<NodeIndex>,
+    add_enum_values: Vec<NodeIndex>,
+    domains: Vec<NodeIndex>,
+    sequences: Vec<NodeIndex>,
+    functions: Vec<NodeIndex>,
+    alter_functions: Vec<NodeIndex>,
+    tables: Vec<NodeIndex>,
+    partitions: Vec<NodeIndex>,
+    add_columns: Vec<NodeIndex>,
+    add_pks: Vec<NodeIndex>,
+    add_indexes: Vec<NodeIndex>,
+    add_fks: Vec<NodeIndex>,
+    add_checks: Vec<NodeIndex>,
+    enable_rls: Vec<NodeIndex>,
+    policies: Vec<NodeIndex>,
+    triggers: Vec<NodeIndex>,
+    views: Vec<NodeIndex>,
+    version_views: Vec<NodeIndex>,
+    alter_columns: Vec<NodeIndex>,
+    alter_views: Vec<NodeIndex>,
+    alter_sequences: Vec<NodeIndex>,
+    drop_functions: Vec<NodeIndex>,
+    drop_fks: Vec<NodeIndex>,
+    drop_indexes: Vec<NodeIndex>,
+    drop_checks: Vec<NodeIndex>,
+    drop_policies: Vec<NodeIndex>,
+    drop_triggers: Vec<NodeIndex>,
+    drop_views: Vec<NodeIndex>,
+    drop_columns: Vec<NodeIndex>,
+    drop_pks: Vec<NodeIndex>,
+    drop_tables: Vec<NodeIndex>,
+    drop_partitions: Vec<NodeIndex>,
+    drop_sequences: Vec<NodeIndex>,
+    drop_domains: Vec<NodeIndex>,
+    drop_enums: Vec<NodeIndex>,
+    drop_extensions: Vec<NodeIndex>,
+    drop_version_schemas: Vec<NodeIndex>,
+    drop_schemas: Vec<NodeIndex>,
+    drop_version_views: Vec<NodeIndex>,
+}
+
+impl NodeSets {
+    fn new(graph: &MigrationGraph) -> Self {
+        Self {
+            schemas: graph.nodes_matching(|k| matches!(k, OpKey::CreateSchema(_))),
+            version_schemas: graph.nodes_matching(|k| matches!(k, OpKey::CreateVersionSchema { .. })),
+            extensions: graph.nodes_matching(|k| matches!(k, OpKey::CreateExtension(_))),
+            enums: graph.nodes_matching(|k| matches!(k, OpKey::CreateEnum(_))),
+            add_enum_values: graph.nodes_matching(|k| matches!(k, OpKey::AddEnumValue { .. })),
+            domains: graph.nodes_matching(|k| matches!(k, OpKey::CreateDomain(_))),
+            sequences: graph.nodes_matching(|k| matches!(k, OpKey::CreateSequence(_))),
+            functions: graph.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. })),
+            alter_functions: graph.nodes_matching(|k| matches!(k, OpKey::AlterFunction { .. })),
+            tables: graph.nodes_matching(|k| matches!(k, OpKey::CreateTable(_))),
+            partitions: graph.nodes_matching(|k| matches!(k, OpKey::CreatePartition(_))),
+            add_columns: graph.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. })),
+            add_pks: graph.nodes_matching(|k| matches!(k, OpKey::AddPrimaryKey { .. })),
+            add_indexes: graph.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. })),
+            add_fks: graph.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. })),
+            add_checks: graph.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. })),
+            enable_rls: graph.nodes_matching(|k| matches!(k, OpKey::EnableRls { .. })),
+            policies: graph.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. })),
+            triggers: graph.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. })),
+            views: graph.nodes_matching(|k| matches!(k, OpKey::CreateView(_))),
+            version_views: graph.nodes_matching(|k| matches!(k, OpKey::CreateVersionView { .. })),
+            alter_columns: graph.nodes_matching(|k| matches!(k, OpKey::AlterColumn { .. })),
+            alter_views: graph.nodes_matching(|k| matches!(k, OpKey::AlterView(_))),
+            alter_sequences: graph.nodes_matching(|k| matches!(k, OpKey::AlterSequence(_))),
+            drop_functions: graph.nodes_matching(|k| matches!(k, OpKey::DropFunction { .. })),
+            drop_fks: graph.nodes_matching(|k| matches!(k, OpKey::DropForeignKey { .. })),
+            drop_indexes: graph.nodes_matching(|k| matches!(k, OpKey::DropIndex { .. })),
+            drop_checks: graph.nodes_matching(|k| matches!(k, OpKey::DropCheckConstraint { .. })),
+            drop_policies: graph.nodes_matching(|k| matches!(k, OpKey::DropPolicy { .. })),
+            drop_triggers: graph.nodes_matching(|k| matches!(k, OpKey::DropTrigger { .. })),
+            drop_views: graph.nodes_matching(|k| matches!(k, OpKey::DropView(_))),
+            drop_columns: graph.nodes_matching(|k| matches!(k, OpKey::DropColumn { .. })),
+            drop_pks: graph.nodes_matching(|k| matches!(k, OpKey::DropPrimaryKey { .. })),
+            drop_tables: graph.nodes_matching(|k| matches!(k, OpKey::DropTable(_))),
+            drop_partitions: graph.nodes_matching(|k| matches!(k, OpKey::DropPartition(_))),
+            drop_sequences: graph.nodes_matching(|k| matches!(k, OpKey::DropSequence(_))),
+            drop_domains: graph.nodes_matching(|k| matches!(k, OpKey::DropDomain(_))),
+            drop_enums: graph.nodes_matching(|k| matches!(k, OpKey::DropEnum(_))),
+            drop_extensions: graph.nodes_matching(|k| matches!(k, OpKey::DropExtension(_))),
+            drop_version_schemas: graph.nodes_matching(|k| matches!(k, OpKey::DropVersionSchema { .. })),
+            drop_schemas: graph.nodes_matching(|k| matches!(k, OpKey::DropSchema(_))),
+            drop_version_views: graph.nodes_matching(|k| matches!(k, OpKey::DropVersionView { .. })),
+        }
+    }
+}
+
 /// Graph-based migration planner using explicit dependency edges.
 pub(crate) struct MigrationGraph {
     graph: DiGraph<MigrationOp, ()>,
@@ -70,90 +169,64 @@ impl MigrationGraph {
     }
 
     pub fn add_type_level_edges(&mut self) {
-        self.add_schema_infrastructure_edges();
-        self.add_type_system_edges();
-        self.add_function_edges();
-        self.add_table_and_partition_edges();
-        self.add_table_element_edges();
-        self.add_rls_policy_trigger_view_edges();
-        self.add_drop_edges();
-        self.add_alter_column_edges();
-        self.add_modification_pattern_edges();
-        self.add_creates_before_final_drops_edges();
+        let ns = NodeSets::new(self);
+        self.add_schema_infrastructure_edges(&ns);
+        self.add_type_system_edges(&ns);
+        self.add_function_edges(&ns);
+        self.add_table_and_partition_edges(&ns);
+        self.add_table_element_edges(&ns);
+        self.add_rls_policy_trigger_view_edges(&ns);
+        self.add_drop_edges(&ns);
+        self.add_alter_column_edges(&ns);
+        self.add_modification_pattern_edges(&ns);
+        self.add_creates_before_final_drops_edges(&ns);
     }
 
     /// Tier 1: Schema infrastructure — schemas and version schemas before everything.
-    fn add_schema_infrastructure_edges(&mut self) {
-        let schemas = self.nodes_matching(|k| matches!(k, OpKey::CreateSchema(_)));
-        let version_schemas =
-            self.nodes_matching(|k| matches!(k, OpKey::CreateVersionSchema { .. }));
-        let extensions = self.nodes_matching(|k| matches!(k, OpKey::CreateExtension(_)));
-        let enums = self.nodes_matching(|k| matches!(k, OpKey::CreateEnum(_)));
-        let domains = self.nodes_matching(|k| matches!(k, OpKey::CreateDomain(_)));
-        let sequences = self.nodes_matching(|k| matches!(k, OpKey::CreateSequence(_)));
-        let functions = self.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. }));
-        let tables = self.nodes_matching(|k| matches!(k, OpKey::CreateTable(_)));
-        let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
-        let version_views = self.nodes_matching(|k| matches!(k, OpKey::CreateVersionView { .. }));
+    fn add_schema_infrastructure_edges(&mut self, ns: &NodeSets) {
+        self.edges_all_to_all(&ns.schemas, &ns.tables);
+        self.edges_all_to_all(&ns.schemas, &ns.enums);
+        self.edges_all_to_all(&ns.schemas, &ns.domains);
+        self.edges_all_to_all(&ns.schemas, &ns.sequences);
+        self.edges_all_to_all(&ns.schemas, &ns.functions);
+        self.edges_all_to_all(&ns.schemas, &ns.views);
+        self.edges_all_to_all(&ns.version_schemas, &ns.version_views);
 
-        self.edges_all_to_all(&schemas, &tables);
-        self.edges_all_to_all(&schemas, &enums);
-        self.edges_all_to_all(&schemas, &domains);
-        self.edges_all_to_all(&schemas, &sequences);
-        self.edges_all_to_all(&schemas, &functions);
-        self.edges_all_to_all(&schemas, &views);
-        self.edges_all_to_all(&version_schemas, &version_views);
-
-        self.edges_all_to_all(&extensions, &enums);
-        self.edges_all_to_all(&extensions, &domains);
-        self.edges_all_to_all(&extensions, &tables);
+        self.edges_all_to_all(&ns.extensions, &ns.enums);
+        self.edges_all_to_all(&ns.extensions, &ns.domains);
+        self.edges_all_to_all(&ns.extensions, &ns.tables);
     }
 
     /// Tier 2: Type system — enums, enum values, and domains before tables and columns.
-    fn add_type_system_edges(&mut self) {
-        let enums = self.nodes_matching(|k| matches!(k, OpKey::CreateEnum(_)));
-        let add_enum_values = self.nodes_matching(|k| matches!(k, OpKey::AddEnumValue { .. }));
-        let domains = self.nodes_matching(|k| matches!(k, OpKey::CreateDomain(_)));
-        let tables = self.nodes_matching(|k| matches!(k, OpKey::CreateTable(_)));
-        let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
-        let functions = self.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. }));
-        let alter_functions = self.nodes_matching(|k| matches!(k, OpKey::AlterFunction { .. }));
+    fn add_type_system_edges(&mut self, ns: &NodeSets) {
+        self.edges_all_to_all(&ns.enums, &ns.tables);
+        self.edges_all_to_all(&ns.enums, &ns.add_columns);
+        self.edges_all_to_all(&ns.enums, &ns.add_enum_values);
+        self.edges_all_to_all(&ns.add_enum_values, &ns.tables);
+        self.edges_all_to_all(&ns.add_enum_values, &ns.add_columns);
+        self.edges_all_to_all(&ns.domains, &ns.tables);
+        self.edges_all_to_all(&ns.domains, &ns.add_columns);
 
-        self.edges_all_to_all(&enums, &tables);
-        self.edges_all_to_all(&enums, &add_columns);
-        self.edges_all_to_all(&enums, &add_enum_values);
-        self.edges_all_to_all(&add_enum_values, &tables);
-        self.edges_all_to_all(&add_enum_values, &add_columns);
-        self.edges_all_to_all(&domains, &tables);
-        self.edges_all_to_all(&domains, &add_columns);
-
-        self.edges_all_to_all(&enums, &functions);
-        self.edges_all_to_all(&domains, &functions);
-        self.edges_all_to_all(&add_enum_values, &functions);
-        self.edges_all_to_all(&enums, &alter_functions);
-        self.edges_all_to_all(&domains, &alter_functions);
-        self.edges_all_to_all(&add_enum_values, &alter_functions);
+        self.edges_all_to_all(&ns.enums, &ns.functions);
+        self.edges_all_to_all(&ns.domains, &ns.functions);
+        self.edges_all_to_all(&ns.add_enum_values, &ns.functions);
+        self.edges_all_to_all(&ns.enums, &ns.alter_functions);
+        self.edges_all_to_all(&ns.domains, &ns.alter_functions);
+        self.edges_all_to_all(&ns.add_enum_values, &ns.alter_functions);
     }
 
     /// Tier 3: Sequences and functions before tables.
     /// Functions with RETURNS SETOF <table> or %ROWTYPE references are handled per-table
     /// to avoid introducing cycles.
-    fn add_function_edges(&mut self) {
-        let sequences = self.nodes_matching(|k| matches!(k, OpKey::CreateSequence(_)));
-        let functions = self.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. }));
-        let tables = self.nodes_matching(|k| matches!(k, OpKey::CreateTable(_)));
-        let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
-        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
-        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
-
-        self.edges_all_to_all(&sequences, &tables);
+    fn add_function_edges(&mut self, ns: &NodeSets) {
+        self.edges_all_to_all(&ns.sequences, &ns.tables);
 
         // Functions before tables (used in defaults/checks),
         // except functions with RETURNS SETOF <table> or %ROWTYPE references which depend on
         // the table existing first. Per-table granularity: only skip the func→table edge for
         // the specific tables the function depends on, not all tables.
         // AlterFunction carries no body, so %ROWTYPE/SETOF detection is not needed for it.
-        for &func_idx in &functions {
+        for &func_idx in &ns.functions {
             if let MigrationOp::CreateFunction(f) = &self.graph[func_idx] {
                 let setof_table = extract_setof_type_ref(&f.return_type).map(|type_ref| {
                     let (s, n) = parse_type_ref(type_ref, &f.schema);
@@ -165,7 +238,7 @@ impl MigrationGraph {
                         .map(|r| qualified_name(&r.schema, &r.name))
                         .collect();
 
-                for &table_idx in &tables {
+                for &table_idx in &ns.tables {
                     if func_idx == table_idx {
                         continue;
                     }
@@ -181,7 +254,7 @@ impl MigrationGraph {
                     }
                 }
             } else {
-                for &table_idx in &tables {
+                for &table_idx in &ns.tables {
                     if func_idx != table_idx {
                         self.graph.add_edge(func_idx, table_idx, ());
                     }
@@ -189,241 +262,129 @@ impl MigrationGraph {
             }
         }
 
-        self.edges_all_to_all(&functions, &add_columns);
-        self.edges_all_to_all(&functions, &triggers);
-        self.edges_all_to_all(&functions, &policies);
+        self.edges_all_to_all(&ns.functions, &ns.add_columns);
+        self.edges_all_to_all(&ns.functions, &ns.triggers);
+        self.edges_all_to_all(&ns.functions, &ns.policies);
     }
 
     /// Tier 4: Tables before partitions, and tables before all table-level objects.
-    fn add_table_and_partition_edges(&mut self) {
-        let tables = self.nodes_matching(|k| matches!(k, OpKey::CreateTable(_)));
-        let partitions = self.nodes_matching(|k| matches!(k, OpKey::CreatePartition(_)));
-        let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
-        let add_pks = self.nodes_matching(|k| matches!(k, OpKey::AddPrimaryKey { .. }));
-        let add_indexes = self.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. }));
-        let add_fks = self.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. }));
-        let add_checks = self.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. }));
-        let enable_rls = self.nodes_matching(|k| matches!(k, OpKey::EnableRls { .. }));
-        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
-        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
-        let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
-        let alter_sequences = self.nodes_matching(|k| matches!(k, OpKey::AlterSequence(_)));
+    fn add_table_and_partition_edges(&mut self, ns: &NodeSets) {
+        self.edges_all_to_all(&ns.tables, &ns.partitions);
 
-        self.edges_all_to_all(&tables, &partitions);
-
-        self.edges_all_to_all(&tables, &add_columns);
-        self.edges_all_to_all(&tables, &add_pks);
-        self.edges_all_to_all(&tables, &add_indexes);
-        self.edges_all_to_all(&tables, &add_fks);
-        self.edges_all_to_all(&tables, &add_checks);
-        self.edges_all_to_all(&tables, &enable_rls);
-        self.edges_all_to_all(&tables, &policies);
-        self.edges_all_to_all(&tables, &triggers);
-        self.edges_all_to_all(&tables, &views);
-        self.edges_all_to_all(&tables, &alter_sequences);
+        self.edges_all_to_all(&ns.tables, &ns.add_columns);
+        self.edges_all_to_all(&ns.tables, &ns.add_pks);
+        self.edges_all_to_all(&ns.tables, &ns.add_indexes);
+        self.edges_all_to_all(&ns.tables, &ns.add_fks);
+        self.edges_all_to_all(&ns.tables, &ns.add_checks);
+        self.edges_all_to_all(&ns.tables, &ns.enable_rls);
+        self.edges_all_to_all(&ns.tables, &ns.policies);
+        self.edges_all_to_all(&ns.tables, &ns.triggers);
+        self.edges_all_to_all(&ns.tables, &ns.views);
+        self.edges_all_to_all(&ns.tables, &ns.alter_sequences);
     }
 
     /// Tier 5: Table elements — columns before indexes, FKs, checks, views, policies, triggers.
-    fn add_table_element_edges(&mut self) {
-        let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
-        let add_indexes = self.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. }));
-        let add_fks = self.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. }));
-        let add_checks = self.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. }));
-        let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
-        let alter_views = self.nodes_matching(|k| matches!(k, OpKey::AlterView(_)));
-        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
-        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
+    fn add_table_element_edges(&mut self, ns: &NodeSets) {
+        self.edges_all_to_all(&ns.add_columns, &ns.add_indexes);
+        self.edges_all_to_all(&ns.add_columns, &ns.add_fks);
+        self.edges_all_to_all(&ns.add_columns, &ns.add_checks);
 
-        self.edges_all_to_all(&add_columns, &add_indexes);
-        self.edges_all_to_all(&add_columns, &add_fks);
-        self.edges_all_to_all(&add_columns, &add_checks);
-
-        self.edges_all_to_all(&add_columns, &views);
-        self.edges_all_to_all(&add_columns, &alter_views);
-        self.edges_all_to_all(&add_columns, &policies);
-        self.edges_all_to_all(&add_columns, &triggers);
+        self.edges_all_to_all(&ns.add_columns, &ns.views);
+        self.edges_all_to_all(&ns.add_columns, &ns.alter_views);
+        self.edges_all_to_all(&ns.add_columns, &ns.policies);
+        self.edges_all_to_all(&ns.add_columns, &ns.triggers);
     }
 
     /// Tier 6: RLS, policies, triggers, and views — RLS before policies.
-    fn add_rls_policy_trigger_view_edges(&mut self) {
-        let enable_rls = self.nodes_matching(|k| matches!(k, OpKey::EnableRls { .. }));
-        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
-
-        self.edges_all_to_all(&enable_rls, &policies);
+    fn add_rls_policy_trigger_view_edges(&mut self, ns: &NodeSets) {
+        self.edges_all_to_all(&ns.enable_rls, &ns.policies);
     }
 
     /// Tier 8 (reverse): Drop operations in reverse creation order.
-    fn add_drop_edges(&mut self) {
-        let drop_fks = self.nodes_matching(|k| matches!(k, OpKey::DropForeignKey { .. }));
-        let drop_indexes = self.nodes_matching(|k| matches!(k, OpKey::DropIndex { .. }));
-        let drop_checks = self.nodes_matching(|k| matches!(k, OpKey::DropCheckConstraint { .. }));
-        let drop_policies = self.nodes_matching(|k| matches!(k, OpKey::DropPolicy { .. }));
-        let drop_triggers = self.nodes_matching(|k| matches!(k, OpKey::DropTrigger { .. }));
-        let drop_views = self.nodes_matching(|k| matches!(k, OpKey::DropView(_)));
-        let drop_columns = self.nodes_matching(|k| matches!(k, OpKey::DropColumn { .. }));
-        let drop_pks = self.nodes_matching(|k| matches!(k, OpKey::DropPrimaryKey { .. }));
-        let drop_tables = self.nodes_matching(|k| matches!(k, OpKey::DropTable(_)));
-        let drop_partitions = self.nodes_matching(|k| matches!(k, OpKey::DropPartition(_)));
-        let drop_sequences = self.nodes_matching(|k| matches!(k, OpKey::DropSequence(_)));
-        let drop_domains = self.nodes_matching(|k| matches!(k, OpKey::DropDomain(_)));
-        let drop_enums = self.nodes_matching(|k| matches!(k, OpKey::DropEnum(_)));
-        let drop_extensions = self.nodes_matching(|k| matches!(k, OpKey::DropExtension(_)));
-        let drop_version_schemas =
-            self.nodes_matching(|k| matches!(k, OpKey::DropVersionSchema { .. }));
-        let drop_schemas = self.nodes_matching(|k| matches!(k, OpKey::DropSchema(_)));
-        let drop_version_views =
-            self.nodes_matching(|k| matches!(k, OpKey::DropVersionView { .. }));
+    fn add_drop_edges(&mut self, ns: &NodeSets) {
+        self.edges_all_to_all(&ns.drop_fks, &ns.drop_tables);
+        self.edges_all_to_all(&ns.drop_indexes, &ns.drop_tables);
+        self.edges_all_to_all(&ns.drop_checks, &ns.drop_tables);
+        self.edges_all_to_all(&ns.drop_policies, &ns.drop_tables);
+        self.edges_all_to_all(&ns.drop_triggers, &ns.drop_tables);
+        self.edges_all_to_all(&ns.drop_pks, &ns.drop_tables);
+        self.edges_all_to_all(&ns.drop_columns, &ns.drop_tables);
 
-        self.edges_all_to_all(&drop_fks, &drop_tables);
-        self.edges_all_to_all(&drop_indexes, &drop_tables);
-        self.edges_all_to_all(&drop_checks, &drop_tables);
-        self.edges_all_to_all(&drop_policies, &drop_tables);
-        self.edges_all_to_all(&drop_triggers, &drop_tables);
-        self.edges_all_to_all(&drop_pks, &drop_tables);
-        self.edges_all_to_all(&drop_columns, &drop_tables);
+        self.edges_all_to_all(&ns.drop_partitions, &ns.drop_tables);
 
-        self.edges_all_to_all(&drop_partitions, &drop_tables);
+        self.edges_all_to_all(&ns.drop_views, &ns.drop_tables);
 
-        self.edges_all_to_all(&drop_views, &drop_tables);
+        self.edges_all_to_all(&ns.drop_version_views, &ns.drop_version_schemas);
 
-        self.edges_all_to_all(&drop_version_views, &drop_version_schemas);
+        self.edges_all_to_all(&ns.drop_tables, &ns.drop_schemas);
+        self.edges_all_to_all(&ns.drop_tables, &ns.drop_enums);
+        self.edges_all_to_all(&ns.drop_tables, &ns.drop_domains);
+        self.edges_all_to_all(&ns.drop_tables, &ns.drop_sequences);
 
-        self.edges_all_to_all(&drop_tables, &drop_schemas);
-        self.edges_all_to_all(&drop_tables, &drop_enums);
-        self.edges_all_to_all(&drop_tables, &drop_domains);
-        self.edges_all_to_all(&drop_tables, &drop_sequences);
+        self.edges_all_to_all(&ns.drop_sequences, &ns.drop_extensions);
 
-        self.edges_all_to_all(&drop_sequences, &drop_extensions);
+        self.edges_all_to_all(&ns.drop_enums, &ns.drop_extensions);
+        self.edges_all_to_all(&ns.drop_domains, &ns.drop_extensions);
 
-        self.edges_all_to_all(&drop_enums, &drop_extensions);
-        self.edges_all_to_all(&drop_domains, &drop_extensions);
-
-        self.edges_all_to_all(&drop_extensions, &drop_schemas);
+        self.edges_all_to_all(&ns.drop_extensions, &ns.drop_schemas);
     }
 
     /// ALTER column dependencies: drop constraints before alter, recreate after.
-    fn add_alter_column_edges(&mut self) {
-        let alter_columns = self.nodes_matching(|k| matches!(k, OpKey::AlterColumn { .. }));
-        let drop_fks = self.nodes_matching(|k| matches!(k, OpKey::DropForeignKey { .. }));
-        let drop_indexes = self.nodes_matching(|k| matches!(k, OpKey::DropIndex { .. }));
-        let drop_policies = self.nodes_matching(|k| matches!(k, OpKey::DropPolicy { .. }));
-        let drop_triggers = self.nodes_matching(|k| matches!(k, OpKey::DropTrigger { .. }));
-        let drop_views = self.nodes_matching(|k| matches!(k, OpKey::DropView(_)));
-        let add_fks = self.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. }));
-        let add_indexes = self.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. }));
-        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
-        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
-        let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
-        let alter_views = self.nodes_matching(|k| matches!(k, OpKey::AlterView(_)));
-
-        self.edges_all_to_all(&drop_fks, &alter_columns);
-        self.edges_all_to_all(&drop_indexes, &alter_columns);
-        self.edges_all_to_all(&drop_policies, &alter_columns);
-        self.edges_all_to_all(&drop_triggers, &alter_columns);
-        self.edges_all_to_all(&drop_views, &alter_columns);
+    fn add_alter_column_edges(&mut self, ns: &NodeSets) {
+        self.edges_all_to_all(&ns.drop_fks, &ns.alter_columns);
+        self.edges_all_to_all(&ns.drop_indexes, &ns.alter_columns);
+        self.edges_all_to_all(&ns.drop_policies, &ns.alter_columns);
+        self.edges_all_to_all(&ns.drop_triggers, &ns.alter_columns);
+        self.edges_all_to_all(&ns.drop_views, &ns.alter_columns);
 
         // Pattern: DropX → AlterColumn → CreateX
-        self.edges_all_to_all(&alter_columns, &add_fks);
-        self.edges_all_to_all(&alter_columns, &add_indexes);
-        self.edges_all_to_all(&alter_columns, &policies);
-        self.edges_all_to_all(&alter_columns, &triggers);
-        self.edges_all_to_all(&alter_columns, &views);
-        self.edges_all_to_all(&alter_columns, &alter_views);
+        self.edges_all_to_all(&ns.alter_columns, &ns.add_fks);
+        self.edges_all_to_all(&ns.alter_columns, &ns.add_indexes);
+        self.edges_all_to_all(&ns.alter_columns, &ns.policies);
+        self.edges_all_to_all(&ns.alter_columns, &ns.triggers);
+        self.edges_all_to_all(&ns.alter_columns, &ns.views);
+        self.edges_all_to_all(&ns.alter_columns, &ns.alter_views);
     }
 
     /// Modification patterns: when objects are dropped and recreated, drop before create.
-    fn add_modification_pattern_edges(&mut self) {
-        let drop_functions = self.nodes_matching(|k| matches!(k, OpKey::DropFunction { .. }));
-        let drop_indexes = self.nodes_matching(|k| matches!(k, OpKey::DropIndex { .. }));
-        let drop_fks = self.nodes_matching(|k| matches!(k, OpKey::DropForeignKey { .. }));
-        let drop_checks = self.nodes_matching(|k| matches!(k, OpKey::DropCheckConstraint { .. }));
-        let drop_policies = self.nodes_matching(|k| matches!(k, OpKey::DropPolicy { .. }));
-        let drop_triggers = self.nodes_matching(|k| matches!(k, OpKey::DropTrigger { .. }));
-        let drop_views = self.nodes_matching(|k| matches!(k, OpKey::DropView(_)));
-        let functions = self.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. }));
-        let add_indexes = self.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. }));
-        let add_fks = self.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. }));
-        let add_checks = self.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. }));
-        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
-        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
-        let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
-
-        self.edges_all_to_all(&drop_functions, &functions);
-        self.edges_all_to_all(&drop_indexes, &add_indexes);
-        self.edges_all_to_all(&drop_fks, &add_fks);
-        self.edges_all_to_all(&drop_checks, &add_checks);
-        self.edges_all_to_all(&drop_policies, &policies);
-        self.edges_all_to_all(&drop_triggers, &triggers);
-        self.edges_all_to_all(&drop_views, &views);
+    fn add_modification_pattern_edges(&mut self, ns: &NodeSets) {
+        self.edges_all_to_all(&ns.drop_functions, &ns.functions);
+        self.edges_all_to_all(&ns.drop_indexes, &ns.add_indexes);
+        self.edges_all_to_all(&ns.drop_fks, &ns.add_fks);
+        self.edges_all_to_all(&ns.drop_checks, &ns.add_checks);
+        self.edges_all_to_all(&ns.drop_policies, &ns.policies);
+        self.edges_all_to_all(&ns.drop_triggers, &ns.triggers);
+        self.edges_all_to_all(&ns.drop_views, &ns.views);
     }
 
     /// All create/alter operations must complete before final drop operations.
     /// Excludes drops that must precede creates/alters (DropFunction, DropFK, etc.).
-    fn add_creates_before_final_drops_edges(&mut self) {
-        let schemas = self.nodes_matching(|k| matches!(k, OpKey::CreateSchema(_)));
-        let version_schemas =
-            self.nodes_matching(|k| matches!(k, OpKey::CreateVersionSchema { .. }));
-        let extensions = self.nodes_matching(|k| matches!(k, OpKey::CreateExtension(_)));
-        let enums = self.nodes_matching(|k| matches!(k, OpKey::CreateEnum(_)));
-        let add_enum_values = self.nodes_matching(|k| matches!(k, OpKey::AddEnumValue { .. }));
-        let domains = self.nodes_matching(|k| matches!(k, OpKey::CreateDomain(_)));
-        let sequences = self.nodes_matching(|k| matches!(k, OpKey::CreateSequence(_)));
-        let functions = self.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. }));
-        let tables = self.nodes_matching(|k| matches!(k, OpKey::CreateTable(_)));
-        let partitions = self.nodes_matching(|k| matches!(k, OpKey::CreatePartition(_)));
-        let add_columns = self.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. }));
-        let add_pks = self.nodes_matching(|k| matches!(k, OpKey::AddPrimaryKey { .. }));
-        let add_indexes = self.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. }));
-        let add_fks = self.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. }));
-        let add_checks = self.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. }));
-        let enable_rls = self.nodes_matching(|k| matches!(k, OpKey::EnableRls { .. }));
-        let policies = self.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. }));
-        let triggers = self.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. }));
-        let views = self.nodes_matching(|k| matches!(k, OpKey::CreateView(_)));
-        let version_views = self.nodes_matching(|k| matches!(k, OpKey::CreateVersionView { .. }));
-        let alter_columns = self.nodes_matching(|k| matches!(k, OpKey::AlterColumn { .. }));
-        let alter_views = self.nodes_matching(|k| matches!(k, OpKey::AlterView(_)));
-        let alter_sequences = self.nodes_matching(|k| matches!(k, OpKey::AlterSequence(_)));
-
-        let drop_columns = self.nodes_matching(|k| matches!(k, OpKey::DropColumn { .. }));
-        let drop_pks = self.nodes_matching(|k| matches!(k, OpKey::DropPrimaryKey { .. }));
-        let drop_tables = self.nodes_matching(|k| matches!(k, OpKey::DropTable(_)));
-        let drop_partitions = self.nodes_matching(|k| matches!(k, OpKey::DropPartition(_)));
-        let drop_sequences = self.nodes_matching(|k| matches!(k, OpKey::DropSequence(_)));
-        let drop_domains = self.nodes_matching(|k| matches!(k, OpKey::DropDomain(_)));
-        let drop_enums = self.nodes_matching(|k| matches!(k, OpKey::DropEnum(_)));
-        let drop_extensions = self.nodes_matching(|k| matches!(k, OpKey::DropExtension(_)));
-        let drop_version_schemas =
-            self.nodes_matching(|k| matches!(k, OpKey::DropVersionSchema { .. }));
-        let drop_schemas = self.nodes_matching(|k| matches!(k, OpKey::DropSchema(_)));
-        let drop_version_views =
-            self.nodes_matching(|k| matches!(k, OpKey::DropVersionView { .. }));
-
+    fn add_creates_before_final_drops_edges(&mut self, ns: &NodeSets) {
         // Create operations that should complete before final drops
         let all_creates: Vec<NodeIndex> = [
-            &schemas,
-            &version_schemas,
-            &extensions,
-            &enums,
-            &add_enum_values,
-            &domains,
-            &sequences,
-            &functions,
-            &tables,
-            &partitions,
-            &add_columns,
-            &add_pks,
-            &add_indexes,
-            &add_fks,
-            &add_checks,
-            &enable_rls,
-            &policies,
-            &triggers,
-            &views,
-            &version_views,
-            &alter_columns,
-            &alter_views,
-            &alter_sequences,
+            &ns.schemas,
+            &ns.version_schemas,
+            &ns.extensions,
+            &ns.enums,
+            &ns.add_enum_values,
+            &ns.domains,
+            &ns.sequences,
+            &ns.functions,
+            &ns.tables,
+            &ns.partitions,
+            &ns.add_columns,
+            &ns.add_pks,
+            &ns.add_indexes,
+            &ns.add_fks,
+            &ns.add_checks,
+            &ns.enable_rls,
+            &ns.policies,
+            &ns.triggers,
+            &ns.views,
+            &ns.version_views,
+            &ns.alter_columns,
+            &ns.alter_views,
+            &ns.alter_sequences,
         ]
         .into_iter()
         .flatten()
@@ -434,17 +395,17 @@ impl MigrationGraph {
         // Note: DropFK, DropIndex, DropPolicy, DropTrigger, DropView, DropFunction
         // are excluded because they may need to happen before alters/creates
         let final_drops: Vec<NodeIndex> = [
-            &drop_columns,
-            &drop_pks,
-            &drop_tables,
-            &drop_partitions,
-            &drop_sequences,
-            &drop_domains,
-            &drop_enums,
-            &drop_extensions,
-            &drop_version_schemas,
-            &drop_schemas,
-            &drop_version_views,
+            &ns.drop_columns,
+            &ns.drop_pks,
+            &ns.drop_tables,
+            &ns.drop_partitions,
+            &ns.drop_sequences,
+            &ns.drop_domains,
+            &ns.drop_enums,
+            &ns.drop_extensions,
+            &ns.drop_version_schemas,
+            &ns.drop_schemas,
+            &ns.drop_version_views,
         ]
         .into_iter()
         .flatten()
