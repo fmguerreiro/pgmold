@@ -67,8 +67,8 @@ pub(super) fn generate_fk_ops_for_type_changes(
     });
 
     for (table_name, table) in &from.tables {
+        let qualified_table_str = qualified_name(&table.schema, &table.name);
         for fk in &table.foreign_keys {
-            let qualified_table_str = qualified_name(&table.schema, &table.name);
             let referenced_table_str = qualified_name(&fk.referenced_schema, &fk.referenced_table);
 
             let fk_affected = fk.columns.iter().any(|col| {
@@ -124,9 +124,8 @@ pub(super) fn generate_policy_ops_for_type_changes(
 
     for table_name in affected_tables {
         if let Some(from_table) = from.tables.get(table_name) {
+            let qualified_table_str = qualified_name(&from_table.schema, &from_table.name);
             for policy in &from_table.policies {
-                let qualified_table_str = qualified_name(&from_table.schema, &from_table.name);
-
                 if existing_policy_drops
                     .contains(&(qualified_table_str.clone(), policy.name.clone()))
                 {
@@ -291,9 +290,8 @@ pub(super) fn generate_policy_ops_for_function_changes(
         });
 
     for table in from.tables.values() {
+        let qualified_table_str = qualified_name(&table.schema, &table.name);
         for policy in &table.policies {
-            let qualified_table_str = qualified_name(&table.schema, &table.name);
-
             let policy_affected = policy_references_functions(policy, &dropped_functions);
 
             if policy_affected

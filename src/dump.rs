@@ -41,6 +41,37 @@ fn push_grant_ops(
     }
 }
 
+struct DumpObjectInfo<'a> {
+    owner: &'a Option<String>,
+    owner_kind: OwnerObjectKind,
+    grants: &'a [Grant],
+    grant_kind: GrantObjectKind,
+    schema: &'a str,
+    name: &'a str,
+    args: Option<String>,
+}
+
+fn push_owner_and_grant_ops(ops: &mut Vec<MigrationOp>, info: DumpObjectInfo<'_>) {
+    if let Some(ref owner) = info.owner {
+        push_owner_op(
+            ops,
+            info.owner_kind,
+            info.schema,
+            info.name,
+            info.args.clone(),
+            owner,
+        );
+    }
+    push_grant_ops(
+        ops,
+        info.grants,
+        info.grant_kind,
+        info.schema,
+        info.name,
+        info.args,
+    );
+}
+
 pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
 
@@ -62,67 +93,49 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
 
     for enum_type in schema.enums.values() {
         ops.push(MigrationOp::CreateEnum(enum_type.clone()));
-        if let Some(ref owner) = enum_type.owner {
-            push_owner_op(
-                &mut ops,
-                OwnerObjectKind::Type,
-                &enum_type.schema,
-                &enum_type.name,
-                None,
-                owner,
-            );
-        }
-        push_grant_ops(
+        push_owner_and_grant_ops(
             &mut ops,
-            &enum_type.grants,
-            GrantObjectKind::Type,
-            &enum_type.schema,
-            &enum_type.name,
-            None,
+            DumpObjectInfo {
+                owner: &enum_type.owner,
+                owner_kind: OwnerObjectKind::Type,
+                grants: &enum_type.grants,
+                grant_kind: GrantObjectKind::Type,
+                schema: &enum_type.schema,
+                name: &enum_type.name,
+                args: None,
+            },
         );
     }
 
     for domain in schema.domains.values() {
         ops.push(MigrationOp::CreateDomain(domain.clone()));
-        if let Some(ref owner) = domain.owner {
-            push_owner_op(
-                &mut ops,
-                OwnerObjectKind::Domain,
-                &domain.schema,
-                &domain.name,
-                None,
-                owner,
-            );
-        }
-        push_grant_ops(
+        push_owner_and_grant_ops(
             &mut ops,
-            &domain.grants,
-            GrantObjectKind::Domain,
-            &domain.schema,
-            &domain.name,
-            None,
+            DumpObjectInfo {
+                owner: &domain.owner,
+                owner_kind: OwnerObjectKind::Domain,
+                grants: &domain.grants,
+                grant_kind: GrantObjectKind::Domain,
+                schema: &domain.schema,
+                name: &domain.name,
+                args: None,
+            },
         );
     }
 
     for sequence in schema.sequences.values() {
         ops.push(MigrationOp::CreateSequence(sequence.clone()));
-        if let Some(ref owner) = sequence.owner {
-            push_owner_op(
-                &mut ops,
-                OwnerObjectKind::Sequence,
-                &sequence.schema,
-                &sequence.name,
-                None,
-                owner,
-            );
-        }
-        push_grant_ops(
+        push_owner_and_grant_ops(
             &mut ops,
-            &sequence.grants,
-            GrantObjectKind::Sequence,
-            &sequence.schema,
-            &sequence.name,
-            None,
+            DumpObjectInfo {
+                owner: &sequence.owner,
+                owner_kind: OwnerObjectKind::Sequence,
+                grants: &sequence.grants,
+                grant_kind: GrantObjectKind::Sequence,
+                schema: &sequence.schema,
+                name: &sequence.name,
+                args: None,
+            },
         );
     }
 
@@ -176,45 +189,33 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
             .map(|a| crate::model::normalize_pg_type(&a.data_type))
             .collect::<Vec<_>>()
             .join(", ");
-        if let Some(ref owner) = function.owner {
-            push_owner_op(
-                &mut ops,
-                OwnerObjectKind::Function,
-                &function.schema,
-                &function.name,
-                Some(func_args.clone()),
-                owner,
-            );
-        }
-        push_grant_ops(
+        push_owner_and_grant_ops(
             &mut ops,
-            &function.grants,
-            GrantObjectKind::Function,
-            &function.schema,
-            &function.name,
-            Some(func_args),
+            DumpObjectInfo {
+                owner: &function.owner,
+                owner_kind: OwnerObjectKind::Function,
+                grants: &function.grants,
+                grant_kind: GrantObjectKind::Function,
+                schema: &function.schema,
+                name: &function.name,
+                args: Some(func_args),
+            },
         );
     }
 
     for view in schema.views.values() {
         ops.push(MigrationOp::CreateView(view.clone()));
-        if let Some(ref owner) = view.owner {
-            push_owner_op(
-                &mut ops,
-                OwnerObjectKind::View,
-                &view.schema,
-                &view.name,
-                None,
-                owner,
-            );
-        }
-        push_grant_ops(
+        push_owner_and_grant_ops(
             &mut ops,
-            &view.grants,
-            GrantObjectKind::View,
-            &view.schema,
-            &view.name,
-            None,
+            DumpObjectInfo {
+                owner: &view.owner,
+                owner_kind: OwnerObjectKind::View,
+                grants: &view.grants,
+                grant_kind: GrantObjectKind::View,
+                schema: &view.schema,
+                name: &view.name,
+                args: None,
+            },
         );
     }
 

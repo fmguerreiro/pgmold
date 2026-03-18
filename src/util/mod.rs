@@ -450,11 +450,7 @@ fn apply_common_normalizations(expr: &str) -> String {
     let result = RE_NOT_LIKE.replace_all(&result, " NOT LIKE ");
     let result = RE_LIKE.replace_all(&result, " LIKE ");
 
-    let result = RE_TYPE_CAST
-        .replace_all(&result, |caps: &regex::Captures| {
-            format!("::{}", caps[1].to_lowercase())
-        })
-        .to_string();
+    let result = normalize_type_casts(&result);
 
     let result = RE_WHITESPACE.replace_all(result.trim(), " ");
     let result = RE_PAREN_OPEN.replace_all(&result, "(");
@@ -543,41 +539,44 @@ fn remove_from_join_parens(s: &str) -> String {
     result
 }
 
+fn apply_until_stable<F>(mut input: String, mut transform: F) -> String
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    loop {
+        match transform(&input) {
+            Some(new) => input = new,
+            None => return input,
+        }
+    }
+}
+
 /// Removes outer parens in WHERE clauses
 /// WHERE ((...) AND (...)) -> WHERE (...) AND (...)
 /// Also handles: WHERE (a OR b) -> WHERE a OR b (single outer parens)
 fn remove_where_outer_parens(s: &str) -> String {
-    let mut result = s.to_string();
-
-    loop {
-        let mut found = false;
-        if let Some(mat) = RE_WHERE_DOUBLE_PAREN.find(&result) {
+    let result = apply_until_stable(s.to_string(), |input| {
+        if let Some(mat) = RE_WHERE_DOUBLE_PAREN.find(input) {
             let outer_open_pos = mat.end() - 2;
-
-            if let Some(outer_close_pos) = find_matching_paren(&result, outer_open_pos) {
-                if let Some(inner_close) = find_matching_paren(&result, mat.end() - 1) {
-                    let between = &result[inner_close + 1..outer_close_pos];
+            if let Some(outer_close_pos) = find_matching_paren(input, outer_open_pos) {
+                if let Some(inner_close) = find_matching_paren(input, mat.end() - 1) {
+                    let between = &input[inner_close + 1..outer_close_pos];
                     let trimmed = between.trim();
                     if trimmed.is_empty() || trimmed.starts_with("AND") || trimmed.starts_with("OR")
                     {
-                        result = remove_byte_pair(&result, outer_open_pos, outer_close_pos);
-                        found = true;
+                        return Some(remove_byte_pair(input, outer_open_pos, outer_close_pos));
                     }
                 }
             }
         }
-        if !found {
-            break;
-        }
-    }
+        None
+    });
 
-    loop {
-        let mut found = false;
-        for mat in RE_WHERE_SINGLE_PAREN.find_iter(&result.clone()) {
+    apply_until_stable(result, |input| {
+        for mat in RE_WHERE_SINGLE_PAREN.find_iter(input) {
             let open_pos = mat.end() - 1;
-
-            if let Some(close_pos) = find_matching_paren(&result, open_pos) {
-                let after_close = result[close_pos + 1..].trim_start();
+            if let Some(close_pos) = find_matching_paren(input, open_pos) {
+                let after_close = input[close_pos + 1..].trim_start();
                 if after_close.is_empty()
                     || after_close.starts_with("ORDER")
                     || after_close.starts_with("GROUP")
@@ -590,18 +589,12 @@ fn remove_where_outer_parens(s: &str) -> String {
                     || after_close.starts_with(")")
                     || after_close.starts_with(";")
                 {
-                    result = remove_byte_pair(&result, open_pos, close_pos);
-                    found = true;
-                    break;
+                    return Some(remove_byte_pair(input, open_pos, close_pos));
                 }
             }
         }
-        if !found {
-            break;
-        }
-    }
-
-    result
+        None
+    })
 }
 
 fn strip_text_cast_from_string_literals(query: &str) -> String {
