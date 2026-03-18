@@ -655,7 +655,9 @@ fn parse_partition_bound(expr: &str) -> Result<PartitionBound> {
         }
     }
 
-    Ok(PartitionBound::Default)
+    Err(SchemaError::ParseError(format!(
+        "unrecognized partition bound expression: {expr}"
+    )))
 }
 
 /// Extract values from a parenthesized list like "(val1, val2)"
