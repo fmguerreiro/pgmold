@@ -11,11 +11,13 @@ static RE_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").expe
 static RE_TYPE_CAST: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"::([A-Za-z][A-Za-z0-9_\[\]]*)").expect("valid regex"));
 
+const STRING_TEXT_CAST_PATTERN: &str = r"'([^']*)'::text";
+
 static RE_STRING_TEXT_CAST: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"'([^']*)'::text").expect("valid regex"));
+    LazyLock::new(|| Regex::new(STRING_TEXT_CAST_PATTERN).expect("valid regex"));
 
 static RE_STRING_TEXT_CAST_CI: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)'([^']*)'::text").expect("valid regex"));
+    LazyLock::new(|| Regex::new(&format!("(?i){STRING_TEXT_CAST_PATTERN}")).expect("valid regex"));
 
 static RE_STRING_CUSTOM_CAST: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"'([^']*)'::(?:[a-z_][a-z0-9_]*\.)?"?[A-Za-z_][A-Za-z0-9_]*"?"#)
@@ -539,25 +541,18 @@ fn remove_outer_parens_around_pattern(s: &str, pattern: &str) -> String {
 /// Removes parens around JOINs in FROM clause
 /// FROM (table1 JOIN table2 ON (...)) -> FROM table1 JOIN table2 ON (...)
 fn remove_from_join_parens(s: &str) -> String {
-    let mut result = s.to_string();
-
-    loop {
-        let mut found = false;
-        if let Some(mat) = RE_FROM_PAREN.find(&result) {
+    apply_until_stable(s.to_string(), |input| {
+        if let Some(mat) = RE_FROM_PAREN.find(input) {
             let open_pos = mat.end() - 1;
-            let after_paren = &result[mat.end()..];
+            let after_paren = &input[mat.end()..];
             if RE_JOIN_PATTERN.is_match(after_paren) {
-                if let Some(close_pos) = find_matching_paren(&result, open_pos) {
-                    result = remove_byte_pair(&result, open_pos, close_pos);
-                    found = true;
+                if let Some(close_pos) = find_matching_paren(input, open_pos) {
+                    return Some(remove_byte_pair(input, open_pos, close_pos));
                 }
             }
         }
-        if !found {
-            break;
-        }
-    }
-    result
+        None
+    })
 }
 
 fn apply_until_stable<F>(mut input: String, mut transform: F) -> String
@@ -641,32 +636,24 @@ fn strip_on_clause_parens(query: &str) -> String {
 }
 
 fn remove_parens_around_and_groups_in_or(query: &str) -> String {
-    let mut result = query.to_string();
-    loop {
-        let mut found = false;
-        if let Some(mat) = RE_OR_PAREN.find(&result) {
+    apply_until_stable(query.to_string(), |input| {
+        if let Some(mat) = RE_OR_PAREN.find(input) {
             let open_pos = mat.end() - 1;
-            if let Some(close_pos) = find_matching_paren(&result, open_pos) {
-                let content = &result[open_pos + 1..close_pos];
+            if let Some(close_pos) = find_matching_paren(input, open_pos) {
+                let content = &input[open_pos + 1..close_pos];
                 if content.contains(" AND ") && !content.contains(" OR ") {
-                    result = remove_byte_pair(&result, open_pos, close_pos);
-                    found = true;
+                    return Some(remove_byte_pair(input, open_pos, close_pos));
                 }
             }
         }
-        if !found {
-            break;
-        }
-    }
-    result
+        None
+    })
 }
 
 fn remove_simple_expression_parens(query: &str) -> String {
-    let mut result = query.to_string();
-    loop {
-        let before = result.clone();
-        result = RE_SIMPLE_PAREN
-            .replace_all(&result, |caps: &regex::Captures| {
+    apply_until_stable(query.to_string(), |input| {
+        let new = RE_SIMPLE_PAREN
+            .replace_all(input, |caps: &regex::Captures| {
                 let content = &caps[1];
                 if !content.contains(" AND ")
                     && !content.contains(" OR ")
@@ -679,11 +666,12 @@ fn remove_simple_expression_parens(query: &str) -> String {
                 }
             })
             .to_string();
-        if result == before {
-            break;
+        if new != input {
+            Some(new)
+        } else {
+            None
         }
-    }
-    result
+    })
 }
 
 fn remove_structural_parens(query: &str) -> String {

@@ -292,12 +292,7 @@ impl OpKey {
             },
             MigrationOp::CreateFunction(f) => OpKey::CreateFunction {
                 name: qualified_name(&f.schema, &f.name),
-                args: f
-                    .arguments
-                    .iter()
-                    .map(|a| a.data_type.clone())
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                args: f.args_string(),
             },
             MigrationOp::DropFunction { name, args } => OpKey::DropFunction {
                 name: name.clone(),
