@@ -833,8 +833,7 @@ fn map_pg_type(
                     "expected array udt_name to start with '_', got: {udt_name}"
                 ))
             })?;
-            let element_type =
-                map_udt_name_to_pg_type(base_udt, udt_schema, Some(atttypmod));
+            let element_type = map_udt_name_to_pg_type(base_udt, udt_schema, Some(atttypmod));
             Ok(PgType::Array(Box::new(element_type)))
         }
         other => Err(SchemaError::ParseError(format!(

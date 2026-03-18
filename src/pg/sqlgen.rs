@@ -1054,7 +1054,10 @@ fn generate_view_ddl(view: &View, replace: bool) -> Vec<String> {
         } else {
             "CREATE VIEW"
         };
-        vec![format!("{} {} AS {};", create_stmt, qualified_name, view.query)]
+        vec![format!(
+            "{} {} AS {};",
+            create_stmt, qualified_name, view.query
+        )]
     }
 }
 

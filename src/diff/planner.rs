@@ -70,7 +70,8 @@ impl NodeSets {
     fn new(graph: &MigrationGraph) -> Self {
         Self {
             schemas: graph.nodes_matching(|k| matches!(k, OpKey::CreateSchema(_))),
-            version_schemas: graph.nodes_matching(|k| matches!(k, OpKey::CreateVersionSchema { .. })),
+            version_schemas: graph
+                .nodes_matching(|k| matches!(k, OpKey::CreateVersionSchema { .. })),
             extensions: graph.nodes_matching(|k| matches!(k, OpKey::CreateExtension(_))),
             enums: graph.nodes_matching(|k| matches!(k, OpKey::CreateEnum(_))),
             add_enum_values: graph.nodes_matching(|k| matches!(k, OpKey::AddEnumValue { .. })),
@@ -108,9 +109,11 @@ impl NodeSets {
             drop_domains: graph.nodes_matching(|k| matches!(k, OpKey::DropDomain(_))),
             drop_enums: graph.nodes_matching(|k| matches!(k, OpKey::DropEnum(_))),
             drop_extensions: graph.nodes_matching(|k| matches!(k, OpKey::DropExtension(_))),
-            drop_version_schemas: graph.nodes_matching(|k| matches!(k, OpKey::DropVersionSchema { .. })),
+            drop_version_schemas: graph
+                .nodes_matching(|k| matches!(k, OpKey::DropVersionSchema { .. })),
             drop_schemas: graph.nodes_matching(|k| matches!(k, OpKey::DropSchema(_))),
-            drop_version_views: graph.nodes_matching(|k| matches!(k, OpKey::DropVersionView { .. })),
+            drop_version_views: graph
+                .nodes_matching(|k| matches!(k, OpKey::DropVersionView { .. })),
         }
     }
 }
