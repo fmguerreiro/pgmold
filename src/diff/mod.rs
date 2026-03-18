@@ -106,7 +106,7 @@ pub fn compute_diff_with_flags(
     if !policies_to_filter.is_empty() {
         ops.retain(|op| {
             if let MigrationOp::AlterPolicy { table, name, .. } = op {
-                !policies_to_filter.contains(&(table.to_qualified_string(), name.clone()))
+                !policies_to_filter.contains(&(table.to_string(), name.clone()))
             } else {
                 true
             }

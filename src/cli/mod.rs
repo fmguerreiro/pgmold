@@ -718,10 +718,7 @@ pub async fn run() -> Result<()> {
             let ops = migration_plan.ops;
             let filtered_db_schema = migration_plan.current_schema;
             let filtered_target = migration_plan.target_schema;
-            let lint_options = LintOptions {
-                allow_destructive,
-                ..Default::default()
-            };
+            let lint_options = LintOptions::from_env(allow_destructive);
             let lint_results = lint_migration_plan(&ops, &lint_options);
 
             if !json {
@@ -976,7 +973,7 @@ pub async fn run() -> Result<()> {
                 &grants.excluded_grant_roles(),
             ))?;
 
-            let lint_options = LintOptions::default();
+            let lint_options = LintOptions::from_env(false);
             let results = lint_migration_plan(&ops, &lint_options);
 
             let error_count = results

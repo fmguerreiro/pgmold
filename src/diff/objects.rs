@@ -103,6 +103,15 @@ struct OwnerGrantConfig {
     grant_kind: Option<GrantObjectKind>,
 }
 
+impl OwnerGrantConfig {
+    fn none() -> Self {
+        Self {
+            owner_kind: None,
+            grant_kind: None,
+        }
+    }
+}
+
 /// Generic helper that iterates two BTreeMaps and emits create/update/drop ops.
 ///
 /// `on_create` is called for objects in `to` but not `from`.
@@ -125,16 +134,16 @@ fn diff_objects<K, V, FCreate, FUpdate, FDrop, FCoords, FOwner, FGrants>(
     get_owner: FOwner,
     get_grants: FGrants,
 ) where
-    K: Ord,
+    K: Ord + AsRef<str>,
     FCreate: Fn(&K, &V) -> MigrationOp,
     FUpdate: Fn(&mut Vec<MigrationOp>, &K, &V, &V),
     FDrop: Fn(&K, &V) -> MigrationOp,
-    FCoords: Fn(&K, &V) -> ObjectCoords,
+    FCoords: Fn(&str, &V) -> ObjectCoords,
     FOwner: Fn(&V) -> &Option<String>,
     FGrants: Fn(&V) -> &[Grant],
 {
     for (key, to_val) in to {
-        let c = coords(key, to_val);
+        let c = coords(key.as_ref(), to_val);
         if let Some(from_val) = from.get(key) {
             on_update(ops, key, from_val, to_val);
             if let Some(owner_kind) = owner_grant.owner_kind {
@@ -197,8 +206,7 @@ fn diff_objects<K, V, FCreate, FUpdate, FDrop, FCoords, FOwner, FGrants>(
 }
 
 /// Shorthand for object types that use `parse_qualified_name` on the map key.
-#[allow(clippy::ptr_arg)]
-fn qualified_coords<V>(key: &String, _val: &V) -> ObjectCoords {
+fn qualified_coords<V>(key: &str, _val: &V) -> ObjectCoords {
     let (schema, name) = parse_qualified_name(key);
     ObjectCoords {
         schema,
@@ -218,8 +226,8 @@ pub(super) fn diff_schemas(from: &Schema, to: &Schema, options: &DiffOptions) ->
         |_ops, _key, _from_val, _to_val| {},
         |name, _val| MigrationOp::DropSchema(name.clone()),
         |name, _val| ObjectCoords {
-            schema: name.clone(),
-            name: name.clone(),
+            schema: name.to_string(),
+            name: name.to_string(),
             args: None,
         },
         OwnerGrantConfig {
@@ -238,7 +246,6 @@ pub(super) fn diff_extensions(
     options: &DiffOptions,
 ) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
-    // Extensions have no ownership or grants; OwnerGrantConfig::none() skips both.
     diff_objects(
         &mut ops,
         options,
@@ -249,13 +256,10 @@ pub(super) fn diff_extensions(
         |name, _val| MigrationOp::DropExtension(name.clone()),
         |name, _val| ObjectCoords {
             schema: String::new(),
-            name: name.clone(),
+            name: name.to_string(),
             args: None,
         },
-        OwnerGrantConfig {
-            owner_kind: None,
-            grant_kind: None,
-        },
+        OwnerGrantConfig::none(),
         |_val| &None,
         |_val| &[],
     );

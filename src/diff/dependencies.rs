@@ -12,7 +12,7 @@ pub(super) fn tables_with_type_changes(ops: &[MigrationOp]) -> HashSet<String> {
         .filter_map(|op| {
             if let MigrationOp::AlterColumn { table, changes, .. } = op {
                 if changes.data_type.is_some() {
-                    return Some(table.to_qualified_string());
+                    return Some(table.to_string());
                 }
             }
             None
@@ -39,7 +39,7 @@ pub(super) fn generate_fk_ops_for_type_changes(
             } = op
             {
                 if changes.data_type.is_some() {
-                    return Some((table.to_qualified_string(), column.clone()));
+                    return Some((table.to_string(), column.clone()));
                 }
             }
             None
@@ -58,7 +58,7 @@ pub(super) fn generate_fk_ops_for_type_changes(
                 foreign_key_name,
             } = op
             {
-                Some((table.to_qualified_string(), foreign_key_name.clone()))
+                Some((table.to_string(), foreign_key_name.clone()))
             } else {
                 None
             }
@@ -119,7 +119,7 @@ pub(super) fn generate_policy_ops_for_type_changes(
         .iter()
         .filter_map(|op| {
             if let MigrationOp::DropPolicy { table, name } = op {
-                Some((table.to_qualified_string(), name.clone()))
+                Some((table.to_string(), name.clone()))
             } else {
                 None
             }
@@ -304,7 +304,7 @@ pub(super) fn generate_policy_ops_for_function_changes(
         .iter()
         .filter_map(|op| {
             if let MigrationOp::DropPolicy { table, name } = op {
-                Some((table.to_qualified_string(), name.clone()))
+                Some((table.to_string(), name.clone()))
             } else {
                 None
             }

@@ -553,10 +553,7 @@ impl MigrationGraph {
 
                 // Trigger depends on its target table and its trigger function
                 OpKey::CreateTrigger { target, .. } => {
-                    edges_to_add.push((
-                        OpKey::CreateTable(target.to_qualified_string()),
-                        key.clone(),
-                    ));
+                    edges_to_add.push((OpKey::CreateTable(target.to_string()), key.clone()));
 
                     if let Some(MigrationOp::CreateTrigger(trigger)) = self.get_op(key) {
                         let func_qualified =
@@ -567,8 +564,7 @@ impl MigrationGraph {
 
                 // Policy depends on its table and functions referenced in expressions
                 OpKey::CreatePolicy { table, .. } => {
-                    edges_to_add
-                        .push((OpKey::CreateTable(table.to_qualified_string()), key.clone()));
+                    edges_to_add.push((OpKey::CreateTable(table.to_string()), key.clone()));
 
                     if let Some(MigrationOp::CreatePolicy(policy)) = self.get_op(key) {
                         let schema = &policy.table_schema;
@@ -583,8 +579,7 @@ impl MigrationGraph {
 
                 // Index depends on its table and functions in expressions/predicates
                 OpKey::AddIndex { table, .. } => {
-                    edges_to_add
-                        .push((OpKey::CreateTable(table.to_qualified_string()), key.clone()));
+                    edges_to_add.push((OpKey::CreateTable(table.to_string()), key.clone()));
 
                     if let Some(MigrationOp::AddIndex { table, index }) = self.get_op(key) {
                         let schema = &table.schema;
@@ -605,8 +600,7 @@ impl MigrationGraph {
 
                 // AddColumn depends on table and functions in defaults
                 OpKey::AddColumn { table, .. } => {
-                    edges_to_add
-                        .push((OpKey::CreateTable(table.to_qualified_string()), key.clone()));
+                    edges_to_add.push((OpKey::CreateTable(table.to_string()), key.clone()));
 
                     if let Some(MigrationOp::AddColumn { table, column }) = self.get_op(key) {
                         if let Some(default) = &column.default {
@@ -618,8 +612,7 @@ impl MigrationGraph {
 
                 // AddCheckConstraint depends on table and functions in expression
                 OpKey::AddCheckConstraint { table, .. } => {
-                    edges_to_add
-                        .push((OpKey::CreateTable(table.to_qualified_string()), key.clone()));
+                    edges_to_add.push((OpKey::CreateTable(table.to_string()), key.clone()));
 
                     if let Some(MigrationOp::AddCheckConstraint {
                         table,
@@ -914,7 +907,7 @@ fn drop_targets_table(other: &OpKey, table: &QualifiedName) -> bool {
 }
 
 pub fn plan_migration_checked(ops: Vec<MigrationOp>) -> Result<Vec<MigrationOp>, PlanError> {
-    let processed_ops = preprocess_ops(ops);
+    let processed_ops = split_sequence_owned_by_ops(ops);
 
     let mut graph = MigrationGraph::new();
     for op in processed_ops {
@@ -926,20 +919,19 @@ pub fn plan_migration_checked(ops: Vec<MigrationOp>) -> Result<Vec<MigrationOp>,
     graph.topological_sort()
 }
 
-fn preprocess_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+fn split_sequence_owned_by_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut result = Vec::new();
 
     for op in ops {
         match op {
             MigrationOp::CreateSequence(ref seq) if seq.owned_by.is_some() => {
-                let owned_by = seq.owned_by.clone().unwrap();
                 let mut seq_without_owner = seq.clone();
-                seq_without_owner.owned_by = None;
+                let owned_by = seq_without_owner.owned_by.take();
                 result.push(MigrationOp::CreateSequence(seq_without_owner));
                 result.push(MigrationOp::AlterSequence {
                     name: qualified_name(&seq.schema, &seq.name),
                     changes: super::SequenceChanges {
-                        owned_by: Some(Some(owned_by)),
+                        owned_by: Some(owned_by),
                         ..Default::default()
                     },
                 });
@@ -951,7 +943,8 @@ fn preprocess_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result
 }
 
-/// Panics on circular dependency. Prefer [`plan_migration_checked`] for recoverable error handling.
+/// Test-only convenience wrapper that panics on circular dependencies.
+/// Production code should use [`plan_migration_checked`] instead.
 pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     plan_migration_checked(ops).expect("Circular dependency detected in migration operations")
 }
