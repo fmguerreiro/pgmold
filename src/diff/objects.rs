@@ -47,7 +47,7 @@ fn emit_grants_diff(
             object_kind,
             &coords.schema,
             &coords.name,
-            coords.args.clone(),
+            coords.args.as_deref(),
             options.excluded_grant_roles,
         ));
     }
@@ -66,7 +66,7 @@ fn emit_grants_for_new_object(
             object_kind,
             &coords.schema,
             &coords.name,
-            coords.args.clone(),
+            coords.args.as_deref(),
             options.excluded_grant_roles,
         ));
     }

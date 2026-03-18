@@ -58,7 +58,7 @@ pub(super) fn diff_grants_for_object(
     object_kind: GrantObjectKind,
     schema: &str,
     name: &str,
-    args: Option<String>,
+    args: Option<&str>,
     excluded_grant_roles: &HashSet<String>,
 ) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
@@ -74,12 +74,13 @@ pub(super) fn diff_grants_for_object(
         .map(|g| (g.grantee.as_str(), g))
         .collect();
 
+    let args_owned = args.map(str::to_string);
     let revoke = |grantee: &str, privileges: Vec<Privilege>, revoke_grant_option: bool| {
         MigrationOp::RevokePrivileges {
             object_kind,
             schema: schema.to_string(),
             name: name.to_string(),
-            args: args.clone(),
+            args: args_owned.clone(),
             grantee: grantee.to_string(),
             privileges,
             revoke_grant_option,
@@ -90,7 +91,7 @@ pub(super) fn diff_grants_for_object(
             object_kind,
             schema: schema.to_string(),
             name: name.to_string(),
-            args: args.clone(),
+            args: args_owned.clone(),
             grantee: grantee.to_string(),
             privileges,
             with_grant_option,
@@ -155,9 +156,10 @@ pub(super) fn create_grants_for_new_object(
     object_kind: GrantObjectKind,
     schema: &str,
     name: &str,
-    args: Option<String>,
+    args: Option<&str>,
     excluded_grant_roles: &HashSet<String>,
 ) -> Vec<MigrationOp> {
+    let args_owned = args.map(str::to_string);
     grants
         .iter()
         .filter(|grant| !excluded_grant_roles.contains(&grant.grantee.to_lowercase()))
@@ -167,7 +169,7 @@ pub(super) fn create_grants_for_new_object(
                 object_kind,
                 schema: schema.to_string(),
                 name: name.to_string(),
-                args: args.clone(),
+                args: args_owned.clone(),
                 grantee: grant.grantee.clone(),
                 privileges: privs,
                 with_grant_option: grant.with_grant_option,
