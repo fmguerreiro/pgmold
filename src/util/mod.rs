@@ -158,7 +158,7 @@ fn simple_percent_decode(input: &str) -> String {
         raw_bytes.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8(raw_bytes).unwrap_or_else(|_| input.to_string())
+    String::from_utf8(raw_bytes).expect("percent-decoded bytes are valid UTF-8")
 }
 
 /// Strips dollar-quote delimiters from a function body.

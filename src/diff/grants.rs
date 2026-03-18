@@ -4,6 +4,14 @@ use crate::model::{DefaultPrivilege, Grant, Privilege, Schema};
 
 use super::{GrantObjectKind, MigrationOp};
 
+fn nonempty_privileges(set: &BTreeSet<Privilege>) -> Option<Vec<Privilege>> {
+    if set.is_empty() {
+        None
+    } else {
+        Some(set.iter().cloned().collect())
+    }
+}
+
 struct GrantOptionChange {
     revoke_grant_option: Option<Vec<Privilege>>,
     regrant_with_option: Option<Vec<Privilege>>,
@@ -66,6 +74,29 @@ pub(super) fn diff_grants_for_object(
         .map(|g| (g.grantee.as_str(), g))
         .collect();
 
+    let revoke = |grantee: &str, privileges: Vec<Privilege>, revoke_grant_option: bool| {
+        MigrationOp::RevokePrivileges {
+            object_kind,
+            schema: schema.to_string(),
+            name: name.to_string(),
+            args: args.clone(),
+            grantee: grantee.to_string(),
+            privileges,
+            revoke_grant_option,
+        }
+    };
+    let grant = |grantee: &str, privileges: Vec<Privilege>, with_grant_option: bool| {
+        MigrationOp::GrantPrivileges {
+            object_kind,
+            schema: schema.to_string(),
+            name: name.to_string(),
+            args: args.clone(),
+            grantee: grantee.to_string(),
+            privileges,
+            with_grant_option,
+        }
+    };
+
     for (grantee, from_grant) in &from_by_grantee {
         match to_by_grantee.get(grantee) {
             Some(to_grant) => {
@@ -75,15 +106,7 @@ pub(super) fn diff_grants_for_object(
                     .cloned()
                     .collect();
                 if !privs_to_revoke.is_empty() {
-                    ops.push(MigrationOp::RevokePrivileges {
-                        object_kind,
-                        schema: schema.to_string(),
-                        name: name.to_string(),
-                        args: args.clone(),
-                        grantee: grantee.to_string(),
-                        privileges: privs_to_revoke,
-                        revoke_grant_option: false,
-                    });
+                    ops.push(revoke(grantee, privs_to_revoke, false));
                 }
 
                 let privs_to_grant: Vec<Privilege> = to_grant
@@ -92,15 +115,7 @@ pub(super) fn diff_grants_for_object(
                     .cloned()
                     .collect();
                 if !privs_to_grant.is_empty() {
-                    ops.push(MigrationOp::GrantPrivileges {
-                        object_kind,
-                        schema: schema.to_string(),
-                        name: name.to_string(),
-                        args: args.clone(),
-                        grantee: grantee.to_string(),
-                        privileges: privs_to_grant,
-                        with_grant_option: to_grant.with_grant_option,
-                    });
+                    ops.push(grant(grantee, privs_to_grant, to_grant.with_grant_option));
                 }
 
                 let grant_option_change = compute_grant_option_changes(
@@ -110,40 +125,15 @@ pub(super) fn diff_grants_for_object(
                     to_grant.with_grant_option,
                 );
                 if let Some(privs) = grant_option_change.revoke_grant_option {
-                    ops.push(MigrationOp::RevokePrivileges {
-                        object_kind,
-                        schema: schema.to_string(),
-                        name: name.to_string(),
-                        args: args.clone(),
-                        grantee: grantee.to_string(),
-                        privileges: privs,
-                        revoke_grant_option: true,
-                    });
+                    ops.push(revoke(grantee, privs, true));
                 }
                 if let Some(privs) = grant_option_change.regrant_with_option {
-                    ops.push(MigrationOp::GrantPrivileges {
-                        object_kind,
-                        schema: schema.to_string(),
-                        name: name.to_string(),
-                        args: args.clone(),
-                        grantee: grantee.to_string(),
-                        privileges: privs,
-                        with_grant_option: true,
-                    });
+                    ops.push(grant(grantee, privs, true));
                 }
             }
             None => {
-                let privs: Vec<Privilege> = from_grant.privileges.iter().cloned().collect();
-                if !privs.is_empty() {
-                    ops.push(MigrationOp::RevokePrivileges {
-                        object_kind,
-                        schema: schema.to_string(),
-                        name: name.to_string(),
-                        args: args.clone(),
-                        grantee: grantee.to_string(),
-                        privileges: privs,
-                        revoke_grant_option: false,
-                    });
+                if let Some(privs) = nonempty_privileges(&from_grant.privileges) {
+                    ops.push(revoke(grantee, privs, false));
                 }
             }
         }
@@ -151,17 +141,8 @@ pub(super) fn diff_grants_for_object(
 
     for (grantee, to_grant) in &to_by_grantee {
         if !from_by_grantee.contains_key(grantee) {
-            let privs: Vec<Privilege> = to_grant.privileges.iter().cloned().collect();
-            if !privs.is_empty() {
-                ops.push(MigrationOp::GrantPrivileges {
-                    object_kind,
-                    schema: schema.to_string(),
-                    name: name.to_string(),
-                    args: args.clone(),
-                    grantee: grantee.to_string(),
-                    privileges: privs,
-                    with_grant_option: to_grant.with_grant_option,
-                });
+            if let Some(privs) = nonempty_privileges(&to_grant.privileges) {
+                ops.push(grant(grantee, privs, to_grant.with_grant_option));
             }
         }
     }
@@ -181,10 +162,7 @@ pub(super) fn create_grants_for_new_object(
         .iter()
         .filter(|grant| !excluded_grant_roles.contains(&grant.grantee.to_lowercase()))
         .filter_map(|grant| {
-            let privs: Vec<Privilege> = grant.privileges.iter().cloned().collect();
-            if privs.is_empty() {
-                return None;
-            }
+            let privs = nonempty_privileges(&grant.privileges)?;
             Some(MigrationOp::GrantPrivileges {
                 object_kind,
                 schema: schema.to_string(),
@@ -237,8 +215,7 @@ pub(super) fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<Migrati
 
     for (key, from_dp) in &from_map {
         if !to_map.contains_key(key) {
-            let privs: Vec<Privilege> = from_dp.privileges.iter().cloned().collect();
-            if !privs.is_empty() {
+            if let Some(privs) = nonempty_privileges(&from_dp.privileges) {
                 ops.push(emit_dp(from_dp, privs, true));
             }
         }
@@ -276,11 +253,8 @@ pub(super) fn diff_default_privileges(from: &Schema, to: &Schema) -> Vec<Migrati
                     ops.push(emit_dp(to_dp, common_privs, false));
                 }
             }
-        } else {
-            let privs: Vec<Privilege> = to_dp.privileges.iter().cloned().collect();
-            if !privs.is_empty() {
-                ops.push(emit_dp(to_dp, privs, false));
-            }
+        } else if let Some(privs) = nonempty_privileges(&to_dp.privileges) {
+            ops.push(emit_dp(to_dp, privs, false));
         }
     }
 
