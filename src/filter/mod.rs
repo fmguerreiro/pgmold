@@ -110,6 +110,10 @@ impl ObjectType {
     }
 }
 
+fn matches_any(patterns: &[Pattern], names: &[&str]) -> bool {
+    patterns.iter().any(|p| names.iter().any(|n| p.matches(n)))
+}
+
 pub struct Filter {
     include: Vec<Pattern>,
     exclude: Vec<Pattern>,
@@ -143,45 +147,21 @@ impl Filter {
     }
 
     pub fn should_include(&self, name: &str) -> bool {
-        if !self.exclude.is_empty() {
-            for pattern in &self.exclude {
-                if pattern.matches(name) {
-                    return false;
-                }
-            }
-        }
-
-        if !self.include.is_empty() {
-            for pattern in &self.include {
-                if pattern.matches(name) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        true
+        self.check_inclusion(&[name])
     }
 
     pub fn should_include_with_both(&self, qualified_name: &str, unqualified_name: &str) -> bool {
-        if !self.exclude.is_empty() {
-            for pattern in &self.exclude {
-                if pattern.matches(qualified_name) || pattern.matches(unqualified_name) {
-                    return false;
-                }
-            }
-        }
+        self.check_inclusion(&[qualified_name, unqualified_name])
+    }
 
-        if !self.include.is_empty() {
-            for pattern in &self.include {
-                if pattern.matches(qualified_name) || pattern.matches(unqualified_name) {
-                    return true;
-                }
-            }
+    fn check_inclusion(&self, names: &[&str]) -> bool {
+        if matches_any(&self.exclude, names) {
             return false;
         }
-
-        true
+        if self.include.is_empty() {
+            return true;
+        }
+        matches_any(&self.include, names)
     }
 
     pub fn should_include_type(&self, obj_type: ObjectType) -> bool {

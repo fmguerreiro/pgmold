@@ -5,6 +5,14 @@ use crate::parser::{extract_function_references, extract_table_references};
 
 use super::MigrationOp;
 
+fn collect_existing_drops<K, F>(ops: &[MigrationOp], extract: F) -> HashSet<K>
+where
+    K: Eq + std::hash::Hash,
+    F: Fn(&MigrationOp) -> Option<K>,
+{
+    ops.iter().filter_map(extract).collect()
+}
+
 /// Extract tables that have columns with type changes from migration ops.
 /// Returns qualified name strings (schema.name) for use as map keys.
 pub(super) fn tables_with_type_changes(ops: &[MigrationOp]) -> HashSet<String> {
@@ -50,20 +58,13 @@ pub(super) fn generate_fk_ops_for_type_changes(
         return additional_ops;
     }
 
-    let existing_fk_drops: HashSet<(String, String)> = ops
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::DropForeignKey {
-                table,
-                foreign_key_name,
-            } = op
-            {
-                Some((table.to_string(), foreign_key_name.clone()))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let existing_fk_drops: HashSet<(String, String)> = collect_existing_drops(ops, |op| match op {
+        MigrationOp::DropForeignKey {
+            table,
+            foreign_key_name,
+        } => Some((table.to_string(), foreign_key_name.clone())),
+        _ => None,
+    });
 
     for (table_name, table) in &from.tables {
         for fk in &table.foreign_keys {
@@ -115,16 +116,11 @@ pub(super) fn generate_policy_ops_for_type_changes(
         return additional_ops;
     }
 
-    let existing_policy_drops: HashSet<(String, String)> = ops
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::DropPolicy { table, name } = op {
-                Some((table.to_string(), name.clone()))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let existing_policy_drops: HashSet<(String, String)> =
+        collect_existing_drops(ops, |op| match op {
+            MigrationOp::DropPolicy { table, name } => Some((table.to_string(), name.clone())),
+            _ => None,
+        });
 
     for table_name in affected_tables {
         if let Some(from_table) = from.tables.get(table_name) {
@@ -171,21 +167,15 @@ pub(super) fn generate_trigger_ops_for_type_changes(
         return additional_ops;
     }
 
-    let existing_trigger_drops: HashSet<(String, String, String)> = ops
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::DropTrigger {
+    let existing_trigger_drops: HashSet<(String, String, String)> =
+        collect_existing_drops(ops, |op| match op {
+            MigrationOp::DropTrigger {
                 target_schema,
                 target_name,
                 name,
-            } = op
-            {
-                Some((target_schema.clone(), target_name.clone(), name.clone()))
-            } else {
-                None
-            }
-        })
-        .collect();
+            } => Some((target_schema.clone(), target_name.clone(), name.clone())),
+            _ => None,
+        });
 
     for table_name in affected_tables {
         let (table_schema, table_only_name) = parse_qualified_name(table_name);
@@ -235,16 +225,10 @@ pub(super) fn generate_view_ops_for_type_changes(
         return additional_ops;
     }
 
-    let existing_view_drops: HashSet<String> = ops
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::DropView { name, .. } = op {
-                Some(name.clone())
-            } else {
-                None
-            }
-        })
-        .collect();
+    let existing_view_drops: HashSet<String> = collect_existing_drops(ops, |op| match op {
+        MigrationOp::DropView { name, .. } => Some(name.clone()),
+        _ => None,
+    });
 
     for (view_name, view) in &from.views {
         let referenced_tables = extract_table_references(&view.query, &view.schema);
@@ -300,16 +284,11 @@ pub(super) fn generate_policy_ops_for_function_changes(
         return (additional_ops, policies_to_filter);
     }
 
-    let existing_policy_drops: HashSet<(String, String)> = ops
-        .iter()
-        .filter_map(|op| {
-            if let MigrationOp::DropPolicy { table, name } = op {
-                Some((table.to_string(), name.clone()))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let existing_policy_drops: HashSet<(String, String)> =
+        collect_existing_drops(ops, |op| match op {
+            MigrationOp::DropPolicy { table, name } => Some((table.to_string(), name.clone())),
+            _ => None,
+        });
 
     for table in from.tables.values() {
         for policy in &table.policies {

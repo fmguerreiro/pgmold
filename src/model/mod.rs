@@ -1112,7 +1112,10 @@ pub fn normalize_pg_type(type_name: &str) -> String {
         let inner = &trimmed[6..trimmed.len() - 1];
         let normalized_cols: Vec<String> = split_top_level_commas(inner)
             .iter()
-            .map(|col| normalize_table_column(col.trim()))
+            .map(|col| {
+                normalize_table_column(col.trim())
+                    .expect("BUG: unclosed quote in TABLE column definition")
+            })
             .collect();
         return format!("table({})", normalized_cols.join(", "));
     }
@@ -1137,7 +1140,7 @@ pub fn normalize_pg_type(type_name: &str) -> String {
 /// Normalizes a single column definition within a `TABLE(...)` return type.
 /// Quoted names (e.g. `"userId"`) are preserved verbatim; unquoted names are lowercased.
 /// The type portion is recursively normalized via `normalize_pg_type`.
-fn normalize_table_column(col: &str) -> String {
+fn normalize_table_column(col: &str) -> Result<String, String> {
     let (name, rest) = if let Some(stripped) = col.strip_prefix('"') {
         match stripped.find('"') {
             Some(closing) => {
@@ -1152,18 +1155,22 @@ fn normalize_table_column(col: &str) -> String {
                 };
                 (name, col[end..].trim())
             }
-            None => panic!("BUG: unclosed quote in TABLE column definition: {col}"),
+            None => {
+                return Err(format!(
+                    "BUG: unclosed quote in TABLE column definition: {col}"
+                ))
+            }
         }
     } else {
         match col.find(' ') {
             Some(pos) => (col[..pos].to_lowercase(), col[pos..].trim()),
-            None => return col.to_lowercase(),
+            None => return Ok(col.to_lowercase()),
         }
     };
     if rest.is_empty() {
-        name
+        Ok(name)
     } else {
-        format!("{} {}", name, normalize_pg_type(rest))
+        Ok(format!("{} {}", name, normalize_pg_type(rest)))
     }
 }
 
