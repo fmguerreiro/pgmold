@@ -14,7 +14,7 @@ where
 }
 
 /// Extract (table, column) pairs that have type changes from migration ops.
-fn type_changed_columns(ops: &[MigrationOp]) -> HashSet<(String, String)> {
+pub(super) fn type_changed_columns(ops: &[MigrationOp]) -> HashSet<(String, String)> {
     ops.iter()
         .filter_map(|op| {
             if let MigrationOp::AlterColumn {
@@ -32,25 +32,15 @@ fn type_changed_columns(ops: &[MigrationOp]) -> HashSet<(String, String)> {
         .collect()
 }
 
-/// Extract tables that have columns with type changes from migration ops.
-/// Returns qualified name strings (schema.name) for use as map keys.
-pub(super) fn tables_with_type_changes(ops: &[MigrationOp]) -> HashSet<String> {
-    type_changed_columns(ops)
-        .into_iter()
-        .map(|(table, _)| table)
-        .collect()
-}
-
 /// Generate FK drop/add ops for columns with type changes.
 /// PostgreSQL requires FKs to be dropped before altering the type of columns they reference.
 pub(super) fn generate_fk_ops_for_type_changes(
     ops: &[MigrationOp],
     from: &Schema,
     to: &Schema,
+    type_change_columns: &HashSet<(String, String)>,
 ) -> Vec<MigrationOp> {
     let mut additional_ops = Vec::new();
-
-    let type_change_columns = type_changed_columns(ops);
 
     if type_change_columns.is_empty() {
         return additional_ops;
