@@ -10,7 +10,7 @@ pub enum IssueSeverity {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaIssue {
-    pub rule: String,
+    pub rule: &'static str,
     pub severity: IssueSeverity,
     pub message: String,
 }
@@ -48,7 +48,7 @@ fn check_foreign_key_references(schema: &Schema, issues: &mut Vec<SchemaIssue>) 
             let referenced_key = format!("{}.{}", fk.referenced_schema, fk.referenced_table);
             if !table_keys.contains(&referenced_key) {
                 issues.push(SchemaIssue {
-                    rule: "fk_references_missing_table".to_string(),
+                    rule: "fk_references_missing_table",
                     severity: IssueSeverity::Error,
                     message: format!(
                         "Foreign key \"{}\" on \"{}\" references non-existent table \"{}\"",
@@ -62,7 +62,7 @@ fn check_foreign_key_references(schema: &Schema, issues: &mut Vec<SchemaIssue>) 
                 for col in &fk.referenced_columns {
                     if !referenced_table.columns.contains_key(col) {
                         issues.push(SchemaIssue {
-                            rule: "fk_references_missing_column".to_string(),
+                            rule: "fk_references_missing_column",
                             severity: IssueSeverity::Error,
                             message: format!(
                                 "Foreign key \"{}\" on \"{}\" references non-existent column \"{}\".\"{}\"",
@@ -87,7 +87,7 @@ fn check_enum_references(schema: &Schema, issues: &mut Vec<SchemaIssue>) {
                 };
                 if !schema.enums.contains_key(&qualified) {
                     issues.push(SchemaIssue {
-                        rule: "column_references_missing_enum".to_string(),
+                        rule: "column_references_missing_enum",
                         severity: IssueSeverity::Error,
                         message: format!(
                             "Column \"{}\".\"{}\" references non-existent enum \"{}\"",
@@ -107,7 +107,7 @@ fn check_trigger_references(schema: &Schema, issues: &mut Vec<SchemaIssue>) {
         let target_key = format!("{}.{}", trigger.target_schema, trigger.target_name);
         if !table_keys.contains(&target_key) {
             issues.push(SchemaIssue {
-                rule: "trigger_references_missing_table".to_string(),
+                rule: "trigger_references_missing_table",
                 severity: IssueSeverity::Error,
                 message: format!(
                     "Trigger \"{}\" targets non-existent table \"{}\"",
@@ -123,7 +123,7 @@ fn check_trigger_references(schema: &Schema, issues: &mut Vec<SchemaIssue>) {
             .any(|k| k.starts_with(&function_prefix));
         if !function_exists {
             issues.push(SchemaIssue {
-                rule: "trigger_references_missing_function".to_string(),
+                rule: "trigger_references_missing_function",
                 severity: IssueSeverity::Error,
                 message: format!(
                     "Trigger \"{}\" references non-existent function \"{}\".\"{}\"",
@@ -139,7 +139,7 @@ fn check_partition_references(schema: &Schema, issues: &mut Vec<SchemaIssue>) {
         let parent_key = format!("{}.{}", partition.parent_schema, partition.parent_name);
         if !schema.tables.contains_key(&parent_key) {
             issues.push(SchemaIssue {
-                rule: "partition_references_missing_parent".to_string(),
+                rule: "partition_references_missing_parent",
                 severity: IssueSeverity::Error,
                 message: format!(
                     "Partition \"{}\" references non-existent parent table \"{}\"",
@@ -157,7 +157,7 @@ fn check_sequence_owner_references(schema: &Schema, issues: &mut Vec<SchemaIssue
             if let Some(table) = schema.tables.get(&table_key) {
                 if !table.columns.contains_key(&owner.column_name) {
                     issues.push(SchemaIssue {
-                        rule: "sequence_owner_missing_column".to_string(),
+                        rule: "sequence_owner_missing_column",
                         severity: IssueSeverity::Error,
                         message: format!(
                             "Sequence \"{}\" owned by non-existent column \"{}\".\"{}\"",
@@ -167,7 +167,7 @@ fn check_sequence_owner_references(schema: &Schema, issues: &mut Vec<SchemaIssue
                 }
             } else if !schema.partitions.contains_key(&table_key) {
                 issues.push(SchemaIssue {
-                    rule: "sequence_owner_missing_table".to_string(),
+                    rule: "sequence_owner_missing_table",
                     severity: IssueSeverity::Error,
                     message: format!(
                         "Sequence \"{}\" owned by non-existent table \"{}\"",
@@ -235,7 +235,7 @@ fn check_circular_foreign_keys(schema: &Schema, issues: &mut Vec<SchemaIssue>) {
             .map(|(&n, _)| n)
             .collect();
         issues.push(SchemaIssue {
-            rule: "circular_foreign_keys".to_string(),
+            rule: "circular_foreign_keys",
             severity: IssueSeverity::Warning,
             message: format!(
                 "Circular foreign key dependency involving: {}",

@@ -992,7 +992,7 @@ pub async fn run() -> Result<()> {
                                 LintSeverity::Error => "error".to_string(),
                                 LintSeverity::Warning => "warning".to_string(),
                             },
-                            rule: r.rule.clone(),
+                            rule: r.rule.to_string(),
                             message: r.message.clone(),
                         })
                         .collect(),
@@ -1252,7 +1252,7 @@ pub async fn run() -> Result<()> {
                                 IssueSeverity::Error => "error".to_string(),
                                 IssueSeverity::Warning => "warning".to_string(),
                             },
-                            rule: i.rule.clone(),
+                            rule: i.rule.to_string(),
                             message: i.message.clone(),
                         })
                         .collect(),
