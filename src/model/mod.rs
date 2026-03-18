@@ -840,9 +840,9 @@ impl Schema {
             }
         }
 
-        self.apply_pending_owners();
-        self.apply_pending_grants();
-        self.apply_pending_revokes();
+        self.apply_pending_owners(false);
+        self.apply_pending_grants(false);
+        self.apply_pending_revokes(false);
         Ok(())
     }
 
@@ -863,32 +863,29 @@ impl Schema {
             }
         }
 
-        self.apply_pending_owners_partial();
-        self.apply_pending_grants_partial();
-        self.apply_pending_revokes_partial();
+        self.apply_pending_owners(true);
+        self.apply_pending_grants(true);
+        self.apply_pending_revokes(true);
         orphaned
     }
 
     /// Applies pending ownership assignments to their respective objects.
-    /// Ownership for non-existent objects is silently ignored and pending_owners is cleared.
-    fn apply_pending_owners(&mut self) {
+    /// When `keep_unapplied` is true, unapplied items are preserved for cross-file resolution.
+    fn apply_pending_owners(&mut self, keep_unapplied: bool) {
         let pending = std::mem::take(&mut self.pending_owners);
-        for po in pending {
-            self.apply_single_owner(&po);
-        }
-    }
-
-    /// Applies pending ownership assignments, keeping unapplied ones for cross-file resolution.
-    /// Used by finalize_partial() to handle same-file ownership while preserving cross-file ones.
-    fn apply_pending_owners_partial(&mut self) {
-        let pending = std::mem::take(&mut self.pending_owners);
-        let mut unapplied = Vec::new();
-        for po in pending {
-            if !self.apply_single_owner(&po) {
-                unapplied.push(po);
+        if keep_unapplied {
+            let mut unapplied = Vec::new();
+            for po in pending {
+                if !self.apply_single_owner(&po) {
+                    unapplied.push(po);
+                }
+            }
+            self.pending_owners = unapplied;
+        } else {
+            for po in pending {
+                self.apply_single_owner(&po);
             }
         }
-        self.pending_owners = unapplied;
     }
 
     /// Applies a single ownership assignment. Returns true if the object was found.
@@ -948,24 +945,23 @@ impl Schema {
         }
     }
 
-    /// Applies all pending grants. Grants for non-existent objects are silently ignored.
-    fn apply_pending_grants(&mut self) {
+    /// Applies pending grants to their respective objects.
+    /// When `keep_unapplied` is true, unapplied items are preserved for cross-file resolution.
+    fn apply_pending_grants(&mut self, keep_unapplied: bool) {
         let pending = std::mem::take(&mut self.pending_grants);
-        for pg in pending {
-            self.apply_single_grant(&pg);
-        }
-    }
-
-    /// Applies pending grants, keeping unapplied ones for cross-file resolution.
-    fn apply_pending_grants_partial(&mut self) {
-        let pending = std::mem::take(&mut self.pending_grants);
-        let mut unapplied = Vec::new();
-        for pg in pending {
-            if !self.apply_single_grant(&pg) {
-                unapplied.push(pg);
+        if keep_unapplied {
+            let mut unapplied = Vec::new();
+            for pg in pending {
+                if !self.apply_single_grant(&pg) {
+                    unapplied.push(pg);
+                }
+            }
+            self.pending_grants = unapplied;
+        } else {
+            for pg in pending {
+                self.apply_single_grant(&pg);
             }
         }
-        self.pending_grants = unapplied;
     }
 
     /// Resolves the grants vector for a given object type and key.
@@ -1012,24 +1008,23 @@ impl Schema {
         }
     }
 
-    /// Applies all pending revokes. Revokes for non-existent objects are silently ignored.
-    fn apply_pending_revokes(&mut self) {
+    /// Applies pending revokes to their respective objects.
+    /// When `keep_unapplied` is true, unapplied items are preserved for cross-file resolution.
+    fn apply_pending_revokes(&mut self, keep_unapplied: bool) {
         let pending = std::mem::take(&mut self.pending_revokes);
-        for pr in pending {
-            self.apply_single_revoke(&pr);
-        }
-    }
-
-    /// Applies pending revokes, keeping unapplied ones for cross-file resolution.
-    fn apply_pending_revokes_partial(&mut self) {
-        let pending = std::mem::take(&mut self.pending_revokes);
-        let mut unapplied = Vec::new();
-        for pr in pending {
-            if !self.apply_single_revoke(&pr) {
-                unapplied.push(pr);
+        if keep_unapplied {
+            let mut unapplied = Vec::new();
+            for pr in pending {
+                if !self.apply_single_revoke(&pr) {
+                    unapplied.push(pr);
+                }
+            }
+            self.pending_revokes = unapplied;
+        } else {
+            for pr in pending {
+                self.apply_single_revoke(&pr);
             }
         }
-        self.pending_revokes = unapplied;
     }
 
     /// Applies a single pending revoke. Returns true if the object was found.
