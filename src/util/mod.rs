@@ -790,7 +790,7 @@ fn normalize_order_by(order_by: &sqlparser::ast::OrderBy) -> sqlparser::ast::Ord
                         .iter()
                         .map(|e| sqlparser::ast::OrderByExpr {
                             expr: normalize_expr(&e.expr),
-                            options: e.options.clone(),
+                            options: e.options,
                             with_fill: e.with_fill.clone(),
                         })
                         .collect(),
