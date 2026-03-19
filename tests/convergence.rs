@@ -78,6 +78,7 @@ async fn table_with_indexes() {
         CREATE UNIQUE INDEX products_sku_idx ON public.products (sku);
         CREATE INDEX products_category_idx ON public.products (category);
         CREATE INDEX products_active_idx ON public.products (id) WHERE (is_deleted = FALSE);
+        CREATE INDEX products_name_lower_idx ON public.products (lower(name));
         "#,
     )
     .await;
@@ -209,7 +210,8 @@ async fn view() {
             department,
             salary
         FROM public.employees
-        WHERE hired_at IS NOT NULL;
+        WHERE hired_at IS NOT NULL
+        ORDER BY salary DESC;
         "#,
     )
     .await;
@@ -229,12 +231,10 @@ async fn materialized_view() {
 
         CREATE MATERIALIZED VIEW public.event_counts_mv AS
         SELECT
-            id,
             event_type,
-            user_id,
-            occurred_at
+            COUNT(*) AS event_count
         FROM public.events
-        WHERE user_id > 0;
+        GROUP BY event_type;
         "#,
     )
     .await;
@@ -285,6 +285,9 @@ async fn sequence() {
         r#"
         CREATE SEQUENCE public.invoice_number_seq
             INCREMENT BY 1
+            START WITH 1000
+            MINVALUE 1
+            MAXVALUE 999999999
             CACHE 10;
         "#,
     )
@@ -369,7 +372,8 @@ async fn grants() {
             PRIMARY KEY (id)
         );
 
-        GRANT SELECT, INSERT ON TABLE public.reports TO readonly_role;
+        GRANT SELECT ON TABLE public.reports TO readonly_role;
+        GRANT INSERT ON TABLE public.reports TO readonly_role;
         "#,
     )
     .unwrap();
@@ -543,11 +547,11 @@ async fn complex_combined() {
 
         CREATE INDEX tasks_workspace_idx ON public.tasks (workspace_id);
         CREATE INDEX tasks_status_idx ON public.tasks (status);
-        CREATE INDEX tasks_open_idx ON public.tasks (workspace_id, due_date) WHERE (status <> 'done' AND status <> 'cancelled');
+        CREATE INDEX tasks_open_idx ON public.tasks (workspace_id, due_date) WHERE (status NOT IN ('done', 'cancelled'));
 
         CREATE FUNCTION public.count_tasks_by_status(
             p_workspace_id BIGINT,
-            p_status       TEXT
+            p_status       public.task_status
         )
         RETURNS BIGINT
         LANGUAGE plpgsql
@@ -559,7 +563,7 @@ async fn complex_combined() {
             SELECT COUNT(*) INTO v_count
             FROM public.tasks
             WHERE workspace_id = p_workspace_id
-              AND status::TEXT = p_status;
+              AND status = p_status;
             RETURN v_count;
         END;
         $$;
@@ -574,7 +578,7 @@ async fn complex_combined() {
             w.name AS workspace_name
         FROM public.tasks t
         JOIN public.workspaces w ON w.id = t.workspace_id
-        WHERE t.status <> 'done' AND t.status <> 'cancelled';
+        WHERE t.status NOT IN ('done', 'cancelled');
 
         CREATE FUNCTION public.tasks_audit_fn()
         RETURNS TRIGGER

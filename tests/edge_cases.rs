@@ -170,7 +170,13 @@ fn all_common_column_types_parse_without_crash() {
             col_json        JSON,
             col_inet        INET,
             col_cidr        CIDR,
-            col_macaddr     MACADDR
+            col_macaddr     MACADDR,
+            col_time        TIME,
+            col_interval    INTERVAL,
+            col_bytea       BYTEA,
+            col_char        CHAR(1),
+            col_point       POINT,
+            col_xml         XML
         );
     "#;
 
