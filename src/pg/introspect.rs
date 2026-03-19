@@ -919,12 +919,12 @@ async fn introspect_all_indexes(
             i.relname as index_name,
             ix.indisunique,
             am.amname,
-            (SELECT array_agg(
+            COALESCE((SELECT array_agg(
                 CASE WHEN ix.indkey[k] = 0
                      THEN pg_get_indexdef(ix.indexrelid, k, false)
                      ELSE (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = t.oid AND a.attnum = ix.indkey[k])
                 END ORDER BY k
-            ) FROM generate_series(1, array_length(ix.indkey, 1)) AS k) as columns,
+            ) FROM generate_series(1, array_length(ix.indkey, 1)) AS k), ARRAY[]::text[]) as columns,
             pg_get_expr(ix.indpred, ix.indrelid) as predicate,
             (uc.oid IS NOT NULL) AS is_constraint
         FROM pg_index ix
