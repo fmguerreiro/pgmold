@@ -256,7 +256,6 @@ async fn dump_empty_database() {
 // ── Drift command ─────────────────────────────────────────────────────────────
 
 #[tokio::test]
-#[ignore = "drift fingerprint normalization gap: 0 diff ops but different hashes (pgmold-216)"]
 async fn drift_no_drift_exit_zero() {
     let (_container, url) = setup_postgres().await;
 
