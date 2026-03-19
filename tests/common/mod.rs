@@ -17,6 +17,7 @@ pub use tempfile;
 pub use tempfile::NamedTempFile;
 pub use testcontainers::runners::AsyncRunner;
 pub use testcontainers::ContainerAsync;
+pub use testcontainers::ImageExt;
 pub use testcontainers_modules::postgres::Postgres;
 
 pub fn write_sql_temp_file(sql: &str) -> NamedTempFile {
@@ -27,7 +28,11 @@ pub fn write_sql_temp_file(sql: &str) -> NamedTempFile {
 
 #[allow(deprecated)]
 pub async fn setup_postgres() -> (ContainerAsync<Postgres>, String) {
-    let container = Postgres::default().start().await.unwrap();
+    let pg = Postgres::default();
+    let container = match std::env::var("PGMOLD_TEST_PG_VERSION") {
+        Ok(version) => pg.with_tag(version).start().await.unwrap(),
+        Err(_) => pg.start().await.unwrap(),
+    };
     let port = container.get_host_port_ipv4(5432).await.unwrap();
     let url = format!("postgres://postgres:postgres@localhost:{port}/postgres");
     (container, url)

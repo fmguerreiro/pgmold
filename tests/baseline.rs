@@ -7,10 +7,15 @@ use std::fs;
 use tempfile::TempDir;
 use testcontainers::runners::AsyncRunner;
 use testcontainers::ContainerAsync;
+use testcontainers::ImageExt;
 use testcontainers_modules::postgres::Postgres;
 
 async fn setup_postgres() -> (ContainerAsync<Postgres>, String) {
-    let container = Postgres::default().start().await.unwrap();
+    let pg = Postgres::default();
+    let container = match std::env::var("PGMOLD_TEST_PG_VERSION") {
+        Ok(version) => pg.with_tag(version).start().await.unwrap(),
+        Err(_) => pg.start().await.unwrap(),
+    };
     let port = container.get_host_port_ipv4(5432).await.unwrap();
     let url = format!("postgres://postgres:postgres@localhost:{port}/postgres");
     (container, url)

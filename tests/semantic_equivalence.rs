@@ -5,10 +5,15 @@ use pgmold::parser::parse_sql_string;
 use pgmold::pg::introspect::introspect_schema;
 use pgmold::pg::PgConnection;
 use testcontainers::runners::AsyncRunner;
+use testcontainers::ImageExt;
 use testcontainers_modules::postgres::Postgres;
 
 async fn setup_postgres() -> (testcontainers::ContainerAsync<Postgres>, String) {
-    let container = Postgres::default().start().await.unwrap();
+    let pg = Postgres::default();
+    let container = match std::env::var("PGMOLD_TEST_PG_VERSION") {
+        Ok(version) => pg.with_tag(version).start().await.unwrap(),
+        Err(_) => pg.start().await.unwrap(),
+    };
     let port = container.get_host_port_ipv4(5432).await.unwrap();
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     (container, url)
