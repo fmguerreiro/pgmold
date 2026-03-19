@@ -1,17 +1,20 @@
-#![allow(deprecated)]
-
 mod common;
 use common::*;
 
 use assert_cmd::Command;
 
+#[allow(deprecated)]
+fn pgmold() -> Command {
+    Command::cargo_bin("pgmold").unwrap()
+}
+
 // ── Flag validation (no Docker needed) ──────────────────────────────────────
 
 #[test]
 fn no_args_shows_help() {
-    let output = Command::cargo_bin("pgmold").unwrap().output().unwrap();
+    let output = pgmold().output().unwrap();
 
-    let stderr = String::from_utf8(output.stderr.clone()).unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("Usage") || stderr.contains("pgmold"),
         "expected help text in stderr, got: {stderr:?}"
@@ -21,8 +24,7 @@ fn no_args_shows_help() {
 
 #[test]
 fn plan_requires_schema_flag() {
-    let output = Command::cargo_bin("pgmold")
-        .unwrap()
+    let output = pgmold()
         .args(["plan", "--database", "db:postgres://localhost/db"])
         .output()
         .unwrap();
@@ -38,8 +40,7 @@ fn plan_requires_database_flag() {
     let schema_file = write_sql_temp_file("-- empty schema");
     let schema_arg = format!("sql:{}", schema_file.path().display());
 
-    let output = Command::cargo_bin("pgmold")
-        .unwrap()
+    let output = pgmold()
         .args(["plan", "--schema", &schema_arg])
         .env_remove("PGMOLD_DATABASE_URL")
         .output()
@@ -53,11 +54,7 @@ fn plan_requires_database_flag() {
 
 #[test]
 fn unknown_subcommand_errors() {
-    let output = Command::cargo_bin("pgmold")
-        .unwrap()
-        .args(["foobar"])
-        .output()
-        .unwrap();
+    let output = pgmold().args(["foobar"]).output().unwrap();
 
     assert!(
         !output.status.success(),
@@ -67,21 +64,21 @@ fn unknown_subcommand_errors() {
 
 #[test]
 fn version_flag_shows_version() {
-    let output = Command::cargo_bin("pgmold")
-        .unwrap()
-        .args(["--version"])
-        .output()
-        .unwrap();
+    let output = pgmold().args(["--version"]).output().unwrap();
 
     assert!(
         output.status.success(),
         "expected --version to exit 0, got: {}",
         output.status
     );
-    let stdout = String::from_utf8(output.stdout.clone()).unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("pgmold"),
         "expected version string to contain 'pgmold', got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains(env!("CARGO_PKG_VERSION")),
+        "expected version string to contain version number, got: {stdout:?}"
     );
 }
 
@@ -94,8 +91,7 @@ async fn plan_empty_database_empty_schema() {
     let schema_arg = format!("sql:{}", schema_file.path().display());
     let database_arg = format!("db:{url}");
 
-    let output = Command::cargo_bin("pgmold")
-        .unwrap()
+    let output = pgmold()
         .args(["plan", "--schema", &schema_arg, "--database", &database_arg])
         .output()
         .unwrap();
@@ -105,7 +101,7 @@ async fn plan_empty_database_empty_schema() {
         "expected exit 0 for empty schema against empty DB, got: {}",
         output.status
     );
-    let stdout = String::from_utf8(output.stdout.clone()).unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("No changes required"),
         "expected 'No changes required' in output, got: {stdout:?}"
@@ -121,8 +117,7 @@ async fn plan_creates_table() {
     let schema_arg = format!("sql:{}", schema_file.path().display());
     let database_arg = format!("db:{url}");
 
-    let output = Command::cargo_bin("pgmold")
-        .unwrap()
+    let output = pgmold()
         .args(["plan", "--schema", &schema_arg, "--database", &database_arg])
         .output()
         .unwrap();
@@ -132,7 +127,7 @@ async fn plan_creates_table() {
         "expected exit 0 for plan with new table, got: {}",
         output.status
     );
-    let stdout = String::from_utf8(output.stdout.clone()).unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("CREATE TABLE"),
         "expected 'CREATE TABLE' in plan output, got: {stdout:?}"
@@ -148,8 +143,7 @@ async fn plan_json_output_valid() {
     let schema_arg = format!("sql:{}", schema_file.path().display());
     let database_arg = format!("db:{url}");
 
-    let output = Command::cargo_bin("pgmold")
-        .unwrap()
+    let output = pgmold()
         .args([
             "plan",
             "--json",
@@ -166,17 +160,24 @@ async fn plan_json_output_valid() {
         "expected exit 0 for plan --json, got: {}",
         output.status
     );
-    let stdout = String::from_utf8(output.stdout.clone()).unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
         .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}\nstdout was: {stdout:?}"));
 
-    assert!(
-        parsed["statements"].is_array(),
-        "expected 'statements' array in JSON output, got: {parsed}"
+    let statements = parsed["statements"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected 'statements' array in JSON output, got: {parsed}"));
+    let count = parsed["statement_count"].as_u64().unwrap_or_else(|| {
+        panic!("expected 'statement_count' number in JSON output, got: {parsed}")
+    });
+    assert_eq!(
+        count as usize,
+        statements.len(),
+        "statement_count should match statements array length"
     );
     assert!(
-        parsed["statement_count"].is_number(),
-        "expected 'statement_count' number in JSON output, got: {parsed}"
+        !statements.is_empty(),
+        "expected at least one statement for CREATE TABLE"
     );
 }
 
@@ -190,8 +191,7 @@ fn diff_identical_schemas() {
     let from_arg = format!("sql:{}", schema_a.path().display());
     let to_arg = format!("sql:{}", schema_b.path().display());
 
-    let output = Command::cargo_bin("pgmold")
-        .unwrap()
+    let output = pgmold()
         .args(["diff", "--from", &from_arg, "--to", &to_arg])
         .output()
         .unwrap();
@@ -201,7 +201,7 @@ fn diff_identical_schemas() {
         "expected exit 0 for diff of identical schemas, got: {}",
         output.status
     );
-    let stdout = String::from_utf8(output.stdout.clone()).unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("No differences found"),
         "expected 'No differences found' in output, got: {stdout:?}"
@@ -217,8 +217,7 @@ fn diff_shows_changes() {
     let from_arg = format!("sql:{}", schema_a.path().display());
     let to_arg = format!("sql:{}", schema_b.path().display());
 
-    let output = Command::cargo_bin("pgmold")
-        .unwrap()
+    let output = pgmold()
         .args(["diff", "--from", &from_arg, "--to", &to_arg])
         .output()
         .unwrap();
@@ -228,7 +227,7 @@ fn diff_shows_changes() {
         "expected exit 0 for diff showing changes, got: {}",
         output.status
     );
-    let stdout = String::from_utf8(output.stdout.clone()).unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("ALTER TABLE") || stdout.contains("ADD COLUMN"),
         "expected ALTER TABLE or ADD COLUMN in diff output, got: {stdout:?}"
@@ -242,8 +241,7 @@ async fn dump_empty_database() {
     let (_container, url) = setup_postgres().await;
     let database_arg = format!("db:{url}");
 
-    let output = Command::cargo_bin("pgmold")
-        .unwrap()
+    let output = pgmold()
         .args(["dump", "--database", &database_arg])
         .output()
         .unwrap();
@@ -268,8 +266,7 @@ async fn drift_no_drift_exit_zero() {
     let schema_arg = format!("sql:{}", schema_file.path().display());
     let database_arg = format!("db:{url}");
 
-    let apply_output = Command::cargo_bin("pgmold")
-        .unwrap()
+    let apply_output = pgmold()
         .args([
             "apply",
             "--schema",
@@ -285,8 +282,7 @@ async fn drift_no_drift_exit_zero() {
         String::from_utf8_lossy(&apply_output.stderr)
     );
 
-    let output = Command::cargo_bin("pgmold")
-        .unwrap()
+    let output = pgmold()
         .args([
             "drift",
             "--schema",
@@ -316,8 +312,7 @@ async fn drift_detected_exit_nonzero() {
     let schema_arg = format!("sql:{}", schema_file.path().display());
     let database_arg = format!("db:{url}");
 
-    let output = Command::cargo_bin("pgmold")
-        .unwrap()
+    let output = pgmold()
         .args([
             "drift",
             "--schema",

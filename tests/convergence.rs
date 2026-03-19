@@ -3,7 +3,7 @@ use common::*;
 
 async fn apply_and_assert_convergence(
     connection: &PgConnection,
-    target_schema: &Schema,
+    target: &Schema,
     schemas: &[&str],
 ) {
     let schema_names: Vec<String> = schemas.iter().map(|s| s.to_string()).collect();
@@ -12,9 +12,7 @@ async fn apply_and_assert_convergence(
         .await
         .unwrap();
 
-    let ops = compute_diff(&empty, target_schema);
-    let planned = plan_migration(ops);
-    let sql = generate_sql(&planned);
+    let sql = generate_sql(&plan_migration(compute_diff(&empty, target)));
 
     for stmt in &sql {
         sqlx::query(stmt)
@@ -27,7 +25,7 @@ async fn apply_and_assert_convergence(
         .await
         .unwrap();
 
-    let second_diff = compute_diff(&after, target_schema);
+    let second_diff = compute_diff(&after, target);
 
     assert!(
         second_diff.is_empty(),
@@ -37,12 +35,17 @@ async fn apply_and_assert_convergence(
     );
 }
 
-#[tokio::test]
-async fn table_with_columns_and_pk() {
+async fn assert_convergence_public(schema_sql: &str) {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
+    let target = parse_sql_string(schema_sql).unwrap();
+    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+}
 
-    let schema_sql = r#"
+#[tokio::test]
+async fn table_with_columns_and_pk() {
+    assert_convergence_public(
+        r#"
         CREATE TABLE public.users (
             id          BIGSERIAL           NOT NULL,
             email       VARCHAR(255)        NOT NULL,
@@ -53,18 +56,15 @@ async fn table_with_columns_and_pk() {
             created_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
             PRIMARY KEY (id)
         );
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn table_with_indexes() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE TABLE public.products (
             id          BIGSERIAL NOT NULL,
             sku         TEXT      NOT NULL,
@@ -78,18 +78,15 @@ async fn table_with_indexes() {
         CREATE UNIQUE INDEX products_sku_idx ON public.products (sku);
         CREATE INDEX products_category_idx ON public.products (category);
         CREATE INDEX products_active_idx ON public.products (id) WHERE (is_deleted = FALSE);
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn table_with_foreign_keys() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE TABLE public.authors (
             id   BIGSERIAL NOT NULL,
             name TEXT      NOT NULL,
@@ -105,18 +102,15 @@ async fn table_with_foreign_keys() {
             CONSTRAINT articles_author_id_fkey
                 FOREIGN KEY (author_id) REFERENCES public.authors (id) ON DELETE CASCADE
         );
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn table_with_check_constraints() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE TABLE public.orders (
             id       BIGSERIAL      NOT NULL,
             quantity INTEGER        NOT NULL,
@@ -126,18 +120,15 @@ async fn table_with_check_constraints() {
             CONSTRAINT orders_quantity_positive CHECK (quantity > 0),
             CONSTRAINT orders_total_non_negative CHECK (total >= 0)
         );
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn enum_type() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE TYPE public.order_status AS ENUM (
             'pending',
             'processing',
@@ -146,18 +137,15 @@ async fn enum_type() {
             'cancelled',
             'refunded'
         );
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn function_plpgsql() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE FUNCTION public.get_user_display_name(
             p_user_id BIGINT,
             p_fallback TEXT DEFAULT 'Unknown'
@@ -171,6 +159,7 @@ async fn function_plpgsql() {
         DECLARE
             v_name TEXT;
         BEGIN
+            -- references non-existent table; plpgsql validates at call time, not creation
             SELECT username INTO v_name FROM public.profile WHERE id = p_user_id;
             IF v_name IS NULL THEN
                 RETURN p_fallback;
@@ -178,18 +167,15 @@ async fn function_plpgsql() {
             RETURN v_name;
         END;
         $$;
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn function_sql() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE FUNCTION public.calculate_discount(p_price NUMERIC, p_rate NUMERIC)
         RETURNS NUMERIC
         LANGUAGE sql
@@ -197,18 +183,15 @@ async fn function_sql() {
         AS $$
             SELECT p_price * (1 - p_rate);
         $$;
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn view() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE TABLE public.employees (
             id         BIGSERIAL NOT NULL,
             first_name TEXT      NOT NULL,
@@ -227,18 +210,15 @@ async fn view() {
             salary
         FROM public.employees
         WHERE hired_at IS NOT NULL;
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn materialized_view() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE TABLE public.events (
             id         BIGSERIAL NOT NULL,
             event_type TEXT      NOT NULL,
@@ -255,18 +235,15 @@ async fn materialized_view() {
             occurred_at
         FROM public.events
         WHERE user_id > 0;
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn trigger() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE TABLE public.audit_log (
             id         BIGSERIAL NOT NULL,
             table_name TEXT      NOT NULL,
@@ -297,38 +274,27 @@ async fn trigger() {
         AFTER INSERT OR UPDATE ON public.customers
         FOR EACH ROW
         EXECUTE FUNCTION public.customers_audit_fn();
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn sequence() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE SEQUENCE public.invoice_number_seq
             INCREMENT BY 1
             CACHE 10;
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn policy() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    sqlx::query("CREATE ROLE app_user NOLOGIN")
-        .execute(connection.pool())
-        .await
-        .unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE TABLE public.documents (
             id      BIGSERIAL NOT NULL,
             owner   TEXT      NOT NULL DEFAULT current_user,
@@ -347,32 +313,26 @@ async fn policy() {
         FOR INSERT
         TO public
         WITH CHECK (owner = current_user);
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn domain() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE DOMAIN public.positive_integer AS INTEGER
             CONSTRAINT positive_integer_check CHECK (VALUE > 0);
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn partition() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE TABLE public.transactions (
             id              BIGSERIAL NOT NULL,
             amount          NUMERIC(12, 2) NOT NULL,
@@ -385,10 +345,9 @@ async fn partition() {
 
         CREATE TABLE public.transactions_2025 PARTITION OF public.transactions
             FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -401,7 +360,8 @@ async fn grants() {
         .await
         .unwrap();
 
-    let schema_sql = r#"
+    let target = parse_sql_string(
+        r#"
         CREATE TABLE public.reports (
             id      BIGSERIAL NOT NULL,
             title   TEXT      NOT NULL,
@@ -410,23 +370,21 @@ async fn grants() {
         );
 
         GRANT SELECT, INSERT ON TABLE public.reports TO readonly_role;
-    "#;
+        "#,
+    )
+    .unwrap();
 
-    let target = parse_sql_string(schema_sql).unwrap();
+    let no_dropped_roles = std::collections::HashSet::new();
+    let diff_with_grants = |from: &Schema, to: &Schema| -> Vec<MigrationOp> {
+        pgmold::diff::compute_diff_with_flags(from, to, false, true, &no_dropped_roles)
+    };
 
     let empty = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
 
-    let ops = pgmold::diff::compute_diff_with_flags(
-        &empty,
-        &target,
-        false,
-        true,
-        &std::collections::HashSet::new(),
-    );
-    let planned = plan_migration(ops);
-    let sql = generate_sql(&planned);
+    let ops = diff_with_grants(&empty, &target);
+    let sql = generate_sql(&plan_migration(ops));
 
     for stmt in &sql {
         sqlx::query(stmt)
@@ -439,15 +397,8 @@ async fn grants() {
         .await
         .unwrap();
 
-    let second_diff = pgmold::diff::compute_diff_with_flags(
-        &after,
-        &target,
-        false,
-        true,
-        &std::collections::HashSet::new(),
-    );
-    let grant_ops: Vec<_> = second_diff
-        .iter()
+    let remaining_grant_ops: Vec<_> = diff_with_grants(&after, &target)
+        .into_iter()
         .filter(|op| {
             matches!(
                 op,
@@ -457,10 +408,10 @@ async fn grants() {
         .collect();
 
     assert!(
-        grant_ops.is_empty(),
+        remaining_grant_ops.is_empty(),
         "Expected zero grant ops after apply, but got {} op(s): {:?}",
-        grant_ops.len(),
-        grant_ops
+        remaining_grant_ops.len(),
+        remaining_grant_ops
     );
 }
 
@@ -469,30 +420,28 @@ async fn default_privileges() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query("CREATE ROLE db_admin NOLOGIN")
-        .execute(connection.pool())
-        .await
-        .unwrap();
+    for role in ["db_admin", "app_reader"] {
+        sqlx::query(&format!("CREATE ROLE {role} NOLOGIN"))
+            .execute(connection.pool())
+            .await
+            .unwrap();
+    }
 
-    sqlx::query("CREATE ROLE app_reader NOLOGIN")
-        .execute(connection.pool())
-        .await
-        .unwrap();
-
-    let schema_sql = r#"
+    let target = parse_sql_string(
+        r#"
         ALTER DEFAULT PRIVILEGES FOR ROLE db_admin IN SCHEMA public
         GRANT SELECT ON TABLES TO app_reader;
-    "#;
+        "#,
+    )
+    .unwrap();
 
-    let target = parse_sql_string(schema_sql).unwrap();
+    let schema_names = vec!["public".to_string()];
 
-    let empty = introspect_schema(&connection, &["public".to_string()], false)
+    let empty = introspect_schema(&connection, &schema_names, false)
         .await
         .unwrap();
 
-    let ops = compute_diff(&empty, &target);
-    let planned = plan_migration(ops);
-    let sql = generate_sql(&planned);
+    let sql = generate_sql(&plan_migration(compute_diff(&empty, &target)));
 
     for stmt in &sql {
         sqlx::query(stmt)
@@ -501,21 +450,20 @@ async fn default_privileges() {
             .unwrap_or_else(|e| panic!("Failed to execute: {stmt}\nError: {e}"));
     }
 
-    let after = introspect_schema(&connection, &["public".to_string()], false)
+    let after = introspect_schema(&connection, &schema_names, false)
         .await
         .unwrap();
 
-    let second_diff = compute_diff(&after, &target);
-    let adp_ops: Vec<_> = second_diff
-        .iter()
+    let remaining: Vec<_> = compute_diff(&after, &target)
+        .into_iter()
         .filter(|op| matches!(op, MigrationOp::AlterDefaultPrivileges { .. }))
         .collect();
 
     assert!(
-        adp_ops.is_empty(),
+        remaining.is_empty(),
         "Expected zero AlterDefaultPrivileges ops after apply, but got {} op(s): {:?}",
-        adp_ops.len(),
-        adp_ops
+        remaining.len(),
+        remaining
     );
 }
 
@@ -524,16 +472,15 @@ async fn multi_schema() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query("CREATE SCHEMA auth")
-        .execute(connection.pool())
-        .await
-        .unwrap();
-    sqlx::query("CREATE SCHEMA api")
-        .execute(connection.pool())
-        .await
-        .unwrap();
+    for schema in ["auth", "api"] {
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(connection.pool())
+            .await
+            .unwrap();
+    }
 
-    let schema_sql = r#"
+    let target = parse_sql_string(
+        r#"
         CREATE SCHEMA IF NOT EXISTS auth;
         CREATE SCHEMA IF NOT EXISTS api;
 
@@ -555,23 +502,17 @@ async fn multi_schema() {
         );
 
         CREATE INDEX profiles_principal_idx ON api.profiles (principal_id);
-    "#;
+        "#,
+    )
+    .unwrap();
 
-    let target = parse_sql_string(schema_sql).unwrap();
     apply_and_assert_convergence(&connection, &target, &["auth", "api"]).await;
 }
 
 #[tokio::test]
 async fn complex_combined() {
-    let (_container, url) = setup_postgres().await;
-    let connection = PgConnection::new(&url).await.unwrap();
-
-    sqlx::query("CREATE ROLE web_user NOLOGIN")
-        .execute(connection.pool())
-        .await
-        .unwrap();
-
-    let schema_sql = r#"
+    assert_convergence_public(
+        r#"
         CREATE TYPE public.task_status AS ENUM (
             'todo',
             'in_progress',
@@ -655,8 +596,7 @@ async fn complex_combined() {
         FOR ALL
         TO public
         USING (workspace_id IS NOT NULL);
-    "#;
-
-    let target = parse_sql_string(schema_sql).unwrap();
-    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+        "#,
+    )
+    .await;
 }

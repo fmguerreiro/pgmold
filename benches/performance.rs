@@ -21,7 +21,8 @@ fn generate_schema_sql(table_count: usize) -> String {
         if i > 0 {
             let prev = i - 1;
             sql.push_str(&format!(
-                "ALTER TABLE public.table_{i} ADD CONSTRAINT table_{i}_ref_fkey FOREIGN KEY (id) REFERENCES public.table_{prev} (id);\n\n"
+                "ALTER TABLE public.table_{i} ADD COLUMN ref_id INTEGER;\n\
+                 ALTER TABLE public.table_{i} ADD CONSTRAINT table_{i}_ref_fkey FOREIGN KEY (ref_id) REFERENCES public.table_{prev} (id);\n\n"
             ));
         }
     }

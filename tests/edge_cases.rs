@@ -262,6 +262,10 @@ fn exclude_all_types_produces_empty_diff() {
     let all_types: Vec<ObjectType> = ObjectType::all().to_vec();
     let filter = Filter::new(&[], &[], &[], &all_types).unwrap();
     let filtered = filter_schema(&schema, &filter);
+    assert!(
+        filtered.tables.is_empty(),
+        "all types excluded should produce empty tables"
+    );
 
     let ops = compute_diff(&Schema::new(), &filtered);
     assert!(
@@ -311,7 +315,12 @@ async fn schema_with_only_extension_does_not_crash() {
         .unwrap();
 
     let target = parse_sql_string("CREATE EXTENSION IF NOT EXISTS pgcrypto;").unwrap();
-    let _ops = compute_diff(&current, &target);
+    let ops = compute_diff(&current, &target);
+    assert!(
+        ops.iter()
+            .all(|op| !matches!(op, MigrationOp::CreateExtension(_))),
+        "extension already applied should not appear in diff"
+    );
 }
 
 #[tokio::test]
@@ -337,17 +346,13 @@ async fn cross_schema_fk_ordering_creates_referenced_table_first() {
     "#;
 
     let target = parse_sql_string(sql).unwrap();
-    let current = introspect_schema(
-        &connection,
-        &["schema_a".to_string(), "schema_b".to_string()],
-        false,
-    )
-    .await
-    .unwrap();
+    let schema_names = vec!["schema_a".to_string(), "schema_b".to_string()];
 
-    let ops = compute_diff(&current, &target);
-    let planned = plan_migration(ops);
-    let sql_stmts = generate_sql(&planned);
+    let current = introspect_schema(&connection, &schema_names, false)
+        .await
+        .unwrap();
+
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
 
     for stmt in &sql_stmts {
         sqlx::query(stmt)
@@ -356,13 +361,9 @@ async fn cross_schema_fk_ordering_creates_referenced_table_first() {
             .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
     }
 
-    let final_schema = introspect_schema(
-        &connection,
-        &["schema_a".to_string(), "schema_b".to_string()],
-        false,
-    )
-    .await
-    .unwrap();
+    let final_schema = introspect_schema(&connection, &schema_names, false)
+        .await
+        .unwrap();
 
     assert!(final_schema.tables.contains_key("schema_a.items"));
     assert!(final_schema.tables.contains_key("schema_b.orders"));

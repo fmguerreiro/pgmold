@@ -5,6 +5,11 @@ use pgmold::filter::Filter;
 use pgmold::model::QualifiedName;
 use pgmold::provider::load_schema_from_sources;
 
+const NON_DESTRUCTIVE_LINT: LintOptions = LintOptions {
+    allow_destructive: false,
+    is_production: false,
+};
+
 #[test]
 fn invalid_sql_produces_parse_error() {
     let result = parse_sql_string("NOT VALID SQL AT ALL");
@@ -25,9 +30,8 @@ fn duplicate_table_in_sql_last_wins() {
         "CREATE TABLE public.users (id serial PRIMARY KEY);
          CREATE TABLE public.users (id serial PRIMARY KEY, name text);",
     );
-    if let Ok(schema) = result {
-        assert!(schema.tables.contains_key("public.users"));
-    }
+    let schema = result.unwrap();
+    assert!(schema.tables.contains_key("public.users"));
 }
 
 #[test]
@@ -60,11 +64,7 @@ fn circular_fk_does_not_panic() {
 #[test]
 fn destructive_drop_table_blocked_without_flag() {
     let ops = vec![MigrationOp::DropTable("public.old_table".to_string())];
-    let options = LintOptions {
-        allow_destructive: false,
-        is_production: false,
-    };
-    let results = lint_migration_plan(&ops, &options);
+    let results = lint_migration_plan(&ops, &NON_DESTRUCTIVE_LINT);
     assert!(has_errors(&results));
     assert!(results.iter().any(|r| r.rule == "deny_drop_table"));
 }
@@ -75,11 +75,7 @@ fn destructive_drop_column_blocked_without_flag() {
         table: QualifiedName::new("public", "users"),
         column: "email".to_string(),
     }];
-    let options = LintOptions {
-        allow_destructive: false,
-        is_production: false,
-    };
-    let results = lint_migration_plan(&ops, &options);
+    let results = lint_migration_plan(&ops, &NON_DESTRUCTIVE_LINT);
     assert!(has_errors(&results));
     assert!(results.iter().any(|r| r.rule == "deny_drop_column"));
 }
@@ -90,11 +86,7 @@ fn drop_index_allowed_without_flag() {
         table: QualifiedName::new("public", "users"),
         index_name: "users_email_idx".to_string(),
     }];
-    let options = LintOptions {
-        allow_destructive: false,
-        is_production: false,
-    };
-    let results = lint_migration_plan(&ops, &options);
+    let results = lint_migration_plan(&ops, &NON_DESTRUCTIVE_LINT);
     assert!(!has_errors(&results));
 }
 
@@ -127,10 +119,6 @@ fn diff_identical_schemas_produces_zero_ops() {
 
 #[test]
 fn lint_empty_plan_produces_zero_results() {
-    let options = LintOptions {
-        allow_destructive: false,
-        is_production: false,
-    };
-    let results = lint_migration_plan(&[], &options);
+    let results = lint_migration_plan(&[], &NON_DESTRUCTIVE_LINT);
     assert!(results.is_empty());
 }
