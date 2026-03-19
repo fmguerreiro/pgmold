@@ -25,11 +25,8 @@ fn duplicate_table_in_sql_last_wins() {
         "CREATE TABLE public.users (id serial PRIMARY KEY);
          CREATE TABLE public.users (id serial PRIMARY KEY, name text);",
     );
-    match result {
-        Ok(schema) => {
-            assert!(schema.tables.contains_key("public.users"));
-        }
-        Err(_) => {}
+    if let Ok(schema) = result {
+        assert!(schema.tables.contains_key("public.users"));
     }
 }
 
