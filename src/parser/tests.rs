@@ -3143,7 +3143,11 @@ CREATE INDEX idx_users_lower_email ON users (lower(email));
 "#;
     let schema = parse_sql_string(sql).unwrap();
     let table = schema.tables.get("public.users").unwrap();
-    let index = table.indexes.iter().find(|i| i.name == "idx_users_lower_email").unwrap();
+    let index = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "idx_users_lower_email")
+        .unwrap();
     assert_eq!(index.columns, vec!["lower(email)"]);
 }
 
@@ -3157,8 +3161,20 @@ GRANT INSERT ON users TO reader;
     let schema = parse_sql_string(sql).unwrap();
     let table = schema.tables.get("public.users").unwrap();
     // Should be merged into a single grant entry for "reader"
-    let reader_grants: Vec<_> = table.grants.iter().filter(|g| g.grantee == "reader").collect();
-    assert_eq!(reader_grants.len(), 1, "Should have exactly one grant for reader after merging");
-    assert!(reader_grants[0].privileges.contains(&crate::model::Privilege::Select));
-    assert!(reader_grants[0].privileges.contains(&crate::model::Privilege::Insert));
+    let reader_grants: Vec<_> = table
+        .grants
+        .iter()
+        .filter(|g| g.grantee == "reader")
+        .collect();
+    assert_eq!(
+        reader_grants.len(),
+        1,
+        "Should have exactly one grant for reader after merging"
+    );
+    assert!(reader_grants[0]
+        .privileges
+        .contains(&crate::model::Privilege::Select));
+    assert!(reader_grants[0]
+        .privileges
+        .contains(&crate::model::Privilege::Insert));
 }

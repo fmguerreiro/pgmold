@@ -1105,8 +1105,7 @@ fn merge_grants_by_grantee(grants: &mut Vec<Grant>) {
             .entry(grant.grantee.clone())
             .and_modify(|existing| {
                 existing.privileges.extend(grant.privileges.iter().cloned());
-                existing.with_grant_option =
-                    existing.with_grant_option || grant.with_grant_option;
+                existing.with_grant_option = existing.with_grant_option || grant.with_grant_option;
             })
             .or_insert(grant);
     }
