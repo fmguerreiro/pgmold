@@ -3008,7 +3008,7 @@ fn parse_inet_array_column() {
 
 #[test]
 fn parse_unsupported_type_returns_error() {
-    let sql = "CREATE TABLE data (id BIGINT PRIMARY KEY, col BYTEA);";
+    let sql = "CREATE TABLE data (id BIGINT PRIMARY KEY, col BIT(8));";
     let result = parse_sql_string(sql);
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -3037,4 +3037,110 @@ fn parses_alter_materialized_view_owner_schema_qualified() {
     let view = schema.views.get("reporting.summary").unwrap();
     assert!(view.materialized);
     assert_eq!(view.owner, Some("analytics_user".to_string()));
+}
+
+#[test]
+fn parses_time_column_type() {
+    let sql = r#"
+CREATE TABLE events (
+    id BIGINT NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME WITH TIME ZONE NOT NULL
+);
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.events").unwrap();
+    assert_eq!(
+        table.columns["start_time"].data_type,
+        PgType::Time
+    );
+    assert_eq!(
+        table.columns["end_time"].data_type,
+        PgType::TimeTz
+    );
+}
+
+#[test]
+fn parses_interval_column_type() {
+    let sql = r#"
+CREATE TABLE schedules (
+    id BIGINT NOT NULL,
+    duration INTERVAL NOT NULL
+);
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.schedules").unwrap();
+    assert_eq!(
+        table.columns["duration"].data_type,
+        PgType::Interval
+    );
+}
+
+#[test]
+fn parses_bytea_column_type() {
+    let sql = r#"
+CREATE TABLE blobs (
+    id BIGINT NOT NULL,
+    data BYTEA NOT NULL
+);
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.blobs").unwrap();
+    assert_eq!(
+        table.columns["data"].data_type,
+        PgType::Bytea
+    );
+}
+
+#[test]
+fn parses_char_column_type() {
+    let sql = r#"
+CREATE TABLE codes (
+    id BIGINT NOT NULL,
+    code CHAR(10) NOT NULL,
+    flag CHAR NOT NULL
+);
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.codes").unwrap();
+    assert_eq!(
+        table.columns["code"].data_type,
+        PgType::Char(Some(10))
+    );
+    assert_eq!(
+        table.columns["flag"].data_type,
+        PgType::Char(None)
+    );
+}
+
+#[test]
+fn parses_point_column_type() {
+    let sql = r#"
+CREATE TABLE locations (
+    id BIGINT NOT NULL,
+    coordinates POINT NOT NULL
+);
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.locations").unwrap();
+    assert_eq!(
+        table.columns["coordinates"].data_type,
+        PgType::Point
+    );
+}
+
+#[test]
+fn parses_xml_column_type() {
+    let sql = r#"
+CREATE TABLE documents (
+    id BIGINT NOT NULL,
+    content XML NOT NULL
+);
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.documents").unwrap();
+    assert_eq!(
+        table.columns["content"].data_type,
+        PgType::Xml
+    );
 }
