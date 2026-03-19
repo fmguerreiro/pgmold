@@ -1317,10 +1317,26 @@ fn normalize_expr(expr: &Expr) -> Expr {
             Expr::Function(func)
         }
 
-        Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
-            op: *op,
-            expr: Box::new(normalize_expr(inner)),
-        },
+        Expr::UnaryOp { op, expr: inner } => {
+            let norm_inner = normalize_expr(inner);
+            // Normalize NOT (EXISTS ...) → EXISTS { negated: true }
+            if matches!(op, sqlparser::ast::UnaryOperator::Not) {
+                if let Expr::Exists {
+                    subquery,
+                    negated: false,
+                } = norm_inner
+                {
+                    return Expr::Exists {
+                        subquery,
+                        negated: true,
+                    };
+                }
+            }
+            Expr::UnaryOp {
+                op: *op,
+                expr: Box::new(norm_inner),
+            }
+        }
 
         Expr::InList {
             expr: inner,
@@ -2076,6 +2092,41 @@ fn ast_comparison_detects_real_differences() {
     let query5 = "SELECT * FROM t WHERE a = 1";
     let query6 = "SELECT * FROM t WHERE a = 2";
     assert!(!views_semantically_equal(query5, query6));
+}
+
+#[test]
+fn view_normalization_case_branch_text_cast() {
+    let parsed = "SELECT CASE WHEN s.is_active = false THEN 'inactive' WHEN u.email_confirmed_at IS NOT NULL THEN 'active' ELSE 'pending' END AS status FROM t";
+    let pg = "SELECT CASE WHEN s.is_active = false THEN 'inactive'::text WHEN u.email_confirmed_at IS NOT NULL THEN 'active'::text ELSE 'pending'::text END AS status FROM t";
+    assert!(views_semantically_equal(parsed, pg));
+}
+
+#[test]
+fn view_normalization_jsonb_extract_cast_placement() {
+    let parsed = "SELECT (u.raw_user_meta_data ->> 'supplier_name')::text AS name FROM t u";
+    let pg = "SELECT u.raw_user_meta_data ->> 'supplier_name'::text AS name FROM t u";
+    assert!(views_semantically_equal(parsed, pg));
+}
+
+#[test]
+fn view_normalization_jsonb_extract_uuid_cast() {
+    let parsed = "SELECT * FROM t u LEFT JOIN s ON (s.id = (u.data ->> 'supplier_id')::uuid)";
+    let pg = "SELECT * FROM t u LEFT JOIN s ON s.id = ((u.data ->> 'supplier_id'::text)::uuid)";
+    assert!(views_semantically_equal(parsed, pg));
+}
+
+#[test]
+fn view_normalization_not_exists_parens() {
+    let parsed = "SELECT * FROM t WHERE NOT EXISTS (SELECT 1 FROM u WHERE u.id = t.id)";
+    let pg = "SELECT * FROM t WHERE NOT (EXISTS ( SELECT 1 FROM u WHERE u.id = t.id))";
+    assert!(views_semantically_equal(parsed, pg));
+}
+
+#[test]
+fn view_normalization_or_branch_parens() {
+    let parsed = "SELECT * FROM t WHERE (a IS NOT NULL AND f(a)) OR (b IS NOT NULL AND f(b))";
+    let pg = "SELECT * FROM t WHERE a IS NOT NULL AND f(a) OR b IS NOT NULL AND f(b)";
+    assert!(views_semantically_equal(parsed, pg));
 }
 
 #[test]
