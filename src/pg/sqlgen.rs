@@ -824,7 +824,7 @@ fn format_column_list(columns: &[String]) -> String {
 }
 
 fn is_expression_column(column: &str) -> bool {
-    column.contains('(') || column.contains('+') || column.contains('-') || column.contains("::")
+    column.contains('(')
 }
 
 fn format_index_column_list(columns: &[String]) -> String {

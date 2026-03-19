@@ -42,34 +42,53 @@ fn reorder_sequence_options(sql: &str) -> String {
         Regex::new(r"(?i)(CREATE\s+SEQUENCE\s+(?:IF\s+NOT\s+EXISTS\s+)?[^\s;]+)\s+([^;]+);")
             .unwrap();
 
+    let option_patterns = [
+        Regex::new(r"(?i)\bAS\s+\w+").unwrap(),
+        Regex::new(r"(?i)\bINCREMENT\s+BY\s+-?\d+").unwrap(),
+        Regex::new(r"(?i)\b(?:NO\s+)?MINVALUE(?:\s+-?\d+)?").unwrap(),
+        Regex::new(r"(?i)\b(?:NO\s+)?MAXVALUE(?:\s+-?\d+)?").unwrap(),
+        Regex::new(r"(?i)\bSTART\s+WITH\s+-?\d+").unwrap(),
+        Regex::new(r"(?i)\bCACHE\s+-?\d+").unwrap(),
+        Regex::new(r"(?i)\b(?:NO\s+)?CYCLE\b").unwrap(),
+        Regex::new(r"(?i)\bOWNED\s+BY\s+\S+").unwrap(),
+    ];
+
     seq_re
         .replace_all(sql, |caps: &regex::Captures| {
             let prefix = &caps[1];
             let options_str = &caps[2];
 
-            let option_patterns = [
-                Regex::new(r"(?i)\bAS\s+\w+").unwrap(),
-                Regex::new(r"(?i)\bINCREMENT\s+BY\s+-?\d+").unwrap(),
-                Regex::new(r"(?i)\b(?:NO\s+)?MINVALUE(?:\s+-?\d+)?").unwrap(),
-                Regex::new(r"(?i)\b(?:NO\s+)?MAXVALUE(?:\s+-?\d+)?").unwrap(),
-                Regex::new(r"(?i)\bSTART\s+WITH\s+-?\d+").unwrap(),
-                Regex::new(r"(?i)\bCACHE\s+-?\d+").unwrap(),
-                Regex::new(r"(?i)\b(?:NO\s+)?CYCLE\b").unwrap(),
-                Regex::new(r"(?i)\bOWNED\s+BY\s+\S+").unwrap(),
-            ];
-
+            let mut matched_spans: Vec<(usize, usize)> = Vec::new();
             let mut ordered_options = Vec::new();
             for pattern in &option_patterns {
                 if let Some(m) = pattern.find(options_str) {
                     ordered_options.push(m.as_str().to_string());
+                    matched_spans.push((m.start(), m.end()));
                 }
             }
 
             if ordered_options.is_empty() {
-                format!("{} {};", prefix, options_str)
-            } else {
-                format!("{} {};", prefix, ordered_options.join(" "))
+                return format!("{} {};", prefix, options_str);
             }
+
+            // Preserve any unrecognized tokens not matched by known patterns
+            matched_spans.sort_by_key(|s| s.0);
+            let mut pos = 0;
+            let mut unrecognized = Vec::new();
+            for (start, end) in &matched_spans {
+                let gap = options_str[pos..*start].trim();
+                if !gap.is_empty() {
+                    unrecognized.push(gap.to_string());
+                }
+                pos = *end;
+            }
+            let trailing = options_str[pos..].trim();
+            if !trailing.is_empty() {
+                unrecognized.push(trailing.to_string());
+            }
+
+            ordered_options.extend(unrecognized);
+            format!("{} {};", prefix, ordered_options.join(" "))
         })
         .into_owned()
 }

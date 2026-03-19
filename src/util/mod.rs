@@ -1,7 +1,10 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
-use sqlparser::ast::{BinaryOperator, DataType, Expr, Query, Select, SetExpr, Statement};
+use sqlparser::ast::{
+    BinaryOperator, DataType, Expr, GroupByExpr, OrderBy, OrderByExpr, OrderByKind, Query, Select,
+    SetExpr, Statement,
+};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use thiserror::Error;
@@ -769,10 +772,10 @@ fn normalize_query(query: &Query) -> Query {
     }
 }
 
-fn normalize_group_by(group_by: &sqlparser::ast::GroupByExpr) -> sqlparser::ast::GroupByExpr {
+fn normalize_group_by(group_by: &GroupByExpr) -> GroupByExpr {
     match group_by {
-        sqlparser::ast::GroupByExpr::Expressions(exprs, modifiers) => {
-            sqlparser::ast::GroupByExpr::Expressions(
+        GroupByExpr::Expressions(exprs, modifiers) => {
+            GroupByExpr::Expressions(
                 exprs.iter().map(normalize_expr).collect(),
                 modifiers.clone(),
             )
@@ -781,21 +784,19 @@ fn normalize_group_by(group_by: &sqlparser::ast::GroupByExpr) -> sqlparser::ast:
     }
 }
 
-fn normalize_order_by(order_by: &sqlparser::ast::OrderBy) -> sqlparser::ast::OrderBy {
-    sqlparser::ast::OrderBy {
+fn normalize_order_by(order_by: &OrderBy) -> OrderBy {
+    OrderBy {
         kind: match &order_by.kind {
-            sqlparser::ast::OrderByKind::Expressions(exprs) => {
-                sqlparser::ast::OrderByKind::Expressions(
-                    exprs
-                        .iter()
-                        .map(|e| sqlparser::ast::OrderByExpr {
-                            expr: normalize_expr(&e.expr),
-                            options: e.options,
-                            with_fill: e.with_fill.clone(),
-                        })
-                        .collect(),
-                )
-            }
+            OrderByKind::Expressions(exprs) => OrderByKind::Expressions(
+                exprs
+                    .iter()
+                    .map(|e| OrderByExpr {
+                        expr: normalize_expr(&e.expr),
+                        options: e.options,
+                        with_fill: e.with_fill.clone(),
+                    })
+                    .collect(),
+            ),
             other => other.clone(),
         },
         interpolate: order_by.interpolate.clone(),

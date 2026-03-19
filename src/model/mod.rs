@@ -1099,13 +1099,13 @@ fn merge_grants_by_grantee(grants: &mut Vec<Grant>) {
     if grants.len() <= 1 {
         return;
     }
-    let mut merged: BTreeMap<String, Grant> = BTreeMap::new();
+    let mut merged: BTreeMap<(String, bool), Grant> = BTreeMap::new();
     for grant in grants.drain(..) {
+        let key = (grant.grantee.clone(), grant.with_grant_option);
         merged
-            .entry(grant.grantee.clone())
+            .entry(key)
             .and_modify(|existing| {
                 existing.privileges.extend(grant.privileges.iter().cloned());
-                existing.with_grant_option = existing.with_grant_option || grant.with_grant_option;
             })
             .or_insert(grant);
     }
@@ -1160,11 +1160,7 @@ pub fn normalize_pg_type(type_name: &str) -> String {
 
     // Strip public. schema prefix — PostgreSQL qualifies user-defined types
     // in function signatures but SQL declarations typically omit it
-    let trimmed = if let Some(stripped) = trimmed.strip_prefix("public.") {
-        stripped
-    } else {
-        trimmed
-    };
+    let trimmed = trimmed.strip_prefix("public.").unwrap_or(trimmed);
 
     let lower: std::borrow::Cow<str> = if trimmed.bytes().any(|b| b.is_ascii_uppercase()) {
         std::borrow::Cow::Owned(trimmed.to_lowercase())
