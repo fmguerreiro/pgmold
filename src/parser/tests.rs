@@ -3109,3 +3109,56 @@ CREATE TABLE misc (
     assert_eq!(table.columns["coordinates"].data_type, PgType::Point);
     assert_eq!(table.columns["content"].data_type, PgType::Xml);
 }
+
+#[test]
+fn parse_sequence_start_minvalue_maxvalue_together() {
+    let sql = "CREATE SEQUENCE counter_seq START WITH 10 MINVALUE 1 MAXVALUE 1000 CACHE 5;";
+    let schema = parse_sql_string(sql).unwrap();
+    let seq = schema.sequences.get("public.counter_seq").unwrap();
+    assert_eq!(seq.start, Some(10));
+    assert_eq!(seq.min_value, Some(1));
+    assert_eq!(seq.max_value, Some(1000));
+    assert_eq!(seq.cache, Some(5));
+}
+
+#[test]
+fn parse_sequence_reversed_order() {
+    let sql = "CREATE SEQUENCE counter_seq MAXVALUE 500 MINVALUE 10 START WITH 10 INCREMENT BY 2;";
+    let schema = parse_sql_string(sql).unwrap();
+    let seq = schema.sequences.get("public.counter_seq").unwrap();
+    assert_eq!(seq.start, Some(10));
+    assert_eq!(seq.min_value, Some(10));
+    assert_eq!(seq.max_value, Some(500));
+    assert_eq!(seq.increment, Some(2));
+}
+
+#[test]
+fn parse_expression_index() {
+    let sql = r#"
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL
+);
+CREATE INDEX idx_users_lower_email ON users (lower(email));
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.users").unwrap();
+    let index = table.indexes.iter().find(|i| i.name == "idx_users_lower_email").unwrap();
+    assert_eq!(index.columns, vec!["lower(email)"]);
+}
+
+#[test]
+fn grant_select_and_insert_separate_statements_merged() {
+    let sql = r#"
+CREATE TABLE users (id SERIAL PRIMARY KEY);
+GRANT SELECT ON users TO reader;
+GRANT INSERT ON users TO reader;
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.users").unwrap();
+    // Should be merged into a single grant entry for "reader"
+    let reader_grants: Vec<_> = table.grants.iter().filter(|g| g.grantee == "reader").collect();
+    assert_eq!(reader_grants.len(), 1, "Should have exactly one grant for reader after merging");
+    assert!(reader_grants[0].privileges.contains(&crate::model::Privilege::Select));
+    assert!(reader_grants[0].privileges.contains(&crate::model::Privilege::Insert));
+}

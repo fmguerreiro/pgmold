@@ -548,7 +548,7 @@ impl FunctionArg {
     /// (e.g., NULL vs NULL::uuid, 0 vs 0::integer).
     pub fn semantically_equals(&self, other: &FunctionArg) -> bool {
         self.name == other.name
-            && self.data_type == other.data_type
+            && normalize_pg_type(&self.data_type) == normalize_pg_type(&other.data_type)
             && self.mode == other.mode
             && crate::util::optional_expressions_equal(&self.default, &other.default)
     }
@@ -850,6 +850,7 @@ impl Schema {
         self.apply_pending_owners(false);
         self.apply_pending_grants(false);
         self.apply_pending_revokes(false);
+        self.merge_all_grants();
         Ok(())
     }
 
@@ -873,6 +874,7 @@ impl Schema {
         self.apply_pending_owners(true);
         self.apply_pending_grants(true);
         self.apply_pending_revokes(true);
+        self.merge_all_grants();
         orphaned
     }
 
@@ -1043,6 +1045,30 @@ impl Schema {
             false
         }
     }
+
+    fn merge_all_grants(&mut self) {
+        for table in self.tables.values_mut() {
+            merge_grants_by_grantee(&mut table.grants);
+        }
+        for view in self.views.values_mut() {
+            merge_grants_by_grantee(&mut view.grants);
+        }
+        for sequence in self.sequences.values_mut() {
+            merge_grants_by_grantee(&mut sequence.grants);
+        }
+        for function in self.functions.values_mut() {
+            merge_grants_by_grantee(&mut function.grants);
+        }
+        for schema in self.schemas.values_mut() {
+            merge_grants_by_grantee(&mut schema.grants);
+        }
+        for enum_type in self.enums.values_mut() {
+            merge_grants_by_grantee(&mut enum_type.grants);
+        }
+        for domain in self.domains.values_mut() {
+            merge_grants_by_grantee(&mut domain.grants);
+        }
+    }
 }
 
 /// Removes or modifies grants matching the given grantee and privileges.
@@ -1067,6 +1093,24 @@ pub fn revoke_from_grants(
             true
         }
     });
+}
+
+fn merge_grants_by_grantee(grants: &mut Vec<Grant>) {
+    if grants.len() <= 1 {
+        return;
+    }
+    let mut merged: BTreeMap<String, Grant> = BTreeMap::new();
+    for grant in grants.drain(..) {
+        merged
+            .entry(grant.grantee.clone())
+            .and_modify(|existing| {
+                existing.privileges.extend(grant.privileges.iter().cloned());
+                existing.with_grant_option =
+                    existing.with_grant_option || grant.with_grant_option;
+            })
+            .or_insert(grant);
+    }
+    *grants = merged.into_values().collect();
 }
 
 impl Default for Schema {
@@ -1114,6 +1158,14 @@ pub fn normalize_pg_type(type_name: &str) -> String {
             .collect();
         return format!("table({})", normalized_cols.join(", "));
     }
+
+    // Strip public. schema prefix — PostgreSQL qualifies user-defined types
+    // in function signatures but SQL declarations typically omit it
+    let trimmed = if let Some(stripped) = trimmed.strip_prefix("public.") {
+        stripped
+    } else {
+        trimmed
+    };
 
     let lower: std::borrow::Cow<str> = if trimmed.bytes().any(|b| b.is_ascii_uppercase()) {
         std::borrow::Cow::Owned(trimmed.to_lowercase())
@@ -2840,5 +2892,100 @@ fn function_timestamp_param_no_perpetual_diff() {
     assert!(
         from_schema.semantically_equals(&from_db),
         "Functions with timestamp/time params should match after normalization"
+    );
+}
+
+#[test]
+fn merge_grants_by_grantee_combines_privileges() {
+    let mut grants = vec![
+        Grant {
+            grantee: "bob".to_string(),
+            privileges: BTreeSet::from([Privilege::Select]),
+            with_grant_option: false,
+        },
+        Grant {
+            grantee: "bob".to_string(),
+            privileges: BTreeSet::from([Privilege::Insert]),
+            with_grant_option: false,
+        },
+    ];
+    merge_grants_by_grantee(&mut grants);
+    assert_eq!(grants.len(), 1);
+    assert_eq!(
+        grants[0].privileges,
+        BTreeSet::from([Privilege::Select, Privilege::Insert])
+    );
+}
+
+#[test]
+fn merge_grants_preserves_different_grantees() {
+    let mut grants = vec![
+        Grant {
+            grantee: "alice".to_string(),
+            privileges: BTreeSet::from([Privilege::Select]),
+            with_grant_option: false,
+        },
+        Grant {
+            grantee: "bob".to_string(),
+            privileges: BTreeSet::from([Privilege::Insert]),
+            with_grant_option: false,
+        },
+    ];
+    merge_grants_by_grantee(&mut grants);
+    assert_eq!(grants.len(), 2);
+}
+
+#[test]
+fn normalize_pg_type_strips_public_schema_prefix() {
+    assert_eq!(normalize_pg_type("public.task_status"), "task_status");
+    assert_eq!(normalize_pg_type("public.my_enum"), "my_enum");
+    // Non-public schemas should be preserved
+    assert_eq!(normalize_pg_type("auth.role_type"), "auth.role_type");
+}
+
+#[test]
+fn function_with_enum_param_converges() {
+    let from_schema = Function {
+        name: "process_task".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![FunctionArg {
+            name: Some("p_status".to_string()),
+            data_type: "task_status".to_string(),
+            mode: ArgMode::In,
+            default: None,
+        }],
+        return_type: "void".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Volatile,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    // Introspection returns public-qualified enum type
+    let from_db = Function {
+        name: "process_task".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![FunctionArg {
+            name: Some("p_status".to_string()),
+            data_type: "public.task_status".to_string(),
+            mode: ArgMode::In,
+            default: None,
+        }],
+        return_type: "void".to_string(),
+        language: "plpgsql".to_string(),
+        body: "BEGIN END;".to_string(),
+        volatility: Volatility::Volatile,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: vec![],
+    };
+
+    assert!(
+        from_schema.semantically_equals(&from_db),
+        "Functions with public-qualified enum params should match after normalization"
     );
 }

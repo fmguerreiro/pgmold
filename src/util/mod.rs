@@ -758,7 +758,7 @@ fn normalize_query(query: &Query) -> Query {
     Query {
         with: query.with.clone(),
         body: Box::new(normalize_set_expr(&query.body)),
-        order_by: query.order_by.clone(),
+        order_by: query.order_by.as_ref().map(normalize_order_by),
         limit_clause: query.limit_clause.clone(),
         fetch: query.fetch.clone(),
         locks: query.locks.clone(),
@@ -766,6 +766,39 @@ fn normalize_query(query: &Query) -> Query {
         settings: query.settings.clone(),
         format_clause: query.format_clause.clone(),
         pipe_operators: query.pipe_operators.clone(),
+    }
+}
+
+fn normalize_group_by(group_by: &sqlparser::ast::GroupByExpr) -> sqlparser::ast::GroupByExpr {
+    match group_by {
+        sqlparser::ast::GroupByExpr::Expressions(exprs, modifiers) => {
+            sqlparser::ast::GroupByExpr::Expressions(
+                exprs.iter().map(normalize_expr).collect(),
+                modifiers.clone(),
+            )
+        }
+        other => other.clone(),
+    }
+}
+
+fn normalize_order_by(order_by: &sqlparser::ast::OrderBy) -> sqlparser::ast::OrderBy {
+    sqlparser::ast::OrderBy {
+        kind: match &order_by.kind {
+            sqlparser::ast::OrderByKind::Expressions(exprs) => {
+                sqlparser::ast::OrderByKind::Expressions(
+                    exprs
+                        .iter()
+                        .map(|e| sqlparser::ast::OrderByExpr {
+                            expr: normalize_expr(&e.expr),
+                            options: e.options.clone(),
+                            with_fill: e.with_fill.clone(),
+                        })
+                        .collect(),
+                )
+            }
+            other => other.clone(),
+        },
+        interpolate: order_by.interpolate.clone(),
     }
 }
 
@@ -1057,7 +1090,7 @@ fn normalize_select(select: &Select) -> Select {
         lateral_views: select.lateral_views.clone(),
         prewhere: select.prewhere.as_ref().map(normalize_expr),
         selection: select.selection.as_ref().map(normalize_expr),
-        group_by: select.group_by.clone(),
+        group_by: normalize_group_by(&select.group_by),
         cluster_by: select.cluster_by.clone(),
         distribute_by: select.distribute_by.clone(),
         sort_by: select.sort_by.clone(),
@@ -2461,5 +2494,66 @@ fn expressions_equal_interval_literal_vs_cast() {
     assert!(
         expressions_semantically_equal(schema_form, db_form),
         "interval literal and cast syntax should be equal.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
+fn view_with_order_by_normalized() {
+    let schema_form = "SELECT id, name FROM users ORDER BY name";
+    let db_form = "SELECT id, name FROM users ORDER BY name";
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "Views with identical ORDER BY should be equal"
+    );
+}
+
+#[test]
+fn view_with_order_by_cast_normalized() {
+    // PostgreSQL may add casts or parentheses to ORDER BY expressions
+    let schema_form = "SELECT id, name FROM users ORDER BY lower(name)";
+    let db_form = "SELECT id, name FROM users ORDER BY lower(name)";
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "Views with function in ORDER BY should be equal"
+    );
+}
+
+#[test]
+fn view_with_order_by_extra_parens() {
+    let schema_form = "SELECT id FROM t ORDER BY name";
+    let db_form = "SELECT id FROM t ORDER BY (name)";
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "ORDER BY with extra parens should be equal"
+    );
+}
+
+#[test]
+fn materialized_view_count_star() {
+    let schema_form = "SELECT COUNT(*) FROM users";
+    let db_form = "SELECT count(*) FROM users";
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "COUNT(*) vs count(*) should be equal"
+    );
+}
+
+#[test]
+fn materialized_view_count_star_with_alias() {
+    let schema_form = "SELECT COUNT(*) AS total FROM users";
+    let db_form = "SELECT count(*) AS total FROM users";
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "COUNT(*) AS total vs count(*) AS total should be equal"
+    );
+}
+
+#[test]
+fn not_in_view_equals_not_all_array() {
+    let schema_form = "SELECT * FROM t WHERE status NOT IN ('a', 'b')";
+    let db_form = "SELECT * FROM t WHERE status <> ALL (ARRAY['a'::text, 'b'::text])";
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "NOT IN should equal <> ALL(ARRAY[...])"
     );
 }
