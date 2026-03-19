@@ -121,10 +121,9 @@ fn filter_invalid_glob_pattern_returns_error() {
 
 #[test]
 fn diff_identical_schemas_produces_zero_ops() {
-    let schema = parse_sql_string(
-        "CREATE TABLE public.users (id serial PRIMARY KEY, email text NOT NULL);",
-    )
-    .unwrap();
+    let schema =
+        parse_sql_string("CREATE TABLE public.users (id serial PRIMARY KEY, email text NOT NULL);")
+            .unwrap();
     let ops = compute_diff(&schema, &schema);
     assert!(ops.is_empty());
 }

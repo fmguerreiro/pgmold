@@ -9,10 +9,7 @@ use assert_cmd::Command;
 
 #[test]
 fn no_args_shows_help() {
-    let output = Command::cargo_bin("pgmold")
-        .unwrap()
-        .output()
-        .unwrap();
+    let output = Command::cargo_bin("pgmold").unwrap().output().unwrap();
 
     let stderr = String::from_utf8(output.stderr.clone()).unwrap();
     assert!(

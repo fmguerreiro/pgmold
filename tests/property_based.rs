@@ -20,8 +20,10 @@ fn column_type_strategy() -> impl Strategy<Value = String> {
 
 fn identifier_strategy() -> impl Strategy<Value = String> {
     "[a-z][a-z0-9_]{0,29}".prop_filter("not a reserved word", |s| {
-        !["user", "order", "group", "table", "select", "from", "where", "index", "type", "column"]
-            .contains(&s.as_str())
+        ![
+            "user", "order", "group", "table", "select", "from", "where", "index", "type", "column",
+        ]
+        .contains(&s.as_str())
     })
 }
 

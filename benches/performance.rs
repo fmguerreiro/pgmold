@@ -168,13 +168,9 @@ fn bench_generate_sql(criterion: &mut Criterion) {
     for (label, count) in [("small", 10), ("medium", 50)] {
         let ops = build_ops(count);
         let planned = plan_migration(ops);
-        group.bench_with_input(
-            BenchmarkId::new("ops", label),
-            &planned,
-            |bencher, ops| {
-                bencher.iter(|| generate_sql(ops));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("ops", label), &planned, |bencher, ops| {
+            bencher.iter(|| generate_sql(ops));
+        });
     }
 
     group.finish();

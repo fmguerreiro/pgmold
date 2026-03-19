@@ -281,13 +281,7 @@ fn filter_combined_include_exclude() {
     )
     .unwrap();
 
-    let filter = Filter::new(
-        &["api_*".to_string()],
-        &["*_logs".to_string()],
-        &[],
-        &[],
-    )
-    .unwrap();
+    let filter = Filter::new(&["api_*".to_string()], &["*_logs".to_string()], &[], &[]).unwrap();
     let filtered = filter_schema(&schema, &filter);
 
     assert_eq!(
