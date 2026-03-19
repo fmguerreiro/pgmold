@@ -35,11 +35,70 @@ fn strip_do_blocks(sql: &str) -> String {
     result
 }
 
+/// Reorders CREATE SEQUENCE options to the order sqlparser expects:
+/// AS type, INCREMENT BY, MINVALUE, MAXVALUE, START WITH, CACHE, CYCLE, OWNED BY
+fn reorder_sequence_options(sql: &str) -> String {
+    let seq_re =
+        Regex::new(r"(?i)(CREATE\s+SEQUENCE\s+(?:IF\s+NOT\s+EXISTS\s+)?[^\s;]+)\s+([^;]+);")
+            .unwrap();
+
+    let option_patterns = [
+        Regex::new(r"(?i)\bAS\s+\w+").unwrap(),
+        Regex::new(r"(?i)\bINCREMENT\s+BY\s+-?\d+").unwrap(),
+        Regex::new(r"(?i)\b(?:NO\s+)?MINVALUE(?:\s+-?\d+)?").unwrap(),
+        Regex::new(r"(?i)\b(?:NO\s+)?MAXVALUE(?:\s+-?\d+)?").unwrap(),
+        Regex::new(r"(?i)\bSTART\s+WITH\s+-?\d+").unwrap(),
+        Regex::new(r"(?i)\bCACHE\s+-?\d+").unwrap(),
+        Regex::new(r"(?i)\b(?:NO\s+)?CYCLE\b").unwrap(),
+        Regex::new(r"(?i)\bOWNED\s+BY\s+\S+").unwrap(),
+    ];
+
+    seq_re
+        .replace_all(sql, |caps: &regex::Captures| {
+            let prefix = &caps[1];
+            let options_str = &caps[2];
+
+            let mut matched_spans: Vec<(usize, usize)> = Vec::new();
+            let mut ordered_options = Vec::new();
+            for pattern in &option_patterns {
+                if let Some(m) = pattern.find(options_str) {
+                    ordered_options.push(m.as_str().to_string());
+                    matched_spans.push((m.start(), m.end()));
+                }
+            }
+
+            if ordered_options.is_empty() {
+                return format!("{} {};", prefix, options_str);
+            }
+
+            // Preserve any unrecognized tokens not matched by known patterns
+            matched_spans.sort_by_key(|s| s.0);
+            let mut pos = 0;
+            let mut unrecognized = Vec::new();
+            for (start, end) in &matched_spans {
+                let gap = options_str[pos..*start].trim();
+                if !gap.is_empty() {
+                    unrecognized.push(gap.to_string());
+                }
+                pos = *end;
+            }
+            let trailing = options_str[pos..].trim();
+            if !trailing.is_empty() {
+                unrecognized.push(trailing.to_string());
+            }
+
+            ordered_options.extend(unrecognized);
+            format!("{} {};", prefix, ordered_options.join(" "))
+        })
+        .into_owned()
+}
+
 /// Strips syntax not supported by sqlparser 0.52.
 /// Statements stripped here are parsed separately via regex
 /// (GRANT, REVOKE, ALTER DEFAULT PRIVILEGES, OWNER TO, COMMENT ON, DO blocks).
 pub(super) fn preprocess_sql(sql: &str) -> String {
     let sql = strip_do_blocks(sql);
+    let sql = reorder_sequence_options(&sql);
 
     let strip_patterns = [
         r"(?i)\bSET\s+search_path\s+TO\s+'[^']*'(?:\s*,\s*'[^']*')*",
@@ -56,7 +115,7 @@ pub(super) fn preprocess_sql(sql: &str) -> String {
         r"(?i)GRANT\s+[^;]+;",
     ];
 
-    let mut processed = sql;
+    let mut processed = sql.to_string();
     for pattern in strip_patterns {
         let regex = Regex::new(pattern).unwrap();
         processed = regex.replace_all(&processed, "").into_owned();

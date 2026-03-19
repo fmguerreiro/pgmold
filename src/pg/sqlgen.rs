@@ -641,7 +641,7 @@ fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {
         quote_ident(&index.name),
         index_type,
         quote_qualified(schema, table),
-        format_column_list(&index.columns),
+        format_index_column_list(&index.columns),
         where_clause
     )
 }
@@ -819,6 +819,24 @@ fn format_column_list(columns: &[String]) -> String {
     columns
         .iter()
         .map(|c| quote_ident(c))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn is_expression_column(column: &str) -> bool {
+    column.contains('(')
+}
+
+fn format_index_column_list(columns: &[String]) -> String {
+    columns
+        .iter()
+        .map(|c| {
+            if is_expression_column(c) {
+                c.clone()
+            } else {
+                quote_ident(c)
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -3862,6 +3880,57 @@ mod tests {
         assert_eq!(
             sql[1],
             "ALTER TABLE \"public\".\"misc\" ADD COLUMN \"content\" XML NOT NULL;"
+        );
+    }
+
+    #[test]
+    fn expression_index_generates_unquoted_expression() {
+        let index = Index {
+            name: "idx_users_lower_email".to_string(),
+            columns: vec!["lower(email)".to_string()],
+            unique: false,
+            index_type: IndexType::BTree,
+            predicate: None,
+            is_constraint: false,
+        };
+        let sql = generate_create_index("public", "users", &index);
+        assert_eq!(
+            sql,
+            "CREATE INDEX \"idx_users_lower_email\" ON \"public\".\"users\" (lower(email));"
+        );
+    }
+
+    #[test]
+    fn mixed_expression_and_regular_columns_in_index() {
+        let index = Index {
+            name: "idx_mixed".to_string(),
+            columns: vec!["name".to_string(), "lower(email)".to_string()],
+            unique: true,
+            index_type: IndexType::BTree,
+            predicate: None,
+            is_constraint: false,
+        };
+        let sql = generate_create_index("public", "users", &index);
+        assert_eq!(
+            sql,
+            "CREATE UNIQUE INDEX \"idx_mixed\" ON \"public\".\"users\" (\"name\", lower(email));"
+        );
+    }
+
+    #[test]
+    fn cast_expression_in_index_not_quoted() {
+        let index = Index {
+            name: "idx_cast".to_string(),
+            columns: vec!["(created_at::date)".to_string()],
+            unique: false,
+            index_type: IndexType::BTree,
+            predicate: None,
+            is_constraint: false,
+        };
+        let sql = generate_create_index("public", "events", &index);
+        assert_eq!(
+            sql,
+            "CREATE INDEX \"idx_cast\" ON \"public\".\"events\" ((created_at::date));"
         );
     }
 }

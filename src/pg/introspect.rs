@@ -919,21 +919,24 @@ async fn introspect_all_indexes(
             i.relname as index_name,
             ix.indisunique,
             am.amname,
-            array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
+            COALESCE((SELECT array_agg(
+                CASE WHEN ix.indkey[k] = 0
+                     THEN pg_get_indexdef(ix.indexrelid, k + 1, false)
+                     ELSE (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = t.oid AND a.attnum = ix.indkey[k])
+                END ORDER BY k
+            ) FROM generate_series(0, array_length(ix.indkey, 1) - 1) AS k), ARRAY[]::text[]) as columns,
             pg_get_expr(ix.indpred, ix.indrelid) as predicate,
             (uc.oid IS NOT NULL) AS is_constraint
         FROM pg_index ix
         JOIN pg_class t ON t.oid = ix.indrelid
         JOIN pg_class i ON i.oid = ix.indexrelid
         JOIN pg_am am ON am.oid = i.relam
-        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
         JOIN pg_namespace n ON n.oid = t.relnamespace
         LEFT JOIN pg_constraint uc ON uc.conindid = ix.indexrelid AND uc.contype = 'u'
         WHERE n.nspname = ANY($1::text[])
           AND NOT ix.indisprimary
           AND t.relkind IN ('r', 'p')
           AND t.relispartition = false
-        GROUP BY n.nspname, t.relname, i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid, uc.oid
         "#,
     )
     .bind(target_schemas)
