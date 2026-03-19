@@ -3050,14 +3050,8 @@ CREATE TABLE events (
 "#;
     let schema = parse_sql_string(sql).unwrap();
     let table = schema.tables.get("public.events").unwrap();
-    assert_eq!(
-        table.columns["start_time"].data_type,
-        PgType::Time
-    );
-    assert_eq!(
-        table.columns["end_time"].data_type,
-        PgType::TimeTz
-    );
+    assert_eq!(table.columns["start_time"].data_type, PgType::Time);
+    assert_eq!(table.columns["end_time"].data_type, PgType::TimeTz);
 }
 
 #[test]
@@ -3070,10 +3064,7 @@ CREATE TABLE schedules (
 "#;
     let schema = parse_sql_string(sql).unwrap();
     let table = schema.tables.get("public.schedules").unwrap();
-    assert_eq!(
-        table.columns["duration"].data_type,
-        PgType::Interval
-    );
+    assert_eq!(table.columns["duration"].data_type, PgType::Interval);
 }
 
 #[test]
@@ -3086,10 +3077,7 @@ CREATE TABLE blobs (
 "#;
     let schema = parse_sql_string(sql).unwrap();
     let table = schema.tables.get("public.blobs").unwrap();
-    assert_eq!(
-        table.columns["data"].data_type,
-        PgType::Bytea
-    );
+    assert_eq!(table.columns["data"].data_type, PgType::Bytea);
 }
 
 #[test]
@@ -3103,14 +3091,8 @@ CREATE TABLE codes (
 "#;
     let schema = parse_sql_string(sql).unwrap();
     let table = schema.tables.get("public.codes").unwrap();
-    assert_eq!(
-        table.columns["code"].data_type,
-        PgType::Char(Some(10))
-    );
-    assert_eq!(
-        table.columns["flag"].data_type,
-        PgType::Char(None)
-    );
+    assert_eq!(table.columns["code"].data_type, PgType::Char(Some(10)));
+    assert_eq!(table.columns["flag"].data_type, PgType::Char(None));
 }
 
 #[test]
@@ -3123,10 +3105,7 @@ CREATE TABLE locations (
 "#;
     let schema = parse_sql_string(sql).unwrap();
     let table = schema.tables.get("public.locations").unwrap();
-    assert_eq!(
-        table.columns["coordinates"].data_type,
-        PgType::Point
-    );
+    assert_eq!(table.columns["coordinates"].data_type, PgType::Point);
 }
 
 #[test]
@@ -3139,8 +3118,5 @@ CREATE TABLE documents (
 "#;
     let schema = parse_sql_string(sql).unwrap();
     let table = schema.tables.get("public.documents").unwrap();
-    assert_eq!(
-        table.columns["content"].data_type,
-        PgType::Xml
-    );
+    assert_eq!(table.columns["content"].data_type, PgType::Xml);
 }
