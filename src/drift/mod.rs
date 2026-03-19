@@ -26,13 +26,11 @@ pub async fn detect_drift(
 
     let expected_fingerprint = expected.fingerprint();
     let actual_fingerprint = actual.fingerprint();
-    let has_drift = expected_fingerprint != actual_fingerprint;
-
-    let differences = if has_drift {
-        compute_diff(&actual, &expected)
-    } else {
-        vec![]
-    };
+    // ⚠ Fingerprints can diverge due to normalization gaps between parsed and
+    // introspected schemas even when the schemas are semantically identical.
+    // Use diff operations as the source of truth for drift detection.
+    let differences = compute_diff(&actual, &expected);
+    let has_drift = !differences.is_empty();
 
     Ok(DriftReport {
         has_drift,
@@ -49,15 +47,15 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn drift_report_fields() {
+    fn drift_report_no_drift_when_differences_empty() {
         let report = DriftReport {
-            has_drift: true,
+            has_drift: false,
             expected_fingerprint: "abc123".to_string(),
             actual_fingerprint: "def456".to_string(),
             differences: vec![],
         };
 
-        assert!(report.has_drift);
+        assert!(!report.has_drift);
         assert_eq!(report.expected_fingerprint, "abc123");
         assert_eq!(report.actual_fingerprint, "def456");
         assert!(report.differences.is_empty());

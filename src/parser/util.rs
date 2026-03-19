@@ -85,6 +85,18 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
             });
             Ok(PgType::Varchar(size))
         }
+        DataType::Char(len) | DataType::Character(len) => {
+            if let Some(CharacterLength::Max) = len.as_ref() {
+                return Err(SchemaError::ParseError(
+                    "CHAR(MAX) is not valid PostgreSQL syntax".into(),
+                ));
+            }
+            let size = len.as_ref().and_then(|l| match l {
+                CharacterLength::IntegerLength { length, .. } => Some(*length as u32),
+                CharacterLength::Max => unreachable!(),
+            });
+            Ok(PgType::Char(size))
+        }
         DataType::Text => Ok(PgType::Text),
         DataType::Boolean => Ok(PgType::Boolean),
         DataType::Timestamp(_, tz) => {
@@ -94,6 +106,15 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
                 Ok(PgType::Timestamp)
             }
         }
+        DataType::Time(_, tz) => {
+            if *tz == TimezoneInfo::WithTimeZone || *tz == TimezoneInfo::Tz {
+                Ok(PgType::TimeTz)
+            } else {
+                Ok(PgType::Time)
+            }
+        }
+        DataType::Interval { .. } => Ok(PgType::Interval),
+        DataType::Bytea => Ok(PgType::Bytea),
         DataType::Date => Ok(PgType::Date),
         DataType::Uuid => Ok(PgType::Uuid),
         DataType::JSON => Ok(PgType::Json),
@@ -117,6 +138,8 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
                 "cidr" => return Ok(PgType::Cidr),
                 "macaddr" => return Ok(PgType::Macaddr),
                 "macaddr8" => return Ok(PgType::Macaddr8),
+                "point" => return Ok(PgType::Point),
+                "xml" => return Ok(PgType::Xml),
                 _ => {}
             }
 

@@ -767,11 +767,17 @@ fn format_pg_type(pg_type: &PgType) -> String {
         PgType::DoublePrecision => "DOUBLE PRECISION".to_string(),
         PgType::Varchar(Some(len)) => format!("VARCHAR({len})"),
         PgType::Varchar(None) => "VARCHAR".to_string(),
+        PgType::Char(Some(len)) => format!("CHAR({len})"),
+        PgType::Char(None) => "CHAR(1)".to_string(),
         PgType::Text => "TEXT".to_string(),
         PgType::Boolean => "BOOLEAN".to_string(),
         PgType::TimestampTz => "TIMESTAMP WITH TIME ZONE".to_string(),
         PgType::Timestamp => "TIMESTAMP".to_string(),
+        PgType::TimeTz => "TIME WITH TIME ZONE".to_string(),
+        PgType::Time => "TIME".to_string(),
         PgType::Date => "DATE".to_string(),
+        PgType::Interval => "INTERVAL".to_string(),
+        PgType::Bytea => "BYTEA".to_string(),
         PgType::Uuid => "UUID".to_string(),
         PgType::Json => "JSON".to_string(),
         PgType::Jsonb => "JSONB".to_string(),
@@ -779,6 +785,8 @@ fn format_pg_type(pg_type: &PgType) -> String {
         PgType::Cidr => "CIDR".to_string(),
         PgType::Macaddr => "MACADDR".to_string(),
         PgType::Macaddr8 => "MACADDR8".to_string(),
+        PgType::Point => "POINT".to_string(),
+        PgType::Xml => "XML".to_string(),
         PgType::Vector(Some(dim)) => format!("vector({dim})"),
         PgType::Vector(None) => "vector".to_string(),
         PgType::Array(inner) => format!("{}[]", format_pg_type(inner)),
@@ -3702,6 +3710,158 @@ mod tests {
         assert_eq!(
             sql[1],
             "CREATE MATERIALIZED VIEW \"public\".\"summary\" AS SELECT count(*) FROM orders;"
+        );
+    }
+
+    #[test]
+    fn add_column_with_time_type_generates_valid_sql() {
+        let ops = vec![MigrationOp::AddColumn {
+            table: QualifiedName::new("public", "events"),
+            column: Column {
+                name: "start_time".to_string(),
+                data_type: PgType::Time,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"events\" ADD COLUMN \"start_time\" TIME NOT NULL;"
+        );
+    }
+
+    #[test]
+    fn add_column_with_time_tz_type_generates_valid_sql() {
+        let ops = vec![MigrationOp::AddColumn {
+            table: QualifiedName::new("public", "events"),
+            column: Column {
+                name: "end_time".to_string(),
+                data_type: PgType::TimeTz,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"events\" ADD COLUMN \"end_time\" TIME WITH TIME ZONE NOT NULL;"
+        );
+    }
+
+    #[test]
+    fn add_column_with_interval_type_generates_valid_sql() {
+        let ops = vec![MigrationOp::AddColumn {
+            table: QualifiedName::new("public", "schedules"),
+            column: Column {
+                name: "duration".to_string(),
+                data_type: PgType::Interval,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"schedules\" ADD COLUMN \"duration\" INTERVAL NOT NULL;"
+        );
+    }
+
+    #[test]
+    fn add_column_with_bytea_type_generates_valid_sql() {
+        let ops = vec![MigrationOp::AddColumn {
+            table: QualifiedName::new("public", "blobs"),
+            column: Column {
+                name: "data".to_string(),
+                data_type: PgType::Bytea,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        }];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"blobs\" ADD COLUMN \"data\" BYTEA NOT NULL;"
+        );
+    }
+
+    #[test]
+    fn add_column_with_char_type_generates_valid_sql() {
+        let ops = vec![
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "codes"),
+                column: Column {
+                    name: "code".to_string(),
+                    data_type: PgType::Char(Some(10)),
+                    nullable: false,
+                    default: None,
+                    comment: None,
+                },
+            },
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "codes"),
+                column: Column {
+                    name: "flag".to_string(),
+                    data_type: PgType::Char(None),
+                    nullable: false,
+                    default: None,
+                    comment: None,
+                },
+            },
+        ];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 2);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"codes\" ADD COLUMN \"code\" CHAR(10) NOT NULL;"
+        );
+        assert_eq!(
+            sql[1],
+            "ALTER TABLE \"public\".\"codes\" ADD COLUMN \"flag\" CHAR(1) NOT NULL;"
+        );
+    }
+
+    #[test]
+    fn add_column_with_point_and_xml_types_generates_valid_sql() {
+        let ops = vec![
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "misc"),
+                column: Column {
+                    name: "coordinates".to_string(),
+                    data_type: PgType::Point,
+                    nullable: false,
+                    default: None,
+                    comment: None,
+                },
+            },
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "misc"),
+                column: Column {
+                    name: "content".to_string(),
+                    data_type: PgType::Xml,
+                    nullable: false,
+                    default: None,
+                    comment: None,
+                },
+            },
+        ];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 2);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"misc\" ADD COLUMN \"coordinates\" POINT NOT NULL;"
+        );
+        assert_eq!(
+            sql[1],
+            "ALTER TABLE \"public\".\"misc\" ADD COLUMN \"content\" XML NOT NULL;"
         );
     }
 }

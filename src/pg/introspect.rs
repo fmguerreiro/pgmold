@@ -777,7 +777,11 @@ fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i
         "uuid" => PgType::Uuid,
         "timestamptz" => PgType::TimestampTz,
         "timestamp" => PgType::Timestamp,
+        "time" => PgType::Time,
+        "timetz" => PgType::TimeTz,
         "date" => PgType::Date,
+        "interval" => PgType::Interval,
+        "bytea" => PgType::Bytea,
         "json" => PgType::Json,
         "jsonb" => PgType::Jsonb,
         "numeric" => PgType::BuiltinNamed("numeric".to_string()),
@@ -785,6 +789,12 @@ fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i
         "cidr" => PgType::Cidr,
         "macaddr" => PgType::Macaddr,
         "macaddr8" => PgType::Macaddr8,
+        "bpchar" => {
+            let length = atttypmod.and_then(|m| if m > 4 { Some((m - 4) as u32) } else { None });
+            PgType::Char(length)
+        }
+        "point" => PgType::Point,
+        "xml" => PgType::Xml,
         _ => PgType::UserDefined(format!("{udt_schema}.{udt_name}")),
     }
 }
@@ -808,7 +818,12 @@ fn map_pg_type(
         "boolean" => Ok(PgType::Boolean),
         "timestamp with time zone" => Ok(PgType::TimestampTz),
         "timestamp without time zone" => Ok(PgType::Timestamp),
+        "time without time zone" => Ok(PgType::Time),
+        "time with time zone" => Ok(PgType::TimeTz),
         "date" => Ok(PgType::Date),
+        "interval" => Ok(PgType::Interval),
+        "bytea" => Ok(PgType::Bytea),
+        "character" => Ok(PgType::Char(char_max_length.map(|l| l as u32))),
         "uuid" => Ok(PgType::Uuid),
         "json" => Ok(PgType::Json),
         "jsonb" => Ok(PgType::Jsonb),
@@ -816,6 +831,8 @@ fn map_pg_type(
         "cidr" => Ok(PgType::Cidr),
         "macaddr" => Ok(PgType::Macaddr),
         "macaddr8" => Ok(PgType::Macaddr8),
+        "point" => Ok(PgType::Point),
+        "xml" => Ok(PgType::Xml),
         "USER-DEFINED" => {
             if udt_name == "vector" {
                 // pgvector stores dimension directly in atttypmod
