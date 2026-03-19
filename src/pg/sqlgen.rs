@@ -768,7 +768,7 @@ fn format_pg_type(pg_type: &PgType) -> String {
         PgType::Varchar(Some(len)) => format!("VARCHAR({len})"),
         PgType::Varchar(None) => "VARCHAR".to_string(),
         PgType::Char(Some(len)) => format!("CHAR({len})"),
-        PgType::Char(None) => "CHAR".to_string(),
+        PgType::Char(None) => "CHAR(1)".to_string(),
         PgType::Text => "TEXT".to_string(),
         PgType::Boolean => "BOOLEAN".to_string(),
         PgType::TimestampTz => "TIMESTAMP WITH TIME ZONE".to_string(),
@@ -3825,47 +3825,43 @@ mod tests {
         );
         assert_eq!(
             sql[1],
-            "ALTER TABLE \"public\".\"codes\" ADD COLUMN \"flag\" CHAR NOT NULL;"
+            "ALTER TABLE \"public\".\"codes\" ADD COLUMN \"flag\" CHAR(1) NOT NULL;"
         );
     }
 
     #[test]
-    fn add_column_with_point_type_generates_valid_sql() {
-        let ops = vec![MigrationOp::AddColumn {
-            table: QualifiedName::new("public", "locations"),
-            column: Column {
-                name: "coordinates".to_string(),
-                data_type: PgType::Point,
-                nullable: false,
-                default: None,
-                comment: None,
+    fn add_column_with_point_and_xml_types_generates_valid_sql() {
+        let ops = vec![
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "misc"),
+                column: Column {
+                    name: "coordinates".to_string(),
+                    data_type: PgType::Point,
+                    nullable: false,
+                    default: None,
+                    comment: None,
+                },
             },
-        }];
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "misc"),
+                column: Column {
+                    name: "content".to_string(),
+                    data_type: PgType::Xml,
+                    nullable: false,
+                    default: None,
+                    comment: None,
+                },
+            },
+        ];
         let sql = generate_sql(&ops);
-        assert_eq!(sql.len(), 1);
+        assert_eq!(sql.len(), 2);
         assert_eq!(
             sql[0],
-            "ALTER TABLE \"public\".\"locations\" ADD COLUMN \"coordinates\" POINT NOT NULL;"
+            "ALTER TABLE \"public\".\"misc\" ADD COLUMN \"coordinates\" POINT NOT NULL;"
         );
-    }
-
-    #[test]
-    fn add_column_with_xml_type_generates_valid_sql() {
-        let ops = vec![MigrationOp::AddColumn {
-            table: QualifiedName::new("public", "documents"),
-            column: Column {
-                name: "content".to_string(),
-                data_type: PgType::Xml,
-                nullable: false,
-                default: None,
-                comment: None,
-            },
-        }];
-        let sql = generate_sql(&ops);
-        assert_eq!(sql.len(), 1);
         assert_eq!(
-            sql[0],
-            "ALTER TABLE \"public\".\"documents\" ADD COLUMN \"content\" XML NOT NULL;"
+            sql[1],
+            "ALTER TABLE \"public\".\"misc\" ADD COLUMN \"content\" XML NOT NULL;"
         );
     }
 }

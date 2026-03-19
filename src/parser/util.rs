@@ -86,9 +86,14 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
             Ok(PgType::Varchar(size))
         }
         DataType::Char(len) | DataType::Character(len) => {
+            if let Some(CharacterLength::Max) = len.as_ref() {
+                return Err(SchemaError::ParseError(
+                    "CHAR(MAX) is not valid PostgreSQL syntax".into(),
+                ));
+            }
             let size = len.as_ref().and_then(|l| match l {
                 CharacterLength::IntegerLength { length, .. } => Some(*length as u32),
-                CharacterLength::Max => None,
+                CharacterLength::Max => unreachable!(),
             });
             Ok(PgType::Char(size))
         }

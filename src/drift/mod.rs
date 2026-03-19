@@ -26,6 +26,9 @@ pub async fn detect_drift(
 
     let expected_fingerprint = expected.fingerprint();
     let actual_fingerprint = actual.fingerprint();
+    // ⚠ Fingerprints can diverge due to normalization gaps between parsed and
+    // introspected schemas even when the schemas are semantically identical.
+    // Use diff operations as the source of truth for drift detection.
     let differences = compute_diff(&actual, &expected);
     let has_drift = !differences.is_empty();
 

@@ -3096,27 +3096,16 @@ CREATE TABLE codes (
 }
 
 #[test]
-fn parses_point_column_type() {
+fn parses_point_and_xml_column_types() {
     let sql = r#"
-CREATE TABLE locations (
+CREATE TABLE misc (
     id BIGINT NOT NULL,
-    coordinates POINT NOT NULL
-);
-"#;
-    let schema = parse_sql_string(sql).unwrap();
-    let table = schema.tables.get("public.locations").unwrap();
-    assert_eq!(table.columns["coordinates"].data_type, PgType::Point);
-}
-
-#[test]
-fn parses_xml_column_type() {
-    let sql = r#"
-CREATE TABLE documents (
-    id BIGINT NOT NULL,
+    coordinates POINT NOT NULL,
     content XML NOT NULL
 );
 "#;
     let schema = parse_sql_string(sql).unwrap();
-    let table = schema.tables.get("public.documents").unwrap();
+    let table = schema.tables.get("public.misc").unwrap();
+    assert_eq!(table.columns["coordinates"].data_type, PgType::Point);
     assert_eq!(table.columns["content"].data_type, PgType::Xml);
 }

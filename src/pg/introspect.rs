@@ -789,7 +789,10 @@ fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i
         "cidr" => PgType::Cidr,
         "macaddr" => PgType::Macaddr,
         "macaddr8" => PgType::Macaddr8,
-        "bpchar" => PgType::Char(None),
+        "bpchar" => {
+            let length = atttypmod.and_then(|m| if m > 4 { Some((m - 4) as u32) } else { None });
+            PgType::Char(length)
+        }
         "point" => PgType::Point,
         "xml" => PgType::Xml,
         _ => PgType::UserDefined(format!("{udt_schema}.{udt_name}")),
