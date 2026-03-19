@@ -774,12 +774,10 @@ fn normalize_query(query: &Query) -> Query {
 
 fn normalize_group_by(group_by: &GroupByExpr) -> GroupByExpr {
     match group_by {
-        GroupByExpr::Expressions(exprs, modifiers) => {
-            GroupByExpr::Expressions(
-                exprs.iter().map(normalize_expr).collect(),
-                modifiers.clone(),
-            )
-        }
+        GroupByExpr::Expressions(exprs, modifiers) => GroupByExpr::Expressions(
+            exprs.iter().map(normalize_expr).collect(),
+            modifiers.clone(),
+        ),
         other => other.clone(),
     }
 }
