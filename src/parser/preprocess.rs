@@ -1,5 +1,82 @@
 use regex::Regex;
 
+fn strip_line_comments(sql: &str) -> String {
+    let bytes = sql.as_bytes();
+    let length = bytes.len();
+    let mut result = String::with_capacity(length);
+    let mut index = 0;
+
+    while index < length {
+        match bytes[index] {
+            b'\'' => {
+                let start = index;
+                index += 1;
+                while index < length {
+                    if bytes[index] == b'\'' {
+                        index += 1;
+                        if index < length && bytes[index] == b'\'' {
+                            index += 1;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        index += 1;
+                    }
+                }
+                result.push_str(&sql[start..index]);
+            }
+            b'$' => {
+                let tag_start = index;
+                index += 1;
+                while index < length
+                    && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+                {
+                    index += 1;
+                }
+                if index < length && bytes[index] == b'$' {
+                    index += 1;
+                    let tag = &sql[tag_start..index];
+                    let body_start = index;
+                    let mut closed = false;
+                    while index + tag.len() <= length {
+                        if &sql[index..index + tag.len()] == tag {
+                            index += tag.len();
+                            closed = true;
+                            break;
+                        }
+                        index += 1;
+                    }
+                    if !closed {
+                        index = length;
+                    }
+                    result.push_str(&sql[tag_start..index]);
+                } else {
+                    result.push_str(&sql[tag_start..index]);
+                }
+            }
+            b'-' if index + 1 < length && bytes[index + 1] == b'-' => {
+                while index < length && bytes[index] != b'\n' {
+                    index += 1;
+                }
+                if index < length {
+                    result.push('\n');
+                    index += 1;
+                }
+            }
+            _ => {
+                let start = index;
+                index += 1;
+                while index < length && !matches!(bytes[index], b'\'' | b'$' | b'-') {
+                    index += 1;
+                }
+                result.push_str(&sql[start..index]);
+            }
+        }
+    }
+
+    result
+}
+
 fn strip_do_blocks(sql: &str) -> String {
     let do_start_re = Regex::new(r"(?i)\bDO\s+(?:LANGUAGE\s+\w+\s+)?(\$[^$]*\$)").unwrap();
 
@@ -97,7 +174,8 @@ fn reorder_sequence_options(sql: &str) -> String {
 /// Statements stripped here are parsed separately via regex
 /// (GRANT, REVOKE, ALTER DEFAULT PRIVILEGES, OWNER TO, COMMENT ON, DO blocks).
 pub(super) fn preprocess_sql(sql: &str) -> String {
-    let sql = strip_do_blocks(sql);
+    let sql = strip_line_comments(sql);
+    let sql = strip_do_blocks(&sql);
     let sql = reorder_sequence_options(&sql);
 
     let strip_patterns = [
@@ -122,4 +200,117 @@ pub(super) fn preprocess_sql(sql: &str) -> String {
     }
 
     processed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_line_comments_removes_simple_comments() {
+        let sql = "SELECT 1; -- this is a comment\nSELECT 2;";
+        let result = strip_line_comments(sql);
+        assert_eq!(result, "SELECT 1; \nSELECT 2;");
+    }
+
+    #[test]
+    fn strip_line_comments_preserves_single_quoted_strings() {
+        let sql = "SELECT '-- not a comment';";
+        let result = strip_line_comments(sql);
+        assert_eq!(result, "SELECT '-- not a comment';");
+    }
+
+    #[test]
+    fn strip_line_comments_preserves_escaped_quotes() {
+        let sql = "SELECT 'it''s -- fine';";
+        let result = strip_line_comments(sql);
+        assert_eq!(result, "SELECT 'it''s -- fine';");
+    }
+
+    #[test]
+    fn strip_line_comments_preserves_dollar_quoted_strings() {
+        let sql = "AS $$\n-- comment inside body\nEND;\n$$;";
+        let result = strip_line_comments(sql);
+        assert_eq!(result, "AS $$\n-- comment inside body\nEND;\n$$;");
+    }
+
+    #[test]
+    fn strip_line_comments_preserves_custom_dollar_tags() {
+        let sql = "AS $fn$\n-- comment inside body\nEND;\n$fn$;";
+        let result = strip_line_comments(sql);
+        assert_eq!(result, "AS $fn$\n-- comment inside body\nEND;\n$fn$;");
+    }
+
+    #[test]
+    fn apostrophe_in_comment_before_dollar_quoted_function() {
+        let sql = "\
+-- The verifier_user_id must already have the 'verifier' role.
+
+CREATE OR REPLACE FUNCTION mrv.example_function()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'hello';
+END;
+$$;";
+        let result = strip_line_comments(sql);
+        assert_eq!(
+            result,
+            "\
+\n
+CREATE OR REPLACE FUNCTION mrv.example_function()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'hello';
+END;
+$$;"
+        );
+    }
+
+    #[test]
+    fn preprocess_apostrophe_in_comment_before_function() {
+        let sql = "\
+-- Auth: caller must be enterprise_admin for the grant's enterprise.
+-- The verifier_user_id must already have the 'verifier' role.
+
+CREATE OR REPLACE FUNCTION mrv.example_function()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'hello';
+END;
+$$;";
+        let result = preprocess_sql(sql);
+        assert_eq!(
+            result,
+            "\
+\n\n
+CREATE OR REPLACE FUNCTION mrv.example_function()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'hello';
+END;
+$$;"
+        );
+    }
+
+    #[test]
+    fn strip_line_comments_preserves_non_ascii() {
+        let sql = "SELECT 'resume' -- Resultat de l'utilisateur\nFROM users;";
+        let result = strip_line_comments(sql);
+        assert_eq!(result, "SELECT 'resume' \nFROM users;");
+    }
+
+    #[test]
+    fn strip_line_comments_preserves_non_ascii_in_strings() {
+        let sql = "SELECT 'naive value -- still inside';";
+        let result = strip_line_comments(sql);
+        assert_eq!(result, "SELECT 'naive value -- still inside';");
+    }
 }
