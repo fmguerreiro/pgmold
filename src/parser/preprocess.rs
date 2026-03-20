@@ -1,6 +1,6 @@
 use regex::Regex;
 
-fn strip_line_comments(sql: &str) -> String {
+fn strip_comments(sql: &str) -> String {
     let bytes = sql.as_bytes();
     let length = bytes.len();
     let mut result = String::with_capacity(length);
@@ -36,7 +36,6 @@ fn strip_line_comments(sql: &str) -> String {
                 if index < length && bytes[index] == b'$' {
                     index += 1;
                     let tag = &sql[tag_start..index];
-                    let body_start = index;
                     let mut closed = false;
                     while index + tag.len() <= length {
                         if &sql[index..index + tag.len()] == tag {
@@ -63,10 +62,32 @@ fn strip_line_comments(sql: &str) -> String {
                     index += 1;
                 }
             }
+            b'/' if index + 1 < length && bytes[index + 1] == b'*' => {
+                index += 2;
+                let mut depth: usize = 1;
+                while depth > 0 {
+                    if index + 1 >= length {
+                        index = length;
+                        break;
+                    }
+                    if bytes[index] == b'/' && bytes[index + 1] == b'*' {
+                        depth += 1;
+                        index += 2;
+                    } else if bytes[index] == b'*' && bytes[index + 1] == b'/' {
+                        depth -= 1;
+                        index += 2;
+                    } else {
+                        index += 1;
+                    }
+                }
+                result.push(' ');
+            }
             _ => {
                 let start = index;
                 index += 1;
-                while index < length && !matches!(bytes[index], b'\'' | b'$' | b'-') {
+                while index < length
+                    && !matches!(bytes[index], b'\'' | b'$' | b'-' | b'/')
+                {
                     index += 1;
                 }
                 result.push_str(&sql[start..index]);
@@ -174,7 +195,7 @@ fn reorder_sequence_options(sql: &str) -> String {
 /// Statements stripped here are parsed separately via regex
 /// (GRANT, REVOKE, ALTER DEFAULT PRIVILEGES, OWNER TO, COMMENT ON, DO blocks).
 pub(super) fn preprocess_sql(sql: &str) -> String {
-    let sql = strip_line_comments(sql);
+    let sql = strip_comments(sql);
     let sql = strip_do_blocks(&sql);
     let sql = reorder_sequence_options(&sql);
 
@@ -207,37 +228,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn strip_line_comments_removes_simple_comments() {
+    fn strip_comments_removes_simple_comments() {
         let sql = "SELECT 1; -- this is a comment\nSELECT 2;";
-        let result = strip_line_comments(sql);
+        let result = strip_comments(sql);
         assert_eq!(result, "SELECT 1; \nSELECT 2;");
     }
 
     #[test]
-    fn strip_line_comments_preserves_single_quoted_strings() {
+    fn strip_comments_preserves_single_quoted_strings() {
         let sql = "SELECT '-- not a comment';";
-        let result = strip_line_comments(sql);
+        let result = strip_comments(sql);
         assert_eq!(result, "SELECT '-- not a comment';");
     }
 
     #[test]
-    fn strip_line_comments_preserves_escaped_quotes() {
+    fn strip_comments_preserves_escaped_quotes() {
         let sql = "SELECT 'it''s -- fine';";
-        let result = strip_line_comments(sql);
+        let result = strip_comments(sql);
         assert_eq!(result, "SELECT 'it''s -- fine';");
     }
 
     #[test]
-    fn strip_line_comments_preserves_dollar_quoted_strings() {
+    fn strip_comments_preserves_dollar_quoted_strings() {
         let sql = "AS $$\n-- comment inside body\nEND;\n$$;";
-        let result = strip_line_comments(sql);
+        let result = strip_comments(sql);
         assert_eq!(result, "AS $$\n-- comment inside body\nEND;\n$$;");
     }
 
     #[test]
-    fn strip_line_comments_preserves_custom_dollar_tags() {
+    fn strip_comments_preserves_custom_dollar_tags() {
         let sql = "AS $fn$\n-- comment inside body\nEND;\n$fn$;";
-        let result = strip_line_comments(sql);
+        let result = strip_comments(sql);
         assert_eq!(result, "AS $fn$\n-- comment inside body\nEND;\n$fn$;");
     }
 
@@ -254,7 +275,7 @@ BEGIN
     RAISE EXCEPTION 'hello';
 END;
 $$;";
-        let result = strip_line_comments(sql);
+        let result = strip_comments(sql);
         assert_eq!(
             result,
             "\
@@ -301,16 +322,72 @@ $$;"
     }
 
     #[test]
-    fn strip_line_comments_preserves_non_ascii() {
+    fn strip_comments_preserves_non_ascii() {
         let sql = "SELECT 'resume' -- Resultat de l'utilisateur\nFROM users;";
-        let result = strip_line_comments(sql);
+        let result = strip_comments(sql);
         assert_eq!(result, "SELECT 'resume' \nFROM users;");
     }
 
     #[test]
-    fn strip_line_comments_preserves_non_ascii_in_strings() {
+    fn strip_comments_preserves_non_ascii_in_strings() {
         let sql = "SELECT 'naive value -- still inside';";
-        let result = strip_line_comments(sql);
+        let result = strip_comments(sql);
         assert_eq!(result, "SELECT 'naive value -- still inside';");
+    }
+
+    #[test]
+    fn strip_comments_removes_block_comments() {
+        let sql = "SELECT 1; /* block comment */ SELECT 2;";
+        let result = strip_comments(sql);
+        assert_eq!(result, "SELECT 1;   SELECT 2;");
+    }
+
+    #[test]
+    fn strip_comments_removes_nested_block_comments() {
+        let sql = "SELECT /* outer /* inner */ still outer */ 1;";
+        let result = strip_comments(sql);
+        assert_eq!(result, "SELECT   1;");
+    }
+
+    #[test]
+    fn strip_comments_block_with_keywords() {
+        let sql = "/* GRANT ALL; REVOKE everything; ALTER TABLE too */\nSELECT 1;";
+        let result = strip_comments(sql);
+        assert_eq!(result, " \nSELECT 1;");
+    }
+
+    #[test]
+    fn preprocess_block_comment_with_grant_before_function() {
+        let sql = "\
+/* GRANT ALL to everyone; */
+
+CREATE OR REPLACE FUNCTION example()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    NULL;
+END;
+$$;";
+        let result = preprocess_sql(sql);
+        assert!(
+            result.contains("CREATE OR REPLACE FUNCTION"),
+            "function should be preserved: {result}"
+        );
+        assert!(
+            result.contains("$$"),
+            "dollar-quoted body should be preserved: {result}"
+        );
+        assert!(
+            !result.contains("GRANT"),
+            "block comment should be stripped: {result}"
+        );
+    }
+
+    #[test]
+    fn strip_comments_preserves_block_comment_syntax_in_string() {
+        let sql = "SELECT '/* not a block comment */' FROM t;";
+        let result = strip_comments(sql);
+        assert_eq!(result, "SELECT '/* not a block comment */' FROM t;");
     }
 }

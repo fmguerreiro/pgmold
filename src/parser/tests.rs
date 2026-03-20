@@ -3178,3 +3178,40 @@ GRANT INSERT ON users TO reader;
         .privileges
         .contains(&crate::model::Privilege::Insert));
 }
+
+#[test]
+fn line_comment_with_grant_keyword_before_dollar_quoted_function() {
+    let sql = r#"
+        -- We GRANT the user access to the 'verifier' role.
+
+        CREATE OR REPLACE FUNCTION example_function()
+        RETURNS void
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RAISE EXCEPTION 'hello';
+        END;
+        $$;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    assert!(schema.functions.contains_key("public.example_function()"));
+}
+
+#[test]
+fn block_comment_with_grant_keyword_before_dollar_quoted_function() {
+    let sql = r#"
+        /* GRANT ALL and REVOKE everything; ALTER TABLE too */
+        CREATE OR REPLACE FUNCTION block_comment_function()
+        RETURNS void
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            NULL;
+        END;
+        $$;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    assert!(schema
+        .functions
+        .contains_key("public.block_comment_function()"));
+}
