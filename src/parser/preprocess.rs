@@ -25,6 +25,17 @@ fn strip_comments(sql: &str) -> String {
                 }
                 result.push_str(&sql[start..index]);
             }
+            b'"' => {
+                let start = index;
+                index += 1;
+                while index < length && bytes[index] != b'"' {
+                    index += 1;
+                }
+                if index < length {
+                    index += 1;
+                }
+                result.push_str(&sql[start..index]);
+            }
             b'$' => {
                 let tag_start = index;
                 index += 1;
@@ -36,22 +47,15 @@ fn strip_comments(sql: &str) -> String {
                 if index < length && bytes[index] == b'$' {
                     index += 1;
                     let tag = &sql[tag_start..index];
-                    let mut closed = false;
                     while index + tag.len() <= length {
                         if &sql[index..index + tag.len()] == tag {
                             index += tag.len();
-                            closed = true;
                             break;
                         }
                         index += 1;
                     }
-                    if !closed {
-                        index = length;
-                    }
-                    result.push_str(&sql[tag_start..index]);
-                } else {
-                    result.push_str(&sql[tag_start..index]);
                 }
+                result.push_str(&sql[tag_start..index]);
             }
             b'-' if index + 1 < length && bytes[index + 1] == b'-' => {
                 while index < length && bytes[index] != b'\n' {
@@ -85,7 +89,7 @@ fn strip_comments(sql: &str) -> String {
             _ => {
                 let start = index;
                 index += 1;
-                while index < length && !matches!(bytes[index], b'\'' | b'$' | b'-' | b'/') {
+                while index < length && !matches!(bytes[index], b'\'' | b'"' | b'$' | b'-' | b'/') {
                     index += 1;
                 }
                 result.push_str(&sql[start..index]);
@@ -387,5 +391,40 @@ $$;";
         let sql = "SELECT '/* not a block comment */' FROM t;";
         let result = strip_comments(sql);
         assert_eq!(result, "SELECT '/* not a block comment */' FROM t;");
+    }
+
+    #[test]
+    fn strip_comments_preserves_double_quoted_identifiers() {
+        let sql = r#"SELECT "col--name" FROM t;"#;
+        let result = strip_comments(sql);
+        assert_eq!(result, r#"SELECT "col--name" FROM t;"#);
+    }
+
+    #[test]
+    fn strip_comments_preserves_double_quoted_with_block_comment_syntax() {
+        let sql = r#"SELECT "schema/*weird*/name" FROM t;"#;
+        let result = strip_comments(sql);
+        assert_eq!(result, r#"SELECT "schema/*weird*/name" FROM t;"#);
+    }
+
+    #[test]
+    fn strip_comments_line_comment_at_end_of_input() {
+        let sql = "SELECT 1; -- no newline at end";
+        let result = strip_comments(sql);
+        assert_eq!(result, "SELECT 1; ");
+    }
+
+    #[test]
+    fn strip_comments_block_comment_marker_inside_line_comment() {
+        let sql = "SELECT 1; -- ignore /* this\nSELECT 2;";
+        let result = strip_comments(sql);
+        assert_eq!(result, "SELECT 1; \nSELECT 2;");
+    }
+
+    #[test]
+    fn strip_comments_line_comment_marker_inside_block_comment() {
+        let sql = "SELECT /* see -- not a comment */ 1;";
+        let result = strip_comments(sql);
+        assert_eq!(result, "SELECT   1;");
     }
 }
