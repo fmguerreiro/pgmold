@@ -85,9 +85,7 @@ fn strip_comments(sql: &str) -> String {
             _ => {
                 let start = index;
                 index += 1;
-                while index < length
-                    && !matches!(bytes[index], b'\'' | b'$' | b'-' | b'/')
-                {
+                while index < length && !matches!(bytes[index], b'\'' | b'$' | b'-' | b'/') {
                     index += 1;
                 }
                 result.push_str(&sql[start..index]);
