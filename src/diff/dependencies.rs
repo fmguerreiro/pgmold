@@ -244,7 +244,7 @@ pub(super) fn generate_view_ops_for_affected_tables(
     let mut affected_names: HashSet<String> = affected_tables.clone();
     loop {
         let mut new_views = Vec::new();
-        for (_, view) in &from.views {
+        for view in from.views.values() {
             let qualified_view_name = qualified_name(&view.schema, &view.name);
             if affected_names.contains(&qualified_view_name) {
                 continue;

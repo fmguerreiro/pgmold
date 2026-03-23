@@ -496,8 +496,7 @@ impl MigrationGraph {
                         let refs = extract_relation_references(&view.query);
                         for ref_name in refs {
                             if ref_name != *view_name {
-                                edges_to_add
-                                    .push((key.clone(), OpKey::DropView(ref_name)));
+                                edges_to_add.push((key.clone(), OpKey::DropView(ref_name)));
                             }
                         }
                     }
@@ -4751,15 +4750,21 @@ mod tests {
 
         let leaf_pos = planned
             .iter()
-            .position(|op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.a_leaf"))
+            .position(
+                |op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.a_leaf"),
+            )
             .expect("DropView(a_leaf) not found");
         let middle_pos = planned
             .iter()
-            .position(|op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.m_middle"))
+            .position(
+                |op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.m_middle"),
+            )
             .expect("DropView(m_middle) not found");
         let base_pos = planned
             .iter()
-            .position(|op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.z_base"))
+            .position(
+                |op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.z_base"),
+            )
             .expect("DropView(z_base) not found");
 
         assert!(
