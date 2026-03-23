@@ -528,7 +528,10 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         }
                         SqlTriggerEvent::Update(cols) => {
                             trigger_events.push(TriggerEvent::Update);
-                            update_columns.extend(cols.iter().map(|c| unquote_ident(&c.to_string()).to_string()));
+                            update_columns.extend(
+                                cols.iter()
+                                    .map(|c| unquote_ident(&c.to_string()).to_string()),
+                            );
                         }
                         SqlTriggerEvent::Delete => {
                             trigger_events.push(TriggerEvent::Delete);
