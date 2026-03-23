@@ -944,8 +944,7 @@ mod tests {
             using_expr: Some("enterprise_id = current_enterprise_id()".to_string()),
             check_expr: None,
         });
-        from.tables
-            .insert("public.users".to_string(), users_table);
+        from.tables.insert("public.users".to_string(), users_table);
 
         let mut to = empty_schema();
         let mut users_table_to = simple_table("users");
@@ -968,8 +967,7 @@ mod tests {
             using_expr: Some("id = current_user_id()".to_string()),
             check_expr: None,
         });
-        to.tables
-            .insert("public.users".to_string(), users_table_to);
+        to.tables.insert("public.users".to_string(), users_table_to);
 
         let ops = compute_diff(&from, &to);
 
@@ -982,8 +980,16 @@ mod tests {
             .filter(|op| matches!(op, MigrationOp::CreatePolicy(_)))
             .collect();
 
-        assert_eq!(drop_policy_ops.len(), 1, "Should have exactly 1 DropPolicy op");
-        assert_eq!(create_policy_ops.len(), 1, "Should have exactly 1 CreatePolicy op");
+        assert_eq!(
+            drop_policy_ops.len(),
+            1,
+            "Should have exactly 1 DropPolicy op"
+        );
+        assert_eq!(
+            create_policy_ops.len(),
+            1,
+            "Should have exactly 1 CreatePolicy op"
+        );
     }
 
     #[test]
@@ -1186,8 +1192,16 @@ mod tests {
             .filter(|op| matches!(op, MigrationOp::CreateTrigger(_)))
             .collect();
 
-        assert_eq!(drop_trigger_ops.len(), 1, "Should have exactly 1 DropTrigger op");
-        assert_eq!(create_trigger_ops.len(), 1, "Should have exactly 1 CreateTrigger op");
+        assert_eq!(
+            drop_trigger_ops.len(),
+            1,
+            "Should have exactly 1 DropTrigger op"
+        );
+        assert_eq!(
+            create_trigger_ops.len(),
+            1,
+            "Should have exactly 1 CreateTrigger op"
+        );
     }
 
     #[test]
@@ -1264,6 +1278,10 @@ mod tests {
             .collect();
 
         assert_eq!(drop_view_ops.len(), 1, "Should have exactly 1 DropView op");
-        assert_eq!(create_view_ops.len(), 1, "Should have exactly 1 CreateView op");
+        assert_eq!(
+            create_view_ops.len(),
+            1,
+            "Should have exactly 1 CreateView op"
+        );
     }
 }
