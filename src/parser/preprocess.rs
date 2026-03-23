@@ -480,7 +480,8 @@ $$;"
 
     #[test]
     fn multibyte_char_adjacent_to_dollar_tag() {
-        let sql = "SELECT '\u{2014}';\nCREATE FUNCTION f() RETURNS void AS $$\nBEGIN NULL; END;\n$$;";
+        let sql =
+            "SELECT '\u{2014}';\nCREATE FUNCTION f() RETURNS void AS $$\nBEGIN NULL; END;\n$$;";
         let result = strip_comments(sql);
         assert_eq!(result, sql);
     }
