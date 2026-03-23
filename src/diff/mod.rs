@@ -3515,4 +3515,156 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         assert_eq!(alter_policy_count, 0, "AlterPolicy should be filtered out");
         assert_eq!(alter_view_count, 0, "AlterView should be filtered out");
     }
+
+    #[test]
+    fn drop_column_with_transitive_view_dependencies() {
+        use crate::diff::planner::plan_migration;
+
+        let mut from = empty_schema();
+        let mut suppliers = simple_table("suppliers");
+        suppliers
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        suppliers.columns.insert(
+            "enterprise_id".to_string(),
+            simple_column("enterprise_id", PgType::Integer),
+        );
+        from.tables
+            .insert("public.suppliers".to_string(), suppliers);
+        from.views.insert(
+            "public.farmer_users_view".to_string(),
+            View {
+                name: "farmer_users_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id, enterprise_id FROM public.suppliers".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+        from.views.insert(
+            "public.procurement_farmers_view".to_string(),
+            View {
+                name: "procurement_farmers_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id FROM public.farmer_users_view".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+        from.views.insert(
+            "public.facility_farmers_view".to_string(),
+            View {
+                name: "facility_farmers_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id FROM public.farmer_users_view".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+
+        let mut to = empty_schema();
+        let mut suppliers_to = simple_table("suppliers");
+        suppliers_to
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        to.tables
+            .insert("public.suppliers".to_string(), suppliers_to);
+        to.views.insert(
+            "public.farmer_users_view".to_string(),
+            View {
+                name: "farmer_users_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id FROM public.suppliers".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+        to.views.insert(
+            "public.procurement_farmers_view".to_string(),
+            View {
+                name: "procurement_farmers_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id FROM public.farmer_users_view".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+        to.views.insert(
+            "public.facility_farmers_view".to_string(),
+            View {
+                name: "facility_farmers_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id FROM public.farmer_users_view".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        let planned = plan_migration(ops);
+
+        let drop_view_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropView { .. }))
+            .count();
+        let create_view_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreateView(_)))
+            .count();
+
+        assert_eq!(
+            drop_view_count, 3,
+            "should drop all 3 views (1 direct + 2 transitive), got {drop_view_count}.\nPlan: {planned:#?}"
+        );
+        assert_eq!(
+            create_view_count, 3,
+            "should recreate all 3 views, got {create_view_count}.\nPlan: {planned:#?}"
+        );
+
+        let drop_col_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropColumn { .. }))
+            .expect("should have DropColumn");
+
+        for op in &planned {
+            if let MigrationOp::DropView { name, .. } = op {
+                let drop_view_pos = planned
+                    .iter()
+                    .position(|o| matches!(o, MigrationOp::DropView { name: n, .. } if n == name))
+                    .unwrap();
+                assert!(
+                    drop_view_pos < drop_col_pos,
+                    "DropView({name}) at {drop_view_pos} must come before DropColumn at {drop_col_pos}"
+                );
+            }
+        }
+
+        let farmer_drop_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.farmer_users_view"))
+            .unwrap();
+        let procurement_drop_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.procurement_farmers_view"))
+            .unwrap();
+        let facility_drop_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.facility_farmers_view"))
+            .unwrap();
+
+        assert!(
+            procurement_drop_pos < farmer_drop_pos,
+            "DropView(procurement) at {procurement_drop_pos} must come before DropView(farmer_users) at {farmer_drop_pos}"
+        );
+        assert!(
+            facility_drop_pos < farmer_drop_pos,
+            "DropView(facility) at {facility_drop_pos} must come before DropView(farmer_users) at {farmer_drop_pos}"
+        );
+    }
 }
