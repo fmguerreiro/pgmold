@@ -465,6 +465,39 @@ EXECUTE FUNCTION notify_fn();
 }
 
 #[test]
+fn parses_trigger_with_quoted_update_of_columns() {
+    let sql = r#"
+CREATE TABLE "public"."suppliers" ("id" BIGINT PRIMARY KEY, "methodology_mode" TEXT);
+CREATE FUNCTION "public"."check_supplier_methodology_mode"() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+
+CREATE TRIGGER "on_supplier_methodology_mode"
+AFTER UPDATE OF "methodology_mode" ON "public"."suppliers"
+FOR EACH ROW
+EXECUTE FUNCTION "public"."check_supplier_methodology_mode"();
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let trigger = schema
+        .triggers
+        .get("public.suppliers.on_supplier_methodology_mode")
+        .unwrap();
+
+    assert_eq!(trigger.update_columns, vec!["methodology_mode"]);
+
+    let ops = vec![crate::diff::MigrationOp::CreateTrigger(trigger.clone())];
+    let sql = crate::pg::sqlgen::generate_sql(&ops);
+    assert_eq!(sql.len(), 1);
+    assert!(
+        sql[0].contains(r#"UPDATE OF "methodology_mode""#),
+        "Expected single-quoted column, got: {}",
+        sql[0]
+    );
+    assert!(
+        !sql[0].contains(r#""""methodology_mode""""#),
+        "Column should not be triple-quoted"
+    );
+}
+
+#[test]
 fn parses_trigger_with_multiple_events() {
     let sql = r#"
 CREATE FUNCTION log_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
