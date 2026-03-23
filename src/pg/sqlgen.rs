@@ -123,7 +123,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
 
         MigrationOp::DropColumn { table, column } => {
             vec![format!(
-                "ALTER TABLE {} DROP COLUMN {};",
+                "ALTER TABLE {} DROP COLUMN {} CASCADE;",
                 quote_qualified(&table.schema, &table.name),
                 quote_ident(column)
             )]
@@ -1519,7 +1519,7 @@ mod tests {
         assert_eq!(sql.len(), 1);
         assert_eq!(
             sql[0],
-            "ALTER TABLE \"public\".\"users\" DROP COLUMN \"email\";"
+            "ALTER TABLE \"public\".\"users\" DROP COLUMN \"email\" CASCADE;"
         );
     }
 
