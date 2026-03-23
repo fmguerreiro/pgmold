@@ -94,15 +94,17 @@ pub fn extract_table_references(body: &str, default_schema: &str) -> HashSet<Obj
     let mut refs = HashSet::new();
     let dialect = PostgreSqlDialect {};
 
-    // Try to parse as a query
-    let sql = format!("SELECT * FROM ({body}) AS subq");
-    let statements = match Parser::parse_sql(&dialect, &sql) {
-        Ok(stmts) => stmts,
-        Err(_) => match Parser::parse_sql(&dialect, body) {
-            Ok(stmts) => stmts,
-            Err(_) => return refs,
-        },
-    };
+    // Try parsing strategies in order:
+    // 1. As a boolean expression (policy USING/CHECK clauses)
+    // 2. As a subquery (view/function bodies with SELECT statements)
+    // 3. As a raw SQL statement
+    let sql_as_where = format!("SELECT 1 WHERE {body}");
+    let sql_as_subquery = format!("SELECT * FROM ({body}) AS subq");
+
+    let statements = Parser::parse_sql(&dialect, &sql_as_where)
+        .or_else(|_| Parser::parse_sql(&dialect, &sql_as_subquery))
+        .or_else(|_| Parser::parse_sql(&dialect, body))
+        .unwrap_or_default();
 
     for statement in &statements {
         extract_tables_from_statement(statement, default_schema, &mut refs);
@@ -396,6 +398,8 @@ fn extract_tables_from_expr(expr: &Expr, default_schema: &str, refs: &mut HashSe
             extract_tables_from_query(subquery, default_schema, refs);
         }
         Expr::Exists { subquery, .. } => extract_tables_from_query(subquery, default_schema, refs),
+        Expr::Nested(inner) => extract_tables_from_expr(inner, default_schema, refs),
+        Expr::UnaryOp { expr: inner, .. } => extract_tables_from_expr(inner, default_schema, refs),
         Expr::BinaryOp { left, right, .. } => {
             extract_tables_from_expr(left, default_schema, refs);
             extract_tables_from_expr(right, default_schema, refs);
@@ -821,5 +825,16 @@ mod tests {
         let refs = extract_rowtype_references(body, "public");
 
         assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn extract_table_references_from_policy_exists_expression() {
+        let expr =
+            "(EXISTS (SELECT 1 FROM enterprise_suppliers es WHERE es.supplier_id = suppliers.id))";
+        let refs = extract_table_references(expr, "public");
+        assert!(
+            refs.contains(&ObjectRef::new("public", "enterprise_suppliers")),
+            "expected enterprise_suppliers in refs, got: {refs:?}"
+        );
     }
 }

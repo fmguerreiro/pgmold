@@ -526,17 +526,17 @@ impl MigrationGraph {
                     }
                 }
 
-                // Policy depends on its table and functions referenced in expressions
+                // Policy depends on its table, tables/views referenced in expressions, and functions
                 OpKey::CreatePolicy { table, .. } => {
                     edges_to_add.push((OpKey::CreateTable(table.to_string()), key.clone()));
 
                     if let Some(MigrationOp::CreatePolicy(policy)) = self.get_op(key) {
                         let schema = &policy.table_schema;
-                        if let Some(expr) = &policy.using_expr {
-                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
-                        }
-                        if let Some(expr) = &policy.check_expr {
-                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
+                        for expr in [&policy.using_expr, &policy.check_expr]
+                            .into_iter()
+                            .flatten()
+                        {
+                            push_expression_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
                         }
                     }
                 }
@@ -627,15 +627,16 @@ impl MigrationGraph {
                     }
                 }
 
-                // AlterPolicy depends on functions in new expressions
+                // AlterPolicy depends on tables/views and functions in new expressions
                 OpKey::AlterPolicy { table, .. } => {
                     if let Some(MigrationOp::AlterPolicy { changes, .. }) = self.get_op(key) {
                         let schema = &table.schema;
-                        if let Some(Some(expr)) = &changes.using_expr {
-                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
-                        }
-                        if let Some(Some(expr)) = &changes.check_expr {
-                            push_function_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
+                        for expr in [&changes.using_expr, &changes.check_expr]
+                            .into_iter()
+                            .flatten()
+                            .flatten()
+                        {
+                            push_expression_ref_edges(&mut edges_to_add, &keys, expr, schema, key);
                         }
                     }
                 }
@@ -856,6 +857,28 @@ fn push_function_ref_edges(
         let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
         push_function_edges(edges, keys, &ref_qualified, consumer_key);
     }
+}
+
+fn push_relation_ref_edges(
+    edges: &mut Vec<(OpKey, OpKey)>,
+    expression: &str,
+    consumer_key: &OpKey,
+) {
+    for ref_name in extract_relation_references(expression) {
+        edges.push((OpKey::CreateTable(ref_name.clone()), consumer_key.clone()));
+        edges.push((OpKey::CreateView(ref_name), consumer_key.clone()));
+    }
+}
+
+fn push_expression_ref_edges(
+    edges: &mut Vec<(OpKey, OpKey)>,
+    keys: &[OpKey],
+    expression: &str,
+    default_schema: &str,
+    consumer_key: &OpKey,
+) {
+    push_relation_ref_edges(edges, expression, consumer_key);
+    push_function_ref_edges(edges, keys, expression, default_schema, consumer_key);
 }
 
 fn drop_targets_table(other: &OpKey, table: &QualifiedName) -> bool {
@@ -4909,6 +4932,137 @@ mod tests {
         assert!(
             create_table_pos < drop_table_pos,
             "CreateTable ({create_table_pos}) should come before DropTable ({drop_table_pos})"
+        );
+    }
+
+    #[test]
+    fn create_policy_using_expr_references_table() {
+        let mut policy = make_policy("enterprise_access", "public", "suppliers");
+        policy.using_expr = Some(
+            "(EXISTS (SELECT 1 FROM enterprise_suppliers es WHERE es.supplier_id = suppliers.id))"
+                .to_string(),
+        );
+        let ops = vec![
+            MigrationOp::CreatePolicy(policy),
+            MigrationOp::CreateTable(simple_table_with_fks("suppliers", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("enterprise_suppliers", vec![])),
+        ];
+        let planned = plan_migration(ops);
+
+        let create_enterprise_pos = planned
+            .iter()
+            .position(
+                |op| matches!(op, MigrationOp::CreateTable(t) if t.name == "enterprise_suppliers"),
+            )
+            .expect("CreateTable(enterprise_suppliers) not found");
+        let policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .expect("CreatePolicy not found");
+
+        assert!(
+            create_enterprise_pos < policy_pos,
+            "CreateTable(enterprise_suppliers) at {create_enterprise_pos} must come before CreatePolicy at {policy_pos}"
+        );
+    }
+
+    #[test]
+    fn create_policy_check_expr_references_table() {
+        let mut policy = make_policy("insert_check", "public", "suppliers");
+        policy.using_expr = None;
+        policy.check_expr = Some(
+            "(EXISTS (SELECT 1 FROM enterprise_suppliers es WHERE es.supplier_id = suppliers.id))"
+                .to_string(),
+        );
+        let ops = vec![
+            MigrationOp::CreatePolicy(policy),
+            MigrationOp::CreateTable(simple_table_with_fks("suppliers", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("enterprise_suppliers", vec![])),
+        ];
+        let planned = plan_migration(ops);
+
+        let create_enterprise_pos = planned
+            .iter()
+            .position(
+                |op| matches!(op, MigrationOp::CreateTable(t) if t.name == "enterprise_suppliers"),
+            )
+            .expect("CreateTable(enterprise_suppliers) not found");
+        let policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .expect("CreatePolicy not found");
+
+        assert!(
+            create_enterprise_pos < policy_pos,
+            "CreateTable(enterprise_suppliers) at {create_enterprise_pos} must come before CreatePolicy at {policy_pos}"
+        );
+    }
+
+    #[test]
+    fn alter_policy_using_expr_references_table() {
+        let ops = vec![
+            MigrationOp::AlterPolicy {
+                table: QualifiedName::new("public", "suppliers"),
+                name: "enterprise_access".to_string(),
+                changes: PolicyChanges {
+                    roles: None,
+                    using_expr: Some(Some(
+                        "(EXISTS (SELECT 1 FROM enterprise_suppliers es WHERE es.supplier_id = suppliers.id))"
+                            .to_string(),
+                    )),
+                    check_expr: None,
+                },
+            },
+            MigrationOp::CreateTable(simple_table_with_fks("enterprise_suppliers", vec![])),
+        ];
+        let planned = plan_migration(ops);
+
+        let create_table_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .expect("CreateTable not found");
+        let alter_policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterPolicy { .. }))
+            .expect("AlterPolicy not found");
+
+        assert!(
+            create_table_pos < alter_policy_pos,
+            "CreateTable(enterprise_suppliers) at {create_table_pos} must come before AlterPolicy at {alter_policy_pos}"
+        );
+    }
+
+    #[test]
+    fn alter_policy_check_expr_references_table() {
+        let ops = vec![
+            MigrationOp::AlterPolicy {
+                table: QualifiedName::new("public", "suppliers"),
+                name: "enterprise_insert".to_string(),
+                changes: PolicyChanges {
+                    roles: None,
+                    using_expr: None,
+                    check_expr: Some(Some(
+                        "(EXISTS (SELECT 1 FROM enterprise_suppliers es WHERE es.supplier_id = suppliers.id))"
+                            .to_string(),
+                    )),
+                },
+            },
+            MigrationOp::CreateTable(simple_table_with_fks("enterprise_suppliers", vec![])),
+        ];
+        let planned = plan_migration(ops);
+
+        let create_table_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .expect("CreateTable not found");
+        let alter_policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterPolicy { .. }))
+            .expect("AlterPolicy not found");
+
+        assert!(
+            create_table_pos < alter_policy_pos,
+            "CreateTable(enterprise_suppliers) at {create_table_pos} must come before AlterPolicy at {alter_policy_pos}"
         );
     }
 }
