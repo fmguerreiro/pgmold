@@ -47,12 +47,10 @@ fn strip_comments(sql: &str) -> String {
                 if index < length && bytes[index] == b'$' {
                     index += 1;
                     let tag = &sql[tag_start..index];
-                    while index + tag.len() <= length {
-                        if &sql[index..index + tag.len()] == tag {
-                            index += tag.len();
-                            break;
-                        }
-                        index += 1;
+                    if let Some(close_offset) = sql[index..].find(tag) {
+                        index += close_offset + tag.len();
+                    } else {
+                        index = length;
                     }
                 }
                 result.push_str(&sql[tag_start..index]);
@@ -426,5 +424,65 @@ $$;";
         let sql = "SELECT /* see -- not a comment */ 1;";
         let result = strip_comments(sql);
         assert_eq!(result, "SELECT   1;");
+    }
+
+    #[test]
+    fn strip_comments_em_dash_in_line_comment() {
+        let sql = "-- This has an em\u{2014}dash\nSELECT 1;";
+        let result = strip_comments(sql);
+        assert_eq!(result, "\nSELECT 1;");
+    }
+
+    #[test]
+    fn em_dash_in_comment_before_dollar_quoted_function() {
+        let sql = "\
+-- Synchronous audit trigger \u{2014} logs changes
+CREATE OR REPLACE FUNCTION audit.log_change()
+RETURNS TRIGGER AS $$
+BEGIN
+    RETURN NEW;
+END;
+$$;";
+        let result = strip_comments(sql);
+        assert_eq!(
+            result,
+            "\
+\n\
+CREATE OR REPLACE FUNCTION audit.log_change()
+RETURNS TRIGGER AS $$
+BEGIN
+    RETURN NEW;
+END;
+$$;"
+        );
+    }
+
+    #[test]
+    fn multibyte_chars_inside_dollar_quoted_body() {
+        let sql = "CREATE FUNCTION f() RETURNS void AS $$\n-- em\u{2014}dash inside body\n$$;";
+        let result = strip_comments(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn multibyte_chars_in_plain_sql() {
+        let sql = "SELECT '\u{2014}' AS dash;";
+        let result = strip_comments(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn multibyte_in_custom_dollar_tag_body() {
+        let sql = "AS $fn$\nRETURN '\u{2014}em\u{2013}dash';\n$fn$;";
+        let result = strip_comments(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn multibyte_char_adjacent_to_dollar_tag() {
+        let sql =
+            "SELECT '\u{2014}';\nCREATE FUNCTION f() RETURNS void AS $$\nBEGIN NULL; END;\n$$;";
+        let result = strip_comments(sql);
+        assert_eq!(result, sql);
     }
 }
