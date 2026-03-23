@@ -16,9 +16,9 @@ pub use types::{
 };
 
 use dependencies::{
-    generate_fk_ops_for_type_changes, generate_policy_ops_for_function_changes,
-    generate_policy_ops_for_type_changes, generate_trigger_ops_for_type_changes,
-    generate_view_ops_for_type_changes, type_changed_columns,
+    generate_fk_ops_for_type_changes, generate_policy_ops_for_affected_tables,
+    generate_policy_ops_for_function_changes, generate_trigger_ops_for_affected_tables,
+    generate_view_ops_for_affected_tables, tables_with_dropped_columns, type_changed_columns,
 };
 use grants::diff_default_privileges;
 use objects::{
@@ -91,24 +91,50 @@ pub fn compute_diff_with_flags(
         to,
         &type_change_columns,
     ));
-    ops.extend(generate_policy_ops_for_type_changes(
+    let (type_change_policy_ops, _) =
+        generate_policy_ops_for_affected_tables(&ops, from, to, &affected_tables);
+    ops.extend(type_change_policy_ops);
+    ops.extend(generate_trigger_ops_for_affected_tables(
         &ops,
         from,
         to,
         &affected_tables,
     ));
-    ops.extend(generate_trigger_ops_for_type_changes(
+    let (type_change_view_ops, _) =
+        generate_view_ops_for_affected_tables(&ops, from, to, &affected_tables);
+    ops.extend(type_change_view_ops);
+
+    let tables_with_column_drops = tables_with_dropped_columns(&ops);
+    let (column_drop_policy_ops, column_drop_policies_to_filter) =
+        generate_policy_ops_for_affected_tables(&ops, from, to, &tables_with_column_drops);
+    if !column_drop_policies_to_filter.is_empty() {
+        ops.retain(|op| {
+            if let MigrationOp::AlterPolicy { table, name, .. } = op {
+                !column_drop_policies_to_filter.contains(&(table.to_string(), name.clone()))
+            } else {
+                true
+            }
+        });
+    }
+    ops.extend(column_drop_policy_ops);
+    ops.extend(generate_trigger_ops_for_affected_tables(
         &ops,
         from,
         to,
-        &affected_tables,
+        &tables_with_column_drops,
     ));
-    ops.extend(generate_view_ops_for_type_changes(
-        &ops,
-        from,
-        to,
-        &affected_tables,
-    ));
+    let (column_drop_view_ops, column_drop_views_to_filter) =
+        generate_view_ops_for_affected_tables(&ops, from, to, &tables_with_column_drops);
+    if !column_drop_views_to_filter.is_empty() {
+        ops.retain(|op| {
+            if let MigrationOp::AlterView { name, .. } = op {
+                !column_drop_views_to_filter.contains(name)
+            } else {
+                true
+            }
+        });
+    }
+    ops.extend(column_drop_view_ops);
 
     // Drop/recreate policies that reference functions being dropped
     let (policy_ops, policies_to_filter) = generate_policy_ops_for_function_changes(&ops, from, to);
@@ -3274,5 +3300,219 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
 
         let ops = compute_diff_with_flags(&from, &to, false, false, &HashSet::new());
         assert_eq!(ops.len(), 0);
+    }
+
+    #[test]
+    fn drop_column_does_not_duplicate_policy_ops() {
+        use crate::model::{Policy, PolicyCommand};
+
+        let mut from = empty_schema();
+        let mut table = simple_table("users");
+        table
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        table.columns.insert(
+            "old_col".to_string(),
+            simple_column("old_col", PgType::Text),
+        );
+        table.row_level_security = true;
+        table.policies.push(Policy {
+            name: "read_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("old_col IS NOT NULL".to_string()),
+            check_expr: None,
+        });
+        from.tables.insert("public.users".to_string(), table);
+
+        let mut to = empty_schema();
+        let mut table_to = simple_table("users");
+        table_to
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        table_to.row_level_security = true;
+        table_to.policies.push(Policy {
+            name: "read_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("id IS NOT NULL".to_string()),
+            check_expr: None,
+        });
+        to.tables.insert("public.users".to_string(), table_to);
+
+        let ops = compute_diff(&from, &to);
+
+        let alter_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterPolicy { .. }))
+            .collect();
+        let drop_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropPolicy { .. }))
+            .collect();
+        let create_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .collect();
+
+        assert_eq!(
+            alter_policy_ops.len(),
+            0,
+            "AlterPolicy should be filtered out when DropPolicy+CreatePolicy exist for same policy"
+        );
+        assert_eq!(drop_policy_ops.len(), 1, "Should have exactly 1 DropPolicy");
+        assert_eq!(
+            create_policy_ops.len(),
+            1,
+            "Should have exactly 1 CreatePolicy"
+        );
+    }
+
+    #[test]
+    fn drop_column_with_dependent_view_and_policy() {
+        use crate::diff::planner::plan_migration;
+        use crate::model::{Policy, PolicyCommand};
+
+        let mut from = empty_schema();
+        let mut suppliers = simple_table("suppliers");
+        suppliers
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        suppliers.columns.insert(
+            "enterprise_id".to_string(),
+            simple_column("enterprise_id", PgType::Integer),
+        );
+        suppliers.policies.push(Policy {
+            name: "enterprise_members_can_view".to_string(),
+            table_schema: "public".to_string(),
+            table: "suppliers".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("enterprise_id = current_enterprise_id()".to_string()),
+            check_expr: None,
+        });
+        from.tables
+            .insert("public.suppliers".to_string(), suppliers);
+        from.views.insert(
+            "public.enterprise_suppliers_view".to_string(),
+            View {
+                name: "enterprise_suppliers_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id, enterprise_id FROM public.suppliers".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+
+        let mut to = empty_schema();
+        let mut suppliers_to = simple_table("suppliers");
+        suppliers_to
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        suppliers_to.policies.push(Policy {
+            name: "enterprise_members_can_view".to_string(),
+            table_schema: "public".to_string(),
+            table: "suppliers".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("id IS NOT NULL".to_string()),
+            check_expr: None,
+        });
+        to.tables
+            .insert("public.suppliers".to_string(), suppliers_to);
+        to.views.insert(
+            "public.enterprise_suppliers_view".to_string(),
+            View {
+                name: "enterprise_suppliers_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id FROM public.suppliers".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        let planned = plan_migration(ops);
+
+        let drop_view_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropView { .. }))
+            .expect("should have DropView");
+        let drop_policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropPolicy { .. }))
+            .expect("should have DropPolicy");
+        let drop_col_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropColumn { .. }))
+            .expect("should have DropColumn");
+        let create_view_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateView(_)))
+            .expect("should have CreateView");
+        let create_policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .expect("should have CreatePolicy");
+
+        assert!(
+            drop_view_pos < drop_col_pos,
+            "DropView ({drop_view_pos}) must come before DropColumn ({drop_col_pos})"
+        );
+        assert!(
+            drop_policy_pos < drop_col_pos,
+            "DropPolicy ({drop_policy_pos}) must come before DropColumn ({drop_col_pos})"
+        );
+        assert!(
+            drop_col_pos < create_view_pos,
+            "DropColumn ({drop_col_pos}) must come before CreateView ({create_view_pos})"
+        );
+        assert!(
+            drop_col_pos < create_policy_pos,
+            "DropColumn ({drop_col_pos}) must come before CreatePolicy ({create_policy_pos})"
+        );
+
+        let drop_view_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropView { .. }))
+            .count();
+        let create_view_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreateView(_)))
+            .count();
+        let drop_policy_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropPolicy { .. }))
+            .count();
+        let create_policy_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .count();
+        let drop_col_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropColumn { .. }))
+            .count();
+        let alter_policy_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterPolicy { .. }))
+            .count();
+        let alter_view_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterView { .. }))
+            .count();
+
+        assert_eq!(drop_view_count, 1, "should have exactly 1 DropView");
+        assert_eq!(create_view_count, 1, "should have exactly 1 CreateView");
+        assert_eq!(drop_policy_count, 1, "should have exactly 1 DropPolicy");
+        assert_eq!(create_policy_count, 1, "should have exactly 1 CreatePolicy");
+        assert_eq!(drop_col_count, 1, "should have exactly 1 DropColumn");
+        assert_eq!(alter_policy_count, 0, "AlterPolicy should be filtered out");
+        assert_eq!(alter_view_count, 0, "AlterView should be filtered out");
     }
 }

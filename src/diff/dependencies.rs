@@ -89,19 +89,35 @@ pub(super) fn generate_fk_ops_for_type_changes(
     additional_ops
 }
 
-/// Generate policy drop/create ops for tables with column type changes.
-/// PostgreSQL requires policies to be dropped before altering the type of columns they reference.
-/// Uses conservative approach: if any column on a table changes type, drop/recreate all policies.
-pub(super) fn generate_policy_ops_for_type_changes(
+/// Extract table qualified names for tables that have columns being dropped.
+pub(super) fn tables_with_dropped_columns(ops: &[MigrationOp]) -> HashSet<String> {
+    ops.iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropColumn { table, .. } = op {
+                Some(table.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Generate policy drop/create ops for tables with affected columns (type changes or drops).
+/// PostgreSQL requires policies to be dropped before altering column types or dropping columns.
+/// Uses conservative approach: if any column on a table is affected, drop/recreate all policies.
+/// Returns the generated ops and a set of (table_qualified_name, policy_name) pairs that
+/// had DropPolicy emitted, so callers can filter out any duplicate AlterPolicy ops.
+pub(super) fn generate_policy_ops_for_affected_tables(
     ops: &[MigrationOp],
     from: &Schema,
     to: &Schema,
     affected_tables: &HashSet<String>,
-) -> Vec<MigrationOp> {
+) -> (Vec<MigrationOp>, HashSet<(String, String)>) {
     let mut additional_ops = Vec::new();
+    let mut policies_to_filter = HashSet::new();
 
     if affected_tables.is_empty() {
-        return additional_ops;
+        return (additional_ops, policies_to_filter);
     }
 
     let existing_policy_drops: HashSet<(String, String)> =
@@ -125,6 +141,8 @@ pub(super) fn generate_policy_ops_for_type_changes(
                     .get(table_name)
                     .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
 
+                policies_to_filter.insert((qualified_table_str.clone(), policy.name.clone()));
+
                 additional_ops.push(MigrationOp::DropPolicy {
                     table: QualifiedName::new(&from_table.schema, &from_table.name),
                     name: policy.name.clone(),
@@ -136,13 +154,13 @@ pub(super) fn generate_policy_ops_for_type_changes(
         }
     }
 
-    additional_ops
+    (additional_ops, policies_to_filter)
 }
 
-/// Generate trigger drop/create ops for tables with column type changes.
-/// PostgreSQL requires triggers to be dropped before altering the type of columns they reference.
-/// Uses conservative approach: if any column on a table changes type, drop/recreate all triggers.
-pub(super) fn generate_trigger_ops_for_type_changes(
+/// Generate trigger drop/create ops for tables with affected columns (type changes or drops).
+/// PostgreSQL requires triggers to be dropped before altering column types or dropping columns.
+/// Uses conservative approach: if any column on a table is affected, drop/recreate all triggers.
+pub(super) fn generate_trigger_ops_for_affected_tables(
     ops: &[MigrationOp],
     from: &Schema,
     to: &Schema,
@@ -198,18 +216,21 @@ pub(super) fn generate_trigger_ops_for_type_changes(
     additional_ops
 }
 
-/// Generate view drop/create ops for views that reference tables with column type changes.
-/// PostgreSQL requires views to be dropped before altering the type of columns they reference.
-pub(super) fn generate_view_ops_for_type_changes(
+/// Generate view drop/create ops for views that reference affected tables (type changes or drops).
+/// PostgreSQL requires views to be dropped before altering column types or dropping columns.
+/// Returns the generated ops and a set of view qualified names that had DropView emitted,
+/// so callers can filter out any duplicate AlterView ops for the same views.
+pub(super) fn generate_view_ops_for_affected_tables(
     ops: &[MigrationOp],
     from: &Schema,
     to: &Schema,
     affected_tables: &HashSet<String>,
-) -> Vec<MigrationOp> {
+) -> (Vec<MigrationOp>, HashSet<String>) {
     let mut additional_ops = Vec::new();
+    let mut views_to_filter = HashSet::new();
 
     if affected_tables.is_empty() {
-        return additional_ops;
+        return (additional_ops, views_to_filter);
     }
 
     let existing_view_drops: HashSet<String> = collect_existing_drops(ops, |op| match op {
@@ -233,6 +254,8 @@ pub(super) fn generate_view_ops_for_type_changes(
 
             let target_view = to.views.get(view_name);
 
+            views_to_filter.insert(qualified_view_name.clone());
+
             additional_ops.push(MigrationOp::DropView {
                 name: qualified_view_name.clone(),
                 materialized: view.materialized,
@@ -241,7 +264,7 @@ pub(super) fn generate_view_ops_for_type_changes(
         }
     }
 
-    additional_ops
+    (additional_ops, views_to_filter)
 }
 
 /// Generate policy drop/create ops for policies that reference functions being dropped.
@@ -889,6 +912,87 @@ mod tests {
     }
 
     #[test]
+    fn generates_policy_ops_for_column_drops() {
+        let mut from = empty_schema();
+        let mut users_table = simple_table("users");
+        users_table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table.columns.insert(
+            "enterprise_id".to_string(),
+            Column {
+                name: "enterprise_id".to_string(),
+                data_type: PgType::Integer,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table.policies.push(Policy {
+            name: "users_select_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("enterprise_id = current_enterprise_id()".to_string()),
+            check_expr: None,
+        });
+        from.tables.insert("public.users".to_string(), users_table);
+
+        let mut to = empty_schema();
+        let mut users_table_to = simple_table("users");
+        users_table_to.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table_to.policies.push(Policy {
+            name: "users_select_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("id = current_user_id()".to_string()),
+            check_expr: None,
+        });
+        to.tables.insert("public.users".to_string(), users_table_to);
+
+        let ops = compute_diff(&from, &to);
+
+        let drop_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropPolicy { .. }))
+            .collect();
+        let create_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .collect();
+
+        assert_eq!(
+            drop_policy_ops.len(),
+            1,
+            "Should have exactly 1 DropPolicy op"
+        );
+        assert_eq!(
+            create_policy_ops.len(),
+            1,
+            "Should have exactly 1 CreatePolicy op"
+        );
+    }
+
+    #[test]
     fn generates_policy_ops_for_function_changes() {
         let mut from = empty_schema();
         let mut to = empty_schema();
@@ -997,5 +1101,187 @@ mod tests {
         if let MigrationOp::CreatePolicy(policy) = &create_policy_ops[0] {
             assert_eq!(policy.name, "access_policy");
         }
+    }
+
+    #[test]
+    fn generates_trigger_ops_for_column_drops() {
+        let mut from = empty_schema();
+        let mut users_table = simple_table("users");
+        users_table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table.columns.insert(
+            "old_col".to_string(),
+            Column {
+                name: "old_col".to_string(),
+                data_type: PgType::Text,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        from.tables.insert("public.users".to_string(), users_table);
+        from.triggers.insert(
+            "public.users.audit_trigger".to_string(),
+            Trigger {
+                name: "audit_trigger".to_string(),
+                target_schema: "public".to_string(),
+                target_name: "users".to_string(),
+                function_schema: "public".to_string(),
+                function_name: "audit_func".to_string(),
+                events: vec![TriggerEvent::Insert],
+                timing: TriggerTiming::After,
+                for_each_row: true,
+                when_clause: None,
+                function_args: vec![],
+                enabled: TriggerEnabled::Origin,
+                update_columns: vec![],
+                old_table_name: None,
+                new_table_name: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        let mut users_table_to = simple_table("users");
+        users_table_to.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        to.tables.insert("public.users".to_string(), users_table_to);
+        to.triggers.insert(
+            "public.users.audit_trigger".to_string(),
+            Trigger {
+                name: "audit_trigger".to_string(),
+                target_schema: "public".to_string(),
+                target_name: "users".to_string(),
+                function_schema: "public".to_string(),
+                function_name: "audit_func".to_string(),
+                events: vec![TriggerEvent::Insert],
+                timing: TriggerTiming::After,
+                for_each_row: true,
+                when_clause: None,
+                function_args: vec![],
+                enabled: TriggerEnabled::Origin,
+                update_columns: vec![],
+                old_table_name: None,
+                new_table_name: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+
+        let drop_trigger_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropTrigger { .. }))
+            .collect();
+        let create_trigger_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreateTrigger(_)))
+            .collect();
+
+        assert_eq!(
+            drop_trigger_ops.len(),
+            1,
+            "Should have exactly 1 DropTrigger op"
+        );
+        assert_eq!(
+            create_trigger_ops.len(),
+            1,
+            "Should have exactly 1 CreateTrigger op"
+        );
+    }
+
+    #[test]
+    fn generates_view_ops_for_column_drops() {
+        let mut from = empty_schema();
+        let mut users_table = simple_table("users");
+        users_table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table.columns.insert(
+            "enterprise_id".to_string(),
+            Column {
+                name: "enterprise_id".to_string(),
+                data_type: PgType::Integer,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        from.tables.insert("public.users".to_string(), users_table);
+        from.views.insert(
+            "public.enterprise_users_view".to_string(),
+            View {
+                name: "enterprise_users_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id, enterprise_id FROM public.users".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+
+        let mut to = empty_schema();
+        let mut users_table_to = simple_table("users");
+        users_table_to.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        to.tables.insert("public.users".to_string(), users_table_to);
+        to.views.insert(
+            "public.enterprise_users_view".to_string(),
+            View {
+                name: "enterprise_users_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id FROM public.users".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+
+        let drop_view_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropView { .. }))
+            .collect();
+        let create_view_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreateView(_)))
+            .collect();
+
+        assert_eq!(drop_view_ops.len(), 1, "Should have exactly 1 DropView op");
+        assert_eq!(
+            create_view_ops.len(),
+            1,
+            "Should have exactly 1 CreateView op"
+        );
     }
 }

@@ -181,6 +181,7 @@ impl MigrationGraph {
         self.add_rls_policy_trigger_view_edges(&ns);
         self.add_drop_edges(&ns);
         self.add_alter_column_edges(&ns);
+        self.add_drop_column_edges(&ns);
         self.add_modification_pattern_edges(&ns);
         self.add_creates_before_final_drops_edges(&ns);
     }
@@ -349,6 +350,18 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.alter_columns, &ns.alter_views);
     }
 
+    /// DROP COLUMN dependencies: drop dependent objects before dropping column, recreate after.
+    fn add_drop_column_edges(&mut self, ns: &NodeSets) {
+        self.edges_all_to_all(&ns.drop_policies, &ns.drop_columns);
+        self.edges_all_to_all(&ns.drop_triggers, &ns.drop_columns);
+        self.edges_all_to_all(&ns.drop_views, &ns.drop_columns);
+
+        self.edges_all_to_all(&ns.drop_columns, &ns.policies);
+        self.edges_all_to_all(&ns.drop_columns, &ns.triggers);
+        self.edges_all_to_all(&ns.drop_columns, &ns.views);
+        self.edges_all_to_all(&ns.drop_columns, &ns.alter_views);
+    }
+
     /// Modification patterns: when objects are dropped and recreated, drop before create.
     fn add_modification_pattern_edges(&mut self, ns: &NodeSets) {
         self.edges_all_to_all(&ns.drop_functions, &ns.functions);
@@ -363,7 +376,17 @@ impl MigrationGraph {
     /// All create/alter operations must complete before final drop operations.
     /// Excludes drops that must precede creates/alters (DropFunction, DropFK, etc.).
     fn add_creates_before_final_drops_edges(&mut self, ns: &NodeSets) {
-        // Create operations that should complete before final drops
+        // Create operations that should complete before final drops.
+        //
+        // policies, triggers, and views are excluded: when columns are dropped,
+        // these objects are dropped before the column and recreated after
+        // (add_drop_column_edges: drop_columns -> policies/triggers/views).
+        // Including them here would create a cycle because drop_columns is in
+        // final_drops (policies -> drop_columns -> policies).
+        //
+        // This is safe because policies/triggers/views never need to precede
+        // unrelated final drops — their dependencies are on the tables they
+        // belong to, which ARE in all_creates.
         let all_creates: Vec<NodeIndex> = [
             &ns.schemas,
             &ns.version_schemas,
@@ -381,9 +404,6 @@ impl MigrationGraph {
             &ns.add_fks,
             &ns.add_checks,
             &ns.enable_rls,
-            &ns.policies,
-            &ns.triggers,
-            &ns.views,
             &ns.version_views,
             &ns.alter_columns,
             &ns.alter_views,
@@ -600,7 +620,7 @@ impl MigrationGraph {
                 // signatures). PostgreSQL resolves this naturally: the domain is created
                 // first, then the function, and the CHECK is validated lazily.
 
-                // DropColumn must happen after DropFK/DropIndex/DropCheck on that table
+                // DropColumn must happen after DropFK/DropIndex/DropCheck/DropPolicy/DropTrigger on that table
                 OpKey::DropColumn { table, .. } => {
                     for other in &keys {
                         if drop_targets_table(other, table)
@@ -609,6 +629,8 @@ impl MigrationGraph {
                                 OpKey::DropForeignKey { .. }
                                     | OpKey::DropIndex { .. }
                                     | OpKey::DropCheckConstraint { .. }
+                                    | OpKey::DropPolicy { .. }
+                                    | OpKey::DropTrigger { .. }
                             )
                         {
                             edges_to_add.push((other.clone(), key.clone()));
@@ -1669,6 +1691,144 @@ mod tests {
         assert!(
             alter_col_pos < create_view_pos,
             "AlterColumn must come before CreateView. ALTER at {alter_col_pos}, CREATE_VIEW at {create_view_pos}"
+        );
+    }
+
+    #[test]
+    fn drop_policy_before_drop_column() {
+        let policy = Policy {
+            name: "users_select_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("enterprise_id = current_enterprise_id()".to_string()),
+            check_expr: None,
+        };
+
+        let ops = vec![
+            MigrationOp::DropColumn {
+                table: QualifiedName::new("public", "users"),
+                column: "enterprise_id".to_string(),
+            },
+            MigrationOp::DropPolicy {
+                table: QualifiedName::new("public", "users"),
+                name: "users_select_policy".to_string(),
+            },
+            MigrationOp::CreatePolicy(policy),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let drop_policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropPolicy { .. }))
+            .unwrap();
+        let drop_column_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropColumn { .. }))
+            .unwrap();
+        let create_policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .unwrap();
+
+        assert!(
+            drop_policy_pos < drop_column_pos,
+            "DropPolicy must come before DropColumn. DROP_POLICY at {drop_policy_pos}, DROP_COLUMN at {drop_column_pos}"
+        );
+        assert!(
+            drop_column_pos < create_policy_pos,
+            "DropColumn must come before CreatePolicy. DROP_COLUMN at {drop_column_pos}, CREATE_POLICY at {create_policy_pos}"
+        );
+    }
+
+    #[test]
+    fn drop_trigger_before_drop_column() {
+        let trigger = Trigger {
+            name: "audit_trigger".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            timing: TriggerTiming::Before,
+            events: vec![TriggerEvent::Update],
+            update_columns: vec!["enterprise_id".to_string()],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "audit_changes".to_string(),
+            function_args: vec![],
+            enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
+        };
+
+        let ops = vec![
+            MigrationOp::DropColumn {
+                table: QualifiedName::new("public", "users"),
+                column: "enterprise_id".to_string(),
+            },
+            MigrationOp::DropTrigger {
+                target_schema: "public".to_string(),
+                target_name: "users".to_string(),
+                name: "audit_trigger".to_string(),
+            },
+            MigrationOp::CreateTrigger(trigger),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let drop_trigger_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropTrigger { .. }))
+            .unwrap();
+        let drop_column_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropColumn { .. }))
+            .unwrap();
+
+        assert!(
+            drop_trigger_pos < drop_column_pos,
+            "DropTrigger must come before DropColumn. DROP_TRIGGER at {drop_trigger_pos}, DROP_COLUMN at {drop_column_pos}"
+        );
+    }
+
+    #[test]
+    fn drop_view_before_drop_column() {
+        let view = View {
+            name: "users_view".to_string(),
+            schema: "public".to_string(),
+            query: "SELECT id, name FROM users".to_string(),
+            materialized: false,
+            owner: None,
+            grants: vec![],
+        };
+
+        let ops = vec![
+            MigrationOp::DropColumn {
+                table: QualifiedName::new("public", "users"),
+                column: "enterprise_id".to_string(),
+            },
+            MigrationOp::DropView {
+                name: "public.users_view".to_string(),
+                materialized: false,
+            },
+            MigrationOp::CreateView(view),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let drop_view_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropView { .. }))
+            .unwrap();
+        let drop_column_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropColumn { .. }))
+            .unwrap();
+
+        assert!(
+            drop_view_pos < drop_column_pos,
+            "DropView must come before DropColumn. DROP_VIEW at {drop_view_pos}, DROP_COLUMN at {drop_column_pos}"
         );
     }
 
