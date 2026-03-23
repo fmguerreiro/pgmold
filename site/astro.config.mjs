@@ -68,6 +68,7 @@ export default defineConfig({
 						{ label: 'CLI Commands', slug: 'reference/cli' },
 						{ label: 'Terraform Provider', slug: 'reference/terraform' },
 						{ label: 'GitHub Action', slug: 'reference/github-action' },
+						{ label: 'PostgreSQL Compatibility', slug: 'reference/compatibility' },
 					],
 				},
 				{
