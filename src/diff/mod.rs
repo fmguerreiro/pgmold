@@ -3380,4 +3380,111 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         );
     }
 
+    #[test]
+    fn drop_column_with_dependent_view_and_policy() {
+        use crate::diff::planner::plan_migration;
+        use crate::model::{Policy, PolicyCommand};
+
+        let mut from = empty_schema();
+        let mut suppliers = simple_table("suppliers");
+        suppliers
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        suppliers.columns.insert(
+            "enterprise_id".to_string(),
+            simple_column("enterprise_id", PgType::Integer),
+        );
+        suppliers.policies.push(Policy {
+            name: "enterprise_members_can_view".to_string(),
+            table_schema: "public".to_string(),
+            table: "suppliers".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("enterprise_id = current_enterprise_id()".to_string()),
+            check_expr: None,
+        });
+        from.tables
+            .insert("public.suppliers".to_string(), suppliers);
+        from.views.insert(
+            "public.enterprise_suppliers_view".to_string(),
+            View {
+                name: "enterprise_suppliers_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id, enterprise_id FROM public.suppliers".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+
+        let mut to = empty_schema();
+        let mut suppliers_to = simple_table("suppliers");
+        suppliers_to
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        suppliers_to.policies.push(Policy {
+            name: "enterprise_members_can_view".to_string(),
+            table_schema: "public".to_string(),
+            table: "suppliers".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("id IS NOT NULL".to_string()),
+            check_expr: None,
+        });
+        to.tables
+            .insert("public.suppliers".to_string(), suppliers_to);
+        to.views.insert(
+            "public.enterprise_suppliers_view".to_string(),
+            View {
+                name: "enterprise_suppliers_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id FROM public.suppliers".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        let planned = plan_migration(ops);
+
+        let drop_view_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropView { .. }))
+            .expect("should have DropView");
+        let drop_policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropPolicy { .. }))
+            .expect("should have DropPolicy");
+        let drop_col_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropColumn { .. }))
+            .expect("should have DropColumn");
+        let create_view_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateView(_)))
+            .expect("should have CreateView");
+        let create_policy_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .expect("should have CreatePolicy");
+
+        assert!(
+            drop_view_pos < drop_col_pos,
+            "DropView ({drop_view_pos}) must come before DropColumn ({drop_col_pos})"
+        );
+        assert!(
+            drop_policy_pos < drop_col_pos,
+            "DropPolicy ({drop_policy_pos}) must come before DropColumn ({drop_col_pos})"
+        );
+        assert!(
+            drop_col_pos < create_view_pos,
+            "DropColumn ({drop_col_pos}) must come before CreateView ({create_view_pos})"
+        );
+        assert!(
+            drop_col_pos < create_policy_pos,
+            "DropColumn ({drop_col_pos}) must come before CreatePolicy ({create_policy_pos})"
+        );
+    }
+
 }
