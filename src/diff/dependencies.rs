@@ -238,30 +238,53 @@ pub(super) fn generate_view_ops_for_affected_tables(
         _ => None,
     });
 
-    for (view_name, view) in &from.views {
-        let referenced_tables = extract_table_references(&view.query, &view.schema);
-
-        let view_affected = referenced_tables
-            .iter()
-            .any(|ref_table| affected_tables.contains(&ref_table.qualified_name()));
-
-        if view_affected {
+    // Build the full set of affected names (tables + transitively dependent views).
+    // A view is affected if it references any name already in the affected set.
+    // Repeat until no new views are discovered (fixpoint).
+    let mut affected_names: HashSet<String> = affected_tables.clone();
+    loop {
+        let mut new_views = Vec::new();
+        for view in from.views.values() {
             let qualified_view_name = qualified_name(&view.schema, &view.name);
-
-            if existing_view_drops.contains(&qualified_view_name) {
+            if affected_names.contains(&qualified_view_name) {
                 continue;
             }
-
-            let target_view = to.views.get(view_name);
-
-            views_to_filter.insert(qualified_view_name.clone());
-
-            additional_ops.push(MigrationOp::DropView {
-                name: qualified_view_name.clone(),
-                materialized: view.materialized,
-            });
-            additional_ops.push(MigrationOp::CreateView(target_view.unwrap_or(view).clone()));
+            let referenced = extract_table_references(&view.query, &view.schema);
+            let view_affected = referenced
+                .iter()
+                .any(|reference| affected_names.contains(&reference.qualified_name()));
+            if view_affected {
+                new_views.push(qualified_view_name);
+            }
         }
+        if new_views.is_empty() {
+            break;
+        }
+        for name in new_views {
+            affected_names.insert(name);
+        }
+    }
+
+    for (view_name, view) in &from.views {
+        let qualified_view_name = qualified_name(&view.schema, &view.name);
+
+        if !affected_names.contains(&qualified_view_name) {
+            continue;
+        }
+
+        if existing_view_drops.contains(&qualified_view_name) {
+            continue;
+        }
+
+        let target_view = to.views.get(view_name);
+
+        views_to_filter.insert(qualified_view_name.clone());
+
+        additional_ops.push(MigrationOp::DropView {
+            name: qualified_view_name.clone(),
+            materialized: view.materialized,
+        });
+        additional_ops.push(MigrationOp::CreateView(target_view.unwrap_or(view).clone()));
     }
 
     (additional_ops, views_to_filter)

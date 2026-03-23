@@ -487,6 +487,21 @@ impl MigrationGraph {
                     }
                 }
 
+                // DropView of a derived view must happen before DropView of its base view.
+                // We look up the corresponding CreateView op to find the view's references.
+                OpKey::DropView(view_name) => {
+                    if let Some(MigrationOp::CreateView(view)) =
+                        self.get_op(&OpKey::CreateView(view_name.clone()))
+                    {
+                        let refs = extract_relation_references(&view.query);
+                        for ref_name in refs {
+                            if ref_name != *view_name {
+                                edges_to_add.push((key.clone(), OpKey::DropView(ref_name)));
+                            }
+                        }
+                    }
+                }
+
                 // CreateView depends on tables/views/functions it references in its query
                 OpKey::CreateView(view_name) => {
                     if let Some(MigrationOp::CreateView(view)) = self.get_op(key) {
@@ -4667,6 +4682,98 @@ mod tests {
             "CreateView(derived)",
             |op| matches!(op, MigrationOp::CreateView(v) if v.name == "base"),
             |op| matches!(op, MigrationOp::CreateView(v) if v.name == "derived"),
+        );
+    }
+
+    #[test]
+    fn drop_derived_view_before_drop_base_view() {
+        // Names chosen so alphabetical order is WRONG (z_base before a_derived),
+        // forcing the planner to use content-aware edges, not accidental sort order.
+        // Includes CreateView pairs since DropView doesn't carry query info.
+        let ops = vec![
+            MigrationOp::DropView {
+                name: "public.z_base".to_string(),
+                materialized: false,
+            },
+            MigrationOp::DropView {
+                name: "public.a_derived".to_string(),
+                materialized: false,
+            },
+            MigrationOp::CreateView(make_view("z_base", "public", "SELECT 1 AS x")),
+            MigrationOp::CreateView(make_view(
+                "a_derived",
+                "public",
+                "SELECT x FROM public.z_base",
+            )),
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "DropView(a_derived)",
+            "DropView(z_base)",
+            |op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.a_derived"),
+            |op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.z_base"),
+        );
+    }
+
+    #[test]
+    fn drop_transitive_view_chain() {
+        // Names chosen so alphabetical order is WRONG (z_ first),
+        // forcing the planner to use content-aware edges.
+        // Includes CreateView pairs since DropView doesn't carry query info.
+        let ops = vec![
+            MigrationOp::DropView {
+                name: "public.z_base".to_string(),
+                materialized: false,
+            },
+            MigrationOp::DropView {
+                name: "public.m_middle".to_string(),
+                materialized: false,
+            },
+            MigrationOp::DropView {
+                name: "public.a_leaf".to_string(),
+                materialized: false,
+            },
+            MigrationOp::CreateView(make_view("z_base", "public", "SELECT 1 AS x")),
+            MigrationOp::CreateView(make_view(
+                "m_middle",
+                "public",
+                "SELECT x FROM public.z_base",
+            )),
+            MigrationOp::CreateView(make_view(
+                "a_leaf",
+                "public",
+                "SELECT x FROM public.m_middle",
+            )),
+        ];
+        let planned = plan_migration(ops);
+
+        let leaf_pos = planned
+            .iter()
+            .position(
+                |op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.a_leaf"),
+            )
+            .expect("DropView(a_leaf) not found");
+        let middle_pos = planned
+            .iter()
+            .position(
+                |op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.m_middle"),
+            )
+            .expect("DropView(m_middle) not found");
+        let base_pos = planned
+            .iter()
+            .position(
+                |op| matches!(op, MigrationOp::DropView { name, .. } if name == "public.z_base"),
+            )
+            .expect("DropView(z_base) not found");
+
+        assert!(
+            leaf_pos < middle_pos,
+            "DropView(a_leaf) at {leaf_pos} must come before DropView(m_middle) at {middle_pos}"
+        );
+        assert!(
+            middle_pos < base_pos,
+            "DropView(m_middle) at {middle_pos} must come before DropView(z_base) at {base_pos}"
         );
     }
 
