@@ -113,24 +113,36 @@ pub fn compute_diff_with_flags(
     ));
 
     let tables_with_column_drops = tables_with_dropped_columns(&ops);
-    ops.extend(generate_policy_ops_for_column_drops(
-        &ops,
-        from,
-        to,
-        &tables_with_column_drops,
-    ));
+    let (column_drop_policy_ops, column_drop_policies_to_filter) =
+        generate_policy_ops_for_column_drops(&ops, from, to, &tables_with_column_drops);
+    if !column_drop_policies_to_filter.is_empty() {
+        ops.retain(|op| {
+            if let MigrationOp::AlterPolicy { table, name, .. } = op {
+                !column_drop_policies_to_filter.contains(&(table.to_string(), name.clone()))
+            } else {
+                true
+            }
+        });
+    }
+    ops.extend(column_drop_policy_ops);
     ops.extend(generate_trigger_ops_for_column_drops(
         &ops,
         from,
         to,
         &tables_with_column_drops,
     ));
-    ops.extend(generate_view_ops_for_column_drops(
-        &ops,
-        from,
-        to,
-        &tables_with_column_drops,
-    ));
+    let (column_drop_view_ops, column_drop_views_to_filter) =
+        generate_view_ops_for_column_drops(&ops, from, to, &tables_with_column_drops);
+    if !column_drop_views_to_filter.is_empty() {
+        ops.retain(|op| {
+            if let MigrationOp::AlterView { name, .. } = op {
+                !column_drop_views_to_filter.contains(name)
+            } else {
+                true
+            }
+        });
+    }
+    ops.extend(column_drop_view_ops);
 
     // Drop/recreate policies that reference functions being dropped
     let (policy_ops, policies_to_filter) = generate_policy_ops_for_function_changes(&ops, from, to);
@@ -3297,4 +3309,75 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         let ops = compute_diff_with_flags(&from, &to, false, false, &HashSet::new());
         assert_eq!(ops.len(), 0);
     }
+
+    #[test]
+    fn drop_column_does_not_duplicate_policy_ops() {
+        use crate::model::{Policy, PolicyCommand};
+
+        let mut from = empty_schema();
+        let mut table = simple_table("users");
+        table
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        table.columns.insert(
+            "old_col".to_string(),
+            simple_column("old_col", PgType::Text),
+        );
+        table.row_level_security = true;
+        table.policies.push(Policy {
+            name: "read_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("old_col IS NOT NULL".to_string()),
+            check_expr: None,
+        });
+        from.tables.insert("public.users".to_string(), table);
+
+        let mut to = empty_schema();
+        let mut table_to = simple_table("users");
+        table_to
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        table_to.row_level_security = true;
+        table_to.policies.push(Policy {
+            name: "read_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("id IS NOT NULL".to_string()),
+            check_expr: None,
+        });
+        to.tables.insert("public.users".to_string(), table_to);
+
+        let ops = compute_diff(&from, &to);
+
+        let alter_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterPolicy { .. }))
+            .collect();
+        let drop_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropPolicy { .. }))
+            .collect();
+        let create_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .collect();
+
+        assert_eq!(
+            alter_policy_ops.len(),
+            0,
+            "AlterPolicy should be filtered out when DropPolicy+CreatePolicy exist for same policy"
+        );
+        assert_eq!(drop_policy_ops.len(), 1, "Should have exactly 1 DropPolicy");
+        assert_eq!(
+            create_policy_ops.len(),
+            1,
+            "Should have exactly 1 CreatePolicy"
+        );
+    }
+
 }

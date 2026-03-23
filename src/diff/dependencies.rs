@@ -155,16 +155,19 @@ pub(super) fn tables_with_dropped_columns(ops: &[MigrationOp]) -> HashSet<String
 /// Generate policy drop/create ops for tables with dropped columns.
 /// PostgreSQL requires policies to be dropped before dropping columns they may reference.
 /// Uses conservative approach: if any column on a table is dropped, drop/recreate all policies.
+/// Returns the generated ops and a set of (table_qualified_name, policy_name) pairs that
+/// had DropPolicy emitted, so callers can filter out any duplicate AlterPolicy ops.
 pub(super) fn generate_policy_ops_for_column_drops(
     ops: &[MigrationOp],
     from: &Schema,
     to: &Schema,
     affected_tables: &HashSet<String>,
-) -> Vec<MigrationOp> {
+) -> (Vec<MigrationOp>, HashSet<(String, String)>) {
     let mut additional_ops = Vec::new();
+    let mut policies_to_filter = HashSet::new();
 
     if affected_tables.is_empty() {
-        return additional_ops;
+        return (additional_ops, policies_to_filter);
     }
 
     let existing_policy_drops: HashSet<(String, String)> =
@@ -188,6 +191,8 @@ pub(super) fn generate_policy_ops_for_column_drops(
                     .get(table_name)
                     .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
 
+                policies_to_filter.insert((qualified_table_str.clone(), policy.name.clone()));
+
                 additional_ops.push(MigrationOp::DropPolicy {
                     table: QualifiedName::new(&from_table.schema, &from_table.name),
                     name: policy.name.clone(),
@@ -199,7 +204,7 @@ pub(super) fn generate_policy_ops_for_column_drops(
         }
     }
 
-    additional_ops
+    (additional_ops, policies_to_filter)
 }
 
 /// Generate trigger drop/create ops for tables with dropped columns.
@@ -262,16 +267,19 @@ pub(super) fn generate_trigger_ops_for_column_drops(
 
 /// Generate view drop/create ops for views that reference tables with dropped columns.
 /// Uses conservative approach: if any column on a table is dropped, drop/recreate all views referencing that table.
+/// Returns the generated ops and a set of view qualified names that had DropView emitted,
+/// so callers can filter out any duplicate AlterView ops for the same views.
 pub(super) fn generate_view_ops_for_column_drops(
     ops: &[MigrationOp],
     from: &Schema,
     to: &Schema,
     affected_tables: &HashSet<String>,
-) -> Vec<MigrationOp> {
+) -> (Vec<MigrationOp>, HashSet<String>) {
     let mut additional_ops = Vec::new();
+    let mut views_to_filter = HashSet::new();
 
     if affected_tables.is_empty() {
-        return additional_ops;
+        return (additional_ops, views_to_filter);
     }
 
     let existing_view_drops: HashSet<String> = collect_existing_drops(ops, |op| match op {
@@ -295,6 +303,8 @@ pub(super) fn generate_view_ops_for_column_drops(
 
             let target_view = to.views.get(view_name);
 
+            views_to_filter.insert(qualified_view_name.clone());
+
             additional_ops.push(MigrationOp::DropView {
                 name: qualified_view_name.clone(),
                 materialized: view.materialized,
@@ -303,7 +313,7 @@ pub(super) fn generate_view_ops_for_column_drops(
         }
     }
 
-    additional_ops
+    (additional_ops, views_to_filter)
 }
 
 /// Generate trigger drop/create ops for tables with column type changes.
