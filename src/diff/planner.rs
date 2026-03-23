@@ -377,8 +377,16 @@ impl MigrationGraph {
     /// Excludes drops that must precede creates/alters (DropFunction, DropFK, etc.).
     fn add_creates_before_final_drops_edges(&mut self, ns: &NodeSets) {
         // Create operations that should complete before final drops.
-        // Note: policies, triggers, views are excluded because they may need to come after
-        // drop_columns (handled by add_drop_column_edges).
+        //
+        // policies, triggers, and views are excluded: when columns are dropped,
+        // these objects are dropped before the column and recreated after
+        // (add_drop_column_edges: drop_columns -> policies/triggers/views).
+        // Including them here would create a cycle because drop_columns is in
+        // final_drops (policies -> drop_columns -> policies).
+        //
+        // This is safe because policies/triggers/views never need to precede
+        // unrelated final drops — their dependencies are on the tables they
+        // belong to, which ARE in all_creates.
         let all_creates: Vec<NodeIndex> = [
             &ns.schemas,
             &ns.version_schemas,

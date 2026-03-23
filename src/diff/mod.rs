@@ -3477,6 +3477,22 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             drop_col_pos < create_policy_pos,
             "DropColumn ({drop_col_pos}) must come before CreatePolicy ({create_policy_pos})"
         );
+
+        let drop_view_count = planned.iter().filter(|op| matches!(op, MigrationOp::DropView { .. })).count();
+        let create_view_count = planned.iter().filter(|op| matches!(op, MigrationOp::CreateView(_))).count();
+        let drop_policy_count = planned.iter().filter(|op| matches!(op, MigrationOp::DropPolicy { .. })).count();
+        let create_policy_count = planned.iter().filter(|op| matches!(op, MigrationOp::CreatePolicy(_))).count();
+        let drop_col_count = planned.iter().filter(|op| matches!(op, MigrationOp::DropColumn { .. })).count();
+        let alter_policy_count = planned.iter().filter(|op| matches!(op, MigrationOp::AlterPolicy { .. })).count();
+        let alter_view_count = planned.iter().filter(|op| matches!(op, MigrationOp::AlterView { .. })).count();
+
+        assert_eq!(drop_view_count, 1, "should have exactly 1 DropView");
+        assert_eq!(create_view_count, 1, "should have exactly 1 CreateView");
+        assert_eq!(drop_policy_count, 1, "should have exactly 1 DropPolicy");
+        assert_eq!(create_policy_count, 1, "should have exactly 1 CreatePolicy");
+        assert_eq!(drop_col_count, 1, "should have exactly 1 DropColumn");
+        assert_eq!(alter_policy_count, 0, "AlterPolicy should be filtered out");
+        assert_eq!(alter_view_count, 0, "AlterView should be filtered out");
     }
 
 }
