@@ -4943,9 +4943,9 @@ mod tests {
 
         let create_enterprise_pos = planned
             .iter()
-            .position(|op| {
-                matches!(op, MigrationOp::CreateTable(t) if t.name == "enterprise_suppliers")
-            })
+            .position(
+                |op| matches!(op, MigrationOp::CreateTable(t) if t.name == "enterprise_suppliers"),
+            )
             .expect("CreateTable(enterprise_suppliers) not found");
         let policy_pos = planned
             .iter()
@@ -4975,9 +4975,9 @@ mod tests {
 
         let create_enterprise_pos = planned
             .iter()
-            .position(|op| {
-                matches!(op, MigrationOp::CreateTable(t) if t.name == "enterprise_suppliers")
-            })
+            .position(
+                |op| matches!(op, MigrationOp::CreateTable(t) if t.name == "enterprise_suppliers"),
+            )
             .expect("CreateTable(enterprise_suppliers) not found");
         let policy_pos = planned
             .iter()
