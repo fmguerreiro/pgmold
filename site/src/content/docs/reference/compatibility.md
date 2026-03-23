@@ -33,17 +33,6 @@ The full integration test suite runs against each version above. This covers:
 - Grants and default privileges
 - Drift detection via fingerprinting
 
-## Version-specific features
-
-Some PostgreSQL features are only available in newer versions. pgmold handles these gracefully:
-
-| Feature | Minimum PG version | pgmold behavior |
-|---------|-------------------|-----------------|
-| Declarative partitioning | 10 | Fully supported |
-| Identity columns | 10 | Fully supported |
-| Row-level security | 9.5 | Fully supported |
-| Generated columns | 12 | Fully supported |
-
 ## Running tests against a specific version
 
 Set the `PGMOLD_TEST_PG_VERSION` environment variable:

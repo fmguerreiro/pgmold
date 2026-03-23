@@ -19,6 +19,7 @@ PostgreSQL schema-as-code management tool. Define schemas in native PostgreSQL D
 - **Describe**: Inspect available commands, object types, and providers with `pgmold describe`
 - **Grant Management**: `GRANT`/`REVOKE` sync enabled by default; `--manage-ownership` for `ALTER OWNER`
 - **Environment Variable**: Set connection string via `PGMOLD_DATABASE_URL`
+- **PostgreSQL 13-17**: Tested against every major version ([compatibility matrix](https://pgmold.dev/docs/reference/compatibility/))
 
 ## How pgmold Works
 
