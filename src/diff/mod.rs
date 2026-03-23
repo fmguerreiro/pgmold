@@ -18,8 +18,8 @@ pub use types::{
 use dependencies::{
     generate_fk_ops_for_type_changes, generate_policy_ops_for_column_drops,
     generate_policy_ops_for_function_changes, generate_policy_ops_for_type_changes,
-    generate_trigger_ops_for_type_changes, generate_view_ops_for_type_changes,
-    tables_with_dropped_columns, type_changed_columns,
+    generate_trigger_ops_for_column_drops, generate_trigger_ops_for_type_changes,
+    generate_view_ops_for_type_changes, tables_with_dropped_columns, type_changed_columns,
 };
 use grants::diff_default_privileges;
 use objects::{
@@ -113,6 +113,12 @@ pub fn compute_diff_with_flags(
 
     let tables_with_column_drops = tables_with_dropped_columns(&ops);
     ops.extend(generate_policy_ops_for_column_drops(
+        &ops,
+        from,
+        to,
+        &tables_with_column_drops,
+    ));
+    ops.extend(generate_trigger_ops_for_column_drops(
         &ops,
         from,
         to,

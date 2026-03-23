@@ -202,6 +202,64 @@ pub(super) fn generate_policy_ops_for_column_drops(
     additional_ops
 }
 
+/// Generate trigger drop/create ops for tables with dropped columns.
+/// Uses conservative approach: if any column on a table is dropped, drop/recreate all triggers on that table.
+pub(super) fn generate_trigger_ops_for_column_drops(
+    ops: &[MigrationOp],
+    from: &Schema,
+    to: &Schema,
+    affected_tables: &HashSet<String>,
+) -> Vec<MigrationOp> {
+    let mut additional_ops = Vec::new();
+
+    if affected_tables.is_empty() {
+        return additional_ops;
+    }
+
+    let existing_trigger_drops: HashSet<(String, String, String)> =
+        collect_existing_drops(ops, |op| match op {
+            MigrationOp::DropTrigger {
+                target_schema,
+                target_name,
+                name,
+            } => Some((target_schema.clone(), target_name.clone(), name.clone())),
+            _ => None,
+        });
+
+    for table_name in affected_tables {
+        let (table_schema, table_only_name) = parse_qualified_name(table_name);
+
+        for trigger in from.triggers.values() {
+            if trigger.target_schema == table_schema && trigger.target_name == table_only_name {
+                if existing_trigger_drops.contains(&(
+                    trigger.target_schema.clone(),
+                    trigger.target_name.clone(),
+                    trigger.name.clone(),
+                )) {
+                    continue;
+                }
+
+                let target_trigger = to.triggers.values().find(|t| {
+                    t.name == trigger.name
+                        && t.target_schema == table_schema
+                        && t.target_name == table_only_name
+                });
+
+                additional_ops.push(MigrationOp::DropTrigger {
+                    target_schema: trigger.target_schema.clone(),
+                    target_name: trigger.target_name.clone(),
+                    name: trigger.name.clone(),
+                });
+                additional_ops.push(MigrationOp::CreateTrigger(
+                    target_trigger.unwrap_or(trigger).clone(),
+                ));
+            }
+        }
+    }
+
+    additional_ops
+}
+
 /// Generate trigger drop/create ops for tables with column type changes.
 /// PostgreSQL requires triggers to be dropped before altering the type of columns they reference.
 /// Uses conservative approach: if any column on a table changes type, drop/recreate all triggers.
@@ -1136,4 +1194,98 @@ mod tests {
             assert_eq!(policy.name, "access_policy");
         }
     }
+
+    #[test]
+    fn generates_trigger_ops_for_column_drops() {
+        let mut from = empty_schema();
+        let mut users_table = simple_table("users");
+        users_table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table.columns.insert(
+            "old_col".to_string(),
+            Column {
+                name: "old_col".to_string(),
+                data_type: PgType::Text,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        from.tables.insert("public.users".to_string(), users_table);
+        from.triggers.insert(
+            "public.users.audit_trigger".to_string(),
+            Trigger {
+                name: "audit_trigger".to_string(),
+                target_schema: "public".to_string(),
+                target_name: "users".to_string(),
+                function_schema: "public".to_string(),
+                function_name: "audit_func".to_string(),
+                events: vec![TriggerEvent::Insert],
+                timing: TriggerTiming::After,
+                for_each_row: true,
+                when_clause: None,
+                function_args: vec![],
+                enabled: TriggerEnabled::Origin,
+                update_columns: vec![],
+                old_table_name: None,
+                new_table_name: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        let mut users_table_to = simple_table("users");
+        users_table_to.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        to.tables.insert("public.users".to_string(), users_table_to);
+        to.triggers.insert(
+            "public.users.audit_trigger".to_string(),
+            Trigger {
+                name: "audit_trigger".to_string(),
+                target_schema: "public".to_string(),
+                target_name: "users".to_string(),
+                function_schema: "public".to_string(),
+                function_name: "audit_func".to_string(),
+                events: vec![TriggerEvent::Insert],
+                timing: TriggerTiming::After,
+                for_each_row: true,
+                when_clause: None,
+                function_args: vec![],
+                enabled: TriggerEnabled::Origin,
+                update_columns: vec![],
+                old_table_name: None,
+                new_table_name: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+
+        let drop_trigger_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropTrigger { .. }))
+            .collect();
+        let create_trigger_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreateTrigger(_)))
+            .collect();
+
+        assert_eq!(drop_trigger_ops.len(), 1, "Should have exactly 1 DropTrigger op");
+        assert_eq!(create_trigger_ops.len(), 1, "Should have exactly 1 CreateTrigger op");
+    }
+
 }
