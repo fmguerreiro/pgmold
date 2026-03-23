@@ -139,6 +139,69 @@ pub(super) fn generate_policy_ops_for_type_changes(
     additional_ops
 }
 
+/// Extract table qualified names for tables that have columns being dropped.
+pub(super) fn tables_with_dropped_columns(ops: &[MigrationOp]) -> HashSet<String> {
+    ops.iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropColumn { table, .. } = op {
+                Some(table.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Generate policy drop/create ops for tables with dropped columns.
+/// PostgreSQL requires policies to be dropped before dropping columns they may reference.
+/// Uses conservative approach: if any column on a table is dropped, drop/recreate all policies.
+pub(super) fn generate_policy_ops_for_column_drops(
+    ops: &[MigrationOp],
+    from: &Schema,
+    to: &Schema,
+    affected_tables: &HashSet<String>,
+) -> Vec<MigrationOp> {
+    let mut additional_ops = Vec::new();
+
+    if affected_tables.is_empty() {
+        return additional_ops;
+    }
+
+    let existing_policy_drops: HashSet<(String, String)> =
+        collect_existing_drops(ops, |op| match op {
+            MigrationOp::DropPolicy { table, name } => Some((table.to_string(), name.clone())),
+            _ => None,
+        });
+
+    for table_name in affected_tables {
+        if let Some(from_table) = from.tables.get(table_name) {
+            let qualified_table_str = qualified_name(&from_table.schema, &from_table.name);
+            for policy in &from_table.policies {
+                if existing_policy_drops
+                    .contains(&(qualified_table_str.clone(), policy.name.clone()))
+                {
+                    continue;
+                }
+
+                let target_policy = to
+                    .tables
+                    .get(table_name)
+                    .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
+
+                additional_ops.push(MigrationOp::DropPolicy {
+                    table: QualifiedName::new(&from_table.schema, &from_table.name),
+                    name: policy.name.clone(),
+                });
+                additional_ops.push(MigrationOp::CreatePolicy(
+                    target_policy.unwrap_or(policy).clone(),
+                ));
+            }
+        }
+    }
+
+    additional_ops
+}
+
 /// Generate trigger drop/create ops for tables with column type changes.
 /// PostgreSQL requires triggers to be dropped before altering the type of columns they reference.
 /// Uses conservative approach: if any column on a table changes type, drop/recreate all triggers.
@@ -886,6 +949,81 @@ mod tests {
         if let MigrationOp::CreateView(view) = &create_view_ops[0] {
             assert_eq!(view.name, "users_view");
         }
+    }
+
+    #[test]
+    fn generates_policy_ops_for_column_drops() {
+        let mut from = empty_schema();
+        let mut users_table = simple_table("users");
+        users_table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table.columns.insert(
+            "enterprise_id".to_string(),
+            Column {
+                name: "enterprise_id".to_string(),
+                data_type: PgType::Integer,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table.policies.push(Policy {
+            name: "users_select_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("enterprise_id = current_enterprise_id()".to_string()),
+            check_expr: None,
+        });
+        from.tables
+            .insert("public.users".to_string(), users_table);
+
+        let mut to = empty_schema();
+        let mut users_table_to = simple_table("users");
+        users_table_to.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table_to.policies.push(Policy {
+            name: "users_select_policy".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("id = current_user_id()".to_string()),
+            check_expr: None,
+        });
+        to.tables
+            .insert("public.users".to_string(), users_table_to);
+
+        let ops = compute_diff(&from, &to);
+
+        let drop_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropPolicy { .. }))
+            .collect();
+        let create_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .collect();
+
+        assert_eq!(drop_policy_ops.len(), 1, "Should have exactly 1 DropPolicy op");
+        assert_eq!(create_policy_ops.len(), 1, "Should have exactly 1 CreatePolicy op");
     }
 
     #[test]
