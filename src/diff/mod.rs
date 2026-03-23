@@ -16,11 +16,9 @@ pub use types::{
 };
 
 use dependencies::{
-    generate_fk_ops_for_type_changes, generate_policy_ops_for_column_drops,
-    generate_policy_ops_for_function_changes, generate_policy_ops_for_type_changes,
-    generate_trigger_ops_for_column_drops, generate_trigger_ops_for_type_changes,
-    generate_view_ops_for_column_drops, generate_view_ops_for_type_changes,
-    tables_with_dropped_columns, type_changed_columns,
+    generate_fk_ops_for_type_changes, generate_policy_ops_for_affected_tables,
+    generate_policy_ops_for_function_changes, generate_trigger_ops_for_affected_tables,
+    generate_view_ops_for_affected_tables, tables_with_dropped_columns, type_changed_columns,
 };
 use grants::diff_default_privileges;
 use objects::{
@@ -93,28 +91,22 @@ pub fn compute_diff_with_flags(
         to,
         &type_change_columns,
     ));
-    ops.extend(generate_policy_ops_for_type_changes(
+    let (type_change_policy_ops, _) =
+        generate_policy_ops_for_affected_tables(&ops, from, to, &affected_tables);
+    ops.extend(type_change_policy_ops);
+    ops.extend(generate_trigger_ops_for_affected_tables(
         &ops,
         from,
         to,
         &affected_tables,
     ));
-    ops.extend(generate_trigger_ops_for_type_changes(
-        &ops,
-        from,
-        to,
-        &affected_tables,
-    ));
-    ops.extend(generate_view_ops_for_type_changes(
-        &ops,
-        from,
-        to,
-        &affected_tables,
-    ));
+    let (type_change_view_ops, _) =
+        generate_view_ops_for_affected_tables(&ops, from, to, &affected_tables);
+    ops.extend(type_change_view_ops);
 
     let tables_with_column_drops = tables_with_dropped_columns(&ops);
     let (column_drop_policy_ops, column_drop_policies_to_filter) =
-        generate_policy_ops_for_column_drops(&ops, from, to, &tables_with_column_drops);
+        generate_policy_ops_for_affected_tables(&ops, from, to, &tables_with_column_drops);
     if !column_drop_policies_to_filter.is_empty() {
         ops.retain(|op| {
             if let MigrationOp::AlterPolicy { table, name, .. } = op {
@@ -125,14 +117,14 @@ pub fn compute_diff_with_flags(
         });
     }
     ops.extend(column_drop_policy_ops);
-    ops.extend(generate_trigger_ops_for_column_drops(
+    ops.extend(generate_trigger_ops_for_affected_tables(
         &ops,
         from,
         to,
         &tables_with_column_drops,
     ));
     let (column_drop_view_ops, column_drop_views_to_filter) =
-        generate_view_ops_for_column_drops(&ops, from, to, &tables_with_column_drops);
+        generate_view_ops_for_affected_tables(&ops, from, to, &tables_with_column_drops);
     if !column_drop_views_to_filter.is_empty() {
         ops.retain(|op| {
             if let MigrationOp::AlterView { name, .. } = op {

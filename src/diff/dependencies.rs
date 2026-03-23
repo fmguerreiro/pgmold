@@ -89,56 +89,6 @@ pub(super) fn generate_fk_ops_for_type_changes(
     additional_ops
 }
 
-/// Generate policy drop/create ops for tables with column type changes.
-/// PostgreSQL requires policies to be dropped before altering the type of columns they reference.
-/// Uses conservative approach: if any column on a table changes type, drop/recreate all policies.
-pub(super) fn generate_policy_ops_for_type_changes(
-    ops: &[MigrationOp],
-    from: &Schema,
-    to: &Schema,
-    affected_tables: &HashSet<String>,
-) -> Vec<MigrationOp> {
-    let mut additional_ops = Vec::new();
-
-    if affected_tables.is_empty() {
-        return additional_ops;
-    }
-
-    let existing_policy_drops: HashSet<(String, String)> =
-        collect_existing_drops(ops, |op| match op {
-            MigrationOp::DropPolicy { table, name } => Some((table.to_string(), name.clone())),
-            _ => None,
-        });
-
-    for table_name in affected_tables {
-        if let Some(from_table) = from.tables.get(table_name) {
-            let qualified_table_str = qualified_name(&from_table.schema, &from_table.name);
-            for policy in &from_table.policies {
-                if existing_policy_drops
-                    .contains(&(qualified_table_str.clone(), policy.name.clone()))
-                {
-                    continue;
-                }
-
-                let target_policy = to
-                    .tables
-                    .get(table_name)
-                    .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
-
-                additional_ops.push(MigrationOp::DropPolicy {
-                    table: QualifiedName::new(&from_table.schema, &from_table.name),
-                    name: policy.name.clone(),
-                });
-                additional_ops.push(MigrationOp::CreatePolicy(
-                    target_policy.unwrap_or(policy).clone(),
-                ));
-            }
-        }
-    }
-
-    additional_ops
-}
-
 /// Extract table qualified names for tables that have columns being dropped.
 pub(super) fn tables_with_dropped_columns(ops: &[MigrationOp]) -> HashSet<String> {
     ops.iter()
@@ -152,12 +102,12 @@ pub(super) fn tables_with_dropped_columns(ops: &[MigrationOp]) -> HashSet<String
         .collect()
 }
 
-/// Generate policy drop/create ops for tables with dropped columns.
-/// PostgreSQL requires policies to be dropped before dropping columns they may reference.
-/// Uses conservative approach: if any column on a table is dropped, drop/recreate all policies.
+/// Generate policy drop/create ops for tables with affected columns (type changes or drops).
+/// PostgreSQL requires policies to be dropped before altering column types or dropping columns.
+/// Uses conservative approach: if any column on a table is affected, drop/recreate all policies.
 /// Returns the generated ops and a set of (table_qualified_name, policy_name) pairs that
 /// had DropPolicy emitted, so callers can filter out any duplicate AlterPolicy ops.
-pub(super) fn generate_policy_ops_for_column_drops(
+pub(super) fn generate_policy_ops_for_affected_tables(
     ops: &[MigrationOp],
     from: &Schema,
     to: &Schema,
@@ -207,9 +157,10 @@ pub(super) fn generate_policy_ops_for_column_drops(
     (additional_ops, policies_to_filter)
 }
 
-/// Generate trigger drop/create ops for tables with dropped columns.
-/// Uses conservative approach: if any column on a table is dropped, drop/recreate all triggers on that table.
-pub(super) fn generate_trigger_ops_for_column_drops(
+/// Generate trigger drop/create ops for tables with affected columns (type changes or drops).
+/// PostgreSQL requires triggers to be dropped before altering column types or dropping columns.
+/// Uses conservative approach: if any column on a table is affected, drop/recreate all triggers.
+pub(super) fn generate_trigger_ops_for_affected_tables(
     ops: &[MigrationOp],
     from: &Schema,
     to: &Schema,
@@ -265,11 +216,11 @@ pub(super) fn generate_trigger_ops_for_column_drops(
     additional_ops
 }
 
-/// Generate view drop/create ops for views that reference tables with dropped columns.
-/// Uses conservative approach: if any column on a table is dropped, drop/recreate all views referencing that table.
+/// Generate view drop/create ops for views that reference affected tables (type changes or drops).
+/// PostgreSQL requires views to be dropped before altering column types or dropping columns.
 /// Returns the generated ops and a set of view qualified names that had DropView emitted,
 /// so callers can filter out any duplicate AlterView ops for the same views.
-pub(super) fn generate_view_ops_for_column_drops(
+pub(super) fn generate_view_ops_for_affected_tables(
     ops: &[MigrationOp],
     from: &Schema,
     to: &Schema,
@@ -314,111 +265,6 @@ pub(super) fn generate_view_ops_for_column_drops(
     }
 
     (additional_ops, views_to_filter)
-}
-
-/// Generate trigger drop/create ops for tables with column type changes.
-/// PostgreSQL requires triggers to be dropped before altering the type of columns they reference.
-/// Uses conservative approach: if any column on a table changes type, drop/recreate all triggers.
-pub(super) fn generate_trigger_ops_for_type_changes(
-    ops: &[MigrationOp],
-    from: &Schema,
-    to: &Schema,
-    affected_tables: &HashSet<String>,
-) -> Vec<MigrationOp> {
-    let mut additional_ops = Vec::new();
-
-    if affected_tables.is_empty() {
-        return additional_ops;
-    }
-
-    let existing_trigger_drops: HashSet<(String, String, String)> =
-        collect_existing_drops(ops, |op| match op {
-            MigrationOp::DropTrigger {
-                target_schema,
-                target_name,
-                name,
-            } => Some((target_schema.clone(), target_name.clone(), name.clone())),
-            _ => None,
-        });
-
-    for table_name in affected_tables {
-        let (table_schema, table_only_name) = parse_qualified_name(table_name);
-
-        for trigger in from.triggers.values() {
-            if trigger.target_schema == table_schema && trigger.target_name == table_only_name {
-                if existing_trigger_drops.contains(&(
-                    trigger.target_schema.clone(),
-                    trigger.target_name.clone(),
-                    trigger.name.clone(),
-                )) {
-                    continue;
-                }
-
-                let target_trigger = to.triggers.values().find(|t| {
-                    t.name == trigger.name
-                        && t.target_schema == table_schema
-                        && t.target_name == table_only_name
-                });
-
-                additional_ops.push(MigrationOp::DropTrigger {
-                    target_schema: trigger.target_schema.clone(),
-                    target_name: trigger.target_name.clone(),
-                    name: trigger.name.clone(),
-                });
-                additional_ops.push(MigrationOp::CreateTrigger(
-                    target_trigger.unwrap_or(trigger).clone(),
-                ));
-            }
-        }
-    }
-
-    additional_ops
-}
-
-/// Generate view drop/create ops for views that reference tables with column type changes.
-/// PostgreSQL requires views to be dropped before altering the type of columns they reference.
-pub(super) fn generate_view_ops_for_type_changes(
-    ops: &[MigrationOp],
-    from: &Schema,
-    to: &Schema,
-    affected_tables: &HashSet<String>,
-) -> Vec<MigrationOp> {
-    let mut additional_ops = Vec::new();
-
-    if affected_tables.is_empty() {
-        return additional_ops;
-    }
-
-    let existing_view_drops: HashSet<String> = collect_existing_drops(ops, |op| match op {
-        MigrationOp::DropView { name, .. } => Some(name.clone()),
-        _ => None,
-    });
-
-    for (view_name, view) in &from.views {
-        let referenced_tables = extract_table_references(&view.query, &view.schema);
-
-        let view_affected = referenced_tables
-            .iter()
-            .any(|ref_table| affected_tables.contains(&ref_table.qualified_name()));
-
-        if view_affected {
-            let qualified_view_name = qualified_name(&view.schema, &view.name);
-
-            if existing_view_drops.contains(&qualified_view_name) {
-                continue;
-            }
-
-            let target_view = to.views.get(view_name);
-
-            additional_ops.push(MigrationOp::DropView {
-                name: qualified_view_name.clone(),
-                materialized: view.materialized,
-            });
-            additional_ops.push(MigrationOp::CreateView(target_view.unwrap_or(view).clone()));
-        }
-    }
-
-    additional_ops
 }
 
 /// Generate policy drop/create ops for policies that reference functions being dropped.
