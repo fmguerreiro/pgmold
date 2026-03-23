@@ -260,6 +260,52 @@ pub(super) fn generate_trigger_ops_for_column_drops(
     additional_ops
 }
 
+/// Generate view drop/create ops for views that reference tables with dropped columns.
+/// Uses conservative approach: if any column on a table is dropped, drop/recreate all views referencing that table.
+pub(super) fn generate_view_ops_for_column_drops(
+    ops: &[MigrationOp],
+    from: &Schema,
+    to: &Schema,
+    affected_tables: &HashSet<String>,
+) -> Vec<MigrationOp> {
+    let mut additional_ops = Vec::new();
+
+    if affected_tables.is_empty() {
+        return additional_ops;
+    }
+
+    let existing_view_drops: HashSet<String> = collect_existing_drops(ops, |op| match op {
+        MigrationOp::DropView { name, .. } => Some(name.clone()),
+        _ => None,
+    });
+
+    for (view_name, view) in &from.views {
+        let referenced_tables = extract_table_references(&view.query, &view.schema);
+
+        let view_affected = referenced_tables
+            .iter()
+            .any(|ref_table| affected_tables.contains(&ref_table.qualified_name()));
+
+        if view_affected {
+            let qualified_view_name = qualified_name(&view.schema, &view.name);
+
+            if existing_view_drops.contains(&qualified_view_name) {
+                continue;
+            }
+
+            let target_view = to.views.get(view_name);
+
+            additional_ops.push(MigrationOp::DropView {
+                name: qualified_view_name.clone(),
+                materialized: view.materialized,
+            });
+            additional_ops.push(MigrationOp::CreateView(target_view.unwrap_or(view).clone()));
+        }
+    }
+
+    additional_ops
+}
+
 /// Generate trigger drop/create ops for tables with column type changes.
 /// PostgreSQL requires triggers to be dropped before altering the type of columns they reference.
 /// Uses conservative approach: if any column on a table changes type, drop/recreate all triggers.
@@ -1288,4 +1334,80 @@ mod tests {
         assert_eq!(create_trigger_ops.len(), 1, "Should have exactly 1 CreateTrigger op");
     }
 
+    #[test]
+    fn generates_view_ops_for_column_drops() {
+        let mut from = empty_schema();
+        let mut users_table = simple_table("users");
+        users_table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        users_table.columns.insert(
+            "enterprise_id".to_string(),
+            Column {
+                name: "enterprise_id".to_string(),
+                data_type: PgType::Integer,
+                nullable: true,
+                default: None,
+                comment: None,
+            },
+        );
+        from.tables.insert("public.users".to_string(), users_table);
+        from.views.insert(
+            "public.enterprise_users_view".to_string(),
+            View {
+                name: "enterprise_users_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id, enterprise_id FROM public.users".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+
+        let mut to = empty_schema();
+        let mut users_table_to = simple_table("users");
+        users_table_to.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        );
+        to.tables.insert("public.users".to_string(), users_table_to);
+        to.views.insert(
+            "public.enterprise_users_view".to_string(),
+            View {
+                name: "enterprise_users_view".to_string(),
+                schema: "public".to_string(),
+                query: "SELECT id FROM public.users".to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+
+        let drop_view_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropView { .. }))
+            .collect();
+        let create_view_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreateView(_)))
+            .collect();
+
+        assert_eq!(drop_view_ops.len(), 1, "Should have exactly 1 DropView op");
+        assert_eq!(create_view_ops.len(), 1, "Should have exactly 1 CreateView op");
+    }
 }
