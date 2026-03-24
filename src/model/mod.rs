@@ -496,7 +496,7 @@ impl Function {
             // Use semantic comparison for defaults to handle PostgreSQL normalization
             let defaults_differ =
                 !crate::util::optional_expressions_equal(&self_arg.default, &other_arg.default);
-            if self_arg.data_type == other_arg.data_type
+            if normalize_pg_type(&self_arg.data_type) == normalize_pg_type(&other_arg.data_type)
                 && self_arg.mode == other_arg.mode
                 && (self_arg.name != other_arg.name || defaults_differ)
             {
