@@ -1246,7 +1246,8 @@ async fn introspect_functions(
             p.provolatile as volatility,
             p.prosecdef as security_definer,
             p.proconfig as config_params,
-            r.rolname as owner
+            r.rolname as owner,
+            p.proargmodes as arg_modes
         FROM pg_proc p
         JOIN pg_namespace n ON p.pronamespace = n.oid
         JOIN pg_language l ON p.prolang = l.oid
@@ -1290,6 +1291,25 @@ async fn introspect_functions(
         };
 
         let arguments = parse_function_arguments(&arguments_str);
+
+        let arg_modes_raw: Option<Vec<i8>> = row.get("arg_modes");
+        let arguments = if let Some(modes) = arg_modes_raw {
+            arguments
+                .into_iter()
+                .zip(modes.into_iter())
+                .map(|(mut arg, mode)| {
+                    arg.mode = match pg_char(mode) {
+                        'o' => crate::model::ArgMode::Out,
+                        'b' => crate::model::ArgMode::InOut,
+                        'v' => crate::model::ArgMode::Variadic,
+                        _ => arg.mode,
+                    };
+                    arg
+                })
+                .collect()
+        } else {
+            arguments
+        };
 
         let config_params_raw: Option<Vec<String>> = row.get("config_params");
         let config_params: Vec<(String, String)> = config_params_raw

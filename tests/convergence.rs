@@ -604,3 +604,484 @@ async fn complex_combined() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn function_with_default_null_typed_params() {
+    assert_convergence_public(
+        r#"
+        CREATE FUNCTION public.create_project(
+            p_name text,
+            p_owner_id uuid DEFAULT NULL,
+            p_parent_id integer DEFAULT NULL,
+            p_metadata jsonb DEFAULT NULL
+        )
+        RETURNS void
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RETURN;
+        END;
+        $$;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn function_with_mixed_defaults() {
+    assert_convergence_public(
+        r#"
+        CREATE FUNCTION public.upsert_record(
+            p_id uuid,
+            p_name text DEFAULT 'unnamed',
+            p_count integer DEFAULT 0,
+            p_active boolean DEFAULT true,
+            p_tags text[] DEFAULT NULL,
+            p_config jsonb DEFAULT '{}'::jsonb
+        )
+        RETURNS void
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RETURN;
+        END;
+        $$;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn view_after_column_drop_recreate() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let initial_sql = r#"
+        CREATE TABLE public.items (
+            id serial PRIMARY KEY,
+            name text NOT NULL,
+            description text,
+            price numeric(10,2) NOT NULL
+        );
+
+        CREATE VIEW public.item_summary AS
+        SELECT id, name, price FROM public.items WHERE price > 0;
+    "#;
+
+    let target = parse_sql_string(initial_sql).unwrap();
+    apply_and_assert_convergence(&connection, &target, &["public"]).await;
+
+    let after_drop_sql = r#"
+        CREATE TABLE public.items (
+            id serial PRIMARY KEY,
+            name text NOT NULL,
+            price numeric(10,2) NOT NULL
+        );
+
+        CREATE VIEW public.item_summary AS
+        SELECT id, name, price FROM public.items WHERE price > 0;
+    "#;
+
+    let after_target = parse_sql_string(after_drop_sql).unwrap();
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let ops = compute_diff(&current, &after_target);
+    let planned = plan_migration(ops);
+    let sql = generate_sql(&planned);
+
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Failed to execute: {stmt}\nError: {e}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let residual = compute_diff(&after, &after_target);
+    assert!(
+        residual.is_empty(),
+        "Expected zero ops after drop column + view recreate, got {} op(s): {:?}",
+        residual.len(),
+        residual
+    );
+}
+
+#[tokio::test]
+async fn view_with_explicit_casts_and_coalesce() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.products (
+            id serial PRIMARY KEY,
+            name text,
+            weight numeric,
+            category text
+        );
+
+        CREATE VIEW public.product_display AS
+        SELECT
+            id,
+            COALESCE(name, 'N/A') AS display_name,
+            COALESCE(weight, 0) AS display_weight,
+            COALESCE(category, 'uncategorized') AS display_category
+        FROM public.products;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn function_non_public_schema_with_null_defaults() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE SCHEMA mrv")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema_sql = r#"
+        CREATE SCHEMA mrv;
+
+        CREATE FUNCTION mrv.vcs_project_create(
+            p_name text,
+            p_organization_id uuid DEFAULT NULL,
+            p_parent_project_id uuid DEFAULT NULL,
+            p_description text DEFAULT NULL,
+            p_settings jsonb DEFAULT NULL
+        )
+        RETURNS uuid
+        LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = mrv, public
+        AS $$
+        DECLARE
+            v_id uuid;
+        BEGIN
+            v_id := gen_random_uuid();
+            RETURN v_id;
+        END;
+        $$;
+    "#;
+
+    let target = parse_sql_string(schema_sql).unwrap();
+    apply_and_assert_convergence(&connection, &target, &["mrv"]).await;
+}
+
+#[tokio::test]
+async fn function_with_complex_defaults() {
+    assert_convergence_public(
+        r#"
+        CREATE FUNCTION public.process_batch(
+            p_items text[] DEFAULT ARRAY[]::text[],
+            p_config jsonb DEFAULT '{"enabled": true}'::jsonb,
+            p_limit integer DEFAULT 100,
+            p_offset integer DEFAULT 0,
+            p_created_after timestamptz DEFAULT now()
+        )
+        RETURNS void
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RETURN;
+        END;
+        $$;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn view_with_case_and_subquery() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.orders (
+            id serial PRIMARY KEY,
+            customer_id integer NOT NULL,
+            status text NOT NULL DEFAULT 'pending',
+            total numeric(12,2) NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE TABLE public.customers (
+            id serial PRIMARY KEY,
+            name text NOT NULL,
+            tier text DEFAULT 'standard'
+        );
+
+        CREATE VIEW public.order_summary AS
+        SELECT
+            o.id,
+            o.total,
+            c.name AS customer_name,
+            CASE
+                WHEN o.total > 1000 THEN 'high'
+                WHEN o.total > 100 THEN 'medium'
+                ELSE 'low'
+            END AS value_tier,
+            CASE WHEN o.status = 'completed' THEN true ELSE false END AS is_complete,
+            (SELECT COUNT(*) FROM public.orders o2 WHERE o2.customer_id = o.customer_id) AS customer_order_count
+        FROM public.orders o
+        JOIN public.customers c ON c.id = o.customer_id
+        WHERE o.status <> 'cancelled';
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn view_with_string_concat_and_type_casts() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.users (
+            id serial PRIMARY KEY,
+            first_name text NOT NULL,
+            last_name text NOT NULL,
+            age integer,
+            score numeric(5,2),
+            created_at timestamptz DEFAULT now()
+        );
+
+        CREATE VIEW public.user_display AS
+        SELECT
+            id,
+            first_name || ' ' || last_name AS full_name,
+            COALESCE(age::text, 'unknown') AS age_display,
+            COALESCE(score, 0.0) AS display_score,
+            created_at::date AS signup_date
+        FROM public.users;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn function_returns_table_with_defaults() {
+    assert_convergence_public(
+        r#"
+        CREATE FUNCTION public.search_items(
+            p_query text DEFAULT NULL,
+            p_limit integer DEFAULT 50,
+            p_include_inactive boolean DEFAULT false
+        )
+        RETURNS TABLE(id integer, name text, score numeric)
+        LANGUAGE plpgsql STABLE
+        AS $$
+        BEGIN
+            RETURN QUERY SELECT 1, 'test'::text, 1.0::numeric;
+        END;
+        $$;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn function_with_interval_and_timestamp_defaults() {
+    assert_convergence_public(
+        r#"
+        CREATE FUNCTION public.get_recent_events(
+            p_window interval DEFAULT interval '90 days',
+            p_since timestamptz DEFAULT now(),
+            p_status text DEFAULT 'active'
+        )
+        RETURNS void
+        LANGUAGE plpgsql STABLE
+        AS $$
+        BEGIN
+            RETURN;
+        END;
+        $$;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn view_with_window_functions() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.sales (
+            id serial PRIMARY KEY,
+            product_id integer NOT NULL,
+            amount numeric(12,2) NOT NULL,
+            sold_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE VIEW public.sales_ranked AS
+        SELECT
+            id,
+            product_id,
+            amount,
+            sold_at,
+            ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY sold_at DESC) AS row_num,
+            SUM(amount) OVER (PARTITION BY product_id) AS product_total
+        FROM public.sales;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn function_with_out_params_and_defaults() {
+    assert_convergence_public(
+        r#"
+        CREATE FUNCTION public.get_user_info(
+            p_user_id integer,
+            OUT o_name text,
+            OUT o_email text
+        )
+        RETURNS RECORD
+        LANGUAGE plpgsql STABLE
+        AS $$
+        BEGIN
+            o_name := 'test';
+            o_email := 'test@test.com';
+        END;
+        $$;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn function_sql_with_type_casts_in_body() {
+    assert_convergence_public(
+        r#"
+        CREATE FUNCTION public.format_value(p_val numeric DEFAULT 0)
+        RETURNS text
+        LANGUAGE sql IMMUTABLE
+        AS $$
+            SELECT p_val::text || ' units';
+        $$;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn function_with_returns_table_aliases() {
+    assert_convergence_public(
+        r#"
+        CREATE FUNCTION public.get_stats(
+            p_department text DEFAULT NULL
+        )
+        RETURNS TABLE(
+            department_name text,
+            employee_count bigint,
+            avg_salary numeric
+        )
+        LANGUAGE plpgsql STABLE
+        AS $$
+        BEGIN
+            RETURN QUERY
+            SELECT 'eng'::text, 10::bigint, 95000.00::numeric;
+        END;
+        $$;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn function_with_inout_params() {
+    assert_convergence_public(
+        r#"
+        CREATE FUNCTION public.increment_counter(
+            INOUT counter integer,
+            step integer DEFAULT 1
+        )
+        RETURNS integer
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            counter := counter + step;
+        END;
+        $$;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn view_with_window_frame_bounds() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.metrics (
+            id serial PRIMARY KEY,
+            value numeric NOT NULL,
+            recorded_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE VIEW public.metrics_moving_avg AS
+        SELECT
+            id,
+            value,
+            recorded_at,
+            AVG(value) OVER (ORDER BY recorded_at ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS moving_avg
+        FROM public.metrics;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn view_with_cte() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.employees (
+            id serial PRIMARY KEY,
+            name text NOT NULL,
+            manager_id integer,
+            department text NOT NULL,
+            salary numeric(10,2) NOT NULL
+        );
+
+        CREATE VIEW public.department_stats AS
+        WITH dept_totals AS (
+            SELECT
+                department,
+                COUNT(*) AS employee_count,
+                AVG(salary) AS avg_salary
+            FROM public.employees
+            GROUP BY department
+        )
+        SELECT
+            department,
+            employee_count,
+            avg_salary
+        FROM dept_totals
+        WHERE employee_count > 0;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn view_with_union() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.active_users (
+            id serial PRIMARY KEY,
+            name text NOT NULL,
+            email text NOT NULL
+        );
+
+        CREATE TABLE public.archived_users (
+            id serial PRIMARY KEY,
+            name text NOT NULL,
+            email text NOT NULL,
+            archived_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE VIEW public.all_users AS
+        SELECT id, name, email, 'active' AS status FROM public.active_users
+        UNION ALL
+        SELECT id, name, email, 'archived' AS status FROM public.archived_users;
+        "#,
+    )
+    .await;
+}

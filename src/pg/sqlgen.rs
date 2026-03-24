@@ -3,9 +3,9 @@ use crate::diff::{
     PolicyChanges, SequenceChanges,
 };
 use crate::model::{
-    parse_qualified_name, versioned_schema_name, CheckConstraint, Column, Domain, ForeignKey,
-    Function, Index, IndexType, Partition, PartitionBound, PartitionStrategy, PgType, Policy,
-    PolicyCommand, Privilege, QualifiedName, ReferentialAction, SecurityType, Sequence,
+    parse_qualified_name, versioned_schema_name, ArgMode, CheckConstraint, Column, Domain,
+    ForeignKey, Function, Index, IndexType, Partition, PartitionBound, PartitionStrategy, PgType,
+    Policy, PolicyCommand, Privilege, QualifiedName, ReferentialAction, SecurityType, Sequence,
     SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, VersionView,
     View, Volatility,
 };
@@ -991,6 +991,12 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
         .iter()
         .map(|arg| {
             let mut parts = Vec::new();
+            match arg.mode {
+                ArgMode::Out => parts.push("OUT".to_string()),
+                ArgMode::InOut => parts.push("INOUT".to_string()),
+                ArgMode::Variadic => parts.push("VARIADIC".to_string()),
+                ArgMode::In => {}
+            }
             if let Some(ref name) = arg.name {
                 parts.push(quote_ident(name));
             }

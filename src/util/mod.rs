@@ -759,7 +759,21 @@ fn normalize_statement(stmt: &Statement) -> Statement {
 /// Normalizes a query to canonical form.
 fn normalize_query(query: &Query) -> Query {
     Query {
-        with: query.with.clone(),
+        with: query.with.as_ref().map(|w| sqlparser::ast::With {
+            with_token: w.with_token.clone(),
+            recursive: w.recursive,
+            cte_tables: w
+                .cte_tables
+                .iter()
+                .map(|cte| sqlparser::ast::Cte {
+                    alias: cte.alias.clone(),
+                    query: Box::new(normalize_query(&cte.query)),
+                    from: cte.from.clone(),
+                    materialized: cte.materialized.clone(),
+                    closing_paren_token: cte.closing_paren_token.clone(),
+                })
+                .collect(),
+        }),
         body: Box::new(normalize_set_expr(&query.body)),
         order_by: query.order_by.as_ref().map(normalize_order_by),
         limit_clause: query.limit_clause.clone(),
@@ -896,6 +910,44 @@ fn normalize_function_arg(arg: &sqlparser::ast::FunctionArg) -> sqlparser::ast::
             arg: normalize_function_arg_expr(arg),
             operator: operator.clone(),
         },
+    }
+}
+
+fn normalize_window_spec(spec: &sqlparser::ast::WindowSpec) -> sqlparser::ast::WindowSpec {
+    sqlparser::ast::WindowSpec {
+        window_name: spec.window_name.clone(),
+        partition_by: spec.partition_by.iter().map(normalize_expr).collect(),
+        order_by: spec
+            .order_by
+            .iter()
+            .map(|e| sqlparser::ast::OrderByExpr {
+                expr: normalize_expr(&e.expr),
+                options: e.options,
+                with_fill: e.with_fill.clone(),
+            })
+            .collect(),
+        window_frame: spec
+            .window_frame
+            .as_ref()
+            .map(|wf| sqlparser::ast::WindowFrame {
+                units: wf.units,
+                start_bound: normalize_window_frame_bound(&wf.start_bound),
+                end_bound: wf.end_bound.as_ref().map(normalize_window_frame_bound),
+            }),
+    }
+}
+
+fn normalize_window_frame_bound(
+    bound: &sqlparser::ast::WindowFrameBound,
+) -> sqlparser::ast::WindowFrameBound {
+    match bound {
+        sqlparser::ast::WindowFrameBound::Preceding(Some(e)) => {
+            sqlparser::ast::WindowFrameBound::Preceding(Some(Box::new(normalize_expr(e))))
+        }
+        sqlparser::ast::WindowFrameBound::Following(Some(e)) => {
+            sqlparser::ast::WindowFrameBound::Following(Some(Box::new(normalize_expr(e))))
+        }
+        other => other.clone(),
     }
 }
 
@@ -1312,8 +1364,13 @@ fn normalize_expr(expr: &Expr) -> Expr {
                 }
                 other => other.clone(),
             };
-            // Normalize FILTER (WHERE expr) clause — PostgreSQL adds extra parens
             func.filter = f.filter.as_ref().map(|e| Box::new(normalize_expr(e)));
+            func.over = f.over.as_ref().map(|w| match w {
+                sqlparser::ast::WindowType::WindowSpec(spec) => {
+                    sqlparser::ast::WindowType::WindowSpec(normalize_window_spec(spec))
+                }
+                other => other.clone(),
+            });
             Expr::Function(func)
         }
 
