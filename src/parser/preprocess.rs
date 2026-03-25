@@ -191,6 +191,101 @@ fn reorder_sequence_options(sql: &str) -> String {
         .into_owned()
 }
 
+/// Replaces quoted content (single-quoted strings, double-quoted identifiers,
+/// dollar-quoted blocks) with safe placeholders so that regex-based strip
+/// patterns cannot match keywords inside quoted text.
+fn protect_quoted_content(sql: &str) -> (String, Vec<(String, String)>) {
+    let bytes = sql.as_bytes();
+    let length = bytes.len();
+    let mut result = String::with_capacity(length);
+    let mut replacements: Vec<(String, String)> = Vec::new();
+    let mut index = 0;
+
+    while index < length {
+        match bytes[index] {
+            b'"' => {
+                let start = index;
+                index += 1;
+                while index < length && bytes[index] != b'"' {
+                    index += 1;
+                }
+                if index < length {
+                    index += 1;
+                }
+                let original = &sql[start..index];
+                let sequence = replacements.len();
+                let placeholder = format!("\"_PQ{sequence}_\"");
+                replacements.push((placeholder.clone(), original.to_string()));
+                result.push_str(&placeholder);
+            }
+            b'\'' => {
+                let start = index;
+                index += 1;
+                while index < length {
+                    if bytes[index] == b'\'' {
+                        index += 1;
+                        if index < length && bytes[index] == b'\'' {
+                            index += 1;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        index += 1;
+                    }
+                }
+                let original = &sql[start..index];
+                let sequence = replacements.len();
+                let placeholder = format!("'_PQ{sequence}_'");
+                replacements.push((placeholder.clone(), original.to_string()));
+                result.push_str(&placeholder);
+            }
+            b'$' => {
+                let tag_start = index;
+                index += 1;
+                while index < length
+                    && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+                {
+                    index += 1;
+                }
+                if index < length && bytes[index] == b'$' {
+                    index += 1;
+                    let tag = &sql[tag_start..index];
+                    if let Some(close_offset) = sql[index..].find(tag) {
+                        let end = index + close_offset + tag.len();
+                        let original = &sql[tag_start..end];
+                        let sequence = replacements.len();
+                        let placeholder = format!("$$_PQ{sequence}_$$");
+                        replacements.push((placeholder.clone(), original.to_string()));
+                        result.push_str(&placeholder);
+                        index = end;
+                    } else {
+                        result.push_str(&sql[tag_start..index]);
+                    }
+                } else {
+                    result.push_str(&sql[tag_start..index]);
+                }
+            }
+            _ => {
+                let start = index;
+                index += 1;
+                while index < length && !matches!(bytes[index], b'"' | b'\'' | b'$') {
+                    index += 1;
+                }
+                result.push_str(&sql[start..index]);
+            }
+        }
+    }
+
+    (result, replacements)
+}
+
+fn restore_quoted_content(mut sql: String, replacements: &[(String, String)]) -> String {
+    for (placeholder, original) in replacements {
+        sql = sql.replace(placeholder.as_str(), original.as_str());
+    }
+    sql
+}
+
 /// Strips syntax not supported by sqlparser 0.52.
 /// Statements stripped here are parsed separately via regex
 /// (GRANT, REVOKE, ALTER DEFAULT PRIVILEGES, OWNER TO, COMMENT ON, DO blocks).
@@ -198,6 +293,8 @@ pub(super) fn preprocess_sql(sql: &str) -> String {
     let sql = strip_comments(sql);
     let sql = strip_do_blocks(&sql);
     let sql = reorder_sequence_options(&sql);
+
+    let (protected, replacements) = protect_quoted_content(&sql);
 
     let strip_patterns = [
         r"(?i)\bSET\s+search_path\s+TO\s+'[^']*'(?:\s*,\s*'[^']*')*",
@@ -214,13 +311,13 @@ pub(super) fn preprocess_sql(sql: &str) -> String {
         r"(?i)GRANT\s+[^;]+;",
     ];
 
-    let mut processed = sql.to_string();
+    let mut processed = protected;
     for pattern in strip_patterns {
         let regex = Regex::new(pattern).unwrap();
         processed = regex.replace_all(&processed, "").into_owned();
     }
 
-    processed
+    restore_quoted_content(processed, &replacements)
 }
 
 #[cfg(test)]
@@ -483,6 +580,57 @@ $$;"
         let sql =
             "SELECT '\u{2014}';\nCREATE FUNCTION f() RETURNS void AS $$\nBEGIN NULL; END;\n$$;";
         let result = strip_comments(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_preserves_revoke_in_quoted_identifier() {
+        let sql = r#"CREATE POLICY "Users can revoke their own API keys" ON "public"."api_keys"
+  FOR SELECT TO "authenticated" USING (true);"#;
+        let result = preprocess_sql(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_preserves_grant_in_quoted_identifier() {
+        let sql =
+            r#"CREATE POLICY "grant access to users" ON "public"."t" FOR SELECT USING (true);"#;
+        let result = preprocess_sql(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_preserves_alter_in_quoted_identifier() {
+        let sql = r#"CREATE TABLE "alter table test" (id integer);"#;
+        let result = preprocess_sql(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_still_strips_real_grant_statements() {
+        let sql = "GRANT SELECT ON \"public\".\"users\" TO \"app_role\";\nSELECT 1;";
+        let result = preprocess_sql(sql);
+        assert_eq!(result, "\nSELECT 1;");
+    }
+
+    #[test]
+    fn preprocess_still_strips_real_revoke_statements() {
+        let sql = "REVOKE ALL ON \"public\".\"users\" FROM \"old_role\";\nSELECT 1;";
+        let result = preprocess_sql(sql);
+        assert_eq!(result, "\nSELECT 1;");
+    }
+
+    #[test]
+    fn preprocess_keyword_in_single_quoted_string_preserved() {
+        let sql = "SELECT 'REVOKE access' AS label;";
+        let result = preprocess_sql(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_keyword_in_dollar_quoted_body_preserved() {
+        let sql = "CREATE FUNCTION f() RETURNS void AS $$\nGRANT SELECT ON t TO r;\n$$;";
+        let result = preprocess_sql(sql);
         assert_eq!(result, sql);
     }
 }
