@@ -54,6 +54,10 @@ inputs:
   database-secret-command:
     description: 'Command that prints a db:postgres://... connection string to stdout'
     required: false
+  plan-args:
+    description: 'Extra arguments to pass to pgmold plan (e.g. --exclude "public.legacy_*" --exclude-grants-for-role admin_role --include-types tables,functions)'
+    required: false
+    default: ''
   pr-number:
     description: 'PR number for comments/labels (auto-detected for pull_request events, required for workflow_call)'
     required: false
@@ -248,6 +252,7 @@ runs:
         INPUT_DATABASE: ${{ env.RESOLVED_DATABASE || inputs.database }}
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_TARGET_SCHEMAS: ${{ inputs.target-schemas }}
+        INPUT_PLAN_ARGS: ${{ inputs.plan-args }}
       run: |
         set -f
         SCHEMA_ARGS=()
@@ -258,10 +263,11 @@ runs:
 
         if [[ -n "$INPUT_DATABASE" ]]; then
           echo "Running migration plan against database..."
-          OUTPUT=$(pgmold plan "${SCHEMA_ARGS[@]}" \
-            --database "$INPUT_DATABASE" \
-            --target-schemas "$INPUT_TARGET_SCHEMAS" \
-            --json)
+          eval "OUTPUT=\$(pgmold plan \"\${SCHEMA_ARGS[@]}\" \
+            --database \"\$INPUT_DATABASE\" \
+            --target-schemas \"\$INPUT_TARGET_SCHEMAS\" \
+            $INPUT_PLAN_ARGS \
+            --json)"
         else
           echo "Running SQL-to-SQL diff (baseline mode)..."
           SCHEMA_FIRST="${INPUT_SCHEMA%% *}"
