@@ -2,6 +2,7 @@
 
 pub use pgmold::diff::{compute_diff, planner::plan_migration, MigrationOp};
 pub use pgmold::drift::detect_drift;
+pub use pgmold::dump::generate_dump;
 pub use pgmold::expand_contract::generate_version_schema_ops;
 pub use pgmold::lint::{has_errors, lint_migration_plan, LintOptions};
 pub use pgmold::model::{ColumnMapping, PartitionBound, PartitionStrategy, Schema, VersionView};

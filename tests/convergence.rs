@@ -1085,3 +1085,91 @@ async fn view_with_union() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn unique_constraint_inline() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.users (
+            id          BIGSERIAL NOT NULL,
+            email       TEXT      NOT NULL,
+            username    TEXT      NOT NULL,
+            PRIMARY KEY (id),
+            CONSTRAINT users_email_unique UNIQUE (email)
+        );
+        "#,
+    )
+    .await;
+}
+
+const UNIQUE_CONSTRAINT_ALTER_TABLE_SQL: &str = r#"
+    CREATE SCHEMA IF NOT EXISTS auth;
+
+    CREATE TABLE auth.mfa_amr_claims (
+        id                      UUID NOT NULL PRIMARY KEY,
+        session_id              UUID NOT NULL,
+        authentication_method   TEXT NOT NULL
+    );
+    ALTER TABLE auth.mfa_amr_claims
+        ADD CONSTRAINT mfa_amr_claims_session_id_authentication_method_pkey
+        UNIQUE (session_id, authentication_method);
+"#;
+
+#[tokio::test]
+async fn unique_constraint_via_alter_table() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE SCHEMA auth")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let target = parse_sql_string(UNIQUE_CONSTRAINT_ALTER_TABLE_SQL).unwrap();
+    apply_and_assert_convergence(&connection, &target, &["auth"]).await;
+}
+
+#[tokio::test]
+async fn unique_constraint_dump_round_trip() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE SCHEMA auth")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let target = parse_sql_string(UNIQUE_CONSTRAINT_ALTER_TABLE_SQL).unwrap();
+    apply_and_assert_convergence(&connection, &target, &["auth"]).await;
+
+    let db_schema = introspect_schema(&connection, &["auth".to_string()], false)
+        .await
+        .unwrap();
+    let dump_output = generate_dump(&db_schema, None);
+    let reparsed = parse_sql_string(&dump_output).unwrap();
+
+    let diff = compute_diff(&db_schema, &reparsed);
+    assert!(
+        diff.is_empty(),
+        "Dump round-trip should produce zero diff. Got {} op(s): {:?}\nDump output:\n{}",
+        diff.len(),
+        diff,
+        dump_output
+    );
+
+    let reparsed_table = reparsed.tables.get("auth.mfa_amr_claims").unwrap();
+    let constraint_index = reparsed_table
+        .indexes
+        .iter()
+        .find(|i| i.name == "mfa_amr_claims_session_id_authentication_method_pkey")
+        .expect("Dump round-trip should preserve the unique constraint");
+    assert!(
+        constraint_index.is_constraint,
+        "Dump round-trip should preserve is_constraint=true, got is_constraint=false"
+    );
+    assert!(
+        !dump_output.contains("CREATE UNIQUE INDEX"),
+        "Dump should emit ALTER TABLE ADD CONSTRAINT, not CREATE UNIQUE INDEX.\nDump output:\n{}",
+        dump_output
+    );
+}
