@@ -236,6 +236,20 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             )]
         }
 
+        MigrationOp::ForceRls { table } => {
+            vec![format!(
+                "ALTER TABLE {} FORCE ROW LEVEL SECURITY;",
+                quote_qualified(&table.schema, &table.name)
+            )]
+        }
+
+        MigrationOp::NoForceRls { table } => {
+            vec![format!(
+                "ALTER TABLE {} NO FORCE ROW LEVEL SECURITY;",
+                quote_qualified(&table.schema, &table.name)
+            )]
+        }
+
         MigrationOp::CreatePolicy(policy) => vec![generate_create_policy(policy)],
 
         MigrationOp::DropPolicy { table, name } => {
@@ -1565,6 +1579,7 @@ mod tests {
             check_constraints: vec![],
             comment: None,
             row_level_security: false,
+            force_row_level_security: false,
             policies: vec![],
             partition_by: None,
 
@@ -1974,6 +1989,7 @@ mod tests {
             check_constraints: vec![],
             comment: None,
             row_level_security: false,
+            force_row_level_security: false,
             policies: vec![],
             partition_by: None,
 

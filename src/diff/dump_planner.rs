@@ -35,6 +35,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::CreateView(_) => create_views.push(op),
             MigrationOp::CreateTrigger(_) => create_triggers.push(op),
             MigrationOp::EnableRls { .. } => enable_rls.push(op),
+            MigrationOp::ForceRls { .. } => enable_rls.push(op),
             MigrationOp::CreatePolicy(_) => create_policies.push(op),
             MigrationOp::AlterOwner { .. } => alter_owners.push(op),
             MigrationOp::GrantPrivileges { .. } => grant_privileges.push(op),
@@ -60,6 +61,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             | MigrationOp::AddCheckConstraint { .. }
             | MigrationOp::DropCheckConstraint { .. }
             | MigrationOp::DisableRls { .. }
+            | MigrationOp::NoForceRls { .. }
             | MigrationOp::DropPolicy { .. }
             | MigrationOp::AlterPolicy { .. }
             | MigrationOp::DropFunction { .. }

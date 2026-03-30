@@ -235,6 +235,23 @@ pub(super) fn diff_rls(from_table: &Table, to_table: &Table) -> Vec<MigrationOp>
     ops
 }
 
+pub(super) fn diff_force_rls(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+    let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
+
+    if !from_table.force_row_level_security && to_table.force_row_level_security {
+        ops.push(MigrationOp::ForceRls {
+            table: qualified_table_name,
+        });
+    } else if from_table.force_row_level_security && !to_table.force_row_level_security {
+        ops.push(MigrationOp::NoForceRls {
+            table: qualified_table_name,
+        });
+    }
+
+    ops
+}
+
 pub(super) fn diff_policies(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
     let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);

@@ -36,6 +36,7 @@ pub async fn introspect_schema(
         mut all_foreign_keys,
         mut all_check_constraints,
         mut all_rls,
+        mut all_force_rls,
         mut all_policies,
         default_privileges,
     ) = tokio::try_join!(
@@ -61,6 +62,7 @@ pub async fn introspect_schema(
         introspect_all_foreign_keys(connection, target_schemas),
         introspect_all_check_constraints(connection, target_schemas),
         introspect_all_rls(connection, target_schemas),
+        introspect_all_force_rls(connection, target_schemas),
         introspect_all_policies(connection, target_schemas),
         introspect_default_privileges(connection, target_schemas),
     )?;
@@ -137,6 +139,9 @@ pub async fn introspect_schema(
         }
         if let Some(rls) = all_rls.remove(qualified_name) {
             table.row_level_security = rls;
+        }
+        if let Some(force_rls) = all_force_rls.remove(qualified_name) {
+            table.force_row_level_security = force_rls;
         }
         if let Some(mut policies) = all_policies.remove(qualified_name) {
             policies.sort();
@@ -485,6 +490,7 @@ async fn introspect_tables(
             check_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
+            force_row_level_security: false,
             policies: Vec::new(),
             partition_by: None,
             owner: Some(owner),
@@ -1150,6 +1156,39 @@ async fn introspect_all_rls(
         let table_name: String = row.get("table_name");
         let rls: bool = row.get("relrowsecurity");
         result.insert(qualified_name(&table_schema, &table_name), rls);
+    }
+
+    Ok(result)
+}
+
+async fn introspect_all_force_rls(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, bool>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS table_schema,
+            c.relname AS table_name,
+            c.relforcerowsecurity
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = ANY($1::text[])
+          AND c.relkind IN ('r', 'p')
+          AND c.relispartition = false
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch FORCE RLS status: {e}")))?;
+
+    let mut result = BTreeMap::new();
+    for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
+        let force_rls: bool = row.get("relforcerowsecurity");
+        result.insert(qualified_name(&table_schema, &table_name), force_rls);
     }
 
     Ok(result)

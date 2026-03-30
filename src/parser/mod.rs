@@ -184,6 +184,16 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 table.row_level_security = false;
                             }
                         }
+                        AlterTableOperation::ForceRowLevelSecurity => {
+                            if let Some(table) = schema.tables.get_mut(&tbl_key) {
+                                table.force_row_level_security = true;
+                            }
+                        }
+                        AlterTableOperation::NoForceRowLevelSecurity => {
+                            if let Some(table) = schema.tables.get_mut(&tbl_key) {
+                                table.force_row_level_security = false;
+                            }
+                        }
                         AlterTableOperation::EnableTrigger { name: trig_name } => {
                             let key = make_trigger_key(&tbl_schema, &tbl_name, &trig_name.value);
                             if let Some(trigger) = schema.triggers.get_mut(&key) {

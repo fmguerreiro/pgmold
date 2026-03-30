@@ -560,6 +560,7 @@ mod tests {
                 check_constraints: vec![],
                 comment: None,
                 row_level_security: false,
+                force_row_level_security: false,
                 policies: vec![],
                 partition_by: None,
 
@@ -579,6 +580,7 @@ mod tests {
                 check_constraints: vec![],
                 comment: None,
                 row_level_security: false,
+                force_row_level_security: false,
                 policies: vec![],
                 partition_by: None,
 
@@ -598,6 +600,7 @@ mod tests {
                 check_constraints: vec![],
                 comment: None,
                 row_level_security: false,
+                force_row_level_security: false,
                 policies: vec![],
                 partition_by: None,
 
@@ -647,6 +650,7 @@ mod tests {
                 check_constraints: vec![],
                 comment: None,
                 row_level_security: false,
+                force_row_level_security: false,
                 policies: vec![],
                 partition_by: None,
 
@@ -666,6 +670,7 @@ mod tests {
                 check_constraints: vec![],
                 comment: None,
                 row_level_security: false,
+                force_row_level_security: false,
                 policies: vec![],
                 partition_by: None,
 
@@ -1088,6 +1093,7 @@ mod tests {
                 check_constraints: vec![],
                 comment: None,
                 row_level_security: false,
+                force_row_level_security: false,
                 policies: vec![],
                 partition_by: None,
 
@@ -1134,6 +1140,7 @@ mod tests {
                 check_constraints: vec![],
                 comment: None,
                 row_level_security: false,
+                force_row_level_security: false,
                 policies: vec![],
                 partition_by: None,
 
@@ -1185,6 +1192,7 @@ mod tests {
                 check_constraints: vec![],
                 comment: None,
                 row_level_security: false,
+                force_row_level_security: false,
                 policies: vec![],
                 partition_by: None,
 
@@ -1336,6 +1344,7 @@ mod tests {
             check_constraints: vec![],
             comment: None,
             row_level_security: true,
+            force_row_level_security: false,
             policies: vec![Policy {
                 name: "user_policy".to_string(),
                 table_schema: "public".to_string(),
@@ -1396,6 +1405,7 @@ mod tests {
             check_constraints: vec![],
             comment: None,
             row_level_security: false,
+            force_row_level_security: false,
             policies: vec![],
             partition_by: None,
 
@@ -1446,6 +1456,7 @@ mod tests {
             check_constraints: vec![],
             comment: None,
             row_level_security: true,
+            force_row_level_security: false,
             policies: vec![Policy {
                 name: "user_policy".to_string(),
                 table_schema: "public".to_string(),
@@ -1499,6 +1510,7 @@ mod tests {
             check_constraints: vec![],
             comment: None,
             row_level_security: true,
+            force_row_level_security: false,
             policies: vec![Policy {
                 name: "user_policy".to_string(),
                 table_schema: "public".to_string(),
@@ -1565,6 +1577,7 @@ mod tests {
             check_constraints: vec![],
             comment: None,
             row_level_security: true,
+            force_row_level_security: false,
             policies: vec![Policy {
                 name: "user_policy".to_string(),
                 table_schema: "public".to_string(),
@@ -1643,6 +1656,7 @@ mod tests {
             check_constraints: vec![],
             comment: None,
             row_level_security: false,
+            force_row_level_security: false,
             policies: vec![],
             partition_by: None,
 
@@ -1727,6 +1741,7 @@ mod tests {
                 check_constraints: vec![],
                 comment: None,
                 row_level_security: false,
+                force_row_level_security: false,
                 policies: vec![],
                 partition_by: None,
                 owner: None,
@@ -1797,6 +1812,7 @@ mod tests {
             check_constraints: vec![],
             comment: None,
             row_level_security: false,
+            force_row_level_security: false,
             policies: vec![],
             partition_by: None,
             owner: None,
@@ -1839,6 +1855,7 @@ mod tests {
                 check_constraints: vec![],
                 comment: None,
                 row_level_security: false,
+                force_row_level_security: false,
                 policies: vec![],
                 partition_by: None,
                 owner: None,
@@ -1872,6 +1889,7 @@ mod tests {
             check_constraints: vec![],
             comment: None,
             row_level_security: false,
+            force_row_level_security: false,
             policies: vec![],
             partition_by: None,
             owner: None,
