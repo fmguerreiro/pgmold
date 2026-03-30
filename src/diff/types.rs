@@ -112,6 +112,12 @@ pub enum MigrationOp {
     DisableRls {
         table: QualifiedName,
     },
+    ForceRls {
+        table: QualifiedName,
+    },
+    NoForceRls {
+        table: QualifiedName,
+    },
     CreatePolicy(Policy),
     DropPolicy {
         table: QualifiedName,

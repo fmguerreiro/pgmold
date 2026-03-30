@@ -96,6 +96,12 @@ pub(crate) enum OpKey {
     DisableRls {
         table: QualifiedName,
     },
+    ForceRls {
+        table: QualifiedName,
+    },
+    NoForceRls {
+        table: QualifiedName,
+    },
     CreatePolicy {
         table: QualifiedName,
         name: String,
@@ -276,6 +282,12 @@ impl OpKey {
                 table: table.clone(),
             },
             MigrationOp::DisableRls { table } => OpKey::DisableRls {
+                table: table.clone(),
+            },
+            MigrationOp::ForceRls { table } => OpKey::ForceRls {
+                table: table.clone(),
+            },
+            MigrationOp::NoForceRls { table } => OpKey::NoForceRls {
                 table: table.clone(),
             },
             MigrationOp::CreatePolicy(p) => OpKey::CreatePolicy {

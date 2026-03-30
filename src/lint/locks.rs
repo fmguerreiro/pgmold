@@ -167,6 +167,26 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     ),
                 });
             }
+            MigrationOp::ForceRls { table } => {
+                warnings.push(LockWarning {
+                    operation: "ForceRls".to_string(),
+                    table: table.to_string(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "FORCE ROW LEVEL SECURITY acquires ACCESS EXCLUSIVE lock on table {table}"
+                    ),
+                });
+            }
+            MigrationOp::NoForceRls { table } => {
+                warnings.push(LockWarning {
+                    operation: "NoForceRls".to_string(),
+                    table: table.to_string(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "NO FORCE ROW LEVEL SECURITY acquires ACCESS EXCLUSIVE lock on table {table}"
+                    ),
+                });
+            }
             MigrationOp::CreatePolicy(policy) => {
                 warnings.push(LockWarning {
                     operation: "CreatePolicy".to_string(),

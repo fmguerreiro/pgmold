@@ -39,6 +39,7 @@ struct NodeSets {
     add_fks: Vec<NodeIndex>,
     add_checks: Vec<NodeIndex>,
     enable_rls: Vec<NodeIndex>,
+    force_rls: Vec<NodeIndex>,
     policies: Vec<NodeIndex>,
     triggers: Vec<NodeIndex>,
     views: Vec<NodeIndex>,
@@ -87,6 +88,9 @@ impl NodeSets {
             add_fks: graph.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. })),
             add_checks: graph.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. })),
             enable_rls: graph.nodes_matching(|k| matches!(k, OpKey::EnableRls { .. })),
+            force_rls: graph.nodes_matching(|k| {
+                matches!(k, OpKey::ForceRls { .. } | OpKey::NoForceRls { .. })
+            }),
             policies: graph.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. })),
             triggers: graph.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. })),
             views: graph.nodes_matching(|k| matches!(k, OpKey::CreateView(_))),
@@ -281,6 +285,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.tables, &ns.add_fks);
         self.edges_all_to_all(&ns.tables, &ns.add_checks);
         self.edges_all_to_all(&ns.tables, &ns.enable_rls);
+        self.edges_all_to_all(&ns.tables, &ns.force_rls);
         self.edges_all_to_all(&ns.tables, &ns.policies);
         self.edges_all_to_all(&ns.tables, &ns.triggers);
         self.edges_all_to_all(&ns.tables, &ns.views);
@@ -299,9 +304,11 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.add_columns, &ns.triggers);
     }
 
-    /// Tier 6: RLS, policies, triggers, and views — RLS before policies.
+    /// Tier 6: RLS, policies, triggers, and views — RLS before policies, FORCE RLS after RLS.
     fn add_rls_policy_trigger_view_edges(&mut self, ns: &NodeSets) {
         self.edges_all_to_all(&ns.enable_rls, &ns.policies);
+        self.edges_all_to_all(&ns.enable_rls, &ns.force_rls);
+        self.edges_all_to_all(&ns.force_rls, &ns.policies);
     }
 
     /// Tier 8 (reverse): Drop operations in reverse creation order.
@@ -404,6 +411,7 @@ impl MigrationGraph {
             &ns.add_fks,
             &ns.add_checks,
             &ns.enable_rls,
+            &ns.force_rls,
             &ns.version_views,
             &ns.alter_columns,
             &ns.alter_views,
@@ -2160,6 +2168,7 @@ mod tests {
             check_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
+            force_row_level_security: false,
             policies: Vec::new(),
             partition_by: None,
             owner: None,
@@ -2571,6 +2580,7 @@ mod tests {
             check_constraints: vec![],
             comment: None,
             row_level_security: false,
+            force_row_level_security: false,
             policies: vec![],
             partition_by: None,
             owner: None,

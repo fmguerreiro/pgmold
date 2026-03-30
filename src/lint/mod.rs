@@ -243,6 +243,8 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         | MigrationOp::DropCheckConstraint { .. }
         | MigrationOp::EnableRls { .. }
         | MigrationOp::DisableRls { .. }
+        | MigrationOp::ForceRls { .. }
+        | MigrationOp::NoForceRls { .. }
         | MigrationOp::CreatePolicy(_)
         | MigrationOp::DropPolicy { .. }
         | MigrationOp::AlterPolicy { .. }
