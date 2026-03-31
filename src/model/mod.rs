@@ -1,4 +1,4 @@
-use crate::util::{canonicalize_expression, views_semantically_equal};
+use crate::util::{expressions_semantically_equal, views_semantically_equal};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -274,8 +274,7 @@ impl CheckConstraint {
     /// Compares two check constraints semantically, accounting for PostgreSQL's expression normalization.
     pub fn semantically_equals(&self, other: &CheckConstraint) -> bool {
         self.name == other.name
-            && canonicalize_expression(&self.expression)
-                == canonicalize_expression(&other.expression)
+            && expressions_semantically_equal(&self.expression, &other.expression)
     }
 }
 
