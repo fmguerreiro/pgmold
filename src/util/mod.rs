@@ -48,11 +48,6 @@ static RE_PAREN_OPEN: LazyLock<Regex> =
 static RE_PAREN_CLOSE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\s+\)").expect("valid regex"));
 
-static RE_NUMERIC_LITERAL_CAST: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\((\d+(?:\.\d+)?)\)::(numeric|integer|bigint|smallint|real|double precision)")
-        .expect("valid regex")
-});
-
 static RE_FROM_PAREN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\bFROM\s*\(").expect("valid regex"));
 
@@ -210,232 +205,6 @@ pub fn normalize_type_casts(expr: &str) -> String {
         .to_string()
 }
 
-/// Canonicalizes a SQL expression by parsing it with sqlparser and converting back to string.
-/// This ensures both file-parsed and database-introspected expressions use the same formatting.
-/// Returns the canonicalized expression, or the original with regex normalization as fallback.
-pub fn canonicalize_expression(expr: &str) -> String {
-    let dialect = PostgreSqlDialect {};
-
-    let result = Parser::new(&dialect)
-        .try_with_sql(expr)
-        .and_then(|mut parser| parser.parse_expr())
-        .map(|ast| strip_all_nested(ast).to_string())
-        .unwrap_or_else(|_| normalize_expression_regex(expr));
-
-    // Post-process: remove any remaining casts on numeric literals that weren't caught by AST
-    // (e.g., if regex fallback was used or parser produced different format)
-    strip_numeric_literal_casts(&result)
-}
-
-/// Strips nested expressions from a FunctionArgExpr (owned version).
-fn strip_all_nested_function_arg_expr(
-    arg_expr: sqlparser::ast::FunctionArgExpr,
-) -> sqlparser::ast::FunctionArgExpr {
-    match arg_expr {
-        sqlparser::ast::FunctionArgExpr::Expr(e) => {
-            sqlparser::ast::FunctionArgExpr::Expr(strip_all_nested(e))
-        }
-        other => other,
-    }
-}
-
-/// Strips nested expressions from a FunctionArg (owned version).
-/// Handles all variants: Unnamed, Named, ExprNamed.
-fn strip_all_nested_function_arg(arg: sqlparser::ast::FunctionArg) -> sqlparser::ast::FunctionArg {
-    match arg {
-        sqlparser::ast::FunctionArg::Unnamed(arg_expr) => {
-            sqlparser::ast::FunctionArg::Unnamed(strip_all_nested_function_arg_expr(arg_expr))
-        }
-        sqlparser::ast::FunctionArg::Named {
-            name,
-            arg,
-            operator,
-        } => sqlparser::ast::FunctionArg::Named {
-            name,
-            arg: strip_all_nested_function_arg_expr(arg),
-            operator,
-        },
-        sqlparser::ast::FunctionArg::ExprNamed {
-            name,
-            arg,
-            operator,
-        } => sqlparser::ast::FunctionArg::ExprNamed {
-            name: strip_all_nested(name),
-            arg: strip_all_nested_function_arg_expr(arg),
-            operator,
-        },
-    }
-}
-
-/// Normalizes identifier quoting to match PostgreSQL's canonical output.
-/// Strips double-quotes from all-lowercase ASCII identifiers since PostgreSQL
-/// considers them semantically identical to unquoted forms.
-/// NOTE: Does not check for SQL reserved keywords. Safe for type names in
-/// expression comparison, not for SQL generation.
-fn normalize_ident_quoting(ident: sqlparser::ast::Ident) -> sqlparser::ast::Ident {
-    if ident.quote_style == Some('"') {
-        let value = &ident.value;
-        let needs_quotes = value.is_empty()
-            || value.chars().any(|c| c.is_ascii_uppercase())
-            || !value
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
-            || value
-                .chars()
-                .any(|c| !c.is_ascii_alphanumeric() && c != '_');
-        if !needs_quotes {
-            return sqlparser::ast::Ident {
-                value: ident.value,
-                quote_style: None,
-                span: ident.span,
-            };
-        }
-    }
-    ident
-}
-
-/// Normalizes quoting in a DataType's identifiers (for schema-qualified enum casts).
-fn normalize_data_type_quoting(data_type: DataType) -> DataType {
-    match data_type {
-        DataType::Custom(name, modifiers) => {
-            let normalized_name = sqlparser::ast::ObjectName(
-                name.0
-                    .into_iter()
-                    .map(|part| match part {
-                        sqlparser::ast::ObjectNamePart::Identifier(ident) => {
-                            sqlparser::ast::ObjectNamePart::Identifier(normalize_ident_quoting(
-                                ident,
-                            ))
-                        }
-                        other => other,
-                    })
-                    .collect(),
-            );
-            DataType::Custom(normalized_name, modifiers)
-        }
-        other => other,
-    }
-}
-
-/// Recursively strips ALL Nested (parenthesized) expressions throughout the AST,
-/// not just the outermost ones. This is needed for normalizing CHECK constraint
-/// expressions where PostgreSQL may add extra parentheses around subexpressions.
-fn strip_all_nested(expr: Expr) -> Expr {
-    match expr {
-        // Unwrap nested expressions recursively
-        Expr::Nested(inner) => strip_all_nested(*inner),
-
-        // Binary operations - recurse into both sides
-        Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
-            left: Box::new(strip_all_nested(*left)),
-            op,
-            right: Box::new(strip_all_nested(*right)),
-        },
-
-        // Unary operations
-        Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
-            op,
-            expr: Box::new(strip_all_nested(*inner)),
-        },
-
-        // IS NULL / IS NOT NULL
-        Expr::IsNull(inner) => Expr::IsNull(Box::new(strip_all_nested(*inner))),
-        Expr::IsNotNull(inner) => Expr::IsNotNull(Box::new(strip_all_nested(*inner))),
-
-        // Cast expressions - strip nested inside AND strip numeric literal casts
-        Expr::Cast {
-            kind,
-            expr: inner,
-            data_type,
-            format,
-        } => {
-            let stripped_inner = strip_all_nested(*inner);
-            // Check if this is a numeric literal cast that should be stripped
-            if is_numeric_type(&data_type) {
-                if let Expr::Value(ref v) = stripped_inner {
-                    if is_numeric_value(v) {
-                        return stripped_inner;
-                    }
-                }
-            }
-            Expr::Cast {
-                kind,
-                expr: Box::new(stripped_inner),
-                data_type: normalize_data_type_quoting(data_type),
-                format,
-            }
-        }
-
-        // Between expressions
-        Expr::Between {
-            expr: inner,
-            negated,
-            low,
-            high,
-        } => Expr::Between {
-            expr: Box::new(strip_all_nested(*inner)),
-            negated,
-            low: Box::new(strip_all_nested(*low)),
-            high: Box::new(strip_all_nested(*high)),
-        },
-
-        // In list
-        Expr::InList {
-            expr: inner,
-            list,
-            negated,
-        } => Expr::InList {
-            expr: Box::new(strip_all_nested(*inner)),
-            list: list.into_iter().map(strip_all_nested).collect(),
-            negated,
-        },
-
-        // Function calls
-        Expr::Function(mut f) => {
-            f.args = match f.args {
-                sqlparser::ast::FunctionArguments::List(args) => {
-                    sqlparser::ast::FunctionArguments::List(sqlparser::ast::FunctionArgumentList {
-                        duplicate_treatment: args.duplicate_treatment,
-                        args: args
-                            .args
-                            .into_iter()
-                            .map(strip_all_nested_function_arg)
-                            .collect(),
-                        clauses: args.clauses,
-                    })
-                }
-                other => other,
-            };
-            Expr::Function(f)
-        }
-
-        // Case expressions
-        Expr::Case {
-            case_token,
-            end_token,
-            operand,
-            conditions,
-            else_result,
-        } => Expr::Case {
-            case_token,
-            end_token,
-            operand: operand.map(|e| Box::new(strip_all_nested(*e))),
-            conditions: conditions
-                .into_iter()
-                .map(|cw| sqlparser::ast::CaseWhen {
-                    condition: strip_all_nested(cw.condition),
-                    result: strip_all_nested(cw.result),
-                })
-                .collect(),
-            else_result: else_result.map(|e| Box::new(strip_all_nested(*e))),
-        },
-
-        // Everything else passes through unchanged
-        other => other,
-    }
-}
-
 /// Check if a DataType is a numeric type
 fn is_numeric_type(dt: &DataType) -> bool {
     matches!(
@@ -452,16 +221,6 @@ fn is_numeric_type(dt: &DataType) -> bool {
             | DataType::Double(_)
             | DataType::DoublePrecision
     )
-}
-
-/// Check if a ValueWithSpan contains a numeric literal
-fn is_numeric_value(v: &sqlparser::ast::ValueWithSpan) -> bool {
-    matches!(v.value, sqlparser::ast::Value::Number(_, _))
-}
-
-/// Strips casts on numeric literals, e.g., (0)::numeric -> 0, (123)::integer -> 123
-fn strip_numeric_literal_casts(expr: &str) -> String {
-    RE_NUMERIC_LITERAL_CAST.replace_all(expr, "$1").to_string()
 }
 
 /// Applies the normalization steps shared by both `normalize_expression_regex` and
@@ -1698,131 +1457,46 @@ mod tests {
     }
 
     #[test]
-    fn canonicalize_expression_normalizes_simple_comparison() {
-        let input = "id > 0";
-        let result = canonicalize_expression(input);
-        assert_eq!(result, "id > 0");
-    }
-
-    #[test]
-    fn canonicalize_expression_normalizes_whitespace() {
-        let input = "id   >   0";
-        let result = canonicalize_expression(input);
-        assert_eq!(result, "id > 0");
-    }
-
-    #[test]
-    fn canonicalize_expression_handles_type_cast() {
-        let input = "status::TEXT";
-        let result = canonicalize_expression(input);
-        assert!(result.contains("text") || result.contains("TEXT"));
-    }
-
-    #[test]
-    fn canonicalize_expression_handles_string_literal() {
-        let input = "'active'";
-        let result = canonicalize_expression(input);
-        assert_eq!(result, "'active'");
-    }
-
-    #[test]
-    fn canonicalize_expression_regex_fallback_strips_text_cast() {
+    fn regex_fallback_strips_text_cast() {
         let input = "'foo'::text";
         let result = normalize_expression_regex(input);
         assert_eq!(result, "'foo'");
     }
 
     #[test]
-    fn canonicalize_expression_regex_fallback_normalizes_like() {
+    fn regex_fallback_normalizes_like() {
         let input = "name ~~ 'test%'";
         let result = normalize_expression_regex(input);
         assert_eq!(result, "name LIKE 'test%'");
     }
 
     #[test]
-    fn canonicalize_expression_regex_fallback_normalizes_not_like() {
+    fn regex_fallback_normalizes_not_like() {
         let input = "name !~~ 'test%'";
         let result = normalize_expression_regex(input);
         assert_eq!(result, "name NOT LIKE 'test%'");
     }
 
     #[test]
-    fn canonicalize_expression_handles_check_constraint_with_numeric_cast() {
-        // Bug: PostgreSQL returns expressions with extra parens and type casts
-        // These should normalize to the same canonical form
+    fn check_expression_with_numeric_cast() {
         let db_expr =
             r#"(("liveTreeAreaHa" IS NULL) OR ("liveTreeAreaHa" >= (0)::double precision))"#;
         let parsed_expr = r#""liveTreeAreaHa" IS NULL OR "liveTreeAreaHa" >= 0"#;
-
-        let canon_db = canonicalize_expression(db_expr);
-        let canon_parsed = canonicalize_expression(parsed_expr);
-
-        assert_eq!(
-            canon_db, canon_parsed,
-            "DB: {canon_db} vs Parsed: {canon_parsed}"
-        );
+        assert!(expressions_semantically_equal(db_expr, parsed_expr));
     }
 
     #[test]
-    fn canonicalize_expression_normalizes_schema_quoting_in_enum_cast() {
-        // User writes quoted schema name, PostgreSQL strips quotes from lowercase schema
-        let schema_expr = r#""goalType" = 'TARGET_DURATION'::"mrv"."CarbonPlanGoalType""#;
-        let db_expr = r#""goalType" = 'TARGET_DURATION'::mrv."CarbonPlanGoalType""#;
-
-        let canon_schema = canonicalize_expression(schema_expr);
-        let canon_db = canonicalize_expression(db_expr);
-
-        assert_eq!(
-            canon_schema, canon_db,
-            "Schema: {canon_schema} vs DB: {canon_db}"
-        );
+    fn check_expression_in_list_equals_any_array() {
+        let schema_expr = "role IN ('user', 'assistant', 'system')";
+        let db_expr = "(role = ANY (ARRAY['user'::text, 'assistant'::text, 'system'::text]))";
+        assert!(expressions_semantically_equal(schema_expr, db_expr));
     }
 
     #[test]
-    fn canonicalize_expression_preserves_mixed_case_quotes() {
-        // "goalType" must stay quoted (has uppercase), "mrv" should be unquoted
-        let input = r#""goalType" = 'VALUE'::"mrv"."CarbonPlanGoalType""#;
-        let result = canonicalize_expression(input);
-
-        assert!(
-            result.contains(r#""goalType""#),
-            "Mixed-case identifier should stay quoted: {result}"
-        );
-        assert!(
-            !result.contains(r#""mrv""#),
-            "All-lowercase schema should not be quoted: {result}"
-        );
-    }
-
-    #[test]
-    fn canonicalize_expression_normalizes_redundant_lowercase_quotes() {
-        // Both "public" and "users" are all-lowercase, quotes should be stripped
-        let input = r#""col" = 'x'::"public"."my_enum""#;
-        let result = canonicalize_expression(input);
-
-        assert!(
-            !result.contains(r#""public""#),
-            "All-lowercase 'public' should not be quoted: {result}"
-        );
-        assert!(
-            !result.contains(r#""my_enum""#),
-            "All-lowercase 'my_enum' should not be quoted: {result}"
-        );
-    }
-
-    #[test]
-    fn canonicalize_expression_preserves_digit_leading_ident_in_cast() {
-        let ident = sqlparser::ast::Ident {
-            value: "1col".to_string(),
-            quote_style: Some('"'),
-            span: sqlparser::tokenizer::Span::empty(),
-        };
-        let result = normalize_ident_quoting(ident);
-        assert_eq!(
-            result.quote_style,
-            Some('"'),
-            "Digit-leading identifier must stay quoted"
-        );
+    fn check_expression_not_in_list_equals_all_array() {
+        let schema_expr = "role NOT IN ('user', 'assistant', 'system')";
+        let db_expr = "(role <> ALL (ARRAY['user'::text, 'assistant'::text, 'system'::text]))";
+        assert!(expressions_semantically_equal(schema_expr, db_expr));
     }
 
     // P0 Tests: Nested JOIN Flattening

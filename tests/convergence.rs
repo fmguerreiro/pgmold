@@ -127,6 +127,36 @@ async fn table_with_check_constraints() {
 }
 
 #[tokio::test]
+async fn table_with_check_constraint_in_list() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.message (
+            id   BIGSERIAL NOT NULL,
+            role TEXT NOT NULL,
+            PRIMARY KEY (id),
+            CONSTRAINT message_role_check CHECK (role IN ('user', 'assistant', 'system'))
+        );
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn table_with_check_constraint_not_in_list() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.event (
+            id     BIGSERIAL NOT NULL,
+            status TEXT NOT NULL,
+            PRIMARY KEY (id),
+            CONSTRAINT event_status_check CHECK (status NOT IN ('deleted', 'archived'))
+        );
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn enum_type() {
     assert_convergence_public(
         r#"
