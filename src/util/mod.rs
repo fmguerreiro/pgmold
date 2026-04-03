@@ -1017,10 +1017,7 @@ fn normalize_expr(expr: &Expr) -> Expr {
             if let Expr::Value(v) = &norm_inner {
                 let should_strip = match &v.value {
                     sqlparser::ast::Value::SingleQuotedString(_) => {
-                        // Strip custom type casts and array type casts on string literals.
-                        // PostgreSQL normalizes array literal defaults by adding an explicit
-                        // array type cast (e.g., '{}'::text[]), but the original DDL uses
-                        // the unadorned string literal form (e.g., '{}').
+                        // PostgreSQL always emits an explicit array cast; strip it to match bare literal form.
                         matches!(data_type, DataType::Custom(_, _))
                             || matches!(data_type, DataType::Array(_))
                     }
@@ -2344,7 +2341,6 @@ fn not_in_view_equals_not_all_array() {
     );
 }
 
-// Issue #185: Array literal defaults cause infinite diff cycle
 #[test]
 fn expressions_equal_empty_array_literal_vs_typed_cast() {
     // PostgreSQL normalizes '{}'::text[] when reading back column defaults
