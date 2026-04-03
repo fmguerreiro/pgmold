@@ -882,6 +882,45 @@ fn normalize_join_constraint(
     }
 }
 
+/// Tries to reduce a scalar subquery of the form `(SELECT func() [AS alias])` with no
+/// FROM, WHERE, GROUP BY, HAVING, ORDER BY, or LIMIT to just the function call expression.
+///
+/// Detects that pattern and reduces it back to the bare function call so that
+/// both forms compare as equal.
+fn try_simplify_scalar_subquery(query: &Query) -> Option<Expr> {
+    if query.with.is_some() || query.order_by.is_some() || query.limit_clause.is_some() {
+        return None;
+    }
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return None;
+    };
+    if select.distinct.is_some()
+        || !select.from.is_empty()
+        || select.selection.is_some()
+        || !matches!(select.group_by, sqlparser::ast::GroupByExpr::Expressions(ref exprs, _) if exprs.is_empty())
+        || select.having.is_some()
+    {
+        return None;
+    }
+    if select.projection.len() != 1 {
+        return None;
+    }
+    let expr = match &select.projection[0] {
+        sqlparser::ast::SelectItem::UnnamedExpr(e) => e,
+        sqlparser::ast::SelectItem::ExprWithAlias { expr, alias } => {
+            if !is_auto_generated_alias(expr, alias) {
+                return None;
+            }
+            expr
+        }
+        _ => return None,
+    };
+    if !matches!(expr, Expr::Function(_)) {
+        return None;
+    }
+    Some(normalize_expr(expr))
+}
+
 /// Normalizes a SELECT statement.
 fn normalize_select(select: &Select) -> Select {
     Select {
@@ -1049,8 +1088,13 @@ fn normalize_expr(expr: &Expr) -> Expr {
             }
         }
 
-        // Normalize subquery expressions
-        Expr::Subquery(q) => Expr::Subquery(Box::new(normalize_query(q))),
+        Expr::Subquery(q) => {
+            if let Some(simplified) = try_simplify_scalar_subquery(q) {
+                simplified
+            } else {
+                Expr::Subquery(Box::new(normalize_query(q)))
+            }
+        }
         Expr::Exists { subquery, negated } => Expr::Exists {
             subquery: Box::new(normalize_query(subquery)),
             negated: *negated,
@@ -2266,6 +2310,54 @@ fn expressions_equal_scalar_subquery_with_auto_alias() {
     assert!(
         expressions_semantically_equal(schema_form, db_form),
         "Scalar subquery with auto-generated alias should match without alias.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
+fn function_call_equals_scalar_subquery_form() {
+    let schema_form = "auth.is_admin()";
+    let db_form = "( SELECT auth.is_admin() AS is_admin)";
+    assert!(
+        expressions_semantically_equal(schema_form, db_form),
+        "Direct function call should equal its scalar subquery form.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
+fn function_call_with_args_equals_scalar_subquery_form() {
+    let schema_form = "auth.uid()";
+    let db_form = "( SELECT auth.uid() AS uid)";
+    assert!(
+        expressions_semantically_equal(schema_form, db_form),
+        "Direct function call (with no args) should equal its scalar subquery form.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
+fn function_call_in_comparison_equals_scalar_subquery_form() {
+    let schema_form = "auth.uid() = user_id";
+    let db_form = "( SELECT auth.uid() AS uid) = user_id";
+    assert!(
+        expressions_semantically_equal(schema_form, db_form),
+        "Function call in comparison should equal scalar subquery form.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
+fn try_simplify_scalar_subquery_matches_sqlparser_group_by_variant() {
+    let dialect = PostgreSqlDialect {};
+    let expr_str = "( SELECT auth.is_admin() AS is_admin)";
+    let parsed = Parser::new(&dialect)
+        .try_with_sql(expr_str)
+        .expect("valid SQL")
+        .parse_expr()
+        .expect("parse expr");
+    let Expr::Subquery(query) = parsed else {
+        panic!("expected Expr::Subquery, got something else");
+    };
+    assert!(
+        try_simplify_scalar_subquery(&query).is_some(),
+        "GROUP BY guard in try_simplify_scalar_subquery did not match sqlparser's AST for: {expr_str}"
     );
 }
 
