@@ -733,18 +733,19 @@ pub async fn run() -> Result<()> {
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
 
+            let plan_options = PlanOptions {
+                manage_ownership,
+                manage_grants,
+                excluded_grant_roles: excluded_grant_roles.clone(),
+                include_extension_objects,
+                exclude_unmanaged_partitions,
+            };
             let migration_plan = compute_migration_plan(
                 &schema,
                 &connection,
                 &target_schemas,
                 &filter,
-                &PlanOptions {
-                    manage_ownership,
-                    manage_grants,
-                    excluded_grant_roles: excluded_grant_roles.clone(),
-                    include_extension_objects,
-                    exclude_unmanaged_partitions,
-                },
+                &plan_options,
             )
             .await
             .map_err(|e| anyhow!("{e}"))?;
@@ -902,10 +903,7 @@ pub async fn run() -> Result<()> {
                     &connection,
                     &target_schemas,
                     &filter,
-                    manage_ownership,
-                    manage_grants,
-                    &excluded_grant_roles,
-                    exclude_unmanaged_partitions,
+                    &plan_options,
                 )
                 .await
                 .map_err(|e| anyhow!("Post-apply verification failed: {e}"))?;
