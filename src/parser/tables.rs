@@ -221,6 +221,7 @@ pub(super) fn parse_column_with_serial(
             }),
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         Ok((column, Some(sequence)))

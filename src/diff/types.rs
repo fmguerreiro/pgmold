@@ -13,6 +13,20 @@ pub struct DiffOptions<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CommentObjectType {
+    Table,
+    Column,
+    View,
+    MaterializedView,
+    Function,
+    Type,
+    Domain,
+    Schema,
+    Sequence,
+    Trigger,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OwnerObjectKind {
     Table,
     Partition,
@@ -208,6 +222,16 @@ pub enum MigrationOp {
         privileges: Vec<Privilege>,
         with_grant_option: bool,
         revoke: bool,
+    },
+
+    SetComment {
+        object_type: CommentObjectType,
+        schema: String,
+        name: String,
+        arguments: Option<String>,
+        column: Option<String>,
+        target: Option<String>,
+        comment: Option<String>,
     },
 
     CreateVersionSchema {

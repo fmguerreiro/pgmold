@@ -111,5 +111,6 @@ pub(super) fn parse_create_function(
         config_params,
         owner: None,
         grants: Vec::new(),
+        comment: None,
     })
 }

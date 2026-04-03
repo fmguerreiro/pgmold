@@ -183,6 +183,8 @@ async fn introspect_schemas(
                 PgSchema {
                     name,
                     grants: Vec::new(),
+                    // TODO: read schema comment from pg_description
+                    comment: None,
                 },
             );
         }
@@ -265,6 +267,8 @@ async fn introspect_enums(
             values: labels,
             owner: Some(owner),
             grants: Vec::new(),
+            // TODO: read enum type comment from pg_description
+            comment: None,
         };
         enums.insert(qualified_name(&schema, &name), enum_type);
     }
@@ -375,6 +379,8 @@ async fn introspect_domains(
                 .unwrap_or_default(),
             owner: Some(owner),
             grants: Vec::new(),
+            // TODO: read domain comment from pg_description
+            comment: None,
         };
         domains.insert(qualified_name(&schema, &name), domain);
     }
@@ -488,6 +494,7 @@ async fn introspect_tables(
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+            // TODO: read table comment from pg_description
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -759,6 +766,7 @@ async fn introspect_all_columns(
                     data_type: pg_type,
                     nullable: is_nullable == "YES",
                     default: column_default,
+                    // TODO: read column comment from pg_description
                     comment: None,
                 },
             );
@@ -1382,6 +1390,8 @@ async fn introspect_functions(
             config_params,
             owner: Some(owner),
             grants: Vec::new(),
+            // TODO: read function comment from pg_description
+            comment: None,
         };
 
         let key = qualified_name(&schema, &func.signature());
@@ -1517,6 +1527,8 @@ async fn fetch_views(
             materialized,
             owner: Some(owner),
             grants: Vec::new(),
+            // TODO: read view comment from pg_description
+            comment: None,
         });
     }
     Ok(result)
@@ -1705,6 +1717,8 @@ async fn introspect_triggers(
             enabled,
             old_table_name,
             new_table_name,
+            // TODO: read trigger comment from pg_description
+            comment: None,
         };
 
         let key = format!("{table_schema}.{table_name}.{trigger_name}");
@@ -1836,6 +1850,8 @@ async fn introspect_sequences(
                 owned_by,
                 owner,
                 grants: Vec::new(),
+                // TODO: read sequence comment from pg_description
+                comment: None,
             },
         );
     }

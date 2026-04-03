@@ -1,3 +1,4 @@
+mod comments;
 mod dependencies;
 mod functions;
 mod grants;
@@ -30,6 +31,7 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use std::fs;
 
+use comments::parse_comment_statements;
 use functions::parse_create_function;
 use grants::{parse_alter_default_privileges, parse_grant_statements, parse_revoke_statements};
 use ownership::parse_owner_statements;
@@ -130,6 +132,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         .collect(),
                     owner: None,
                     grants: Vec::new(),
+                    comment: None,
                 };
                 let key = qualified_name(&enum_schema, &enum_name);
                 schema.enums.insert(key, enum_type);
@@ -413,6 +416,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     materialized,
                     owner: None,
                     grants: Vec::new(),
+                    comment: None,
                 };
                 let key = qualified_name(&view_schema, &view_name);
                 schema.views.insert(key, view);
@@ -453,6 +457,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     PgSchema {
                         name,
                         grants: Vec::new(),
+                        comment: None,
                     },
                 );
             }
@@ -496,6 +501,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     check_constraints,
                     owner: None,
                     grants: Vec::new(),
+                    comment: None,
                 };
                 let key = qualified_name(&domain_schema, &domain_name);
                 schema.domains.insert(key, domain);
@@ -635,6 +641,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     enabled: TriggerEnabled::Origin,
                     old_table_name,
                     new_table_name,
+                    comment: None,
                 };
 
                 let key = format!("{tbl_schema}.{tbl_name}.{trigger_name}");
@@ -766,6 +773,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
     parse_grant_statements(sql, &mut schema)?;
     parse_revoke_statements(sql, &mut schema)?;
     parse_alter_default_privileges(sql, &mut schema)?;
+    parse_comment_statements(sql, &mut schema);
 
     schema.pending_policies = schema.finalize_partial();
 

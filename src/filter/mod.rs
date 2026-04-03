@@ -476,6 +476,7 @@ mod tests {
                 config_params: vec![],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         schema.functions.insert(
@@ -492,6 +493,7 @@ mod tests {
                 config_params: vec![],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -518,6 +520,7 @@ mod tests {
                 config_params: vec![],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         schema.functions.insert(
@@ -534,6 +537,7 @@ mod tests {
                 config_params: vec![],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -689,6 +693,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         schema.views.insert(
@@ -701,6 +706,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -721,6 +727,7 @@ mod tests {
                 enabled: TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                comment: None,
             },
         );
         schema.triggers.insert(
@@ -740,6 +747,7 @@ mod tests {
                 enabled: TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                comment: None,
             },
         );
 
@@ -752,6 +760,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         schema.enums.insert(
@@ -763,6 +772,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -779,6 +789,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         schema.domains.insert(
@@ -794,6 +805,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -813,6 +825,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         schema.sequences.insert(
@@ -831,6 +844,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1079,6 +1093,7 @@ mod tests {
                 config_params: vec![],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         schema.tables.insert(
@@ -1126,6 +1141,7 @@ mod tests {
                 config_params: vec![],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         schema.tables.insert(
@@ -1158,6 +1174,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1546,6 +1563,7 @@ mod tests {
                         config_params: vec![],
                         owner: None,
                         grants: Vec::new(),
+                        comment: None,
                     },
                 )]
                 .into_iter()
@@ -1618,6 +1636,7 @@ mod tests {
                         config_params: vec![],
                         owner: None,
                         grants: Vec::new(),
+                        comment: None,
                     },
                 )]
                 .into_iter()
@@ -1775,6 +1794,7 @@ mod tests {
                 config_params: vec![],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1910,6 +1930,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         }
     }
 
@@ -1921,6 +1942,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         }
     }
 
@@ -1931,6 +1953,7 @@ mod tests {
             values: vec!["a".to_string()],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         }
     }
 
@@ -1948,6 +1971,7 @@ mod tests {
             owned_by: None,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         }
     }
 
@@ -1967,6 +1991,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         }
     }
 
@@ -1981,6 +2006,7 @@ mod tests {
             check_constraints: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         }
     }
 
@@ -2065,6 +2091,7 @@ mod tests {
             PgSchema {
                 name: "public".to_string(),
                 grants: vec![],
+                comment: None,
             },
         );
         schema.schemas.insert(
@@ -2072,6 +2099,7 @@ mod tests {
             PgSchema {
                 name: "audit".to_string(),
                 grants: vec![],
+                comment: None,
             },
         );
 

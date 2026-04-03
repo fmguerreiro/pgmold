@@ -1414,6 +1414,7 @@ fn domain_round_trip_with_check_constraint() {
                 name: None,
                 expression: "VALUE ~ '@'".to_string(),
             }],
+            comment: None,
         },
     );
 
@@ -1452,6 +1453,7 @@ fn domain_round_trip_with_table_using_domain() {
                 name: None,
                 expression: "VALUE ~ '@'".to_string(),
             }],
+            comment: None,
         },
     );
 

@@ -418,6 +418,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -431,6 +432,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -456,6 +458,7 @@ mod tests {
                 config_params: vec![],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -474,6 +477,7 @@ mod tests {
                 config_params: vec![],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 

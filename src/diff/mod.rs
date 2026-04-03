@@ -11,8 +11,8 @@ use std::collections::HashSet;
 
 use crate::model::{QualifiedName, Schema};
 pub use types::{
-    ColumnChanges, DiffOptions, DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp,
-    OwnerObjectKind, PolicyChanges, SequenceChanges,
+    ColumnChanges, CommentObjectType, DiffOptions, DomainChanges, EnumValuePosition,
+    GrantObjectKind, MigrationOp, OwnerObjectKind, PolicyChanges, SequenceChanges,
 };
 
 use dependencies::{
@@ -26,7 +26,7 @@ use objects::{
     diff_sequences, diff_tables, diff_triggers, diff_views,
 };
 use table_elements::{
-    diff_check_constraints, diff_columns, diff_foreign_keys, diff_force_rls, diff_indexes,
+    diff_check_constraints, diff_columns, diff_force_rls, diff_foreign_keys, diff_indexes,
     diff_policies, diff_primary_keys, diff_rls,
 };
 
@@ -158,6 +158,160 @@ pub fn compute_diff_with_flags(
 
     ops.extend(diff_default_privileges(from, to));
 
+    ops.extend(diff_comments(from, to));
+
+    ops
+}
+
+fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for (key, to_table) in &to.tables {
+        let from_comment = from.tables.get(key).and_then(|t| t.comment.as_ref());
+        if to_table.comment.as_ref() != from_comment {
+            let (schema, name) = crate::model::parse_qualified_name(key);
+            ops.push(MigrationOp::SetComment {
+                object_type: CommentObjectType::Table,
+                schema,
+                name,
+                arguments: None,
+                column: None,
+                target: None,
+                comment: to_table.comment.clone(),
+            });
+        }
+
+        for (col_name, to_col) in &to_table.columns {
+            let from_col_comment = from
+                .tables
+                .get(key)
+                .and_then(|t| t.columns.get(col_name))
+                .and_then(|c| c.comment.as_ref());
+            if to_col.comment.as_ref() != from_col_comment {
+                ops.push(MigrationOp::SetComment {
+                    object_type: CommentObjectType::Column,
+                    schema: to_table.schema.clone(),
+                    name: to_table.name.clone(),
+                    arguments: None,
+                    column: Some(col_name.clone()),
+                    target: None,
+                    comment: to_col.comment.clone(),
+                });
+            }
+        }
+    }
+
+    for (key, to_func) in &to.functions {
+        let from_comment = from.functions.get(key).and_then(|f| f.comment.as_ref());
+        if to_func.comment.as_ref() != from_comment {
+            let (schema, _) = crate::model::parse_qualified_name(key);
+            ops.push(MigrationOp::SetComment {
+                object_type: CommentObjectType::Function,
+                schema,
+                name: to_func.name.clone(),
+                arguments: Some(to_func.args_string()),
+                column: None,
+                target: None,
+                comment: to_func.comment.clone(),
+            });
+        }
+    }
+
+    for (key, to_view) in &to.views {
+        let from_comment = from.views.get(key).and_then(|v| v.comment.as_ref());
+        if to_view.comment.as_ref() != from_comment {
+            let object_type = if to_view.materialized {
+                CommentObjectType::MaterializedView
+            } else {
+                CommentObjectType::View
+            };
+            ops.push(MigrationOp::SetComment {
+                object_type,
+                schema: to_view.schema.clone(),
+                name: to_view.name.clone(),
+                arguments: None,
+                column: None,
+                target: None,
+                comment: to_view.comment.clone(),
+            });
+        }
+    }
+
+    for (key, to_enum) in &to.enums {
+        let from_comment = from.enums.get(key).and_then(|e| e.comment.as_ref());
+        if to_enum.comment.as_ref() != from_comment {
+            ops.push(MigrationOp::SetComment {
+                object_type: CommentObjectType::Type,
+                schema: to_enum.schema.clone(),
+                name: to_enum.name.clone(),
+                arguments: None,
+                column: None,
+                target: None,
+                comment: to_enum.comment.clone(),
+            });
+        }
+    }
+
+    for (key, to_domain) in &to.domains {
+        let from_comment = from.domains.get(key).and_then(|d| d.comment.as_ref());
+        if to_domain.comment.as_ref() != from_comment {
+            ops.push(MigrationOp::SetComment {
+                object_type: CommentObjectType::Domain,
+                schema: to_domain.schema.clone(),
+                name: to_domain.name.clone(),
+                arguments: None,
+                column: None,
+                target: None,
+                comment: to_domain.comment.clone(),
+            });
+        }
+    }
+
+    for (key, to_schema) in &to.schemas {
+        let from_comment = from.schemas.get(key).and_then(|s| s.comment.as_ref());
+        if to_schema.comment.as_ref() != from_comment {
+            ops.push(MigrationOp::SetComment {
+                object_type: CommentObjectType::Schema,
+                schema: String::new(),
+                name: to_schema.name.clone(),
+                arguments: None,
+                column: None,
+                target: None,
+                comment: to_schema.comment.clone(),
+            });
+        }
+    }
+
+    for (key, to_seq) in &to.sequences {
+        let from_comment = from.sequences.get(key).and_then(|s| s.comment.as_ref());
+        if to_seq.comment.as_ref() != from_comment {
+            ops.push(MigrationOp::SetComment {
+                object_type: CommentObjectType::Sequence,
+                schema: to_seq.schema.clone(),
+                name: to_seq.name.clone(),
+                arguments: None,
+                column: None,
+                target: None,
+                comment: to_seq.comment.clone(),
+            });
+        }
+    }
+
+    for (key, to_trigger) in &to.triggers {
+        let from_comment = from.triggers.get(key).and_then(|t| t.comment.as_ref());
+        if to_trigger.comment.as_ref() != from_comment {
+            ops.push(MigrationOp::SetComment {
+                object_type: CommentObjectType::Trigger,
+                schema: to_trigger.target_schema.clone(),
+                name: to_trigger.name.clone(),
+                arguments: None,
+                column: None,
+                target: Some(to_trigger.target_name.clone()),
+                comment: to_trigger.comment.clone(),
+            });
+        }
+    }
+
     ops
 }
 
@@ -236,6 +390,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -256,6 +411,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         let to = empty_schema();
@@ -528,6 +684,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         to.functions.insert(func.signature(), func);
 
@@ -551,6 +708,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         from.functions.insert(func.signature(), func);
         let to = empty_schema();
@@ -577,6 +735,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         from.functions
             .insert(qualified_name(&func.schema, &func.signature()), func);
@@ -613,6 +772,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         from.functions.insert(
             qualified_name(&func_old.schema, &func_old.signature()),
@@ -637,6 +797,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         to.functions.insert(
             qualified_name(&func_new.schema, &func_new.signature()),
@@ -679,6 +840,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         from.functions.insert(
             qualified_name(&func_old.schema, &func_old.signature()),
@@ -703,6 +865,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         to.functions.insert(
             qualified_name(&func_new.schema, &func_new.signature()),
@@ -740,6 +903,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         from.functions.insert(
             qualified_name(&func_old.schema, &func_old.signature()),
@@ -764,6 +928,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         to.functions.insert(
             qualified_name(&func_new.schema, &func_new.signature()),
@@ -807,6 +972,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         from.functions.insert(
             qualified_name(&func_old.schema, &func_old.signature()),
@@ -831,6 +997,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         to.functions.insert(
             qualified_name(&func_new.schema, &func_new.signature()),
@@ -864,6 +1031,7 @@ mod tests {
 
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         from.views
             .insert(qualified_name(&view.schema, &view.name), view);
@@ -892,6 +1060,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -913,6 +1082,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         let to = empty_schema();
@@ -937,6 +1107,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -951,6 +1122,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -975,6 +1147,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1000,6 +1173,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         from.functions.insert(func1.signature(), func1);
 
@@ -1016,6 +1190,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         to.functions.insert(func2.signature(), func2);
 
@@ -1151,6 +1326,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1167,6 +1343,7 @@ mod tests {
                     "pending".to_string(),
                     "inactive".to_string(),
                 ],
+                comment: None,
             },
         );
 
@@ -1192,6 +1369,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1208,6 +1386,7 @@ mod tests {
                     "active".to_string(),
                     "inactive".to_string(),
                 ],
+                comment: None,
             },
         );
 
@@ -1233,6 +1412,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1249,6 +1429,7 @@ mod tests {
                     "inactive".to_string(),
                     "archived".to_string(),
                 ],
+                comment: None,
             },
         );
 
@@ -1274,6 +1455,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1290,6 +1472,7 @@ mod tests {
                     "active".to_string(),
                     "archived".to_string(),
                 ],
+                comment: None,
             },
         );
 
@@ -1309,6 +1492,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1322,6 +1506,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1374,6 +1559,7 @@ mod tests {
             crate::model::PgSchema {
                 name: "auth".to_string(),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1390,6 +1576,7 @@ mod tests {
             crate::model::PgSchema {
                 name: "old_schema".to_string(),
                 grants: Vec::new(),
+                comment: None,
             },
         );
         let to = empty_schema();
@@ -1415,6 +1602,7 @@ mod tests {
             enabled: crate::model::TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         }
     }
 
@@ -1490,6 +1678,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1508,6 +1697,7 @@ mod tests {
             enabled: crate::model::TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         };
         to.triggers.insert(
             "public.active_users.insert_active_user".to_string(),
@@ -1544,6 +1734,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1572,6 +1763,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         let to = empty_schema();
@@ -1601,6 +1793,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         let mut to = empty_schema();
@@ -1620,6 +1813,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1648,6 +1842,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         let mut to = empty_schema();
@@ -1667,6 +1862,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -1698,6 +1894,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         let mut to = empty_schema();
@@ -1717,6 +1914,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -2152,6 +2350,7 @@ mod tests {
                 enabled: crate::model::TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                comment: None,
             },
         );
 
@@ -2173,6 +2372,7 @@ mod tests {
                 enabled: crate::model::TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                comment: None,
             },
         );
 
@@ -2222,6 +2422,7 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
             enabled: crate::model::TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         };
 
         // Check field by field to identify any mismatches
@@ -2323,6 +2524,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 enabled: crate::model::TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                comment: None,
             },
         );
 
@@ -2343,6 +2545,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 enabled: crate::model::TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                comment: None,
             },
         );
 
@@ -2371,6 +2574,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 enabled: crate::model::TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                comment: None,
             },
         );
 
@@ -2389,6 +2593,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 config_params: vec![],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         db_schema.functions.insert(
@@ -2405,6 +2610,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 config_params: vec![],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
         db_schema.functions.insert(
@@ -2421,6 +2627,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 config_params: vec![],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -2539,6 +2746,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: false,
                 owner: Some("oldowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -2552,6 +2760,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: false,
                 owner: Some("newowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -2587,6 +2796,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 owned_by: None,
                 owner: Some("oldowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -2606,6 +2816,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 owned_by: None,
                 owner: Some("newowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -2634,6 +2845,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 values: vec!["active".to_string()],
                 owner: Some("oldowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -2646,6 +2858,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 values: vec!["active".to_string()],
                 owner: Some("newowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -2678,6 +2891,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 check_constraints: Vec::new(),
                 owner: Some("oldowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -2694,6 +2908,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 check_constraints: Vec::new(),
                 owner: Some("newowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -2734,6 +2949,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 config_params: vec![],
                 owner: Some("oldowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -2757,6 +2973,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 config_params: vec![],
                 owner: Some("newowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -3245,6 +3462,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: true,
                 owner: Some("oldowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -3258,6 +3476,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: true,
                 owner: Some("newowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -3289,6 +3508,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: true,
                 owner: Some("oldowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -3302,6 +3522,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: true,
                 owner: Some("newowner".to_string()),
                 grants: Vec::new(),
+                comment: None,
             },
         );
 
@@ -3413,6 +3634,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: false,
                 owner: None,
                 grants: vec![],
+                comment: None,
             },
         );
 
@@ -3441,6 +3663,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: false,
                 owner: None,
                 grants: vec![],
+                comment: None,
             },
         );
 
@@ -3547,6 +3770,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: false,
                 owner: None,
                 grants: vec![],
+                comment: None,
             },
         );
         from.views.insert(
@@ -3558,6 +3782,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: false,
                 owner: None,
                 grants: vec![],
+                comment: None,
             },
         );
         from.views.insert(
@@ -3569,6 +3794,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: false,
                 owner: None,
                 grants: vec![],
+                comment: None,
             },
         );
 
@@ -3588,6 +3814,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: false,
                 owner: None,
                 grants: vec![],
+                comment: None,
             },
         );
         to.views.insert(
@@ -3599,6 +3826,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: false,
                 owner: None,
                 grants: vec![],
+                comment: None,
             },
         );
         to.views.insert(
@@ -3610,6 +3838,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 materialized: false,
                 owner: None,
                 grants: vec![],
+                comment: None,
             },
         );
 

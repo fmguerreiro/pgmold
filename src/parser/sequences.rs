@@ -111,6 +111,7 @@ pub(super) fn parse_create_sequence(
         owned_by: owned_by_parsed,
         owner: None,
         grants: Vec::new(),
+        comment: None,
     })
 }
 

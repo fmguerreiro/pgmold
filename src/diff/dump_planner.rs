@@ -21,6 +21,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut alter_owners = Vec::new();
     let mut grant_privileges = Vec::new();
     let mut alter_default_privileges = Vec::new();
+    let mut set_comments = Vec::new();
 
     for op in ops {
         match op {
@@ -40,6 +41,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::AlterOwner { .. } => alter_owners.push(op),
             MigrationOp::GrantPrivileges { .. } => grant_privileges.push(op),
             MigrationOp::AlterDefaultPrivileges { .. } => alter_default_privileges.push(op),
+            MigrationOp::SetComment { .. } => set_comments.push(op),
             MigrationOp::DropSchema(_)
             | MigrationOp::DropExtension(_)
             | MigrationOp::DropEnum(_)
@@ -102,6 +104,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(alter_owners);
     result.extend(grant_privileges);
     result.extend(alter_default_privileges);
+    result.extend(set_comments);
 
     result
 }
