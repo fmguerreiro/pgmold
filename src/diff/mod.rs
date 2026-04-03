@@ -26,7 +26,7 @@ use objects::{
     diff_sequences, diff_tables, diff_triggers, diff_views,
 };
 use table_elements::{
-    diff_check_constraints, diff_columns, diff_foreign_keys, diff_force_rls, diff_indexes,
+    diff_check_constraints, diff_columns, diff_force_rls, diff_foreign_keys, diff_indexes,
     diff_policies, diff_primary_keys, diff_rls,
 };
 
@@ -2070,7 +2070,8 @@ mod tests {
             using_expr: Some("( SELECT auth.is_admin() AS is_admin)".to_string()),
             check_expr: Some("( SELECT auth.is_admin() AS is_admin)".to_string()),
         });
-        from.tables.insert("public.feature_flags".to_string(), table);
+        from.tables
+            .insert("public.feature_flags".to_string(), table);
 
         let mut to = empty_schema();
         let mut table = simple_table("feature_flags");

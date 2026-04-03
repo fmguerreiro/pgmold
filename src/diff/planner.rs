@@ -88,9 +88,8 @@ impl NodeSets {
             add_fks: graph.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. })),
             add_checks: graph.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. })),
             enable_rls: graph.nodes_matching(|k| matches!(k, OpKey::EnableRls { .. })),
-            force_rls: graph.nodes_matching(|k| {
-                matches!(k, OpKey::ForceRls { .. } | OpKey::NoForceRls { .. })
-            }),
+            force_rls: graph
+                .nodes_matching(|k| matches!(k, OpKey::ForceRls { .. } | OpKey::NoForceRls { .. })),
             policies: graph.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. })),
             triggers: graph.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. })),
             views: graph.nodes_matching(|k| matches!(k, OpKey::CreateView(_))),
