@@ -26,7 +26,7 @@ use objects::{
     diff_sequences, diff_tables, diff_triggers, diff_views,
 };
 use table_elements::{
-    diff_check_constraints, diff_columns, diff_foreign_keys, diff_force_rls, diff_indexes,
+    diff_check_constraints, diff_columns, diff_force_rls, diff_foreign_keys, diff_indexes,
     diff_policies, diff_primary_keys, diff_rls,
 };
 
