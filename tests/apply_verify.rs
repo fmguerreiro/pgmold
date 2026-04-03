@@ -2,15 +2,13 @@ mod common;
 use common::*;
 use pgmold::apply::{apply_migration, verify_after_apply, ApplyOptions};
 use pgmold::filter::Filter;
-use std::collections::HashSet;
+use pgmold::plan::PlanOptions;
 
-fn default_verify_args() -> (Vec<String>, Filter, bool, bool, HashSet<String>) {
+fn default_verify_args() -> (Vec<String>, Filter, PlanOptions) {
     (
         vec!["public".to_string()],
         Filter::new(&[], &[], &[], &[]).unwrap(),
-        false,
-        false,
-        HashSet::new(),
+        PlanOptions::default(),
     )
 }
 
@@ -36,16 +34,13 @@ async fn verify_after_apply_succeeds_when_convergent() {
 
     assert!(result.applied, "Migration should have been applied");
 
-    let (target_schemas, filter, manage_ownership, manage_grants, excluded_grant_roles) =
-        default_verify_args();
+    let (target_schemas, filter, plan_options) = default_verify_args();
     let verify_result = verify_after_apply(
         &[prefixed_path],
         &connection,
         &target_schemas,
         &filter,
-        manage_ownership,
-        manage_grants,
-        &excluded_grant_roles,
+        &plan_options,
     )
     .await
     .unwrap();
@@ -82,16 +77,13 @@ async fn verify_after_apply_returns_residual_ops_when_not_convergent() {
     );
     let prefixed_path_b = format!("sql:{}", schema_file_b.path().to_str().unwrap());
 
-    let (target_schemas, filter, manage_ownership, manage_grants, excluded_grant_roles) =
-        default_verify_args();
+    let (target_schemas, filter, plan_options) = default_verify_args();
     let verify_result = verify_after_apply(
         &[prefixed_path_b],
         &connection,
         &target_schemas,
         &filter,
-        manage_ownership,
-        manage_grants,
-        &excluded_grant_roles,
+        &plan_options,
     )
     .await
     .unwrap();

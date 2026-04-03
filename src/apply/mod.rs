@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use sqlx::Executor;
 
 use crate::diff::{
@@ -11,6 +9,7 @@ use crate::parser::load_schema_sources;
 use crate::pg::connection::PgConnection;
 use crate::pg::introspect::introspect_schema;
 use crate::pg::sqlgen::generate_sql;
+use crate::plan::PlanOptions;
 use crate::provider::load_schema_from_sources;
 use crate::util::{Result, SchemaError};
 
@@ -25,9 +24,7 @@ pub async fn verify_after_apply(
     connection: &PgConnection,
     target_schemas: &[String],
     filter: &Filter,
-    manage_ownership: bool,
-    manage_grants: bool,
-    excluded_grant_roles: &HashSet<String>,
+    options: &PlanOptions,
 ) -> Result<VerifyResult> {
     let raw_target = load_schema_from_sources(schema_sources)?;
     let target = filter_schema(
@@ -36,12 +33,17 @@ pub async fn verify_after_apply(
     );
     let raw_current = introspect_schema(connection, target_schemas, false).await?;
     let current = filter_schema(&raw_current, filter);
+    let current = if options.exclude_unmanaged_partitions {
+        crate::filter::exclude_unmanaged_partitions(&current, &target)
+    } else {
+        current
+    };
     let residual_operations = plan_migration_checked(compute_diff_with_flags(
         &current,
         &target,
-        manage_ownership,
-        manage_grants,
-        excluded_grant_roles,
+        options.manage_ownership,
+        options.manage_grants,
+        &options.excluded_grant_roles,
     ))
     .map_err(|e| SchemaError::ValidationError(e.to_string()))?;
     let convergent = residual_operations.is_empty();
