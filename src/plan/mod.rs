@@ -28,6 +28,7 @@ pub struct PlanOptions {
     pub manage_grants: bool,
     pub excluded_grant_roles: HashSet<String>,
     pub include_extension_objects: bool,
+    pub exclude_unmanaged_partitions: bool,
 }
 
 /// Load the desired schema from `schema_sources`, introspect the current
@@ -55,6 +56,11 @@ pub async fn compute_migration_plan(
     )
     .await?;
     let current_schema = filter_schema(&raw_current, filter);
+    let current_schema = if options.exclude_unmanaged_partitions {
+        crate::filter::exclude_unmanaged_partitions(&current_schema, &target_schema)
+    } else {
+        current_schema
+    };
 
     let ops = plan_migration_checked(compute_diff_with_flags(
         &current_schema,

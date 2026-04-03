@@ -283,6 +283,19 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
     }
 }
 
+pub fn exclude_unmanaged_partitions(current: &Schema, target: &Schema) -> Schema {
+    let mut result = current.clone();
+    result.partitions.retain(|key, partition| {
+        let parent_key = format!("{}.{}", partition.parent_schema, partition.parent_name);
+        if target.tables.contains_key(&parent_key) {
+            target.partitions.contains_key(key)
+        } else {
+            true
+        }
+    });
+    result
+}
+
 pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> Schema {
     if target_schemas.is_empty() {
         return schema.clone();
@@ -453,9 +466,9 @@ mod tests {
     use super::*;
     use crate::model::{
         DefaultPrivilege, DefaultPrivilegeObjectType, Domain, EnumType, Extension, Function,
-        Partition, PartitionBound, PgSchema, PgType, Privilege, SecurityType, Sequence,
-        SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, View,
-        Volatility,
+        Partition, PartitionBound, PartitionKey, PartitionStrategy, PgSchema, PgType, Privilege,
+        SecurityType, Sequence, SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent,
+        TriggerTiming, View, Volatility,
     };
     use std::collections::BTreeSet;
 
@@ -2208,5 +2221,186 @@ mod tests {
             2,
             "Should keep public + global default privileges"
         );
+    }
+
+    fn make_parent_table(schema: &str, name: &str) -> Table {
+        Table {
+            schema: schema.to_string(),
+            name: name.to_string(),
+            columns: BTreeMap::new(),
+            indexes: vec![],
+            primary_key: None,
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            comment: None,
+            row_level_security: false,
+            force_row_level_security: false,
+            policies: vec![],
+            partition_by: Some(PartitionKey {
+                strategy: PartitionStrategy::Range,
+                columns: vec!["created_at".to_string()],
+                expressions: vec![],
+            }),
+            owner: None,
+            grants: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn exclude_unmanaged_partitions_removes_dynamic_partitions() {
+        let mut target = Schema::default();
+        target.tables.insert(
+            "audit.log".to_string(),
+            make_parent_table("audit", "log"),
+        );
+        target.partitions.insert(
+            "audit.log_2024".to_string(),
+            make_partition("audit", "log_2024", "audit", "log"),
+        );
+
+        let mut current = Schema::default();
+        current.tables.insert(
+            "audit.log".to_string(),
+            make_parent_table("audit", "log"),
+        );
+        current.partitions.insert(
+            "audit.log_2024".to_string(),
+            make_partition("audit", "log_2024", "audit", "log"),
+        );
+        current.partitions.insert(
+            "audit.log_2025".to_string(),
+            make_partition("audit", "log_2025", "audit", "log"),
+        );
+        current.partitions.insert(
+            "audit.log_default".to_string(),
+            make_partition("audit", "log_default", "audit", "log"),
+        );
+
+        let result = exclude_unmanaged_partitions(&current, &target);
+
+        assert_eq!(result.partitions.len(), 1);
+        assert!(result.partitions.contains_key("audit.log_2024"));
+    }
+
+    #[test]
+    fn exclude_unmanaged_partitions_keeps_partitions_of_unmanaged_parents() {
+        let target = Schema::default();
+
+        let mut current = Schema::default();
+        current.tables.insert(
+            "audit.log".to_string(),
+            make_parent_table("audit", "log"),
+        );
+        current.partitions.insert(
+            "audit.log_2024".to_string(),
+            make_partition("audit", "log_2024", "audit", "log"),
+        );
+        current.partitions.insert(
+            "audit.log_2025".to_string(),
+            make_partition("audit", "log_2025", "audit", "log"),
+        );
+
+        let result = exclude_unmanaged_partitions(&current, &target);
+
+        assert_eq!(result.partitions.len(), 2);
+        assert!(result.partitions.contains_key("audit.log_2024"));
+        assert!(result.partitions.contains_key("audit.log_2025"));
+    }
+
+    #[test]
+    fn exclude_unmanaged_partitions_noop_when_all_partitions_managed() {
+        let mut target = Schema::default();
+        target.tables.insert(
+            "audit.log".to_string(),
+            make_parent_table("audit", "log"),
+        );
+        target.partitions.insert(
+            "audit.log_2024".to_string(),
+            make_partition("audit", "log_2024", "audit", "log"),
+        );
+        target.partitions.insert(
+            "audit.log_2025".to_string(),
+            make_partition("audit", "log_2025", "audit", "log"),
+        );
+
+        let current = target.clone();
+
+        let result = exclude_unmanaged_partitions(&current, &target);
+
+        assert_eq!(result.partitions.len(), 2);
+        assert!(result.partitions.contains_key("audit.log_2024"));
+        assert!(result.partitions.contains_key("audit.log_2025"));
+    }
+
+    #[test]
+    fn exclude_unmanaged_partitions_preserves_non_partition_fields() {
+        let mut target = Schema::default();
+        target.tables.insert(
+            "audit.log".to_string(),
+            make_parent_table("audit", "log"),
+        );
+        target.partitions.insert(
+            "audit.log_2024".to_string(),
+            make_partition("audit", "log_2024", "audit", "log"),
+        );
+
+        let mut current = Schema::default();
+        current.tables.insert(
+            "audit.log".to_string(),
+            make_parent_table("audit", "log"),
+        );
+        current.tables.insert(
+            "public.users".to_string(),
+            Table {
+                schema: "public".to_string(),
+                name: "users".to_string(),
+                columns: BTreeMap::new(),
+                indexes: vec![],
+                primary_key: None,
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                comment: None,
+                row_level_security: false,
+                force_row_level_security: false,
+                policies: vec![],
+                partition_by: None,
+                owner: None,
+                grants: Vec::new(),
+            },
+        );
+        current.partitions.insert(
+            "audit.log_2024".to_string(),
+            make_partition("audit", "log_2024", "audit", "log"),
+        );
+        current.partitions.insert(
+            "audit.log_2025".to_string(),
+            make_partition("audit", "log_2025", "audit", "log"),
+        );
+        current.functions.insert(
+            "public.my_func".to_string(),
+            Function {
+                name: "my_func".to_string(),
+                schema: "public".to_string(),
+                arguments: vec![],
+                return_type: "void".to_string(),
+                language: "sql".to_string(),
+                body: "SELECT 1".to_string(),
+                volatility: Volatility::Volatile,
+                security: SecurityType::Invoker,
+                config_params: vec![],
+                owner: None,
+                grants: Vec::new(),
+            },
+        );
+
+        let result = exclude_unmanaged_partitions(&current, &target);
+
+        assert_eq!(result.partitions.len(), 1);
+        assert!(result.partitions.contains_key("audit.log_2024"));
+        assert_eq!(result.tables.len(), 2);
+        assert!(result.tables.contains_key("public.users"));
+        assert!(result.tables.contains_key("audit.log"));
+        assert_eq!(result.functions.len(), 1);
+        assert!(result.functions.contains_key("public.my_func"));
     }
 }

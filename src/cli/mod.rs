@@ -163,6 +163,9 @@ struct FilterArgs {
     /// Include objects owned by extensions (e.g., PostGIS functions)
     #[arg(long)]
     include_extension_objects: bool,
+    /// Exclude partition children from the database that are not defined in the schema files
+    #[arg(long)]
+    exclude_unmanaged_partitions: bool,
 }
 
 impl FilterArgs {
@@ -518,6 +521,7 @@ pub async fn run() -> Result<()> {
             validate,
         } => {
             let include_extension_objects = filter.include_extension_objects;
+            let exclude_unmanaged_partitions = filter.exclude_unmanaged_partitions;
             let filter = filter.to_filter()?;
             let excluded_grant_roles = grants.excluded_grant_roles();
             let manage_grants = grants.manage_grants();
@@ -540,6 +544,7 @@ pub async fn run() -> Result<()> {
                     manage_grants,
                     excluded_grant_roles: excluded_grant_roles.clone(),
                     include_extension_objects,
+                    exclude_unmanaged_partitions,
                 },
             )
             .await
@@ -717,6 +722,7 @@ pub async fn run() -> Result<()> {
             }
 
             let include_extension_objects = filter.include_extension_objects;
+            let exclude_unmanaged_partitions = filter.exclude_unmanaged_partitions;
             let filter = filter.to_filter()?;
             let excluded_grant_roles = grants.excluded_grant_roles();
             let manage_grants = grants.manage_grants();
@@ -737,6 +743,7 @@ pub async fn run() -> Result<()> {
                     manage_grants,
                     excluded_grant_roles: excluded_grant_roles.clone(),
                     include_extension_objects,
+                    exclude_unmanaged_partitions,
                 },
             )
             .await
@@ -898,6 +905,7 @@ pub async fn run() -> Result<()> {
                     manage_ownership,
                     manage_grants,
                     &excluded_grant_roles,
+                    exclude_unmanaged_partitions,
                 )
                 .await
                 .map_err(|e| anyhow!("Post-apply verification failed: {e}"))?;
@@ -2263,6 +2271,43 @@ mod tests {
             assert_eq!(cmd, "plan");
         } else {
             panic!("Expected Describe command with 'plan' arg");
+        }
+    }
+
+    #[test]
+    fn parses_exclude_unmanaged_partitions_flag() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+            "--exclude-unmanaged-partitions",
+        ]);
+
+        if let Commands::Plan { filter, .. } = args.command {
+            assert!(filter.exclude_unmanaged_partitions);
+        } else {
+            panic!("Expected Plan command");
+        }
+    }
+
+    #[test]
+    fn exclude_unmanaged_partitions_defaults_to_false() {
+        let args = Cli::parse_from([
+            "pgmold",
+            "plan",
+            "--schema",
+            "sql:schema.sql",
+            "--database",
+            "db:postgres://localhost/db",
+        ]);
+
+        if let Commands::Plan { filter, .. } = args.command {
+            assert!(!filter.exclude_unmanaged_partitions);
+        } else {
+            panic!("Expected Plan command");
         }
     }
 }

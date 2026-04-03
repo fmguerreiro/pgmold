@@ -28,6 +28,7 @@ pub async fn verify_after_apply(
     manage_ownership: bool,
     manage_grants: bool,
     excluded_grant_roles: &HashSet<String>,
+    exclude_unmanaged_partitions: bool,
 ) -> Result<VerifyResult> {
     let raw_target = load_schema_from_sources(schema_sources)?;
     let target = filter_schema(
@@ -36,6 +37,11 @@ pub async fn verify_after_apply(
     );
     let raw_current = introspect_schema(connection, target_schemas, false).await?;
     let current = filter_schema(&raw_current, filter);
+    let current = if exclude_unmanaged_partitions {
+        crate::filter::exclude_unmanaged_partitions(&current, &target)
+    } else {
+        current
+    };
     let residual_operations = plan_migration_checked(compute_diff_with_flags(
         &current,
         &target,
