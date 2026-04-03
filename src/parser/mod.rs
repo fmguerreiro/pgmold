@@ -100,6 +100,13 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
 
                 if let Some(table) = schema.tables.get_mut(&tbl_key) {
+                    let index_type = match ci.using {
+                        Some(sqlparser::ast::IndexType::BTree) | None => IndexType::BTree,
+                        Some(sqlparser::ast::IndexType::GiST) => IndexType::Gist,
+                        Some(sqlparser::ast::IndexType::GIN) => IndexType::Gin,
+                        Some(sqlparser::ast::IndexType::Hash) => IndexType::Hash,
+                        Some(using) => panic!("unsupported index type: {using:?}"),
+                    };
                     table.indexes.push(Index {
                         name: idx_name,
                         columns: ci
@@ -108,7 +115,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                             .map(|c| unquote_ident(&c.column.expr.to_string()).to_string())
                             .collect(),
                         unique: ci.unique,
-                        index_type: IndexType::BTree,
+                        index_type,
                         predicate: ci.predicate.as_ref().map(|p| p.to_string()),
                         is_constraint: false,
                     });

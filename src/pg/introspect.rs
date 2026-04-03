@@ -966,7 +966,7 @@ async fn introspect_all_indexes(
             "hash" => IndexType::Hash,
             "gin" => IndexType::Gin,
             "gist" => IndexType::Gist,
-            _ => IndexType::BTree,
+            _ => panic!("unsupported index type: {am_name}"),
         };
 
         result
