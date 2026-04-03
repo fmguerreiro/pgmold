@@ -80,6 +80,7 @@ fn build_table(index: usize) -> Table {
         check_constraints: Vec::new(),
         comment: None,
         row_level_security: false,
+        force_row_level_security: false,
         policies: Vec::new(),
         partition_by: None,
         owner: None,
