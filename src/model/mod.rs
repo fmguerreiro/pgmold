@@ -1993,6 +1993,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -2017,6 +2018,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -2041,6 +2043,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -2065,6 +2068,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -2089,6 +2093,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -2113,6 +2118,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(!view1.semantically_equals(&view2));
