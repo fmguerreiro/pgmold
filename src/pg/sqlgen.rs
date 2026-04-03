@@ -709,11 +709,11 @@ fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {
         .unwrap_or_default();
 
     format!(
-        "CREATE {}INDEX {}{} ON {} ({}){};",
+        "CREATE {}INDEX {} ON {}{} ({}){};",
         unique,
         quote_ident(&index.name),
-        index_type,
         quote_qualified(schema, table),
+        index_type,
         format_index_column_list(&index.columns),
         where_clause
     )
@@ -4051,7 +4051,7 @@ mod tests {
         let sql = generate_create_index("mrv", "Polygon", &index);
         assert_eq!(
             sql,
-            "CREATE INDEX \"polygon_geometry_idx\" USING gist ON \"mrv\".\"Polygon\" ((geometry::geography)) WHERE (geometry IS NOT NULL);"
+            "CREATE INDEX \"polygon_geometry_idx\" ON \"mrv\".\"Polygon\" USING gist ((geometry::geography)) WHERE (geometry IS NOT NULL);"
         );
     }
 
@@ -4068,7 +4068,7 @@ mod tests {
         let sql = generate_create_index("public", "documents", &index);
         assert_eq!(
             sql,
-            "CREATE INDEX \"documents_content_idx\" USING gin ON \"public\".\"documents\" (\"content\");"
+            "CREATE INDEX \"documents_content_idx\" ON \"public\".\"documents\" USING gin (\"content\");"
         );
     }
 
@@ -4085,7 +4085,7 @@ mod tests {
         let sql = generate_create_index("public", "users", &index);
         assert_eq!(
             sql,
-            "CREATE INDEX \"users_session_idx\" USING hash ON \"public\".\"users\" (\"session_token\");"
+            "CREATE INDEX \"users_session_idx\" ON \"public\".\"users\" USING hash (\"session_token\");"
         );
     }
 
