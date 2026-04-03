@@ -3955,4 +3955,72 @@ mod tests {
             "CREATE INDEX \"idx_cast\" ON \"public\".\"events\" ((created_at::date));"
         );
     }
+
+    #[test]
+    fn gist_index_generates_using_gist_clause() {
+        let index = Index {
+            name: "polygon_geometry_idx".to_string(),
+            columns: vec!["(geometry::geography)".to_string()],
+            unique: false,
+            index_type: IndexType::Gist,
+            predicate: Some("geometry IS NOT NULL".to_string()),
+            is_constraint: false,
+        };
+        let sql = generate_create_index("mrv", "Polygon", &index);
+        assert_eq!(
+            sql,
+            "CREATE INDEX \"polygon_geometry_idx\" USING gist ON \"mrv\".\"Polygon\" ((geometry::geography)) WHERE (geometry IS NOT NULL);"
+        );
+    }
+
+    #[test]
+    fn gin_index_generates_using_gin_clause() {
+        let index = Index {
+            name: "documents_content_idx".to_string(),
+            columns: vec!["content".to_string()],
+            unique: false,
+            index_type: IndexType::Gin,
+            predicate: None,
+            is_constraint: false,
+        };
+        let sql = generate_create_index("public", "documents", &index);
+        assert_eq!(
+            sql,
+            "CREATE INDEX \"documents_content_idx\" USING gin ON \"public\".\"documents\" (\"content\");"
+        );
+    }
+
+    #[test]
+    fn hash_index_generates_using_hash_clause() {
+        let index = Index {
+            name: "users_session_idx".to_string(),
+            columns: vec!["session_token".to_string()],
+            unique: false,
+            index_type: IndexType::Hash,
+            predicate: None,
+            is_constraint: false,
+        };
+        let sql = generate_create_index("public", "users", &index);
+        assert_eq!(
+            sql,
+            "CREATE INDEX \"users_session_idx\" USING hash ON \"public\".\"users\" (\"session_token\");"
+        );
+    }
+
+    #[test]
+    fn btree_index_generates_without_using_clause() {
+        let index = Index {
+            name: "users_email_idx".to_string(),
+            columns: vec!["email".to_string()],
+            unique: false,
+            index_type: IndexType::BTree,
+            predicate: None,
+            is_constraint: false,
+        };
+        let sql = generate_create_index("public", "users", &index);
+        assert_eq!(
+            sql,
+            "CREATE INDEX \"users_email_idx\" ON \"public\".\"users\" (\"email\");"
+        );
+    }
 }

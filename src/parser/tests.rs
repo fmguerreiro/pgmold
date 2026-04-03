@@ -3249,3 +3249,83 @@ fn block_comment_with_grant_keyword_before_dollar_quoted_function() {
         .functions
         .contains_key("public.block_comment_function()"));
 }
+
+#[test]
+fn gist_index_method_is_preserved() {
+    let sql = r#"
+        CREATE TABLE mrv."Polygon" (
+            id BIGINT PRIMARY KEY,
+            geometry geometry
+        );
+        CREATE INDEX IF NOT EXISTS "Polygon_geometry_idx"
+            ON mrv."Polygon" USING GIST ((geometry::geography))
+            WHERE geometry IS NOT NULL;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = &schema.tables["mrv.Polygon"];
+    let index = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "Polygon_geometry_idx")
+        .expect("index should exist");
+    assert_eq!(index.index_type, IndexType::Gist);
+}
+
+#[test]
+fn gin_index_method_is_preserved() {
+    let sql = r#"
+        CREATE TABLE public.documents (
+            id BIGINT PRIMARY KEY,
+            tags TEXT[]
+        );
+        CREATE INDEX "documents_tags_idx"
+            ON public.documents USING GIN (tags);
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = &schema.tables["public.documents"];
+    let index = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "documents_tags_idx")
+        .expect("index should exist");
+    assert_eq!(index.index_type, IndexType::Gin);
+}
+
+#[test]
+fn hash_index_method_is_preserved() {
+    let sql = r#"
+        CREATE TABLE public.sessions (
+            id BIGINT PRIMARY KEY,
+            token TEXT
+        );
+        CREATE INDEX "sessions_token_idx"
+            ON public.sessions USING HASH (token);
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = &schema.tables["public.sessions"];
+    let index = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "sessions_token_idx")
+        .expect("index should exist");
+    assert_eq!(index.index_type, IndexType::Hash);
+}
+
+#[test]
+fn btree_index_method_defaults_when_no_using_clause() {
+    let sql = r#"
+        CREATE TABLE public.users (
+            id BIGINT PRIMARY KEY,
+            email TEXT
+        );
+        CREATE INDEX "users_email_idx" ON public.users (email);
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = &schema.tables["public.users"];
+    let index = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "users_email_idx")
+        .expect("index should exist");
+    assert_eq!(index.index_type, IndexType::BTree);
+}
