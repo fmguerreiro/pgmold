@@ -2249,20 +2249,18 @@ mod tests {
     #[test]
     fn exclude_unmanaged_partitions_removes_dynamic_partitions() {
         let mut target = Schema::default();
-        target.tables.insert(
-            "audit.log".to_string(),
-            make_parent_table("audit", "log"),
-        );
+        target
+            .tables
+            .insert("audit.log".to_string(), make_parent_table("audit", "log"));
         target.partitions.insert(
             "audit.log_2024".to_string(),
             make_partition("audit", "log_2024", "audit", "log"),
         );
 
         let mut current = Schema::default();
-        current.tables.insert(
-            "audit.log".to_string(),
-            make_parent_table("audit", "log"),
-        );
+        current
+            .tables
+            .insert("audit.log".to_string(), make_parent_table("audit", "log"));
         current.partitions.insert(
             "audit.log_2024".to_string(),
             make_partition("audit", "log_2024", "audit", "log"),
@@ -2287,10 +2285,9 @@ mod tests {
         let target = Schema::default();
 
         let mut current = Schema::default();
-        current.tables.insert(
-            "audit.log".to_string(),
-            make_parent_table("audit", "log"),
-        );
+        current
+            .tables
+            .insert("audit.log".to_string(), make_parent_table("audit", "log"));
         current.partitions.insert(
             "audit.log_2024".to_string(),
             make_partition("audit", "log_2024", "audit", "log"),
@@ -2310,10 +2307,9 @@ mod tests {
     #[test]
     fn exclude_unmanaged_partitions_noop_when_all_partitions_managed() {
         let mut target = Schema::default();
-        target.tables.insert(
-            "audit.log".to_string(),
-            make_parent_table("audit", "log"),
-        );
+        target
+            .tables
+            .insert("audit.log".to_string(), make_parent_table("audit", "log"));
         target.partitions.insert(
             "audit.log_2024".to_string(),
             make_partition("audit", "log_2024", "audit", "log"),
@@ -2335,20 +2331,18 @@ mod tests {
     #[test]
     fn exclude_unmanaged_partitions_preserves_non_partition_fields() {
         let mut target = Schema::default();
-        target.tables.insert(
-            "audit.log".to_string(),
-            make_parent_table("audit", "log"),
-        );
+        target
+            .tables
+            .insert("audit.log".to_string(), make_parent_table("audit", "log"));
         target.partitions.insert(
             "audit.log_2024".to_string(),
             make_partition("audit", "log_2024", "audit", "log"),
         );
 
         let mut current = Schema::default();
-        current.tables.insert(
-            "audit.log".to_string(),
-            make_parent_table("audit", "log"),
-        );
+        current
+            .tables
+            .insert("audit.log".to_string(), make_parent_table("audit", "log"));
         current.tables.insert(
             "public.users".to_string(),
             Table {
