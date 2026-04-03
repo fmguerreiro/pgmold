@@ -1389,7 +1389,6 @@ mod tests {
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
-                comment: None,
             },
         );
 
@@ -1411,7 +1410,6 @@ mod tests {
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
-                comment: None,
             },
         );
 
@@ -1557,7 +1555,6 @@ mod tests {
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
-                comment: None,
             },
         );
         schema.pending_policies.push(Policy {
@@ -1612,7 +1609,6 @@ mod tests {
             partition_by: None,
             owner: None,
             grants: Vec::new(),
-            comment: None,
         };
         assert_eq!(table.schema, "auth");
     }
@@ -1733,7 +1729,6 @@ mod tests {
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
-                comment: None,
             },
         );
 
@@ -1755,7 +1750,6 @@ mod tests {
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
-                comment: None,
             },
         );
 
@@ -1999,7 +1993,6 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
-            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -2024,7 +2017,6 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
-            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -2049,7 +2041,6 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
-            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -2074,7 +2065,6 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
-            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -2099,7 +2089,6 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
-            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -2124,7 +2113,6 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
-            comment: None,
         };
 
         assert!(!view1.semantically_equals(&view2));
@@ -2185,7 +2173,6 @@ mod tests {
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
-            comment: None,
         };
         assert_eq!(table.owner, Some("postgres".to_string()));
     }
@@ -2286,7 +2273,6 @@ mod tests {
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
-            comment: None,
         };
 
         let table2 = Table {
@@ -2304,7 +2290,6 @@ mod tests {
             partition_by: None,
             owner: Some("admin".to_string()),
             grants: Vec::new(),
-            comment: None,
         };
 
         assert_ne!(table1, table2);
@@ -2327,7 +2312,6 @@ mod tests {
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
-            comment: None,
         };
 
         let json = serde_json::to_string(&table).expect("Failed to serialize");
@@ -2356,7 +2340,6 @@ mod tests {
                 partition_by: None,
                 owner: Some("postgres".to_string()),
                 grants: Vec::new(),
-                comment: None,
             },
         );
 
@@ -2378,7 +2361,6 @@ mod tests {
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
-                comment: None,
             },
         );
 
@@ -2440,7 +2422,6 @@ mod tests {
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
-            comment: None,
         };
 
         let json = serde_json::to_string(&table).expect("Failed to serialize");

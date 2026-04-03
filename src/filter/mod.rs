@@ -275,6 +275,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         pending_owners: Vec::new(),
         pending_grants: Vec::new(),
         pending_revokes: Vec::new(),
+        pending_comments: Vec::new(),
         default_privileges: if filter.should_include_type(ObjectType::DefaultPrivileges) {
             schema.default_privileges.clone()
         } else {
@@ -342,6 +343,7 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
         pending_owners: Vec::new(),
         pending_grants: Vec::new(),
         pending_revokes: Vec::new(),
+        pending_comments: Vec::new(),
     }
 }
 
