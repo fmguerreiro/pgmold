@@ -158,7 +158,7 @@ async fn introspect_schemas(
 ) -> Result<BTreeMap<String, PgSchema>> {
     let rows = sqlx::query(
         r#"
-        SELECT nspname as name
+        SELECT nspname as name, obj_description(oid, 'pg_namespace') as comment
         FROM pg_namespace
         WHERE nspname NOT LIKE 'pg_%'
           AND nspname != 'information_schema'
@@ -183,8 +183,7 @@ async fn introspect_schemas(
                 PgSchema {
                     name,
                     grants: Vec::new(),
-                    // TODO: read schema comment from pg_description
-                    comment: None,
+                    comment: row.get("comment"),
                 },
             );
         }
@@ -235,7 +234,8 @@ async fn introspect_enums(
 ) -> Result<BTreeMap<String, EnumType>> {
     let rows = sqlx::query(
         r#"
-        SELECT n.nspname, t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) as labels, r.rolname AS owner
+        SELECT n.nspname, t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) as labels, r.rolname AS owner,
+               obj_description(t.oid, 'pg_type') as comment
         FROM pg_type t
         JOIN pg_enum e ON t.oid = e.enumtypid
         JOIN pg_namespace n ON t.typnamespace = n.oid
@@ -246,7 +246,7 @@ async fn introspect_enums(
               WHERE d.objid = t.oid
               AND d.deptype = 'e'
           ))
-        GROUP BY n.nspname, t.typname, r.rolname
+        GROUP BY n.nspname, t.typname, r.rolname, t.oid
         "#,
     )
     .bind(target_schemas)
@@ -267,8 +267,7 @@ async fn introspect_enums(
             values: labels,
             owner: Some(owner),
             grants: Vec::new(),
-            // TODO: read enum type comment from pg_description
-            comment: None,
+            comment: row.get("comment"),
         };
         enums.insert(qualified_name(&schema, &name), enum_type);
     }
@@ -290,7 +289,8 @@ async fn introspect_domains(
             bt.typcategory::text AS base_category,
             t.typnotnull AS not_null,
             pg_get_expr(t.typdefaultbin, 0) AS default_expr,
-            r.rolname AS owner
+            r.rolname AS owner,
+            obj_description(t.oid, 'pg_type') AS comment
         FROM pg_type t
         JOIN pg_namespace n ON t.typnamespace = n.oid
         JOIN pg_type bt ON t.typbasetype = bt.oid
@@ -379,8 +379,7 @@ async fn introspect_domains(
                 .unwrap_or_default(),
             owner: Some(owner),
             grants: Vec::new(),
-            // TODO: read domain comment from pg_description
-            comment: None,
+            comment: row.get("comment"),
         };
         domains.insert(qualified_name(&schema, &name), domain);
     }
@@ -461,7 +460,8 @@ async fn introspect_tables(
 ) -> Result<BTreeMap<String, Table>> {
     let rows = sqlx::query(
         r#"
-        SELECT n.nspname AS table_schema, c.relname AS table_name, r.rolname AS owner
+        SELECT n.nspname AS table_schema, c.relname AS table_name, r.rolname AS owner,
+               obj_description(c.oid, 'pg_class') AS comment
         FROM pg_class c
         JOIN pg_namespace n ON c.relnamespace = n.oid
         JOIN pg_roles r ON c.relowner = r.oid
@@ -494,8 +494,7 @@ async fn introspect_tables(
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
-            // TODO: read table comment from pg_description
-            comment: None,
+            comment: row.get("comment"),
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
@@ -719,7 +718,8 @@ async fn introspect_all_columns(
             c.column_default,
             c.udt_name,
             c.udt_schema,
-            a.atttypmod
+            a.atttypmod,
+            col_description(t.oid, a.attnum) AS comment
         FROM information_schema.columns c
         JOIN pg_catalog.pg_class t ON t.relname = c.table_name
         JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace AND n.nspname = c.table_schema
@@ -766,8 +766,7 @@ async fn introspect_all_columns(
                     data_type: pg_type,
                     nullable: is_nullable == "YES",
                     default: column_default,
-                    // TODO: read column comment from pg_description
-                    comment: None,
+                    comment: row.get("comment"),
                 },
             );
     }
@@ -1294,7 +1293,8 @@ async fn introspect_functions(
             p.prosecdef as security_definer,
             p.proconfig as config_params,
             r.rolname as owner,
-            p.proargmodes as arg_modes
+            p.proargmodes as arg_modes,
+            obj_description(p.oid, 'pg_proc') as comment
         FROM pg_proc p
         JOIN pg_namespace n ON p.pronamespace = n.oid
         JOIN pg_language l ON p.prolang = l.oid
@@ -1390,8 +1390,7 @@ async fn introspect_functions(
             config_params,
             owner: Some(owner),
             grants: Vec::new(),
-            // TODO: read function comment from pg_description
-            comment: None,
+            comment: row.get("comment"),
         };
 
         let key = qualified_name(&schema, &func.signature());
@@ -1527,8 +1526,7 @@ async fn fetch_views(
             materialized,
             owner: Some(owner),
             grants: Vec::new(),
-            // TODO: read view comment from pg_description
-            comment: None,
+            comment: row.get("comment"),
         });
     }
     Ok(result)
@@ -1546,7 +1544,8 @@ async fn introspect_views(
         target_schemas,
         include_extension_objects,
         r#"
-        SELECT v.schemaname, v.viewname, v.definition, r.rolname AS owner
+        SELECT v.schemaname, v.viewname, v.definition, r.rolname AS owner,
+               obj_description(c.oid, 'pg_class') AS comment
         FROM pg_views v
         JOIN pg_class c ON c.relname = v.viewname
         JOIN pg_namespace n ON c.relnamespace = n.oid AND n.nspname = v.schemaname
@@ -1572,7 +1571,8 @@ async fn introspect_views(
         target_schemas,
         include_extension_objects,
         r#"
-        SELECT v.schemaname, v.matviewname, v.definition, r.rolname AS owner
+        SELECT v.schemaname, v.matviewname, v.definition, r.rolname AS owner,
+               obj_description(c.oid, 'pg_class') AS comment
         FROM pg_matviews v
         JOIN pg_class c ON c.relname = v.matviewname
         JOIN pg_namespace n ON c.relnamespace = n.oid AND n.nspname = v.schemaname
@@ -1628,7 +1628,8 @@ async fn introspect_triggers(
                 JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = attr_num
             ) AS update_columns,
             t.tgoldtable AS old_table_name,
-            t.tgnewtable AS new_table_name
+            t.tgnewtable AS new_table_name,
+            obj_description(t.oid, 'pg_trigger') AS comment
         FROM pg_trigger t
         JOIN pg_class c ON t.tgrelid = c.oid
         JOIN pg_namespace ns ON c.relnamespace = ns.oid
@@ -1717,8 +1718,7 @@ async fn introspect_triggers(
             enabled,
             old_table_name,
             new_table_name,
-            // TODO: read trigger comment from pg_description
-            comment: None,
+            comment: row.get("comment"),
         };
 
         let key = format!("{table_schema}.{table_name}.{trigger_name}");
@@ -1774,7 +1774,8 @@ async fn introspect_sequences(
             c.relname as owned_table,
             cn.nspname as owned_schema,
             a.attname as owned_column,
-            r.rolname as owner
+            r.rolname as owner,
+            obj_description(seq_class.oid, 'pg_class') as comment
         FROM pg_sequences s
         JOIN pg_namespace n ON n.nspname = s.schemaname
         LEFT JOIN pg_class seq_class ON seq_class.relname = s.sequencename
@@ -1850,8 +1851,7 @@ async fn introspect_sequences(
                 owned_by,
                 owner,
                 grants: Vec::new(),
-                // TODO: read sequence comment from pg_description
-                comment: None,
+                comment: row.get("comment"),
             },
         );
     }
