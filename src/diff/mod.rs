@@ -2057,6 +2057,47 @@ mod tests {
     }
 
     #[test]
+    fn policy_expression_comparison_function_call_vs_scalar_subquery() {
+        // Issue #187: PostgreSQL (Supabase) rewrites auth.is_admin() in pg_get_expr
+        // to ( SELECT auth.is_admin() AS is_admin). The schema file stores the direct
+        // function call form, while the DB returns the scalar subquery form.
+        // This causes a false diff on 300+ identical policies.
+        let mut from = empty_schema();
+        let mut table = simple_table("feature_flags");
+        table.row_level_security = true;
+        table.policies.push(crate::model::Policy {
+            name: "Admins can manage feature flags".to_string(),
+            table_schema: "public".to_string(),
+            table: "feature_flags".to_string(),
+            command: crate::model::PolicyCommand::All,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("( SELECT auth.is_admin() AS is_admin)".to_string()),
+            check_expr: Some("( SELECT auth.is_admin() AS is_admin)".to_string()),
+        });
+        from.tables.insert("public.feature_flags".to_string(), table);
+
+        let mut to = empty_schema();
+        let mut table = simple_table("feature_flags");
+        table.row_level_security = true;
+        table.policies.push(crate::model::Policy {
+            name: "Admins can manage feature flags".to_string(),
+            table_schema: "public".to_string(),
+            table: "feature_flags".to_string(),
+            command: crate::model::PolicyCommand::All,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("auth.is_admin()".to_string()),
+            check_expr: Some("auth.is_admin()".to_string()),
+        });
+        to.tables.insert("public.feature_flags".to_string(), table);
+
+        let ops = compute_diff(&from, &to);
+        assert!(
+            ops.is_empty(),
+            "Direct function call should equal its scalar subquery form from pg_get_expr. Got: {ops:?}"
+        );
+    }
+
+    #[test]
     fn column_default_comparison_ignores_type_cast_case() {
         let mut from = empty_schema();
         let mut from_table = simple_table("users");
