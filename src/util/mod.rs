@@ -1017,7 +1017,9 @@ fn normalize_expr(expr: &Expr) -> Expr {
             if let Expr::Value(v) = &norm_inner {
                 let should_strip = match &v.value {
                     sqlparser::ast::Value::SingleQuotedString(_) => {
+                        // PostgreSQL always emits an explicit array cast; strip it to match bare literal form.
                         matches!(data_type, DataType::Custom(_, _))
+                            || matches!(data_type, DataType::Array(_))
                     }
                     sqlparser::ast::Value::Number(_, _) => is_numeric_type(data_type),
                     sqlparser::ast::Value::Null => true,
@@ -2336,5 +2338,58 @@ fn not_in_view_equals_not_all_array() {
     assert!(
         views_semantically_equal(schema_form, db_form),
         "NOT IN should equal <> ALL(ARRAY[...])"
+    );
+}
+
+#[test]
+fn expressions_equal_empty_array_literal_vs_typed_cast() {
+    // PostgreSQL normalizes '{}'::text[] when reading back column defaults
+    let schema_form = "'{}'";
+    let db_form = "'{}'::text[]";
+    assert!(
+        expressions_semantically_equal(schema_form, db_form),
+        "Empty array literal should equal typed cast form.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
+fn expressions_equal_array_literal_with_values_vs_typed_cast() {
+    // PostgreSQL normalizes '{a,b}'::text[] when reading back column defaults
+    let schema_form = "'{a,b}'";
+    let db_form = "'{a,b}'::text[]";
+    assert!(
+        expressions_semantically_equal(schema_form, db_form),
+        "Array literal with values should equal typed cast form.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
+fn expressions_equal_empty_array_literal_vs_integer_array_cast() {
+    // Same normalization for integer arrays
+    let schema_form = "'{}'";
+    let db_form = "'{}'::integer[]";
+    assert!(
+        expressions_semantically_equal(schema_form, db_form),
+        "Empty array literal should equal integer[] typed cast form.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
+fn expressions_equal_empty_array_literal_vs_boolean_array_cast() {
+    let schema_form = "'{}'";
+    let db_form = "'{}'::boolean[]";
+    assert!(
+        expressions_semantically_equal(schema_form, db_form),
+        "Empty array literal should equal boolean[] typed cast form.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
+fn expressions_equal_empty_array_literal_vs_uuid_array_cast() {
+    let schema_form = "'{}'";
+    let db_form = "'{}'::uuid[]";
+    assert!(
+        expressions_semantically_equal(schema_form, db_form),
+        "Empty array literal should equal uuid[] typed cast form.\nSchema: {schema_form}\nDB: {db_form}"
     );
 }
