@@ -191,6 +191,10 @@ pub(crate) enum OpKey {
         version_schema: String,
         name: String,
     },
+    SetComment {
+        schema: String,
+        name: String,
+    },
 }
 
 impl OpKey {
@@ -420,6 +424,10 @@ impl OpKey {
                 name,
             } => OpKey::DropVersionView {
                 version_schema: version_schema.clone(),
+                name: name.clone(),
+            },
+            MigrationOp::SetComment { schema, name, .. } => OpKey::SetComment {
+                schema: schema.clone(),
                 name: name.clone(),
             },
         }

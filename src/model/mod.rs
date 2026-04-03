@@ -75,6 +75,27 @@ pub enum PendingOwnerObjectType {
     Domain,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingCommentObjectType {
+    Table,
+    Column,
+    Function,
+    View,
+    MaterializedView,
+    Type,
+    Domain,
+    Schema,
+    Sequence,
+    Trigger,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingComment {
+    pub object_type: PendingCommentObjectType,
+    pub object_key: String,
+    pub comment: Option<String>,
+}
+
 /// Represents a pending GRANT parsed from a GRANT statement.
 /// Used for cross-file resolution when GRANT statements are in separate files from object definitions.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,6 +157,10 @@ pub struct Schema {
     /// Cleared after finalize() is called.
     #[serde(skip)]
     pub pending_revokes: Vec<PendingRevoke>,
+    /// Comment statements collected during parsing, awaiting application to objects.
+    /// Cleared after finalize() is called.
+    #[serde(skip)]
+    pub pending_comments: Vec<PendingComment>,
     pub default_privileges: Vec<DefaultPrivilege>,
 }
 
@@ -151,6 +176,8 @@ pub struct Domain {
     pub owner: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<Grant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -320,6 +347,8 @@ pub struct EnumType {
     pub owner: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<Grant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 /// Represents a PostgreSQL schema (namespace).
@@ -328,6 +357,8 @@ pub struct PgSchema {
     pub name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<Grant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -453,6 +484,8 @@ pub struct Function {
     pub owner: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<Grant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 impl Function {
@@ -588,6 +621,8 @@ pub struct View {
     pub owner: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<Grant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 impl View {
@@ -735,6 +770,8 @@ pub struct Trigger {
     pub enabled: TriggerEnabled,
     pub old_table_name: Option<String>,
     pub new_table_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -759,6 +796,8 @@ pub struct Sequence {
     pub owner: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<Grant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -819,6 +858,7 @@ impl Schema {
             pending_owners: Vec::new(),
             pending_grants: Vec::new(),
             pending_revokes: Vec::new(),
+            pending_comments: Vec::new(),
             default_privileges: Vec::new(),
         }
     }
@@ -851,6 +891,7 @@ impl Schema {
         self.apply_pending_owners(false);
         self.apply_pending_grants(false);
         self.apply_pending_revokes(false);
+        self.apply_pending_comments(false);
         self.merge_all_grants();
         Ok(())
     }
@@ -875,6 +916,7 @@ impl Schema {
         self.apply_pending_owners(true);
         self.apply_pending_grants(true);
         self.apply_pending_revokes(true);
+        self.apply_pending_comments(true);
         self.merge_all_grants();
         orphaned
     }
@@ -1044,6 +1086,103 @@ impl Schema {
             true
         } else {
             false
+        }
+    }
+
+    fn apply_pending_comments(&mut self, keep_unapplied: bool) {
+        let pending = std::mem::take(&mut self.pending_comments);
+        if keep_unapplied {
+            let mut unapplied = Vec::new();
+            for pc in pending {
+                if !self.apply_single_comment(&pc) {
+                    unapplied.push(pc);
+                }
+            }
+            self.pending_comments = unapplied;
+        } else {
+            for pc in pending {
+                self.apply_single_comment(&pc);
+            }
+        }
+    }
+
+    fn apply_single_comment(&mut self, pc: &PendingComment) -> bool {
+        match pc.object_type {
+            PendingCommentObjectType::Table => {
+                if let Some(table) = self.tables.get_mut(&pc.object_key) {
+                    table.comment = pc.comment.clone();
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingCommentObjectType::Column => {
+                if let Some((table_key, col_name)) = pc.object_key.rsplit_once('.') {
+                    if let Some(table) = self.tables.get_mut(table_key) {
+                        if let Some(column) = table.columns.get_mut(col_name) {
+                            column.comment = pc.comment.clone();
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            PendingCommentObjectType::Function => {
+                if let Some(func) = self.functions.get_mut(&pc.object_key) {
+                    func.comment = pc.comment.clone();
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingCommentObjectType::View | PendingCommentObjectType::MaterializedView => {
+                if let Some(view) = self.views.get_mut(&pc.object_key) {
+                    view.comment = pc.comment.clone();
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingCommentObjectType::Type => {
+                if let Some(enum_type) = self.enums.get_mut(&pc.object_key) {
+                    enum_type.comment = pc.comment.clone();
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingCommentObjectType::Domain => {
+                if let Some(domain) = self.domains.get_mut(&pc.object_key) {
+                    domain.comment = pc.comment.clone();
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingCommentObjectType::Schema => {
+                if let Some(schema) = self.schemas.get_mut(&pc.object_key) {
+                    schema.comment = pc.comment.clone();
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingCommentObjectType::Sequence => {
+                if let Some(seq) = self.sequences.get_mut(&pc.object_key) {
+                    seq.comment = pc.comment.clone();
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingCommentObjectType::Trigger => {
+                if let Some(trigger) = self.triggers.get_mut(&pc.object_key) {
+                    trigger.comment = pc.comment.clone();
+                    true
+                } else {
+                    false
+                }
+            }
         }
     }
 
@@ -1315,6 +1454,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let func2 = Function {
@@ -1329,6 +1469,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(func1.semantically_equals(&func2));
@@ -1348,6 +1489,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let introspected_body = Function {
@@ -1362,6 +1504,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(parsed_body.semantically_equals(&introspected_body));
@@ -1479,6 +1622,7 @@ mod tests {
 
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         assert_eq!(enum_type.schema, "auth");
     }
@@ -1528,6 +1672,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         };
 
         assert_eq!(trigger.name, "audit_log");
@@ -1556,6 +1701,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         };
         schema
             .triggers
@@ -1629,6 +1775,7 @@ mod tests {
             }),
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let json = serde_json::to_string(&sequence).expect("Failed to serialize");
@@ -1683,6 +1830,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let func_lowercase = Function {
@@ -1702,6 +1850,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert_eq!(
@@ -1742,6 +1891,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let func_integer = Function {
@@ -1769,6 +1919,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert_eq!(
@@ -1832,6 +1983,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let introspected_view = View {
@@ -1841,6 +1993,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1855,6 +2008,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let introspected_view = View {
@@ -1864,6 +2018,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1878,6 +2033,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let introspected_view = View {
@@ -1887,6 +2043,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1901,6 +2058,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let introspected_view = View {
@@ -1910,6 +2068,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1924,6 +2083,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let introspected_view = View {
@@ -1933,6 +2093,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(parsed_view.semantically_equals(&introspected_view));
@@ -1947,6 +2108,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let view2 = View {
@@ -1956,6 +2118,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         assert!(!view1.semantically_equals(&view2));
@@ -1993,6 +2156,7 @@ mod tests {
             config_params: vec![("search_path".to_string(), "public".to_string())],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         assert_eq!(func.config_params.len(), 1);
         assert_eq!(func.config_params[0].0, "search_path");
@@ -2028,6 +2192,7 @@ mod tests {
             materialized: false,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
+            comment: None,
         };
         assert_eq!(view.owner, Some("postgres".to_string()));
     }
@@ -2047,6 +2212,7 @@ mod tests {
             owned_by: None,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
+            comment: None,
         };
         assert_eq!(sequence.owner, Some("postgres".to_string()));
     }
@@ -2059,6 +2225,7 @@ mod tests {
             values: vec!["admin".to_string(), "user".to_string()],
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
+            comment: None,
         };
         assert_eq!(enum_type.owner, Some("postgres".to_string()));
     }
@@ -2075,6 +2242,7 @@ mod tests {
             check_constraints: Vec::new(),
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
+            comment: None,
         };
         assert_eq!(domain.owner, Some("postgres".to_string()));
     }
@@ -2304,6 +2472,7 @@ mod tests {
             materialized: false,
             owner: Some("postgres".to_string()),
             grants: vec![grant],
+            comment: None,
         };
 
         assert_eq!(view.grants.len(), 1);
@@ -2335,6 +2504,7 @@ mod tests {
             config_params: vec![],
             owner: Some("postgres".to_string()),
             grants: vec![grant],
+            comment: None,
         };
 
         assert_eq!(func.grants.len(), 1);
@@ -2367,6 +2537,7 @@ mod tests {
             owned_by: None,
             owner: Some("postgres".to_string()),
             grants: vec![grant],
+            comment: None,
         };
 
         assert_eq!(sequence.grants.len(), 1);
@@ -2540,6 +2711,7 @@ fn function_semantically_equals_handles_null_type_cast() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     // Function from database (with cast added by PostgreSQL)
@@ -2560,6 +2732,7 @@ fn function_semantically_equals_handles_null_type_cast() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     // This currently FAILS because defaults are compared as strings
@@ -2590,6 +2763,7 @@ fn function_returns_table_case_insensitive_comparison() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     let from_db = Function {
@@ -2604,6 +2778,7 @@ fn function_returns_table_case_insensitive_comparison() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     assert!(
@@ -2629,6 +2804,7 @@ fn function_returns_table_type_alias_normalization() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     let from_db = Function {
@@ -2645,6 +2821,7 @@ fn function_returns_table_type_alias_normalization() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     assert!(
@@ -2667,6 +2844,7 @@ fn function_returns_table_parameterized_types() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     let from_db = Function {
@@ -2681,6 +2859,7 @@ fn function_returns_table_parameterized_types() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     assert!(
@@ -2703,6 +2882,7 @@ fn function_returns_table_multiword_type_aliases() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     let from_db = Function {
@@ -2717,6 +2897,7 @@ fn function_returns_table_multiword_type_aliases() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     assert!(
@@ -2775,6 +2956,7 @@ fn function_semantically_not_equals_quoted_vs_unquoted_mixed_case() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     let without_quotes = Function {
@@ -2789,6 +2971,7 @@ fn function_semantically_not_equals_quoted_vs_unquoted_mixed_case() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     assert!(
@@ -2815,6 +2998,7 @@ fn function_returns_table_timestamp_type_aliases() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     let from_db = Function {
@@ -2831,6 +3015,7 @@ fn function_returns_table_timestamp_type_aliases() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     assert!(
@@ -2870,6 +3055,7 @@ fn function_timestamp_param_no_perpetual_diff() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     let from_db = Function {
@@ -2897,6 +3083,7 @@ fn function_timestamp_param_no_perpetual_diff() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     assert!(
@@ -2972,6 +3159,7 @@ fn function_with_enum_param_converges() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     // Introspection returns public-qualified enum type
@@ -2992,6 +3180,7 @@ fn function_with_enum_param_converges() {
         config_params: vec![],
         owner: None,
         grants: vec![],
+        comment: None,
     };
 
     assert!(

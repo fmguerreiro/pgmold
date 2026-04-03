@@ -754,6 +754,7 @@ mod tests {
                 enabled: TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                comment: None,
             },
         );
 
@@ -788,6 +789,7 @@ mod tests {
                 enabled: TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                comment: None,
             },
         );
 
@@ -860,6 +862,7 @@ mod tests {
                 materialized: false,
                 owner: None,
                 grants: vec![],
+                comment: None,
             },
         );
 
@@ -896,6 +899,7 @@ mod tests {
                 materialized: false,
                 owner: None,
                 grants: vec![],
+                comment: None,
             },
         );
 
@@ -1037,6 +1041,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         let func_new = Function {
             name: "check_access".to_string(),
@@ -1055,6 +1060,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         from.functions.insert(
             qualified_name(&func_old.schema, &func_old.signature()),
@@ -1168,6 +1174,7 @@ mod tests {
                 update_columns: vec![],
                 old_table_name: None,
                 new_table_name: None,
+                comment: None,
             },
         );
 
@@ -1201,6 +1208,7 @@ mod tests {
                 update_columns: vec![],
                 old_table_name: None,
                 new_table_name: None,
+                comment: None,
             },
         );
 
@@ -1261,6 +1269,7 @@ mod tests {
                 materialized: false,
                 owner: None,
                 grants: vec![],
+                comment: None,
             },
         );
 
@@ -1286,6 +1295,7 @@ mod tests {
                 materialized: false,
                 owner: None,
                 grants: vec![],
+                comment: None,
             },
         );
 

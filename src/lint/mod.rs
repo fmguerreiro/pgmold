@@ -265,7 +265,8 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         | MigrationOp::DropVersionSchema { .. }
         | MigrationOp::CreateVersionView { .. }
         | MigrationOp::DropVersionView { .. }
-        | MigrationOp::BackfillHint { .. } => {}
+        | MigrationOp::BackfillHint { .. }
+        | MigrationOp::SetComment { .. } => {}
     }
 
     results

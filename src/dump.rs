@@ -1,5 +1,5 @@
 use crate::diff::dump_planner::plan_dump;
-use crate::diff::{GrantObjectKind, MigrationOp, OwnerObjectKind};
+use crate::diff::{CommentObjectType, GrantObjectKind, MigrationOp, OwnerObjectKind};
 use crate::model::{Grant, QualifiedName, Schema};
 use crate::pg::sqlgen::generate_sql;
 
@@ -51,6 +51,86 @@ struct DumpObjectInfo<'a> {
     args: Option<String>,
 }
 
+fn push_comment_op(
+    ops: &mut Vec<MigrationOp>,
+    object_type: CommentObjectType,
+    schema: &str,
+    name: &str,
+    comment: &Option<String>,
+) {
+    if let Some(text) = comment {
+        ops.push(MigrationOp::SetComment {
+            object_type,
+            schema: schema.to_string(),
+            name: name.to_string(),
+            arguments: None,
+            column: None,
+            target: None,
+            comment: Some(text.clone()),
+        });
+    }
+}
+
+fn push_column_comment_op(
+    ops: &mut Vec<MigrationOp>,
+    schema: &str,
+    table_name: &str,
+    column_name: &str,
+    comment: &Option<String>,
+) {
+    if let Some(text) = comment {
+        ops.push(MigrationOp::SetComment {
+            object_type: CommentObjectType::Column,
+            schema: schema.to_string(),
+            name: table_name.to_string(),
+            arguments: None,
+            column: Some(column_name.to_string()),
+            target: None,
+            comment: Some(text.clone()),
+        });
+    }
+}
+
+fn push_function_comment_op(
+    ops: &mut Vec<MigrationOp>,
+    schema: &str,
+    name: &str,
+    arguments: &str,
+    comment: &Option<String>,
+) {
+    if let Some(text) = comment {
+        ops.push(MigrationOp::SetComment {
+            object_type: CommentObjectType::Function,
+            schema: schema.to_string(),
+            name: name.to_string(),
+            arguments: Some(arguments.to_string()),
+            column: None,
+            target: None,
+            comment: Some(text.clone()),
+        });
+    }
+}
+
+fn push_trigger_comment_op(
+    ops: &mut Vec<MigrationOp>,
+    target_schema: &str,
+    trigger_name: &str,
+    target_name: &str,
+    comment: &Option<String>,
+) {
+    if let Some(text) = comment {
+        ops.push(MigrationOp::SetComment {
+            object_type: CommentObjectType::Trigger,
+            schema: target_schema.to_string(),
+            name: trigger_name.to_string(),
+            arguments: None,
+            column: None,
+            target: Some(target_name.to_string()),
+            comment: Some(text.clone()),
+        });
+    }
+}
+
 fn push_owner_and_grant_ops(ops: &mut Vec<MigrationOp>, info: DumpObjectInfo<'_>) {
     if let Some(ref owner) = info.owner {
         push_owner_op(
@@ -85,6 +165,13 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
             &pg_schema.name,
             None,
         );
+        push_comment_op(
+            &mut ops,
+            CommentObjectType::Schema,
+            "",
+            &pg_schema.name,
+            &pg_schema.comment,
+        );
     }
 
     for extension in schema.extensions.values() {
@@ -105,6 +192,13 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
                 args: None,
             },
         );
+        push_comment_op(
+            &mut ops,
+            CommentObjectType::Type,
+            &enum_type.schema,
+            &enum_type.name,
+            &enum_type.comment,
+        );
     }
 
     for domain in schema.domains.values() {
@@ -120,6 +214,13 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
                 name: &domain.name,
                 args: None,
             },
+        );
+        push_comment_op(
+            &mut ops,
+            CommentObjectType::Domain,
+            &domain.schema,
+            &domain.name,
+            &domain.comment,
         );
     }
 
@@ -137,12 +238,17 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
                 args: None,
             },
         );
+        push_comment_op(
+            &mut ops,
+            CommentObjectType::Sequence,
+            &sequence.schema,
+            &sequence.name,
+            &sequence.comment,
+        );
     }
 
     for table in schema.tables.values() {
         ops.push(MigrationOp::CreateTable(table.clone()));
-        // Note: indexes, foreign_keys, and check_constraints are handled by
-        // generate_create_table in sqlgen.rs, so we don't create separate ops here.
 
         if let Some(ref owner) = table.owner {
             push_owner_op(
@@ -175,6 +281,17 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
             &table.name,
             None,
         );
+
+        push_comment_op(
+            &mut ops,
+            CommentObjectType::Table,
+            &table.schema,
+            &table.name,
+            &table.comment,
+        );
+        for (col_name, col) in &table.columns {
+            push_column_comment_op(&mut ops, &table.schema, &table.name, col_name, &col.comment);
+        }
     }
 
     for partition in schema.partitions.values() {
@@ -198,8 +315,15 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
                 grant_kind: GrantObjectKind::Function,
                 schema: &function.schema,
                 name: &function.name,
-                args: Some(func_args),
+                args: Some(func_args.clone()),
             },
+        );
+        push_function_comment_op(
+            &mut ops,
+            &function.schema,
+            &function.name,
+            &func_args,
+            &function.comment,
         );
     }
 
@@ -217,10 +341,29 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
                 args: None,
             },
         );
+        let view_comment_type = if view.materialized {
+            CommentObjectType::MaterializedView
+        } else {
+            CommentObjectType::View
+        };
+        push_comment_op(
+            &mut ops,
+            view_comment_type,
+            &view.schema,
+            &view.name,
+            &view.comment,
+        );
     }
 
     for trigger in schema.triggers.values() {
         ops.push(MigrationOp::CreateTrigger(trigger.clone()));
+        push_trigger_comment_op(
+            &mut ops,
+            &trigger.target_schema,
+            &trigger.name,
+            &trigger.target_name,
+            &trigger.comment,
+        );
     }
 
     for dp in &schema.default_privileges {
@@ -503,6 +646,7 @@ mod tests {
                     table_name: "users".to_string(),
                     column_name: "id".to_string(),
                 }),
+                comment: None,
             },
         );
 
@@ -692,6 +836,7 @@ mod tests {
                     privileges,
                     with_grant_option: false,
                 }],
+                comment: None,
             },
         );
 
@@ -741,6 +886,7 @@ mod tests {
                     with_grant_option: false,
                 },
             ],
+            comment: None,
         };
         schema
             .sequences

@@ -1,6 +1,6 @@
 use crate::diff::{
-    ColumnChanges, DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp, OwnerObjectKind,
-    PolicyChanges, SequenceChanges,
+    ColumnChanges, CommentObjectType, DomainChanges, EnumValuePosition, GrantObjectKind,
+    MigrationOp, OwnerObjectKind, PolicyChanges, SequenceChanges,
 };
 use crate::model::{
     parse_qualified_name, versioned_schema_name, ArgMode, CheckConstraint, Column, Domain,
@@ -500,6 +500,65 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                     grant_option
                 )]
             }
+        }
+
+        MigrationOp::SetComment {
+            object_type,
+            schema,
+            name,
+            arguments,
+            column,
+            target,
+            comment,
+        } => {
+            let object_sql = match object_type {
+                CommentObjectType::Table => {
+                    format!("TABLE {}", quote_qualified(schema, name))
+                }
+                CommentObjectType::Column => {
+                    let col = column.as_deref().unwrap_or("");
+                    format!(
+                        "COLUMN {}.{}",
+                        quote_qualified(schema, name),
+                        quote_ident(col)
+                    )
+                }
+                CommentObjectType::Function => {
+                    let args = arguments.as_deref().unwrap_or("");
+                    format!("FUNCTION {}({})", quote_qualified(schema, name), args)
+                }
+                CommentObjectType::View => {
+                    format!("VIEW {}", quote_qualified(schema, name))
+                }
+                CommentObjectType::MaterializedView => {
+                    format!("MATERIALIZED VIEW {}", quote_qualified(schema, name))
+                }
+                CommentObjectType::Type => {
+                    format!("TYPE {}", quote_qualified(schema, name))
+                }
+                CommentObjectType::Domain => {
+                    format!("DOMAIN {}", quote_qualified(schema, name))
+                }
+                CommentObjectType::Schema => {
+                    format!("SCHEMA {}", quote_ident(name))
+                }
+                CommentObjectType::Sequence => {
+                    format!("SEQUENCE {}", quote_qualified(schema, name))
+                }
+                CommentObjectType::Trigger => {
+                    let target_name = target.as_deref().unwrap_or("");
+                    format!(
+                        "TRIGGER {} ON {}",
+                        quote_ident(name),
+                        quote_qualified(schema, target_name)
+                    )
+                }
+            };
+            let comment_sql = match comment {
+                Some(text) => format!("'{}'", escape_string(text)),
+                None => "NULL".to_string(),
+            };
+            vec![format!("COMMENT ON {} IS {};", object_sql, comment_sql)]
         }
 
         MigrationOp::CreateVersionSchema {
@@ -1488,6 +1547,7 @@ mod tests {
 
             owner: None,
             grants: Vec::new(),
+            comment: None,
         })];
 
         let sql = generate_sql(&ops);
@@ -1728,6 +1788,7 @@ mod tests {
 
             owner: None,
             grants: Vec::new(),
+            comment: None,
         })];
 
         let sql = generate_sql(&ops);
@@ -1748,6 +1809,7 @@ mod tests {
 
             owner: None,
             grants: Vec::new(),
+            comment: None,
         })];
 
         let sql = generate_sql(&ops);
@@ -1947,6 +2009,7 @@ mod tests {
         let ops = vec![MigrationOp::CreateSchema(crate::model::PgSchema {
             name: "auth".to_string(),
             grants: Vec::new(),
+            comment: None,
         })];
 
         let sql = generate_sql(&ops);
@@ -2022,6 +2085,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -2055,6 +2119,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -2088,6 +2153,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -2115,6 +2181,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -2234,6 +2301,7 @@ mod tests {
             enabled: TriggerEnabled::Disabled,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -2264,6 +2332,7 @@ mod tests {
 
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         let op = MigrationOp::CreateSequence(seq);
         let sql = generate_sql(&[op]);
@@ -2295,6 +2364,7 @@ mod tests {
                 table_name: "users".to_string(),
                 column_name: "id".to_string(),
             }),
+            comment: None,
         };
         let op = MigrationOp::CreateSequence(seq);
         let sql = generate_sql(&[op]);
@@ -2421,6 +2491,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: Some("deleted_rows".to_string()),
             new_table_name: None,
+            comment: None,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -2449,6 +2520,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: Some("inserted_rows".to_string()),
+            comment: None,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -2477,6 +2549,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: Some("old_rows".to_string()),
             new_table_name: Some("new_rows".to_string()),
+            comment: None,
         };
 
         let ops = vec![MigrationOp::CreateTrigger(trigger)];
@@ -2500,6 +2573,7 @@ mod tests {
 
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let ops = vec![MigrationOp::CreateDomain(domain)];
@@ -2526,6 +2600,7 @@ mod tests {
 
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let ops = vec![MigrationOp::CreateDomain(domain)];
@@ -2554,6 +2629,7 @@ mod tests {
             }],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let ops = vec![MigrationOp::CreateDomain(domain)];
@@ -2673,6 +2749,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let ddl = generate_function_ddl(&func, false);
@@ -2750,6 +2827,7 @@ mod tests {
             config_params: vec![("search_path".to_string(), "public".to_string())],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let ddl = generate_function_ddl(&func, false);
@@ -2776,6 +2854,7 @@ mod tests {
             config_params: vec![("search_path".to_string(), "''".to_string())],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let ddl = generate_function_ddl(&func, false);
@@ -2805,6 +2884,7 @@ mod tests {
             ],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let ddl = generate_function_ddl(&func, false);
@@ -2832,6 +2912,7 @@ mod tests {
             config_params: vec![],
             owner: Some("supabase_auth_admin".to_string()),
             grants: Vec::new(),
+            comment: None,
         };
 
         let ops = vec![MigrationOp::CreateFunction(func)];
@@ -3738,6 +3819,7 @@ mod tests {
                 materialized: true,
                 owner: None,
                 grants: vec![],
+                comment: None,
             },
         }];
 

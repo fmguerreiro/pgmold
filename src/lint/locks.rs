@@ -665,6 +665,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         })];
         let warnings = detect_lock_hazards(&ops);
 
@@ -735,6 +736,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             },
         }];
         let warnings = detect_lock_hazards(&ops);

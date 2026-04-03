@@ -1176,6 +1176,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             }),
         ];
 
@@ -1219,6 +1220,7 @@ mod tests {
 
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             }),
         ];
 
@@ -1258,6 +1260,7 @@ mod tests {
 
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         let view_b = View {
             name: "view_b".to_string(),
@@ -1267,6 +1270,7 @@ mod tests {
 
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
         let view_c = View {
             name: "view_c".to_string(),
@@ -1276,6 +1280,7 @@ mod tests {
 
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let ops = vec![
@@ -1358,6 +1363,7 @@ mod tests {
                 table_name: "users".to_string(),
                 column_name: "id".to_string(),
             }),
+            comment: None,
         };
         let table = simple_table_with_fks("users", vec![]);
 
@@ -1410,6 +1416,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let ops = vec![
@@ -1615,6 +1622,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         };
 
         let ops = vec![
@@ -1672,6 +1680,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: vec![],
+            comment: None,
         };
 
         let ops = vec![
@@ -1782,6 +1791,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         };
 
         let ops = vec![
@@ -1823,6 +1833,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: vec![],
+            comment: None,
         };
 
         let ops = vec![
@@ -1903,6 +1914,7 @@ mod tests {
             values: vec!["active".to_string(), "inactive".to_string()],
             owner: None,
             grants: vec![],
+            comment: None,
         };
         let users = simple_table_with_fks("users", vec![]);
 
@@ -1984,6 +1996,7 @@ mod tests {
             values: vec!["active".to_string()],
             owner: None,
             grants: vec![],
+            comment: None,
         };
 
         let users = simple_table_with_fks("users", vec![]);
@@ -2130,6 +2143,7 @@ mod tests {
             grants: Vec::new(),
             cache: Some(1),
             owned_by: None,
+            comment: None,
         };
 
         // Create table that uses the sequence (like in the bug report)
@@ -2255,6 +2269,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: vec![],
+            comment: None,
         };
 
         let ops = vec![
@@ -2317,6 +2332,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: vec![],
+            comment: None,
         };
 
         let ops = vec![
@@ -2367,6 +2383,7 @@ mod tests {
             grants: Vec::new(),
             cache: Some(1),
             owned_by: None,
+            comment: None,
         };
 
         let ops = vec![
@@ -2410,6 +2427,7 @@ mod tests {
             values: vec!["active".to_string(), "inactive".to_string()],
             owner: None,
             grants: vec![],
+            comment: None,
         };
 
         let ops = vec![
@@ -2457,6 +2475,7 @@ mod tests {
             check_constraints: vec![],
             owner: None,
             grants: vec![],
+            comment: None,
         };
 
         let ops = vec![
@@ -2497,6 +2516,7 @@ mod tests {
         let schema = PgSchema {
             name: "api".to_string(),
             grants: vec![],
+            comment: None,
         };
 
         let ops = vec![
@@ -2623,6 +2643,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: vec![],
+            comment: None,
         };
 
         let func_b = Function {
@@ -2642,6 +2663,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: vec![],
+            comment: None,
         };
 
         let func_c = Function {
@@ -2661,6 +2683,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: vec![],
+            comment: None,
         };
 
         // Input ops in scrambled order: [top, base, middle]
@@ -2720,6 +2743,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let ops = vec![
@@ -2730,6 +2754,7 @@ mod tests {
                 values: vec!["project".to_string(), "field".to_string()],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             }),
         ];
 
@@ -2769,6 +2794,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let domain = Domain {
@@ -2781,6 +2807,7 @@ mod tests {
             check_constraints: vec![],
             owner: None,
             grants: vec![],
+            comment: None,
         };
 
         let ops = vec![
@@ -2819,6 +2846,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let ops = vec![
@@ -2861,6 +2889,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let mut table = simple_table_with_fks("ProcurementFacility", vec![]);
@@ -2902,6 +2931,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let table = simple_table_with_fks("Users", vec![]);
@@ -2944,6 +2974,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let mut unrelated_table = simple_table_with_fks("Parcel", vec![]);
@@ -2956,6 +2987,7 @@ mod tests {
                 values: vec!["project".to_string(), "field".to_string()],
                 owner: None,
                 grants: Vec::new(),
+                comment: None,
             }),
             MigrationOp::CreateTable(unrelated_table),
             MigrationOp::CreateFunction(func),
@@ -2992,6 +3024,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         };
 
         let table = simple_table_with_fks("orders", vec![]);
@@ -3044,6 +3077,7 @@ mod tests {
             config_params: vec![],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         }
     }
 
@@ -3072,6 +3106,7 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            comment: None,
         }
     }
 
@@ -3083,6 +3118,7 @@ mod tests {
             materialized: false,
             owner: None,
             grants: Vec::new(),
+            comment: None,
         }
     }
 
@@ -3102,6 +3138,7 @@ mod tests {
         PgSchema {
             name: name.to_string(),
             grants: vec![],
+            comment: None,
         }
     }
 
@@ -3120,6 +3157,7 @@ mod tests {
             values: vec!["active".to_string()],
             owner: None,
             grants: Vec::new(),
+            comment: None,
         }
     }
 
@@ -3134,6 +3172,7 @@ mod tests {
             check_constraints: vec![],
             owner: None,
             grants: vec![],
+            comment: None,
         }
     }
 
@@ -3151,6 +3190,7 @@ mod tests {
             grants: Vec::new(),
             cache: Some(1),
             owned_by: None,
+            comment: None,
         }
     }
 
@@ -4085,6 +4125,7 @@ mod tests {
                     materialized: false,
                     owner: None,
                     grants: Vec::new(),
+                    comment: None,
                 },
             },
             MigrationOp::CreateFunction(make_simple_function("is_active", "auth")),
