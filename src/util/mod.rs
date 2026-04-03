@@ -885,9 +885,7 @@ fn normalize_join_constraint(
 /// Tries to reduce a scalar subquery of the form `(SELECT func() [AS alias])` with no
 /// FROM, WHERE, GROUP BY, HAVING, ORDER BY, or LIMIT to just the function call expression.
 ///
-/// PostgreSQL's `pg_get_expr` rewrites direct function calls in policy USING/CHECK clauses
-/// to scalar subquery form, e.g. `auth.is_admin()` becomes `( SELECT auth.is_admin() AS is_admin)`.
-/// This function detects that pattern and reduces it back to the bare function call so that
+/// Detects that pattern and reduces it back to the bare function call so that
 /// both forms compare as equal.
 fn try_simplify_scalar_subquery(query: &Query) -> Option<Expr> {
     if query.with.is_some() || query.order_by.is_some() || query.limit_clause.is_some() {
@@ -1088,10 +1086,6 @@ fn normalize_expr(expr: &Expr) -> Expr {
             }
         }
 
-        // Normalize subquery expressions.
-        // Scalar subqueries of the form (SELECT func() [AS alias]) are reduced to func()
-        // because PostgreSQL's pg_get_expr rewrites direct function calls in policy
-        // USING/CHECK clauses to that scalar subquery form.
         Expr::Subquery(q) => {
             if let Some(simplified) = try_simplify_scalar_subquery(q) {
                 simplified
@@ -2319,9 +2313,6 @@ fn expressions_equal_scalar_subquery_with_auto_alias() {
 
 #[test]
 fn function_call_equals_scalar_subquery_form() {
-    // Issue #187: PostgreSQL (Supabase) may rewrite auth.is_admin() to
-    // ( SELECT auth.is_admin() AS is_admin) in pg_get_expr output.
-    // Schema file stores the direct function call, DB returns the subquery form.
     let schema_form = "auth.is_admin()";
     let db_form = "( SELECT auth.is_admin() AS is_admin)";
     assert!(
@@ -2332,7 +2323,6 @@ fn function_call_equals_scalar_subquery_form() {
 
 #[test]
 fn function_call_with_args_equals_scalar_subquery_form() {
-    // Issue #187: Same as above but for functions with arguments
     let schema_form = "auth.uid()";
     let db_form = "( SELECT auth.uid() AS uid)";
     assert!(
@@ -2343,12 +2333,29 @@ fn function_call_with_args_equals_scalar_subquery_form() {
 
 #[test]
 fn function_call_in_comparison_equals_scalar_subquery_form() {
-    // Issue #187: When the function call is part of a larger expression
     let schema_form = "auth.uid() = user_id";
     let db_form = "( SELECT auth.uid() AS uid) = user_id";
     assert!(
         expressions_semantically_equal(schema_form, db_form),
         "Function call in comparison should equal scalar subquery form.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
+fn try_simplify_scalar_subquery_matches_sqlparser_group_by_variant() {
+    let dialect = PostgreSqlDialect {};
+    let expr_str = "( SELECT auth.is_admin() AS is_admin)";
+    let parsed = Parser::new(&dialect)
+        .try_with_sql(expr_str)
+        .expect("valid SQL")
+        .parse_expr()
+        .expect("parse expr");
+    let Expr::Subquery(query) = parsed else {
+        panic!("expected Expr::Subquery, got something else");
+    };
+    assert!(
+        try_simplify_scalar_subquery(&query).is_some(),
+        "GROUP BY guard in try_simplify_scalar_subquery did not match sqlparser's AST for: {expr_str}"
     );
 }
 

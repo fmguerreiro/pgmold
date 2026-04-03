@@ -2058,10 +2058,6 @@ mod tests {
 
     #[test]
     fn policy_expression_comparison_function_call_vs_scalar_subquery() {
-        // Issue #187: PostgreSQL (Supabase) rewrites auth.is_admin() in pg_get_expr
-        // to ( SELECT auth.is_admin() AS is_admin). The schema file stores the direct
-        // function call form, while the DB returns the scalar subquery form.
-        // This causes a false diff on 300+ identical policies.
         let mut from = empty_schema();
         let mut table = simple_table("feature_flags");
         table.row_level_security = true;
