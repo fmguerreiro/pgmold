@@ -2225,24 +2225,12 @@ mod tests {
 
     fn make_parent_table(schema: &str, name: &str) -> Table {
         Table {
-            schema: schema.to_string(),
-            name: name.to_string(),
-            columns: BTreeMap::new(),
-            indexes: vec![],
-            primary_key: None,
-            foreign_keys: vec![],
-            check_constraints: vec![],
-            comment: None,
-            row_level_security: false,
-            force_row_level_security: false,
-            policies: vec![],
             partition_by: Some(PartitionKey {
                 strategy: PartitionStrategy::Range,
                 columns: vec!["created_at".to_string()],
                 expressions: vec![],
             }),
-            owner: None,
-            grants: Vec::new(),
+            ..make_table(schema, name)
         }
     }
 
@@ -2276,8 +2264,10 @@ mod tests {
 
         let result = exclude_unmanaged_partitions(&current, &target);
 
-        assert_eq!(result.partitions.len(), 1);
-        assert!(result.partitions.contains_key("audit.log_2024"));
+        assert_eq!(
+            result.partitions.keys().collect::<Vec<_>>(),
+            vec!["audit.log_2024"]
+        );
     }
 
     #[test]
@@ -2299,9 +2289,10 @@ mod tests {
 
         let result = exclude_unmanaged_partitions(&current, &target);
 
-        assert_eq!(result.partitions.len(), 2);
-        assert!(result.partitions.contains_key("audit.log_2024"));
-        assert!(result.partitions.contains_key("audit.log_2025"));
+        assert_eq!(
+            result.partitions.keys().collect::<Vec<_>>(),
+            vec!["audit.log_2024", "audit.log_2025"]
+        );
     }
 
     #[test]
@@ -2323,9 +2314,44 @@ mod tests {
 
         let result = exclude_unmanaged_partitions(&current, &target);
 
-        assert_eq!(result.partitions.len(), 2);
-        assert!(result.partitions.contains_key("audit.log_2024"));
-        assert!(result.partitions.contains_key("audit.log_2025"));
+        assert_eq!(
+            result.partitions.keys().collect::<Vec<_>>(),
+            vec!["audit.log_2024", "audit.log_2025"]
+        );
+    }
+
+    #[test]
+    fn exclude_unmanaged_partitions_cross_schema_parent() {
+        let mut target = Schema::default();
+        target.tables.insert(
+            "public.events".to_string(),
+            make_parent_table("public", "events"),
+        );
+        target.partitions.insert(
+            "partitions.events_2024".to_string(),
+            make_partition("partitions", "events_2024", "public", "events"),
+        );
+
+        let mut current = Schema::default();
+        current.tables.insert(
+            "public.events".to_string(),
+            make_parent_table("public", "events"),
+        );
+        current.partitions.insert(
+            "partitions.events_2024".to_string(),
+            make_partition("partitions", "events_2024", "public", "events"),
+        );
+        current.partitions.insert(
+            "partitions.events_2025".to_string(),
+            make_partition("partitions", "events_2025", "public", "events"),
+        );
+
+        let result = exclude_unmanaged_partitions(&current, &target);
+
+        assert_eq!(
+            result.partitions.keys().collect::<Vec<_>>(),
+            vec!["partitions.events_2024"]
+        );
     }
 
     #[test]
@@ -2343,25 +2369,9 @@ mod tests {
         current
             .tables
             .insert("audit.log".to_string(), make_parent_table("audit", "log"));
-        current.tables.insert(
-            "public.users".to_string(),
-            Table {
-                schema: "public".to_string(),
-                name: "users".to_string(),
-                columns: BTreeMap::new(),
-                indexes: vec![],
-                primary_key: None,
-                foreign_keys: vec![],
-                check_constraints: vec![],
-                comment: None,
-                row_level_security: false,
-                force_row_level_security: false,
-                policies: vec![],
-                partition_by: None,
-                owner: None,
-                grants: Vec::new(),
-            },
-        );
+        current
+            .tables
+            .insert("public.users".to_string(), make_table("public", "users"));
         current.partitions.insert(
             "audit.log_2024".to_string(),
             make_partition("audit", "log_2024", "audit", "log"),
@@ -2372,29 +2382,16 @@ mod tests {
         );
         current.functions.insert(
             "public.my_func".to_string(),
-            Function {
-                name: "my_func".to_string(),
-                schema: "public".to_string(),
-                arguments: vec![],
-                return_type: "void".to_string(),
-                language: "sql".to_string(),
-                body: "SELECT 1".to_string(),
-                volatility: Volatility::Volatile,
-                security: SecurityType::Invoker,
-                config_params: vec![],
-                owner: None,
-                grants: Vec::new(),
-            },
+            make_function("public", "my_func"),
         );
 
         let result = exclude_unmanaged_partitions(&current, &target);
 
-        assert_eq!(result.partitions.len(), 1);
-        assert!(result.partitions.contains_key("audit.log_2024"));
+        assert_eq!(
+            result.partitions.keys().collect::<Vec<_>>(),
+            vec!["audit.log_2024"]
+        );
         assert_eq!(result.tables.len(), 2);
-        assert!(result.tables.contains_key("public.users"));
-        assert!(result.tables.contains_key("audit.log"));
         assert_eq!(result.functions.len(), 1);
-        assert!(result.functions.contains_key("public.my_func"));
     }
 }
