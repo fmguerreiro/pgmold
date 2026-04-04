@@ -413,7 +413,6 @@ impl MigrationGraph {
             &ns.force_rls,
             &ns.version_views,
             &ns.alter_columns,
-            &ns.alter_views,
             &ns.alter_sequences,
         ]
         .into_iter()
