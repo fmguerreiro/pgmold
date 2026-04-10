@@ -25,78 +25,73 @@ fn proptest_roundtrip_convergence() {
     };
     let mut runner = TestRunner::new(config);
 
-    let result = runner.run(
-        &convergence_test_strategy(),
-        |(schema_name, schema_sql)| {
-            let unique_name = unique_schema_name(&schema_name);
-            let rewritten_sql = schema_sql.replace(&schema_name, &unique_name);
+    let result = runner.run(&convergence_test_strategy(), |(schema_name, schema_sql)| {
+        let unique_name = unique_schema_name(&schema_name);
+        let rewritten_sql = schema_sql.replace(&schema_name, &unique_name);
 
+        rt.block_on(async {
+            sqlx::query(&format!("CREATE SCHEMA \"{unique_name}\""))
+                .execute(connection.pool())
+                .await
+                .unwrap();
+        });
+
+        let cleanup = |rt: &tokio::runtime::Runtime, connection: &PgConnection, name: &str| {
             rt.block_on(async {
-                sqlx::query(&format!("CREATE SCHEMA \"{unique_name}\""))
+                let _ = sqlx::query(&format!("DROP SCHEMA \"{name}\" CASCADE"))
                     .execute(connection.pool())
-                    .await
-                    .unwrap();
+                    .await;
             });
+        };
 
-            let cleanup =
-                |rt: &tokio::runtime::Runtime, connection: &PgConnection, name: &str| {
-                    rt.block_on(async {
-                        let _ = sqlx::query(&format!("DROP SCHEMA \"{name}\" CASCADE"))
-                            .execute(connection.pool())
-                            .await;
-                    });
-                };
-
-            let target = match parse_sql_string(&rewritten_sql) {
-                Ok(s) => s,
-                Err(_) => {
-                    cleanup(&rt, &connection, &unique_name);
-                    return Ok(());
-                }
-            };
-
-            let schema_names = vec![unique_name.clone()];
-
-            let empty = rt
-                .block_on(introspect_schema(&connection, &schema_names, false))
-                .unwrap();
-
-            let ops = compute_diff(&empty, &target);
-            let planned = plan_migration(ops);
-            let sql_stmts = generate_sql(&planned);
-
-            for stmt in &sql_stmts {
-                let result =
-                    rt.block_on(async { sqlx::query(stmt).execute(connection.pool()).await });
-                if let Err(e) = result {
-                    cleanup(&rt, &connection, &unique_name);
-                    prop_assert!(
-                        false,
-                        "Failed to execute SQL:\n{stmt}\nError: {e}\n\nFull SQL:\n{rewritten_sql}"
-                    );
-                    return Ok(());
-                }
+        let target = match parse_sql_string(&rewritten_sql) {
+            Ok(s) => s,
+            Err(_) => {
+                cleanup(&rt, &connection, &unique_name);
+                return Ok(());
             }
+        };
 
-            let after = rt
-                .block_on(introspect_schema(&connection, &schema_names, false))
-                .unwrap();
+        let schema_names = vec![unique_name.clone()];
 
-            let second_diff = compute_diff(&after, &target);
+        let empty = rt
+            .block_on(introspect_schema(&connection, &schema_names, false))
+            .unwrap();
 
-            cleanup(&rt, &connection, &unique_name);
+        let ops = compute_diff(&empty, &target);
+        let planned = plan_migration(ops);
+        let sql_stmts = generate_sql(&planned);
 
-            prop_assert!(
-                second_diff.is_empty(),
-                "Expected zero ops after apply, but got {} op(s):\n{:?}\n\nOriginal SQL:\n{}",
-                second_diff.len(),
-                second_diff,
-                rewritten_sql
-            );
+        for stmt in &sql_stmts {
+            let result = rt.block_on(async { sqlx::query(stmt).execute(connection.pool()).await });
+            if let Err(e) = result {
+                cleanup(&rt, &connection, &unique_name);
+                prop_assert!(
+                    false,
+                    "Failed to execute SQL:\n{stmt}\nError: {e}\n\nFull SQL:\n{rewritten_sql}"
+                );
+                return Ok(());
+            }
+        }
 
-            Ok(())
-        },
-    );
+        let after = rt
+            .block_on(introspect_schema(&connection, &schema_names, false))
+            .unwrap();
+
+        let second_diff = compute_diff(&after, &target);
+
+        cleanup(&rt, &connection, &unique_name);
+
+        prop_assert!(
+            second_diff.is_empty(),
+            "Expected zero ops after apply, but got {} op(s):\n{:?}\n\nOriginal SQL:\n{}",
+            second_diff.len(),
+            second_diff,
+            rewritten_sql
+        );
+
+        Ok(())
+    });
 
     // Drop the container within the tokio runtime to avoid the "no reactor" panic
     rt.block_on(async {

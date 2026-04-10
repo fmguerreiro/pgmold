@@ -8,11 +8,51 @@ use proptest::strategy::Union;
 pub fn identifier_strategy() -> impl Strategy<Value = String> {
     "[a-z][a-z0-9_]{0,29}".prop_filter("not a reserved word", |s| {
         ![
-            "user", "order", "group", "table", "select", "from", "where", "index", "type",
-            "column", "check", "constraint", "primary", "foreign", "key", "references", "default",
-            "not", "null", "unique", "create", "drop", "alter", "grant", "revoke", "on", "to",
-            "in", "as", "is", "and", "or", "true", "false", "like", "between", "case", "when",
-            "then", "else", "end", "all", "any", "set", "values",
+            "user",
+            "order",
+            "group",
+            "table",
+            "select",
+            "from",
+            "where",
+            "index",
+            "type",
+            "column",
+            "check",
+            "constraint",
+            "primary",
+            "foreign",
+            "key",
+            "references",
+            "default",
+            "not",
+            "null",
+            "unique",
+            "create",
+            "drop",
+            "alter",
+            "grant",
+            "revoke",
+            "on",
+            "to",
+            "in",
+            "as",
+            "is",
+            "and",
+            "or",
+            "true",
+            "false",
+            "like",
+            "between",
+            "case",
+            "when",
+            "then",
+            "else",
+            "end",
+            "all",
+            "any",
+            "set",
+            "values",
         ]
         .contains(&s.as_str())
     })
@@ -79,11 +119,8 @@ pub struct TableDef {
 
 fn column_default_strategy(col_type: &str) -> BoxedStrategy<Option<String>> {
     let type_lower = col_type.to_lowercase();
-    let mut choices: Vec<BoxedStrategy<Option<String>>> = vec![
-        Just(None).boxed(),
-        Just(None).boxed(),
-        Just(None).boxed(),
-    ];
+    let mut choices: Vec<BoxedStrategy<Option<String>>> =
+        vec![Just(None).boxed(), Just(None).boxed(), Just(None).boxed()];
 
     match type_lower.as_str() {
         "integer" | "bigint" | "smallint" => {
@@ -176,9 +213,7 @@ fn enum_type_strategy(schema_name: String) -> impl Strategy<Value = (String, Str
                 .map(|v| format!("'{v}'"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let ddl = format!(
-                "CREATE TYPE {schema_name}.{enum_name} AS ENUM ({values_str});"
-            );
+            let ddl = format!("CREATE TYPE {schema_name}.{enum_name} AS ENUM ({values_str});");
             let qualified = format!("{schema_name}.{enum_name}");
             (ddl, qualified)
         })
@@ -203,9 +238,7 @@ fn check_constraint_strategy(
             .into_iter()
             .enumerate()
             .map(|(i, (col, op))| {
-                format!(
-                    "    CONSTRAINT {table_name}_check_{i} CHECK ({col} {op})"
-                )
+                format!("    CONSTRAINT {table_name}_check_{i} CHECK ({col} {op})")
             })
             .collect()
     })
@@ -340,8 +373,10 @@ pub fn rich_schema_sql_strategy(schema_name: String) -> impl Strategy<Value = St
         move |enum_defs| {
             let sn = schema_name.clone();
             let enum_ddls: Vec<String> = enum_defs.iter().map(|(ddl, _)| ddl.clone()).collect();
-            let enum_types: Vec<String> =
-                enum_defs.iter().map(|(_, qualified)| qualified.clone()).collect();
+            let enum_types: Vec<String> = enum_defs
+                .iter()
+                .map(|(_, qualified)| qualified.clone())
+                .collect();
 
             struct Acc {
                 schema_name: String,
@@ -365,9 +400,8 @@ pub fn rich_schema_sql_strategy(schema_name: String) -> impl Strategy<Value = St
                     table_count as usize,
                 )
                 .prop_map(move |tables| {
-                    let mut parts: Vec<String> = vec![
-                        format!("CREATE SCHEMA IF NOT EXISTS {acc_sn};"),
-                    ];
+                    let mut parts: Vec<String> =
+                        vec![format!("CREATE SCHEMA IF NOT EXISTS {acc_sn};")];
                     parts.extend(acc_ddls.clone());
 
                     let mut previous_table_names: Vec<String> = vec![];
