@@ -27,16 +27,69 @@ pub struct TableInfo {
 pub fn identifier_strategy() -> impl Strategy<Value = String> {
     "[a-z][a-z0-9_]{0,29}".prop_filter("not a reserved word", |s| {
         ![
-            "user", "order", "group", "table", "select", "from", "where",
-            "index", "type", "column", "check", "constraint", "primary",
-            "foreign", "key", "references", "default", "not", "null",
-            "unique", "create", "drop", "alter", "grant", "revoke", "on",
-            "to", "in", "as", "is", "and", "or", "true", "false", "like",
-            "between", "case", "when", "then", "else", "end", "all", "any",
-            "set", "values",
-            "do", "for", "into", "only", "both", "cast", "fetch", "limit",
-            "offset", "union", "except", "having", "some", "desc", "array",
-            "ilike", "window", "using",
+            "user",
+            "order",
+            "group",
+            "table",
+            "select",
+            "from",
+            "where",
+            "index",
+            "type",
+            "column",
+            "check",
+            "constraint",
+            "primary",
+            "foreign",
+            "key",
+            "references",
+            "default",
+            "not",
+            "null",
+            "unique",
+            "create",
+            "drop",
+            "alter",
+            "grant",
+            "revoke",
+            "on",
+            "to",
+            "in",
+            "as",
+            "is",
+            "and",
+            "or",
+            "true",
+            "false",
+            "like",
+            "between",
+            "case",
+            "when",
+            "then",
+            "else",
+            "end",
+            "all",
+            "any",
+            "set",
+            "values",
+            "do",
+            "for",
+            "into",
+            "only",
+            "both",
+            "cast",
+            "fetch",
+            "limit",
+            "offset",
+            "union",
+            "except",
+            "having",
+            "some",
+            "desc",
+            "array",
+            "ilike",
+            "window",
+            "using",
         ]
         .contains(&s.as_str())
     })
@@ -275,9 +328,7 @@ fn index_strategy(
                 .map(|(i, (cols, unique))| {
                     let unique_str = if unique { "UNIQUE " } else { "" };
                     let cols_str = cols.join(", ");
-                    format!(
-                        "CREATE {unique_str}INDEX {tn}_idx_{i} ON {sn}.{tn} ({cols_str});"
-                    )
+                    format!("CREATE {unique_str}INDEX {tn}_idx_{i} ON {sn}.{tn} ({cols_str});")
                 })
                 .collect()
         })
@@ -409,11 +460,7 @@ fn rich_table_strategy(
                     .find(|e| e.qualified_name == *col_type)
                 {
                     if let Some(first_value) = enum_info.values.first() {
-                        enum_columns.push((
-                            name.clone(),
-                            col_type.clone(),
-                            first_value.clone(),
-                        ));
+                        enum_columns.push((name.clone(), col_type.clone(), first_value.clone()));
                     }
                 }
                 if is_indexable_type(col_type) {
@@ -508,10 +555,7 @@ fn extra_function_strategy(
 // View strategy (0-2 views)
 // ---------------------------------------------------------------------------
 
-fn view_strategy(
-    schema_name: String,
-    table_infos: Vec<TableInfo>,
-) -> BoxedStrategy<Vec<String>> {
+fn view_strategy(schema_name: String, table_infos: Vec<TableInfo>) -> BoxedStrategy<Vec<String>> {
     if table_infos.is_empty() {
         return Just(vec![]).boxed();
     }
@@ -604,10 +648,7 @@ fn view_strategy(
 // Policy strategy (0-2 policy groups with RLS enable)
 // ---------------------------------------------------------------------------
 
-fn policy_strategy(
-    schema_name: String,
-    table_infos: Vec<TableInfo>,
-) -> BoxedStrategy<Vec<String>> {
+fn policy_strategy(schema_name: String, table_infos: Vec<TableInfo>) -> BoxedStrategy<Vec<String>> {
     if table_infos.is_empty() {
         return Just(vec![]).boxed();
     }
