@@ -96,27 +96,32 @@ pub fn identifier_strategy() -> impl Strategy<Value = String> {
 }
 
 pub fn column_type_strategy() -> impl Strategy<Value = String> {
+    let fixed_types = proptest::sample::select(vec![
+        "integer",
+        "bigint",
+        "smallint",
+        "text",
+        "boolean",
+        "timestamp",
+        "timestamptz",
+        "date",
+        "interval",
+        "uuid",
+        "jsonb",
+        "double precision",
+        "real",
+        "bytea",
+        "inet",
+        "numeric",
+        "text[]",
+        "integer[]",
+        "boolean[]",
+    ])
+    .prop_map(String::from);
+
     prop_oneof![
-        Just("integer".to_string()),
-        Just("bigint".to_string()),
-        Just("smallint".to_string()),
-        Just("text".to_string()),
-        Just("boolean".to_string()),
-        Just("timestamp".to_string()),
-        Just("timestamptz".to_string()),
-        Just("date".to_string()),
-        Just("interval".to_string()),
-        Just("uuid".to_string()),
-        Just("jsonb".to_string()),
-        Just("double precision".to_string()),
-        Just("real".to_string()),
-        Just("bytea".to_string()),
-        Just("inet".to_string()),
-        Just("numeric".to_string()),
-        Just("text[]".to_string()),
-        Just("integer[]".to_string()),
-        Just("boolean[]".to_string()),
-        (1u32..255u32).prop_map(|n| format!("varchar({n})")),
+        19 => fixed_types,
+        1 => (1u32..255u32).prop_map(|n| format!("varchar({n})")),
     ]
 }
 
@@ -196,9 +201,8 @@ fn rich_column_def_strategy(
     };
 
     (identifier_strategy(), type_strategy).prop_flat_map(|(name, col_type)| {
-        let ct = col_type.clone();
         let not_null = proptest::bool::weighted(0.4);
-        let default = column_default_strategy(&ct);
+        let default = column_default_strategy(&col_type);
         (Just(name), Just(col_type), not_null, default)
     })
 }
@@ -214,7 +218,8 @@ fn format_column_def(
         s.push_str(" NOT NULL");
     }
     if let Some(d) = default {
-        s.push_str(&format!(" DEFAULT {d}"));
+        s.push_str(" DEFAULT ");
+        s.push_str(d);
     }
     s
 }
@@ -278,7 +283,7 @@ fn check_constraint_strategy(
     proptest::collection::vec(
         (
             proptest::sample::select(numeric_columns),
-            prop_oneof![Just("> 0"), Just(">= 0"), Just("< 1000")],
+            proptest::sample::select(vec!["> 0", ">= 0", "< 1000"]),
         ),
         0..=2usize,
     )
@@ -470,37 +475,38 @@ fn rich_table_strategy(
 
             column_lines.push("    PRIMARY KEY (id)".to_string());
 
-            let table_info = TableInfo {
-                name: table_name.clone(),
-                text_columns: text_columns.clone(),
-                numeric_columns: numeric_columns.clone(),
-                boolean_columns: boolean_columns.clone(),
-                enum_columns: enum_columns.clone(),
-            };
-
             (
-                check_constraint_strategy(table_name.clone(), numeric_columns),
+                check_constraint_strategy(table_name.clone(), numeric_columns.clone()),
                 index_strategy(
                     schema_name.clone(),
                     table_name.clone(),
                     indexable_columns,
-                    text_columns,
-                    boolean_columns,
-                    enum_columns,
+                    text_columns.clone(),
+                    boolean_columns.clone(),
+                    enum_columns.clone(),
                 ),
             )
-                .prop_map(move |(check_lines, index_lines)| {
+            .prop_map({
+                let table_info = TableInfo {
+                    name: table_name,
+                    text_columns,
+                    numeric_columns,
+                    boolean_columns,
+                    enum_columns,
+                };
+                move |(check_lines, index_lines)| {
                     let mut all_parts = column_lines.clone();
                     all_parts.extend(check_lines);
                     let columns = all_parts.join(",\n");
                     let mut ddl =
-                        format!("CREATE TABLE {schema_name}.{table_name} (\n{columns}\n);");
+                        format!("CREATE TABLE {schema_name}.{} (\n{columns}\n);", table_info.name);
                     for idx in &index_lines {
                         ddl.push('\n');
                         ddl.push_str(idx);
                     }
                     (ddl, table_info.clone())
-                })
+                }
+            })
         })
 }
 
@@ -598,8 +604,13 @@ fn view_strategy(schema_name: String, table_infos: Vec<TableInfo>) -> BoxedStrat
                         )
                     }
                 }
-                1 if table_count >= 2 && table_idx != table_idx2 => {
-                    let table2 = &table_infos[table_idx2];
+                1 if table_count >= 2 => {
+                    let other_idx = if table_idx == table_idx2 {
+                        (table_idx + 1) % table_count
+                    } else {
+                        table_idx2
+                    };
+                    let table2 = &table_infos[other_idx];
                     let table2_ref = format!("{schema_name}.{}", table2.name);
                     format!(
                         "CREATE OR REPLACE VIEW {schema_name}.{view_name} AS SELECT t1.id FROM {table_ref} t1 INNER JOIN {table2_ref} t2 ON t1.id = t2.id;"
@@ -656,11 +667,8 @@ fn policy_strategy(schema_name: String, table_infos: Vec<TableInfo>) -> BoxedStr
     proptest::collection::vec(
         (
             0..table_count,
-            proptest::sample::select(vec![
-                "SELECT".to_string(),
-                "INSERT".to_string(),
-                "UPDATE".to_string(),
-            ]),
+            proptest::sample::select(vec!["SELECT", "INSERT", "UPDATE"])
+                .prop_map(String::from),
             0..4u8,
         ),
         0..=2usize,
@@ -753,8 +761,8 @@ fn trigger_strategy(
         let mut seen = std::collections::HashSet::new();
         let fn_name = &trigger_fn_names[0];
 
-        for (i, (table_idx, template)) in triggers.iter().enumerate() {
-            let table = &table_infos[*table_idx];
+        for (i, (table_idx, template)) in triggers.into_iter().enumerate() {
+            let table = &table_infos[table_idx];
             let table_ref = format!("{schema_name}.{}", table.name);
             let trigger_name = format!("{}_trig_{i}", table.name);
 
@@ -797,43 +805,41 @@ fn foreign_key_strategy(
     schema_name: String,
     table_infos: Vec<TableInfo>,
 ) -> BoxedStrategy<Vec<String>> {
-    if table_infos.len() < 2 {
+    let valid_pairs: Vec<(usize, usize)> = (0..table_infos.len())
+        .flat_map(|child| (0..child).map(move |parent| (child, parent)))
+        .collect();
+
+    if valid_pairs.is_empty() {
         return Just(vec![]).boxed();
     }
-    let table_count = table_infos.len();
-    proptest::collection::vec(
-        (0..table_count, 0..table_count),
-        0..=2usize,
-    )
-    .prop_map(move |fks| {
-        let mut ddls = vec![];
-        let mut seen = std::collections::HashSet::new();
 
-        for (child_idx, parent_idx) in fks {
-            if parent_idx >= child_idx {
-                continue;
+    proptest::collection::vec(proptest::sample::select(valid_pairs), 0..=2usize)
+        .prop_map(move |fks| {
+            let mut ddls = vec![];
+            let mut seen = std::collections::HashSet::new();
+
+            for (child_idx, parent_idx) in fks {
+                let child = &table_infos[child_idx];
+                let parent = &table_infos[parent_idx];
+                if !seen.insert((child.name.clone(), parent.name.clone())) {
+                    continue;
+                }
+
+                let child_ref = format!("{schema_name}.{}", child.name);
+                let parent_ref = format!("{schema_name}.{}", parent.name);
+                let col_name = format!("{}_id", parent.name);
+                let constraint_name = format!("{}_{}_fk", child.name, parent.name);
+
+                ddls.push(format!(
+                    "ALTER TABLE {child_ref} ADD COLUMN {col_name} bigint;"
+                ));
+                ddls.push(format!(
+                    "ALTER TABLE {child_ref} ADD CONSTRAINT {constraint_name} FOREIGN KEY ({col_name}) REFERENCES {parent_ref}(id);"
+                ));
             }
-            let child = &table_infos[child_idx];
-            let parent = &table_infos[parent_idx];
-            if !seen.insert((child.name.clone(), parent.name.clone())) {
-                continue;
-            }
-
-            let child_ref = format!("{schema_name}.{}", child.name);
-            let parent_ref = format!("{schema_name}.{}", parent.name);
-            let col_name = format!("{}_id", parent.name);
-            let constraint_name = format!("{}_{}_fk", child.name, parent.name);
-
-            ddls.push(format!(
-                "ALTER TABLE {child_ref} ADD COLUMN {col_name} bigint;"
-            ));
-            ddls.push(format!(
-                "ALTER TABLE {child_ref} ADD CONSTRAINT {constraint_name} FOREIGN KEY ({col_name}) REFERENCES {parent_ref}(id);"
-            ));
-        }
-        ddls
-    })
-    .boxed()
+            ddls
+        })
+        .boxed()
 }
 
 // ---------------------------------------------------------------------------
@@ -912,8 +918,6 @@ pub fn test_schema_name_strategy() -> impl Strategy<Value = String> {
 }
 
 pub fn convergence_test_strategy() -> impl Strategy<Value = (String, String)> {
-    test_schema_name_strategy().prop_flat_map(|name| {
-        let n = name.clone();
-        rich_schema_sql_strategy(name).prop_map(move |sql| (n.clone(), sql))
-    })
+    test_schema_name_strategy()
+        .prop_flat_map(|name| rich_schema_sql_strategy(name.clone()).prop_map(move |sql| (name.clone(), sql)))
 }
