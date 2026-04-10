@@ -138,7 +138,9 @@ fn column_default_strategy(col_type: &str) -> BoxedStrategy<Option<String>> {
         "timestamptz" => {
             choices.push(Just(Some("now()".to_string())).boxed());
         }
-        "uuid" => {}
+        "uuid" => {
+            choices.push(Just(Some("gen_random_uuid()".to_string())).boxed());
+        }
         "jsonb" => {
             choices.push(Just(Some("'{}'::jsonb".to_string())).boxed());
         }
