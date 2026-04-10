@@ -1,5 +1,8 @@
 #![allow(unused_imports, dead_code)]
 
+pub mod strategies;
+pub use strategies::*;
+
 pub use pgmold::diff::{compute_diff, planner::plan_migration, MigrationOp};
 pub use pgmold::drift::detect_drift;
 pub use pgmold::dump::generate_dump;

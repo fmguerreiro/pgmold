@@ -3,52 +3,6 @@ use common::*;
 
 use proptest::prelude::*;
 
-fn column_type_strategy() -> impl Strategy<Value = String> {
-    prop_oneof![
-        Just("integer".to_string()),
-        Just("bigint".to_string()),
-        Just("text".to_string()),
-        Just("boolean".to_string()),
-        Just("timestamp".to_string()),
-        Just("uuid".to_string()),
-        Just("jsonb".to_string()),
-        Just("double precision".to_string()),
-        (1u32..255u32).prop_map(|n| format!("varchar({n})")),
-        (1u32..38u32).prop_map(|p| format!("numeric({p})")),
-    ]
-}
-
-fn identifier_strategy() -> impl Strategy<Value = String> {
-    "[a-z][a-z0-9_]{0,29}".prop_filter("not a reserved word", |s| {
-        ![
-            "user", "order", "group", "table", "select", "from", "where", "index", "type", "column",
-        ]
-        .contains(&s.as_str())
-    })
-}
-
-fn column_def_strategy() -> impl Strategy<Value = String> {
-    (identifier_strategy(), column_type_strategy())
-        .prop_map(|(name, col_type)| format!("    {name} {col_type}"))
-}
-
-fn table_sql_strategy() -> impl Strategy<Value = String> {
-    (
-        identifier_strategy(),
-        proptest::collection::vec(column_def_strategy(), 0..8),
-    )
-        .prop_map(|(table_name, extra_columns)| {
-            let mut parts = vec!["    id integer PRIMARY KEY".to_string()];
-            parts.extend(extra_columns);
-            let columns = parts.join(",\n");
-            format!("CREATE TABLE public.{table_name} (\n{columns}\n);")
-        })
-}
-
-fn schema_sql_strategy() -> impl Strategy<Value = String> {
-    proptest::collection::vec(table_sql_strategy(), 1..5).prop_map(|tables| tables.join("\n\n"))
-}
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(32))]
 
