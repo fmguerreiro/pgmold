@@ -1,10 +1,6 @@
 use proptest::prelude::*;
 use proptest::strategy::Union;
 
-// ---------------------------------------------------------------------------
-// Basic strategies (moved from property_based.rs)
-// ---------------------------------------------------------------------------
-
 pub fn identifier_strategy() -> impl Strategy<Value = String> {
     "[a-z][a-z0-9_]{0,29}".prop_filter("not a reserved word", |s| {
         ![
@@ -109,14 +105,6 @@ pub fn schema_sql_strategy() -> impl Strategy<Value = String> {
 // Rich strategies for convergence and algebraic tests
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
-pub struct TableDef {
-    pub name: String,
-    pub schema_name: String,
-    pub column_names: Vec<String>,
-    pub numeric_columns: Vec<String>,
-}
-
 fn column_default_strategy(col_type: &str) -> BoxedStrategy<Option<String>> {
     let type_lower = col_type.to_lowercase();
     let mut choices: Vec<BoxedStrategy<Option<String>>> =
@@ -206,9 +194,10 @@ fn enum_type_strategy(schema_name: String) -> impl Strategy<Value = (String, Str
     let enum_value = "[a-z][a-z_]{2,10}";
     (
         identifier_strategy(),
-        proptest::collection::vec(enum_value, 2..6),
+        proptest::collection::hash_set(enum_value, 2..6),
     )
         .prop_map(move |(name, values)| {
+            let values: Vec<_> = values.into_iter().collect();
             let enum_name = format!("{name}_enum");
             let values_str = values
                 .iter()
@@ -264,8 +253,10 @@ fn index_strategy(
         0..=2usize,
     )
     .prop_map(move |indexes| {
+        let mut seen = std::collections::HashSet::new();
         indexes
             .into_iter()
+            .filter(|(cols, _)| seen.insert(cols.clone()))
             .enumerate()
             .map(|(i, (cols, unique))| {
                 let unique_str = if unique { "UNIQUE " } else { "" };
@@ -282,41 +273,28 @@ fn index_strategy(
 fn rich_table_strategy(
     schema_name: String,
     available_enums: Vec<String>,
-    previous_tables: Vec<String>,
-) -> impl Strategy<Value = (String, TableDef, Vec<String>)> {
-    let sn = schema_name.clone();
-
+) -> impl Strategy<Value = String> {
     (
         identifier_strategy(),
-        proptest::collection::vec(rich_column_def_strategy(available_enums), 0..6),
-        if previous_tables.is_empty() {
-            Just(None).boxed()
-        } else {
-            proptest::option::weighted(0.5, proptest::sample::select(previous_tables)).boxed()
-        },
+        proptest::collection::vec(rich_column_def_strategy(available_enums), 0..6).prop_map(
+            |cols| {
+                let mut seen = std::collections::HashSet::new();
+                seen.insert("id".to_string());
+                cols.into_iter()
+                    .filter(|(name, ..)| seen.insert(name.clone()))
+                    .collect::<Vec<_>>()
+            },
+        ),
     )
-        .prop_flat_map(move |(table_name, extra_cols, fk_target)| {
-            let sn = sn.clone();
-            let tn = table_name.clone();
+        .prop_flat_map(move |(table_name, extra_cols)| {
+            let schema_name = schema_name.clone();
 
-            let mut column_names: Vec<String> = vec!["id".to_string()];
-            let mut numeric_columns: Vec<String> = vec!["id".to_string()];
+            let mut numeric_columns: Vec<String> = vec![];
             let mut indexable_columns: Vec<String> = vec![];
-            let mut column_lines = vec!["    id integer NOT NULL".to_string()];
-
-            let mut fk_col_name = None;
-            if let Some(ref target) = fk_target {
-                let col = format!("{target}_id");
-                column_lines.push(format!("    {col} bigint NOT NULL"));
-                column_names.push(col.clone());
-                numeric_columns.push(col.clone());
-                indexable_columns.push(col.clone());
-                fk_col_name = Some(col);
-            }
+            let mut column_lines = vec!["    id bigserial NOT NULL".to_string()];
 
             for (name, col_type, not_null, default) in &extra_cols {
                 column_lines.push(format_column_def(name, col_type, *not_null, default));
-                column_names.push(name.clone());
                 if is_numeric_type(col_type) {
                     numeric_columns.push(name.clone());
                 }
@@ -327,92 +305,44 @@ fn rich_table_strategy(
 
             column_lines.push("    PRIMARY KEY (id)".to_string());
 
-            if let (Some(ref col), Some(ref target)) = (&fk_col_name, &fk_target) {
-                column_lines.push(format!(
-                    "    CONSTRAINT {tn}_{col}_fkey FOREIGN KEY ({col}) REFERENCES {sn}.{target} (id)"
-                ));
-            }
-
-            let table_def = TableDef {
-                name: tn.clone(),
-                schema_name: sn.clone(),
-                column_names,
-                numeric_columns: numeric_columns.clone(),
-            };
-
-            let base_ddl_parts = column_lines;
-            let idx_cols = indexable_columns;
-            let sn_idx = sn.clone();
-            let tn_idx = tn.clone();
-            let tn_chk = tn.clone();
-
             (
-                check_constraint_strategy(tn_chk, numeric_columns),
-                index_strategy(sn_idx, tn_idx, idx_cols),
+                check_constraint_strategy(table_name.clone(), numeric_columns),
+                index_strategy(schema_name.clone(), table_name.clone(), indexable_columns),
             )
                 .prop_map(move |(check_lines, index_lines)| {
-                    let mut all_parts = base_ddl_parts.clone();
+                    let mut all_parts = column_lines.clone();
                     all_parts.extend(check_lines);
                     let columns = all_parts.join(",\n");
-                    let mut ddl = format!(
-                        "CREATE TABLE {sn}.{tn} (\n{columns}\n);"
-                    );
+                    let mut ddl =
+                        format!("CREATE TABLE {schema_name}.{table_name} (\n{columns}\n);");
                     for idx in &index_lines {
                         ddl.push('\n');
                         ddl.push_str(idx);
                     }
-                    (ddl, table_def.clone(), index_lines)
+                    ddl
                 })
-        })
-        .prop_map(move |(ddl, table_def, _idx)| {
-            (ddl, table_def, vec![])
         })
 }
 
 pub fn rich_schema_sql_strategy(schema_name: String) -> impl Strategy<Value = String> {
-    let sn = schema_name.clone();
-    proptest::collection::vec(enum_type_strategy(sn.clone()), 0..3).prop_flat_map(
+    proptest::collection::vec(enum_type_strategy(schema_name.clone()), 0..3).prop_flat_map(
         move |enum_defs| {
-            let sn = schema_name.clone();
-            let enum_ddls: Vec<String> = enum_defs.iter().map(|(ddl, _)| ddl.clone()).collect();
-            let enum_types: Vec<String> = enum_defs
-                .iter()
-                .map(|(_, qualified)| qualified.clone())
-                .collect();
-
-            struct Acc {
-                schema_name: String,
-                enum_types: Vec<String>,
-                enum_ddls: Vec<String>,
-            }
-
-            let acc = Acc {
-                schema_name: sn,
-                enum_types,
-                enum_ddls,
-            };
+            let schema_name = schema_name.clone();
+            let (enum_ddls, enum_types): (Vec<String>, Vec<String>) = enum_defs.into_iter().unzip();
 
             (1u32..5u32).prop_flat_map(move |table_count| {
-                let acc_sn = acc.schema_name.clone();
-                let acc_enums = acc.enum_types.clone();
-                let acc_ddls = acc.enum_ddls.clone();
+                let schema_name = schema_name.clone();
+                let enum_ddls = enum_ddls.clone();
 
                 proptest::collection::vec(
-                    rich_table_strategy(acc_sn.clone(), acc_enums.clone(), vec![]),
+                    rich_table_strategy(schema_name.clone(), enum_types.clone()),
                     table_count as usize,
                 )
-                .prop_map(move |tables| {
+                .prop_map(move |table_ddls| {
                     let mut parts: Vec<String> =
-                        vec![format!("CREATE SCHEMA IF NOT EXISTS {acc_sn};")];
-                    parts.extend(acc_ddls.clone());
-
-                    let mut previous_table_names: Vec<String> = vec![];
-                    for (ddl, table_def, _) in &tables {
-                        let _ = &previous_table_names;
-                        parts.push(ddl.clone());
-                        previous_table_names.push(table_def.name.clone());
-                    }
-
+                        vec![format!("CREATE SCHEMA IF NOT EXISTS {schema_name};")];
+                    parts.extend(enum_ddls.clone());
+                    parts.extend(table_ddls);
                     parts.join("\n\n")
                 })
             })
