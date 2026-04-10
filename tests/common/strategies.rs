@@ -486,27 +486,29 @@ fn rich_table_strategy(
                     enum_columns.clone(),
                 ),
             )
-            .prop_map({
-                let table_info = TableInfo {
-                    name: table_name,
-                    text_columns,
-                    numeric_columns,
-                    boolean_columns,
-                    enum_columns,
-                };
-                move |(check_lines, index_lines)| {
-                    let mut all_parts = column_lines.clone();
-                    all_parts.extend(check_lines);
-                    let columns = all_parts.join(",\n");
-                    let mut ddl =
-                        format!("CREATE TABLE {schema_name}.{} (\n{columns}\n);", table_info.name);
-                    for idx in &index_lines {
-                        ddl.push('\n');
-                        ddl.push_str(idx);
+                .prop_map({
+                    let table_info = TableInfo {
+                        name: table_name,
+                        text_columns,
+                        numeric_columns,
+                        boolean_columns,
+                        enum_columns,
+                    };
+                    move |(check_lines, index_lines)| {
+                        let mut all_parts = column_lines.clone();
+                        all_parts.extend(check_lines);
+                        let columns = all_parts.join(",\n");
+                        let mut ddl = format!(
+                            "CREATE TABLE {schema_name}.{} (\n{columns}\n);",
+                            table_info.name
+                        );
+                        for idx in &index_lines {
+                            ddl.push('\n');
+                            ddl.push_str(idx);
+                        }
+                        (ddl, table_info.clone())
                     }
-                    (ddl, table_info.clone())
-                }
-            })
+                })
         })
 }
 
@@ -918,6 +920,7 @@ pub fn test_schema_name_strategy() -> impl Strategy<Value = String> {
 }
 
 pub fn convergence_test_strategy() -> impl Strategy<Value = (String, String)> {
-    test_schema_name_strategy()
-        .prop_flat_map(|name| rich_schema_sql_strategy(name.clone()).prop_map(move |sql| (name.clone(), sql)))
+    test_schema_name_strategy().prop_flat_map(|name| {
+        rich_schema_sql_strategy(name.clone()).prop_map(move |sql| (name.clone(), sql))
+    })
 }
