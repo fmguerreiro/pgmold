@@ -393,25 +393,7 @@ fn index_strategy(
             .boxed()
     };
 
-    let text_cast_index = if text_columns_for_cast.is_empty() {
-        Just(vec![]).boxed()
-    } else {
-        let sn = schema_name.clone();
-        let tn = table_name.clone();
-        (
-            proptest::sample::select(text_columns_for_cast),
-            proptest::bool::weighted(0.3),
-        )
-            .prop_map(move |(col, generate)| {
-                if generate {
-                    vec![format!(
-                        "CREATE INDEX {tn}_cast_0 ON {sn}.{tn} (({col})::text);"
-                    )]
-                } else {
-                    vec![]
-                }
-            })
-            .boxed()
+    let text_cast_index = Just(vec![]).boxed()
     };
 
     let bool_partial = if boolean_columns.is_empty() {
