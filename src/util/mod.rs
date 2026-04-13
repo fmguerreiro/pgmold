@@ -2,8 +2,8 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use sqlparser::ast::{
-    BinaryOperator, DataType, Expr, GroupByExpr, OrderBy, OrderByExpr, OrderByKind, Query, Select,
-    SetExpr, Statement,
+    BinaryOperator, CastKind, DataType, Expr, GroupByExpr, OrderBy, OrderByExpr, OrderByKind,
+    Query, Select, SetExpr, Statement,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -873,6 +873,21 @@ fn normalize_join_constraint(
     }
 }
 
+fn normalize_data_type(data_type: &DataType) -> DataType {
+    match data_type {
+        DataType::Varchar(length) => DataType::CharacterVarying(*length),
+        DataType::Char(length) => DataType::Character(*length),
+        DataType::Bool => DataType::Boolean,
+        DataType::Float4 => DataType::Real,
+        DataType::Float8 => DataType::DoublePrecision,
+        DataType::Int2(n) => DataType::SmallInt(*n),
+        DataType::Int(n) => DataType::Integer(*n),
+        DataType::Int4(n) => DataType::Integer(*n),
+        DataType::Int8(n) => DataType::BigInt(*n),
+        other => other.clone(),
+    }
+}
+
 /// Tries to reduce a scalar subquery of the form `(SELECT func() [AS alias])` with no
 /// FROM, WHERE, GROUP BY, HAVING, ORDER BY, or LIMIT to just the function call expression.
 ///
@@ -1035,44 +1050,42 @@ fn normalize_expr(expr: &Expr) -> Expr {
 
         // Strip casts that PostgreSQL adds but aren't in the original DDL
         Expr::Cast {
-            kind,
             expr: inner,
             data_type,
             format,
+            ..
         } => {
             let norm_inner = normalize_expr(inner);
-            if matches!(data_type, DataType::Text) {
+            let norm_data_type = normalize_data_type(data_type);
+            if matches!(norm_data_type, DataType::Text) {
                 return norm_inner;
             }
             if matches!(
-                data_type,
-                DataType::CharacterVarying(None) | DataType::Varchar(None)
-            ) && matches!(
                 norm_inner,
                 Expr::Identifier(_) | Expr::CompoundIdentifier(_)
-            ) {
+            ) && (matches!(norm_data_type, DataType::CharacterVarying(None))
+                || is_numeric_type(&norm_data_type))
+            {
                 return norm_inner;
             }
             if let Expr::Value(v) = &norm_inner {
                 let should_strip = match &v.value {
                     sqlparser::ast::Value::SingleQuotedString(_) => {
                         matches!(
-                            data_type,
+                            norm_data_type,
                             DataType::Custom(_, _)
                                 | DataType::Array(_)
                                 | DataType::CharacterVarying(None)
-                                | DataType::Varchar(None)
                         )
                     }
-                    sqlparser::ast::Value::Number(_, _) => is_numeric_type(data_type),
+                    sqlparser::ast::Value::Number(_, _) => is_numeric_type(&norm_data_type),
                     sqlparser::ast::Value::Null => true,
                     _ => false,
                 };
                 if should_strip {
                     return norm_inner;
                 }
-                // Normalize '90 days'::interval to interval '90 days'
-                let is_interval_literal = matches!(data_type, DataType::Interval { .. })
+                let is_interval_literal = matches!(norm_data_type, DataType::Interval { .. })
                     && matches!(v.value, sqlparser::ast::Value::SingleQuotedString(_));
                 if is_interval_literal {
                     return Expr::Interval(sqlparser::ast::Interval {
@@ -1085,9 +1098,9 @@ fn normalize_expr(expr: &Expr) -> Expr {
                 }
             }
             Expr::Cast {
-                kind: kind.clone(),
+                kind: CastKind::DoubleColon,
                 expr: Box::new(norm_inner),
-                data_type: data_type.clone(),
+                data_type: norm_data_type,
                 format: format.clone(),
             }
         }
@@ -1882,6 +1895,13 @@ fn ast_comparison_handles_type_cast_case() {
 }
 
 #[test]
+fn ast_comparison_strips_numeric_cast_on_column_in_greatest() {
+    let schema_form = "SELECT t1.id, GREATEST(t1.col, 0) AS col FROM s.t t1";
+    let db_form = "SELECT t1.id, GREATEST((t1.col)::integer, 0) AS col FROM s.t t1";
+    assert!(views_semantically_equal(schema_form, db_form),);
+}
+
+#[test]
 fn ast_comparison_handles_complex_view() {
     // Real-world complex view with multiple normalizations needed
     let db_form = "SELECT u.id, 'active' AS status FROM users u WHERE EXISTS (SELECT 1 FROM roles r WHERE r.user_id = u.id AND r.name LIKE 'admin_%')";
@@ -2188,6 +2208,16 @@ fn length_qualified_varchar_cast_on_string_literal_preserved() {
     assert!(
         !expressions_semantically_equal(with_length, without_cast),
         "Length-qualified varchar cast on string literal should not be stripped"
+    );
+}
+
+#[test]
+fn cast_syntax_equals_double_colon_syntax() {
+    let cast_form = "CAST(col AS varchar(100))";
+    let double_colon_form = "(col)::character varying(100)";
+    assert!(
+        expressions_semantically_equal(cast_form, double_colon_form),
+        "CAST(x AS type) and x::type should be semantically equal"
     );
 }
 
