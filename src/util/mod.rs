@@ -875,12 +875,13 @@ fn normalize_join_constraint(
 
 fn normalize_data_type(data_type: &DataType) -> DataType {
     match data_type {
-        DataType::Varchar(length) => DataType::CharacterVarying(length.clone()),
-        DataType::Char(length) => DataType::Character(length.clone()),
+        DataType::Varchar(length) => DataType::CharacterVarying(*length),
+        DataType::Char(length) => DataType::Character(*length),
         DataType::Bool => DataType::Boolean,
         DataType::Float4 => DataType::Real,
         DataType::Float8 => DataType::DoublePrecision,
         DataType::Int2(n) => DataType::SmallInt(*n),
+        DataType::Int(n) => DataType::Integer(*n),
         DataType::Int4(n) => DataType::Integer(*n),
         DataType::Int8(n) => DataType::BigInt(*n),
         other => other.clone(),
