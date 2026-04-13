@@ -1060,11 +1060,11 @@ fn normalize_expr(expr: &Expr) -> Expr {
             if matches!(norm_data_type, DataType::Text) {
                 return norm_inner;
             }
-            if matches!(norm_data_type, DataType::CharacterVarying(None))
-                && matches!(
-                    norm_inner,
-                    Expr::Identifier(_) | Expr::CompoundIdentifier(_)
-                )
+            if matches!(
+                norm_inner,
+                Expr::Identifier(_) | Expr::CompoundIdentifier(_)
+            ) && (matches!(norm_data_type, DataType::CharacterVarying(None))
+                || is_numeric_type(&norm_data_type))
             {
                 return norm_inner;
             }
@@ -1892,6 +1892,13 @@ fn ast_comparison_handles_type_cast_case() {
     let upper = "SELECT id::TEXT FROM t";
     let lower = "SELECT id::text FROM t";
     assert!(views_semantically_equal(upper, lower));
+}
+
+#[test]
+fn ast_comparison_strips_numeric_cast_on_column_in_greatest() {
+    let schema_form = "SELECT t1.id, GREATEST(t1.col, 0) AS col FROM s.t t1";
+    let db_form = "SELECT t1.id, GREATEST((t1.col)::integer, 0) AS col FROM s.t t1";
+    assert!(views_semantically_equal(schema_form, db_form),);
 }
 
 #[test]
