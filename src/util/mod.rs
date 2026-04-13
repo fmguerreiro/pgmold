@@ -842,12 +842,10 @@ fn normalize_join(j: &sqlparser::ast::Join) -> sqlparser::ast::Join {
         relation: normalize_table_factor(&j.relation),
         global: j.global,
         join_operator: match &j.join_operator {
-            sqlparser::ast::JoinOperator::Join(c)
-            | sqlparser::ast::JoinOperator::Inner(c) => {
+            sqlparser::ast::JoinOperator::Join(c) | sqlparser::ast::JoinOperator::Inner(c) => {
                 sqlparser::ast::JoinOperator::Join(normalize_join_constraint(c))
             }
-            sqlparser::ast::JoinOperator::Left(c)
-            | sqlparser::ast::JoinOperator::LeftOuter(c) => {
+            sqlparser::ast::JoinOperator::Left(c) | sqlparser::ast::JoinOperator::LeftOuter(c) => {
                 sqlparser::ast::JoinOperator::Left(normalize_join_constraint(c))
             }
             sqlparser::ast::JoinOperator::Right(c)
