@@ -1046,7 +1046,7 @@ fn normalize_expr(expr: &Expr) -> Expr {
             }
             if matches!(
                 data_type,
-                DataType::CharacterVarying(_) | DataType::Varchar(_)
+                DataType::CharacterVarying(None) | DataType::Varchar(None)
             ) && matches!(norm_inner, Expr::Identifier(_) | Expr::CompoundIdentifier(_))
             {
                 return norm_inner;
@@ -2142,6 +2142,26 @@ fn varchar_cast_on_identifier_stripped_in_expression_index() {
     assert!(
         expressions_semantically_equal(schema_expr, db_expr),
         "PostgreSQL adds ::character varying casts to varchar columns in expression indexes"
+    );
+}
+
+#[test]
+fn varchar_cast_on_compound_identifier_stripped() {
+    let schema_expr = "lower(t1.col_name)";
+    let db_expr = "lower((t1.col_name)::character varying)";
+    assert!(
+        expressions_semantically_equal(schema_expr, db_expr),
+        "Compound identifier varchar cast should be stripped"
+    );
+}
+
+#[test]
+fn varchar_cast_with_length_preserved() {
+    let with_length = "lower((col_name)::varchar(50))";
+    let without_cast = "lower(col_name)";
+    assert!(
+        !expressions_semantically_equal(with_length, without_cast),
+        "Length-qualified varchar cast is semantically different and should not be stripped"
     );
 }
 
