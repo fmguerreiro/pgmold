@@ -838,31 +838,22 @@ fn normalize_table_with_joins(
 
 /// Normalizes a single Join.
 fn normalize_join(j: &sqlparser::ast::Join) -> sqlparser::ast::Join {
-    sqlparser::ast::Join {
+    use sqlparser::ast::{Join, JoinOperator};
+    let normalize_constraint = normalize_join_constraint;
+    Join {
         relation: normalize_table_factor(&j.relation),
         global: j.global,
         join_operator: match &j.join_operator {
-            sqlparser::ast::JoinOperator::Join(c) => {
-                sqlparser::ast::JoinOperator::Join(normalize_join_constraint(c))
+            JoinOperator::Join(c) | JoinOperator::Inner(c) => {
+                JoinOperator::Join(normalize_constraint(c))
             }
-            sqlparser::ast::JoinOperator::Inner(c) => {
-                sqlparser::ast::JoinOperator::Inner(normalize_join_constraint(c))
+            JoinOperator::Left(c) | JoinOperator::LeftOuter(c) => {
+                JoinOperator::Left(normalize_constraint(c))
             }
-            sqlparser::ast::JoinOperator::Left(c) => {
-                sqlparser::ast::JoinOperator::Left(normalize_join_constraint(c))
+            JoinOperator::Right(c) | JoinOperator::RightOuter(c) => {
+                JoinOperator::Right(normalize_constraint(c))
             }
-            sqlparser::ast::JoinOperator::Right(c) => {
-                sqlparser::ast::JoinOperator::Right(normalize_join_constraint(c))
-            }
-            sqlparser::ast::JoinOperator::LeftOuter(c) => {
-                sqlparser::ast::JoinOperator::LeftOuter(normalize_join_constraint(c))
-            }
-            sqlparser::ast::JoinOperator::RightOuter(c) => {
-                sqlparser::ast::JoinOperator::RightOuter(normalize_join_constraint(c))
-            }
-            sqlparser::ast::JoinOperator::FullOuter(c) => {
-                sqlparser::ast::JoinOperator::FullOuter(normalize_join_constraint(c))
-            }
+            JoinOperator::FullOuter(c) => JoinOperator::FullOuter(normalize_constraint(c)),
             other => other.clone(),
         },
     }
@@ -1053,12 +1044,25 @@ fn normalize_expr(expr: &Expr) -> Expr {
             if matches!(data_type, DataType::Text) {
                 return norm_inner;
             }
+            if matches!(
+                data_type,
+                DataType::CharacterVarying(None) | DataType::Varchar(None)
+            ) && matches!(
+                norm_inner,
+                Expr::Identifier(_) | Expr::CompoundIdentifier(_)
+            ) {
+                return norm_inner;
+            }
             if let Expr::Value(v) = &norm_inner {
                 let should_strip = match &v.value {
                     sqlparser::ast::Value::SingleQuotedString(_) => {
-                        // PostgreSQL always emits an explicit array cast; strip it to match bare literal form.
-                        matches!(data_type, DataType::Custom(_, _))
-                            || matches!(data_type, DataType::Array(_))
+                        matches!(
+                            data_type,
+                            DataType::Custom(_, _)
+                                | DataType::Array(_)
+                                | DataType::CharacterVarying(None)
+                                | DataType::Varchar(None)
+                        )
                     }
                     sqlparser::ast::Value::Number(_, _) => is_numeric_type(data_type),
                     sqlparser::ast::Value::Null => true,
@@ -1604,13 +1608,45 @@ mod tests {
 
     #[test]
     fn nested_join_preserves_join_types() {
-        // Preserve LEFT/INNER join types during flattening
         let schema_form = "SELECT 1 FROM a INNER JOIN b ON a.id = b.id LEFT JOIN c ON b.id = c.id";
-        let db_form = "SELECT 1 FROM ((a INNER JOIN b ON a.id = b.id) LEFT JOIN c ON b.id = c.id)";
+        let db_form = "SELECT 1 FROM ((a JOIN b ON a.id = b.id) LEFT JOIN c ON b.id = c.id)";
 
         assert!(
             views_semantically_equal(schema_form, db_form),
             "Nested JOINs should preserve join types.\nSchema: {schema_form}\nDB: {db_form}"
+        );
+    }
+
+    #[test]
+    fn inner_join_equals_join() {
+        let schema_form = "SELECT 1 FROM a INNER JOIN b ON a.id = b.id";
+        let db_form = "SELECT 1 FROM a JOIN b ON a.id = b.id";
+
+        assert!(
+            views_semantically_equal(schema_form, db_form),
+            "INNER JOIN and JOIN should be semantically equal.\nSchema: {schema_form}\nDB: {db_form}"
+        );
+    }
+
+    #[test]
+    fn left_outer_join_equals_left_join() {
+        let schema_form = "SELECT 1 FROM a LEFT OUTER JOIN b ON a.id = b.id";
+        let db_form = "SELECT 1 FROM a LEFT JOIN b ON a.id = b.id";
+
+        assert!(
+            views_semantically_equal(schema_form, db_form),
+            "LEFT OUTER JOIN and LEFT JOIN should be semantically equal.\nSchema: {schema_form}\nDB: {db_form}"
+        );
+    }
+
+    #[test]
+    fn right_outer_join_equals_right_join() {
+        let schema_form = "SELECT 1 FROM a RIGHT OUTER JOIN b ON a.id = b.id";
+        let db_form = "SELECT 1 FROM a RIGHT JOIN b ON a.id = b.id";
+
+        assert!(
+            views_semantically_equal(schema_form, db_form),
+            "RIGHT OUTER JOIN and RIGHT JOIN should be semantically equal.\nSchema: {schema_form}\nDB: {db_form}"
         );
     }
 
@@ -2102,6 +2138,56 @@ END"#;
     assert!(
         expressions_semantically_equal(with_cast, without_cast),
         "CASE with exact pg_get_expr enum casts should be semantically equal"
+    );
+}
+
+#[test]
+fn varchar_cast_on_identifier_stripped_in_expression_index() {
+    let schema_expr = "lower(col_name)";
+    let db_expr = "lower((col_name)::character varying)";
+    assert!(
+        expressions_semantically_equal(schema_expr, db_expr),
+        "PostgreSQL adds ::character varying casts to varchar columns in expression indexes"
+    );
+}
+
+#[test]
+fn varchar_cast_on_compound_identifier_stripped() {
+    let schema_expr = "lower(t1.col_name)";
+    let db_expr = "lower((t1.col_name)::character varying)";
+    assert!(
+        expressions_semantically_equal(schema_expr, db_expr),
+        "Compound identifier varchar cast should be stripped"
+    );
+}
+
+#[test]
+fn varchar_cast_on_string_literal_stripped() {
+    let schema_expr = "COALESCE(col, 'unknown')";
+    let db_expr = "COALESCE(col, 'unknown'::character varying)";
+    assert!(
+        expressions_semantically_equal(schema_expr, db_expr),
+        "PostgreSQL adds ::character varying casts to string literals in COALESCE with varchar columns"
+    );
+}
+
+#[test]
+fn length_qualified_varchar_cast_on_identifier_preserved() {
+    let with_length = "lower((col_name)::varchar(50))";
+    let without_cast = "lower(col_name)";
+    assert!(
+        !expressions_semantically_equal(with_length, without_cast),
+        "Length-qualified varchar cast on identifier should not be stripped"
+    );
+}
+
+#[test]
+fn length_qualified_varchar_cast_on_string_literal_preserved() {
+    let with_length = "'value'::varchar(10)";
+    let without_cast = "'value'";
+    assert!(
+        !expressions_semantically_equal(with_length, without_cast),
+        "Length-qualified varchar cast on string literal should not be stripped"
     );
 }
 
