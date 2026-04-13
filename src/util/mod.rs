@@ -1060,8 +1060,8 @@ fn normalize_expr(expr: &Expr) -> Expr {
                             data_type,
                             DataType::Custom(_, _)
                                 | DataType::Array(_)
-                                | DataType::CharacterVarying(_)
-                                | DataType::Varchar(_)
+                                | DataType::CharacterVarying(None)
+                                | DataType::Varchar(None)
                         )
                     }
                     sqlparser::ast::Value::Number(_, _) => is_numeric_type(data_type),
@@ -2172,12 +2172,22 @@ fn varchar_cast_on_string_literal_stripped() {
 }
 
 #[test]
-fn varchar_cast_with_length_preserved() {
+fn length_qualified_varchar_cast_on_identifier_preserved() {
     let with_length = "lower((col_name)::varchar(50))";
     let without_cast = "lower(col_name)";
     assert!(
         !expressions_semantically_equal(with_length, without_cast),
-        "Length-qualified varchar cast is semantically different and should not be stripped"
+        "Length-qualified varchar cast on identifier should not be stripped"
+    );
+}
+
+#[test]
+fn length_qualified_varchar_cast_on_string_literal_preserved() {
+    let with_length = "'value'::varchar(10)";
+    let without_cast = "'value'";
+    assert!(
+        !expressions_semantically_equal(with_length, without_cast),
+        "Length-qualified varchar cast on string literal should not be stripped"
     );
 }
 
