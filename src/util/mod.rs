@@ -1047,8 +1047,10 @@ fn normalize_expr(expr: &Expr) -> Expr {
             if matches!(
                 data_type,
                 DataType::CharacterVarying(None) | DataType::Varchar(None)
-            ) && matches!(norm_inner, Expr::Identifier(_) | Expr::CompoundIdentifier(_))
-            {
+            ) && matches!(
+                norm_inner,
+                Expr::Identifier(_) | Expr::CompoundIdentifier(_)
+            ) {
                 return norm_inner;
             }
             if let Expr::Value(v) = &norm_inner {
