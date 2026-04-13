@@ -5,6 +5,17 @@ use sqlparser::ast::{
     PartitionBoundValue, TimezoneInfo,
 };
 
+/// PostgreSQL's NAMEDATALEN is 64, so identifiers are truncated to 63 bytes.
+const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
+
+pub(super) fn truncate_identifier(s: &str) -> String {
+    if s.len() <= PG_MAX_IDENTIFIER_LENGTH {
+        s.to_string()
+    } else {
+        s[..PG_MAX_IDENTIFIER_LENGTH].to_string()
+    }
+}
+
 pub(super) fn unquote_ident(s: &str) -> &str {
     s.trim_matches('"')
 }

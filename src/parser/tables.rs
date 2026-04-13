@@ -6,7 +6,9 @@ use sqlparser::ast::{
 };
 use std::collections::BTreeMap;
 
-use super::util::{extract_qualified_name, normalize_expr, parse_data_type, unquote_ident};
+use super::util::{
+    extract_qualified_name, normalize_expr, parse_data_type, truncate_identifier, unquote_ident,
+};
 
 pub(super) struct ParsedTable {
     pub(super) table: Table,
@@ -93,7 +95,7 @@ pub(super) fn parse_create_table(
 
                 let (ref_schema, ref_table) = extract_qualified_name(&fk.foreign_table);
                 table.foreign_keys.push(ForeignKey {
-                    name: fk_name,
+                    name: truncate_identifier(&fk_name),
                     columns: fk
                         .columns
                         .iter()

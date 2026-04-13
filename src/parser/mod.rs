@@ -40,7 +40,7 @@ use sequences::parse_create_sequence;
 use tables::{parse_column_with_serial, parse_create_table, parse_referential_action};
 use util::{
     extract_qualified_name, normalize_expr, parse_data_type, parse_for_values,
-    parse_policy_command, unquote_ident,
+    parse_policy_command, truncate_identifier, unquote_ident,
 };
 
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
@@ -245,7 +245,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                     let (ref_schema, ref_table) =
                                         extract_qualified_name(&fk.foreign_table);
                                     table.foreign_keys.push(ForeignKey {
-                                        name: fk_name,
+                                        name: truncate_identifier(&fk_name),
                                         columns: fk
                                             .columns
                                             .iter()
