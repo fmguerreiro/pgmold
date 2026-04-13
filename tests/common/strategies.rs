@@ -360,8 +360,6 @@ fn index_strategy(
         .boxed()
     };
 
-    let text_columns_for_cast = text_columns.clone();
-
     let expression = if text_columns.is_empty() {
         Just(vec![]).boxed()
     } else {
@@ -393,8 +391,7 @@ fn index_strategy(
             .boxed()
     };
 
-    let text_cast_index = Just(vec![]).boxed()
-    };
+    let text_cast_index = Just(vec![]).boxed();
 
     let bool_partial = if boolean_columns.is_empty() {
         Just(vec![]).boxed()
