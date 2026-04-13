@@ -5,7 +5,7 @@ use proptest::prelude::*;
 use std::collections::HashSet;
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(64))]
+    #![proptest_config(ProptestConfig::with_cases(128))]
 
     #[test]
     fn diff_self_is_empty_rich(sql in rich_schema_sql_strategy("public".to_string())) {

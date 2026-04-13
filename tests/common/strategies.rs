@@ -119,9 +119,19 @@ pub fn column_type_strategy() -> impl Strategy<Value = String> {
     ])
     .prop_map(String::from);
 
+    let varchar_type = (1u32..255u32).prop_map(|n| format!("varchar({n})"));
+
+    let char_type = (1u32..50u32).prop_map(|n| format!("char({n})"));
+
+    let numeric_parametric_type = (1u32..20u32).prop_flat_map(|precision| {
+        (0u32..=precision).prop_map(move |scale| format!("numeric({precision},{scale})"))
+    });
+
     prop_oneof![
         19 => fixed_types,
-        1 => (1u32..255u32).prop_map(|n| format!("varchar({n})")),
+        1 => varchar_type,
+        1 => char_type,
+        1 => numeric_parametric_type,
     ]
 }
 
@@ -181,7 +191,13 @@ fn column_default_strategy(col_type: &str) -> BoxedStrategy<Option<String>> {
         "numeric" | "double precision" | "real" => {
             choices.push(Just(Some("0".to_string())).boxed());
         }
-        _ => {}
+        _ => {
+            if type_lower.starts_with("char(") {
+                choices.push(Just(Some("'x'".to_string())).boxed());
+            } else if type_lower.starts_with("numeric(") {
+                choices.push(Just(Some("0".to_string())).boxed());
+            }
+        }
     }
 
     Union::new(choices).boxed()
@@ -225,15 +241,16 @@ fn format_column_def(
 }
 
 fn is_numeric_type(col_type: &str) -> bool {
+    let lower = col_type.to_lowercase();
     matches!(
-        col_type.to_lowercase().as_str(),
+        lower.as_str(),
         "integer" | "bigint" | "smallint" | "numeric" | "double precision" | "real"
-    )
+    ) || lower.starts_with("numeric(")
 }
 
 fn is_text_type(col_type: &str) -> bool {
     let lower = col_type.to_lowercase();
-    lower == "text" || lower.starts_with("varchar")
+    lower == "text" || lower.starts_with("varchar") || lower.starts_with("char(")
 }
 
 fn is_indexable_type(col_type: &str) -> bool {
@@ -308,9 +325,12 @@ fn index_strategy(
     table_name: String,
     indexable_columns: Vec<String>,
     text_columns: Vec<String>,
+    numeric_columns: Vec<String>,
     boolean_columns: Vec<String>,
     enum_columns: Vec<(String, String, String)>,
 ) -> BoxedStrategy<Vec<String>> {
+    let indexable_columns_for_null = indexable_columns.clone();
+
     let basic = if indexable_columns.is_empty() {
         Just(vec![]).boxed()
     } else {
@@ -340,19 +360,50 @@ fn index_strategy(
         .boxed()
     };
 
+    let text_columns_for_cast = text_columns.clone();
+
     let expression = if text_columns.is_empty() {
         Just(vec![]).boxed()
     } else {
         let sn = schema_name.clone();
         let tn = table_name.clone();
+        let text_columns_for_upper = text_columns.clone();
         (
             proptest::sample::select(text_columns),
+            proptest::sample::select(text_columns_for_upper),
             proptest::bool::weighted(0.5),
+            proptest::bool::weighted(0.5),
+        )
+            .prop_map(move |(col_lower, col_upper, generate_lower, generate_upper)| {
+                let mut result = vec![];
+                if generate_lower {
+                    result.push(format!(
+                        "CREATE INDEX {tn}_expr_0 ON {sn}.{tn} (lower({col_lower}));"
+                    ));
+                }
+                if generate_upper {
+                    result.push(format!(
+                        "CREATE INDEX {tn}_expr_1 ON {sn}.{tn} (upper({col_upper}));"
+                    ));
+                }
+                result
+            })
+            .boxed()
+    };
+
+    let text_cast_index = if text_columns_for_cast.is_empty() {
+        Just(vec![]).boxed()
+    } else {
+        let sn = schema_name.clone();
+        let tn = table_name.clone();
+        (
+            proptest::sample::select(text_columns_for_cast),
+            proptest::bool::weighted(0.3),
         )
             .prop_map(move |(col, generate)| {
                 if generate {
                     vec![format!(
-                        "CREATE INDEX {tn}_expr_0 ON {sn}.{tn} (lower({col}));"
+                        "CREATE INDEX {tn}_cast_0 ON {sn}.{tn} (({col})::text);"
                     )]
                 } else {
                     vec![]
@@ -367,13 +418,84 @@ fn index_strategy(
         let sn = schema_name.clone();
         let tn = table_name.clone();
         (
-            proptest::sample::select(boolean_columns),
+            proptest::sample::select(boolean_columns.clone()),
             proptest::bool::weighted(0.5),
         )
             .prop_map(move |(bool_col, generate)| {
                 if generate {
                     vec![format!(
                         "CREATE INDEX {tn}_part_0 ON {sn}.{tn} ({bool_col}) WHERE {bool_col} = true;"
+                    )]
+                } else {
+                    vec![]
+                }
+            })
+            .boxed()
+    };
+
+    let null_partial = if indexable_columns_for_null.is_empty() {
+        Just(vec![]).boxed()
+    } else {
+        let sn = schema_name.clone();
+        let tn = table_name.clone();
+        (
+            proptest::sample::select(indexable_columns_for_null),
+            proptest::bool::ANY,
+            proptest::bool::weighted(0.3),
+        )
+            .prop_map(move |(col, use_is_null, generate)| {
+                if generate {
+                    let predicate = if use_is_null {
+                        format!("{col} IS NULL")
+                    } else {
+                        format!("{col} IS NOT NULL")
+                    };
+                    vec![format!(
+                        "CREATE INDEX {tn}_nullp_0 ON {sn}.{tn} ({col}) WHERE {predicate};"
+                    )]
+                } else {
+                    vec![]
+                }
+            })
+            .boxed()
+    };
+
+    let compound_bool_partial = if boolean_columns.len() >= 2 {
+        let sn = schema_name.clone();
+        let tn = table_name.clone();
+        let boolean_columns_clone = boolean_columns.clone();
+        (
+            proptest::sample::select(boolean_columns.clone()),
+            proptest::sample::select(boolean_columns_clone),
+            proptest::bool::weighted(0.3),
+        )
+            .prop_map(move |(col1, col2, generate)| {
+                if generate && col1 != col2 {
+                    vec![format!(
+                        "CREATE INDEX {tn}_comp_0 ON {sn}.{tn} ({col1}) WHERE {col1} = true AND {col2} = false;"
+                    )]
+                } else {
+                    vec![]
+                }
+            })
+            .boxed()
+    } else {
+        Just(vec![]).boxed()
+    };
+
+    let range_partial = if numeric_columns.is_empty() {
+        Just(vec![]).boxed()
+    } else {
+        let sn = schema_name.clone();
+        let tn = table_name.clone();
+        (
+            proptest::sample::select(numeric_columns.clone()),
+            proptest::bool::weighted(0.3),
+        )
+            .prop_map(move |(col, generate)| {
+                if generate {
+                    vec![format!(
+                        "CREATE INDEX {tn}_range_0 ON {sn}.{tn} ({col}) WHERE {col} >= 0 AND {col} < 1000;"
                     )]
                 } else {
                     vec![]
@@ -403,13 +525,28 @@ fn index_strategy(
             .boxed()
     };
 
-    (basic, expression, bool_partial, enum_partial)
-        .prop_map(|(mut indexes, expr, bool_p, enum_p)| {
-            indexes.extend(expr);
-            indexes.extend(bool_p);
-            indexes.extend(enum_p);
-            indexes
-        })
+    (
+        basic,
+        expression,
+        text_cast_index,
+        bool_partial,
+        null_partial,
+        compound_bool_partial,
+        range_partial,
+        enum_partial,
+    )
+        .prop_map(
+            |(mut indexes, expr, cast_idx, bool_p, null_p, comp_p, range_p, enum_p)| {
+                indexes.extend(expr);
+                indexes.extend(cast_idx);
+                indexes.extend(bool_p);
+                indexes.extend(null_p);
+                indexes.extend(comp_p);
+                indexes.extend(range_p);
+                indexes.extend(enum_p);
+                indexes
+            },
+        )
         .boxed()
 }
 
@@ -482,6 +619,7 @@ fn rich_table_strategy(
                     table_name.clone(),
                     indexable_columns,
                     text_columns.clone(),
+                    numeric_columns.clone(),
                     boolean_columns.clone(),
                     enum_columns.clone(),
                 ),
@@ -573,7 +711,7 @@ fn view_strategy(schema_name: String, table_infos: Vec<TableInfo>) -> BoxedStrat
             identifier_strategy(),
             0..table_count,
             0..table_count,
-            0..5u8,
+            0..10u8,
         ),
         0..=2usize,
     )
@@ -637,6 +775,66 @@ fn view_strategy(schema_name: String, table_infos: Vec<TableInfo>) -> BoxedStrat
                     if let Some((ecol, etype, eval)) = table.enum_columns.first() {
                         format!(
                             "CREATE OR REPLACE VIEW {schema_name}.{view_name} AS SELECT t1.id, t1.{ecol} FROM {table_ref} t1 WHERE t1.{ecol} = '{eval}'::{etype};"
+                        )
+                    } else {
+                        format!(
+                            "CREATE OR REPLACE VIEW {schema_name}.{view_name} AS SELECT t1.id FROM {table_ref} t1;"
+                        )
+                    }
+                }
+                4 if table_count >= 2 => {
+                    let other_idx = if table_idx == table_idx2 {
+                        (table_idx + 1) % table_count
+                    } else {
+                        table_idx2
+                    };
+                    let table2 = &table_infos[other_idx];
+                    let table2_ref = format!("{schema_name}.{}", table2.name);
+                    format!(
+                        "CREATE OR REPLACE VIEW {schema_name}.{view_name} AS SELECT t1.id, t2.id AS t2_id FROM {table_ref} t1 LEFT JOIN {table2_ref} t2 ON t1.id = t2.id;"
+                    )
+                }
+                5 => {
+                    if let Some(col) = table.numeric_columns.first() {
+                        format!(
+                            "CREATE OR REPLACE VIEW {schema_name}.{view_name} AS SELECT t1.id, CASE WHEN t1.{col} > 100 THEN 'high' WHEN t1.{col} > 10 THEN 'medium' WHEN t1.{col} > 0 THEN 'low' ELSE 'none' END AS {col}_bucket FROM {table_ref} t1;"
+                        )
+                    } else {
+                        format!(
+                            "CREATE OR REPLACE VIEW {schema_name}.{view_name} AS SELECT t1.id FROM {table_ref} t1;"
+                        )
+                    }
+                }
+                6 => {
+                    if let Some(col) = table.text_columns.first() {
+                        format!(
+                            "CREATE OR REPLACE VIEW {schema_name}.{view_name} AS SELECT t1.id, NULLIF(t1.{col}, '') AS {col} FROM {table_ref} t1;"
+                        )
+                    } else {
+                        format!(
+                            "CREATE OR REPLACE VIEW {schema_name}.{view_name} AS SELECT t1.id FROM {table_ref} t1;"
+                        )
+                    }
+                }
+                7 => {
+                    if let Some(col) = table.numeric_columns.first() {
+                        format!(
+                            "CREATE OR REPLACE VIEW {schema_name}.{view_name} AS SELECT t1.id, GREATEST(t1.{col}, 0) AS {col} FROM {table_ref} t1;"
+                        )
+                    } else {
+                        format!(
+                            "CREATE OR REPLACE VIEW {schema_name}.{view_name} AS SELECT t1.id FROM {table_ref} t1;"
+                        )
+                    }
+                }
+                8 => {
+                    if let Some(col) = table.numeric_columns.first() {
+                        format!(
+                            "CREATE OR REPLACE VIEW {schema_name}.{view_name} AS SELECT t1.id, CAST(t1.{col} AS text) AS {col}_text FROM {table_ref} t1;"
+                        )
+                    } else if let Some(col) = table.text_columns.first() {
+                        format!(
+                            "CREATE OR REPLACE VIEW {schema_name}.{view_name} AS SELECT t1.id, CAST(t1.{col} AS varchar(100)) AS {col} FROM {table_ref} t1;"
                         )
                     } else {
                         format!(
@@ -909,6 +1107,32 @@ pub fn rich_schema_sql_strategy(schema_name: String) -> BoxedStrategy<String> {
                 })
         })
         .boxed()
+}
+
+// ---------------------------------------------------------------------------
+// Cross-schema strategy
+// ---------------------------------------------------------------------------
+
+pub fn cross_schema_strategy() -> impl Strategy<Value = (Vec<String>, String)> {
+    (
+        test_schema_name_strategy(),
+        test_schema_name_strategy(),
+    )
+        .prop_filter("schema names must be distinct", |(name1, name2)| {
+            name1 != name2
+        })
+        .prop_flat_map(|(name1, name2)| {
+            let name1_clone = name1.clone();
+            let name2_clone = name2.clone();
+            (
+                rich_schema_sql_strategy(name1.clone()),
+                rich_schema_sql_strategy(name2.clone()),
+            )
+                .prop_map(move |(sql1, sql2)| {
+                    let combined = format!("{sql1}\n\n{sql2}");
+                    (vec![name1_clone.clone(), name2_clone.clone()], combined)
+                })
+        })
 }
 
 // ---------------------------------------------------------------------------
