@@ -839,15 +839,21 @@ fn normalize_table_with_joins(
 /// Normalizes a single Join.
 fn normalize_join(j: &sqlparser::ast::Join) -> sqlparser::ast::Join {
     use sqlparser::ast::{Join, JoinOperator};
-    let nc = normalize_join_constraint;
+    let normalize_constraint = normalize_join_constraint;
     Join {
         relation: normalize_table_factor(&j.relation),
         global: j.global,
         join_operator: match &j.join_operator {
-            JoinOperator::Join(c) | JoinOperator::Inner(c) => JoinOperator::Join(nc(c)),
-            JoinOperator::Left(c) | JoinOperator::LeftOuter(c) => JoinOperator::Left(nc(c)),
-            JoinOperator::Right(c) | JoinOperator::RightOuter(c) => JoinOperator::Right(nc(c)),
-            JoinOperator::FullOuter(c) => JoinOperator::FullOuter(nc(c)),
+            JoinOperator::Join(c) | JoinOperator::Inner(c) => {
+                JoinOperator::Join(normalize_constraint(c))
+            }
+            JoinOperator::Left(c) | JoinOperator::LeftOuter(c) => {
+                JoinOperator::Left(normalize_constraint(c))
+            }
+            JoinOperator::Right(c) | JoinOperator::RightOuter(c) => {
+                JoinOperator::Right(normalize_constraint(c))
+            }
+            JoinOperator::FullOuter(c) => JoinOperator::FullOuter(normalize_constraint(c)),
             other => other.clone(),
         },
     }
