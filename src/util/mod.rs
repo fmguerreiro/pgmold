@@ -846,7 +846,7 @@ fn normalize_join(j: &sqlparser::ast::Join) -> sqlparser::ast::Join {
                 sqlparser::ast::JoinOperator::Join(normalize_join_constraint(c))
             }
             sqlparser::ast::JoinOperator::Inner(c) => {
-                sqlparser::ast::JoinOperator::Inner(normalize_join_constraint(c))
+                sqlparser::ast::JoinOperator::Join(normalize_join_constraint(c))
             }
             sqlparser::ast::JoinOperator::Left(c) => {
                 sqlparser::ast::JoinOperator::Left(normalize_join_constraint(c))
@@ -855,10 +855,10 @@ fn normalize_join(j: &sqlparser::ast::Join) -> sqlparser::ast::Join {
                 sqlparser::ast::JoinOperator::Right(normalize_join_constraint(c))
             }
             sqlparser::ast::JoinOperator::LeftOuter(c) => {
-                sqlparser::ast::JoinOperator::LeftOuter(normalize_join_constraint(c))
+                sqlparser::ast::JoinOperator::Left(normalize_join_constraint(c))
             }
             sqlparser::ast::JoinOperator::RightOuter(c) => {
-                sqlparser::ast::JoinOperator::RightOuter(normalize_join_constraint(c))
+                sqlparser::ast::JoinOperator::Right(normalize_join_constraint(c))
             }
             sqlparser::ast::JoinOperator::FullOuter(c) => {
                 sqlparser::ast::JoinOperator::FullOuter(normalize_join_constraint(c))
@@ -1604,13 +1604,45 @@ mod tests {
 
     #[test]
     fn nested_join_preserves_join_types() {
-        // Preserve LEFT/INNER join types during flattening
         let schema_form = "SELECT 1 FROM a INNER JOIN b ON a.id = b.id LEFT JOIN c ON b.id = c.id";
         let db_form = "SELECT 1 FROM ((a INNER JOIN b ON a.id = b.id) LEFT JOIN c ON b.id = c.id)";
 
         assert!(
             views_semantically_equal(schema_form, db_form),
             "Nested JOINs should preserve join types.\nSchema: {schema_form}\nDB: {db_form}"
+        );
+    }
+
+    #[test]
+    fn inner_join_equals_join() {
+        let schema_form = "SELECT 1 FROM a INNER JOIN b ON a.id = b.id";
+        let db_form = "SELECT 1 FROM a JOIN b ON a.id = b.id";
+
+        assert!(
+            views_semantically_equal(schema_form, db_form),
+            "INNER JOIN and JOIN should be semantically equal.\nSchema: {schema_form}\nDB: {db_form}"
+        );
+    }
+
+    #[test]
+    fn left_outer_join_equals_left_join() {
+        let schema_form = "SELECT 1 FROM a LEFT OUTER JOIN b ON a.id = b.id";
+        let db_form = "SELECT 1 FROM a LEFT JOIN b ON a.id = b.id";
+
+        assert!(
+            views_semantically_equal(schema_form, db_form),
+            "LEFT OUTER JOIN and LEFT JOIN should be semantically equal.\nSchema: {schema_form}\nDB: {db_form}"
+        );
+    }
+
+    #[test]
+    fn right_outer_join_equals_right_join() {
+        let schema_form = "SELECT 1 FROM a RIGHT OUTER JOIN b ON a.id = b.id";
+        let db_form = "SELECT 1 FROM a RIGHT JOIN b ON a.id = b.id";
+
+        assert!(
+            views_semantically_equal(schema_form, db_form),
+            "RIGHT OUTER JOIN and RIGHT JOIN should be semantically equal.\nSchema: {schema_form}\nDB: {db_form}"
         );
     }
 
