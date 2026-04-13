@@ -1,5 +1,5 @@
 use crate::model::{Column, Index, Policy, QualifiedName, Table};
-use crate::util::optional_expressions_equal;
+use crate::util::{expressions_semantically_equal, optional_expressions_equal};
 
 use super::{ColumnChanges, MigrationOp, PolicyChanges};
 
@@ -78,8 +78,8 @@ pub(super) fn diff_primary_keys(from_table: &Table, to_table: &Table) -> Vec<Mig
 }
 
 /// Canonical equality check for indexes — use this instead of derived `==`.
-/// Uses AST-based comparison for predicates to handle PostgreSQL's normalization
-/// of WHERE clauses (e.g., adding explicit enum casts).
+/// Uses AST-based comparison for columns and predicates to handle PostgreSQL's
+/// normalization (e.g., adding ::character varying casts, explicit enum casts).
 pub(super) fn indexes_semantically_equal(from: &Index, to: &Index) -> bool {
     from.name == to.name
         && from.columns.len() == to.columns.len()
@@ -87,7 +87,7 @@ pub(super) fn indexes_semantically_equal(from: &Index, to: &Index) -> bool {
             .columns
             .iter()
             .zip(to.columns.iter())
-            .all(|(a, b)| a == b || crate::util::expressions_semantically_equal(a, b))
+            .all(|(a, b)| a == b || expressions_semantically_equal(a, b))
         && from.unique == to.unique
         && from.index_type == to.index_type
         && from.is_constraint == to.is_constraint
