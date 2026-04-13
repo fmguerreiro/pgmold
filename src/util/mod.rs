@@ -1043,10 +1043,10 @@ fn normalize_expr(expr: &Expr) -> Expr {
 
         // Strip casts that PostgreSQL adds but aren't in the original DDL
         Expr::Cast {
-            kind,
             expr: inner,
             data_type,
             format,
+            ..
         } => {
             let norm_inner = normalize_expr(inner);
             if matches!(data_type, DataType::Text) {
