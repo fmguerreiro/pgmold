@@ -82,7 +82,12 @@ pub(super) fn diff_primary_keys(from_table: &Table, to_table: &Table) -> Vec<Mig
 /// of WHERE clauses (e.g., adding explicit enum casts).
 pub(super) fn indexes_semantically_equal(from: &Index, to: &Index) -> bool {
     from.name == to.name
-        && from.columns == to.columns
+        && from.columns.len() == to.columns.len()
+        && from
+            .columns
+            .iter()
+            .zip(to.columns.iter())
+            .all(|(a, b)| a == b || crate::util::expressions_semantically_equal(a, b))
         && from.unique == to.unique
         && from.index_type == to.index_type
         && from.is_constraint == to.is_constraint

@@ -1044,6 +1044,13 @@ fn normalize_expr(expr: &Expr) -> Expr {
             if matches!(data_type, DataType::Text) {
                 return norm_inner;
             }
+            if matches!(
+                data_type,
+                DataType::CharacterVarying(_) | DataType::Varchar(_)
+            ) && matches!(norm_inner, Expr::Identifier(_) | Expr::CompoundIdentifier(_))
+            {
+                return norm_inner;
+            }
             if let Expr::Value(v) = &norm_inner {
                 let should_strip = match &v.value {
                     sqlparser::ast::Value::SingleQuotedString(_) => {
@@ -2125,6 +2132,16 @@ END"#;
     assert!(
         expressions_semantically_equal(with_cast, without_cast),
         "CASE with exact pg_get_expr enum casts should be semantically equal"
+    );
+}
+
+#[test]
+fn varchar_cast_on_identifier_stripped_in_expression_index() {
+    let schema_expr = "lower(col_name)";
+    let db_expr = "lower((col_name)::character varying)";
+    assert!(
+        expressions_semantically_equal(schema_expr, db_expr),
+        "PostgreSQL adds ::character varying casts to varchar columns in expression indexes"
     );
 }
 
