@@ -838,23 +838,16 @@ fn normalize_table_with_joins(
 
 /// Normalizes a single Join.
 fn normalize_join(j: &sqlparser::ast::Join) -> sqlparser::ast::Join {
-    sqlparser::ast::Join {
+    use sqlparser::ast::{Join, JoinOperator};
+    let nc = normalize_join_constraint;
+    Join {
         relation: normalize_table_factor(&j.relation),
         global: j.global,
         join_operator: match &j.join_operator {
-            sqlparser::ast::JoinOperator::Join(c) | sqlparser::ast::JoinOperator::Inner(c) => {
-                sqlparser::ast::JoinOperator::Join(normalize_join_constraint(c))
-            }
-            sqlparser::ast::JoinOperator::Left(c) | sqlparser::ast::JoinOperator::LeftOuter(c) => {
-                sqlparser::ast::JoinOperator::Left(normalize_join_constraint(c))
-            }
-            sqlparser::ast::JoinOperator::Right(c)
-            | sqlparser::ast::JoinOperator::RightOuter(c) => {
-                sqlparser::ast::JoinOperator::Right(normalize_join_constraint(c))
-            }
-            sqlparser::ast::JoinOperator::FullOuter(c) => {
-                sqlparser::ast::JoinOperator::FullOuter(normalize_join_constraint(c))
-            }
+            JoinOperator::Join(c) | JoinOperator::Inner(c) => JoinOperator::Join(nc(c)),
+            JoinOperator::Left(c) | JoinOperator::LeftOuter(c) => JoinOperator::Left(nc(c)),
+            JoinOperator::Right(c) | JoinOperator::RightOuter(c) => JoinOperator::Right(nc(c)),
+            JoinOperator::FullOuter(c) => JoinOperator::FullOuter(nc(c)),
             other => other.clone(),
         },
     }
