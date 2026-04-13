@@ -374,20 +374,22 @@ fn index_strategy(
             proptest::bool::weighted(0.5),
             proptest::bool::weighted(0.5),
         )
-            .prop_map(move |(col_lower, col_upper, generate_lower, generate_upper)| {
-                let mut result = vec![];
-                if generate_lower {
-                    result.push(format!(
-                        "CREATE INDEX {tn}_expr_0 ON {sn}.{tn} (lower({col_lower}));"
-                    ));
-                }
-                if generate_upper {
-                    result.push(format!(
-                        "CREATE INDEX {tn}_expr_1 ON {sn}.{tn} (upper({col_upper}));"
-                    ));
-                }
-                result
-            })
+            .prop_map(
+                move |(col_lower, col_upper, generate_lower, generate_upper)| {
+                    let mut result = vec![];
+                    if generate_lower {
+                        result.push(format!(
+                            "CREATE INDEX {tn}_expr_0 ON {sn}.{tn} (lower({col_lower}));"
+                        ));
+                    }
+                    if generate_upper {
+                        result.push(format!(
+                            "CREATE INDEX {tn}_expr_1 ON {sn}.{tn} (upper({col_upper}));"
+                        ));
+                    }
+                    result
+                },
+            )
             .boxed()
     };
 
@@ -1114,10 +1116,7 @@ pub fn rich_schema_sql_strategy(schema_name: String) -> BoxedStrategy<String> {
 // ---------------------------------------------------------------------------
 
 pub fn cross_schema_strategy() -> impl Strategy<Value = (Vec<String>, String)> {
-    (
-        test_schema_name_strategy(),
-        test_schema_name_strategy(),
-    )
+    (test_schema_name_strategy(), test_schema_name_strategy())
         .prop_filter("schema names must be distinct", |(name1, name2)| {
             name1 != name2
         })

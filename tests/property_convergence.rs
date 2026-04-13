@@ -141,17 +141,16 @@ fn proptest_roundtrip_convergence_cross_schema() {
             });
         }
 
-        let cleanup = |rt: &tokio::runtime::Runtime,
-                       connection: &PgConnection,
-                       names: &[String]| {
-            for name in names {
-                rt.block_on(async {
-                    let _ = sqlx::query(&format!("DROP SCHEMA \"{name}\" CASCADE"))
-                        .execute(connection.pool())
-                        .await;
-                });
-            }
-        };
+        let cleanup =
+            |rt: &tokio::runtime::Runtime, connection: &PgConnection, names: &[String]| {
+                for name in names {
+                    rt.block_on(async {
+                        let _ = sqlx::query(&format!("DROP SCHEMA \"{name}\" CASCADE"))
+                            .execute(connection.pool())
+                            .await;
+                    });
+                }
+            };
 
         let target = match parse_sql_string(&rewritten_sql) {
             Ok(s) => s,
