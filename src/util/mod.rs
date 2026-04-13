@@ -2,8 +2,8 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use sqlparser::ast::{
-    BinaryOperator, DataType, Expr, GroupByExpr, OrderBy, OrderByExpr, OrderByKind, Query, Select,
-    SetExpr, Statement,
+    BinaryOperator, CastKind, DataType, Expr, GroupByExpr, OrderBy, OrderByExpr, OrderByKind,
+    Query, Select, SetExpr, Statement,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -873,6 +873,14 @@ fn normalize_join_constraint(
     }
 }
 
+fn normalize_data_type(data_type: &DataType) -> DataType {
+    match data_type {
+        DataType::Varchar(length) => DataType::CharacterVarying(length.clone()),
+        DataType::Char(length) => DataType::Character(length.clone()),
+        other => other.clone(),
+    }
+}
+
 /// Tries to reduce a scalar subquery of the form `(SELECT func() [AS alias])` with no
 /// FROM, WHERE, GROUP BY, HAVING, ORDER BY, or LIMIT to just the function call expression.
 ///
@@ -1085,9 +1093,9 @@ fn normalize_expr(expr: &Expr) -> Expr {
                 }
             }
             Expr::Cast {
-                kind: kind.clone(),
+                kind: CastKind::DoubleColon,
                 expr: Box::new(norm_inner),
-                data_type: data_type.clone(),
+                data_type: normalize_data_type(data_type),
                 format: format.clone(),
             }
         }
@@ -2188,6 +2196,16 @@ fn length_qualified_varchar_cast_on_string_literal_preserved() {
     assert!(
         !expressions_semantically_equal(with_length, without_cast),
         "Length-qualified varchar cast on string literal should not be stripped"
+    );
+}
+
+#[test]
+fn cast_syntax_equals_double_colon_syntax() {
+    let cast_form = "CAST(col AS varchar(100))";
+    let double_colon_form = "(col)::character varying(100)";
+    assert!(
+        expressions_semantically_equal(cast_form, double_colon_form),
+        "CAST(x AS type) and x::type should be semantically equal"
     );
 }
 
