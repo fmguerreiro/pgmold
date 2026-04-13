@@ -877,6 +877,12 @@ fn normalize_data_type(data_type: &DataType) -> DataType {
     match data_type {
         DataType::Varchar(length) => DataType::CharacterVarying(length.clone()),
         DataType::Char(length) => DataType::Character(length.clone()),
+        DataType::Bool => DataType::Boolean,
+        DataType::Float4 => DataType::Real,
+        DataType::Float8 => DataType::DoublePrecision,
+        DataType::Int2(n) => DataType::SmallInt(*n),
+        DataType::Int4(n) => DataType::Integer(*n),
+        DataType::Int8(n) => DataType::BigInt(*n),
         other => other.clone(),
     }
 }
@@ -1049,38 +1055,36 @@ fn normalize_expr(expr: &Expr) -> Expr {
             ..
         } => {
             let norm_inner = normalize_expr(inner);
-            if matches!(data_type, DataType::Text) {
+            let norm_data_type = normalize_data_type(data_type);
+            if matches!(norm_data_type, DataType::Text) {
                 return norm_inner;
             }
-            if matches!(
-                data_type,
-                DataType::CharacterVarying(None) | DataType::Varchar(None)
-            ) && matches!(
-                norm_inner,
-                Expr::Identifier(_) | Expr::CompoundIdentifier(_)
-            ) {
+            if matches!(norm_data_type, DataType::CharacterVarying(None))
+                && matches!(
+                    norm_inner,
+                    Expr::Identifier(_) | Expr::CompoundIdentifier(_)
+                )
+            {
                 return norm_inner;
             }
             if let Expr::Value(v) = &norm_inner {
                 let should_strip = match &v.value {
                     sqlparser::ast::Value::SingleQuotedString(_) => {
                         matches!(
-                            data_type,
+                            norm_data_type,
                             DataType::Custom(_, _)
                                 | DataType::Array(_)
                                 | DataType::CharacterVarying(None)
-                                | DataType::Varchar(None)
                         )
                     }
-                    sqlparser::ast::Value::Number(_, _) => is_numeric_type(data_type),
+                    sqlparser::ast::Value::Number(_, _) => is_numeric_type(&norm_data_type),
                     sqlparser::ast::Value::Null => true,
                     _ => false,
                 };
                 if should_strip {
                     return norm_inner;
                 }
-                // Normalize '90 days'::interval to interval '90 days'
-                let is_interval_literal = matches!(data_type, DataType::Interval { .. })
+                let is_interval_literal = matches!(norm_data_type, DataType::Interval { .. })
                     && matches!(v.value, sqlparser::ast::Value::SingleQuotedString(_));
                 if is_interval_literal {
                     return Expr::Interval(sqlparser::ast::Interval {
@@ -1095,7 +1099,7 @@ fn normalize_expr(expr: &Expr) -> Expr {
             Expr::Cast {
                 kind: CastKind::DoubleColon,
                 expr: Box::new(norm_inner),
-                data_type: normalize_data_type(data_type),
+                data_type: norm_data_type,
                 format: format.clone(),
             }
         }
