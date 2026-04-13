@@ -391,8 +391,6 @@ fn index_strategy(
             .boxed()
     };
 
-    let text_cast_index = Just(vec![]).boxed();
-
     let bool_partial = if boolean_columns.is_empty() {
         Just(vec![]).boxed()
     } else {
@@ -509,7 +507,6 @@ fn index_strategy(
     (
         basic,
         expression,
-        text_cast_index,
         bool_partial,
         null_partial,
         compound_bool_partial,
@@ -517,9 +514,8 @@ fn index_strategy(
         enum_partial,
     )
         .prop_map(
-            |(mut indexes, expr, cast_idx, bool_p, null_p, comp_p, range_p, enum_p)| {
+            |(mut indexes, expr, bool_p, null_p, comp_p, range_p, enum_p)| {
                 indexes.extend(expr);
-                indexes.extend(cast_idx);
                 indexes.extend(bool_p);
                 indexes.extend(null_p);
                 indexes.extend(comp_p);
