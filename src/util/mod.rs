@@ -842,22 +842,16 @@ fn normalize_join(j: &sqlparser::ast::Join) -> sqlparser::ast::Join {
         relation: normalize_table_factor(&j.relation),
         global: j.global,
         join_operator: match &j.join_operator {
-            sqlparser::ast::JoinOperator::Join(c) => {
+            sqlparser::ast::JoinOperator::Join(c)
+            | sqlparser::ast::JoinOperator::Inner(c) => {
                 sqlparser::ast::JoinOperator::Join(normalize_join_constraint(c))
             }
-            sqlparser::ast::JoinOperator::Inner(c) => {
-                sqlparser::ast::JoinOperator::Join(normalize_join_constraint(c))
-            }
-            sqlparser::ast::JoinOperator::Left(c) => {
+            sqlparser::ast::JoinOperator::Left(c)
+            | sqlparser::ast::JoinOperator::LeftOuter(c) => {
                 sqlparser::ast::JoinOperator::Left(normalize_join_constraint(c))
             }
-            sqlparser::ast::JoinOperator::Right(c) => {
-                sqlparser::ast::JoinOperator::Right(normalize_join_constraint(c))
-            }
-            sqlparser::ast::JoinOperator::LeftOuter(c) => {
-                sqlparser::ast::JoinOperator::Left(normalize_join_constraint(c))
-            }
-            sqlparser::ast::JoinOperator::RightOuter(c) => {
+            sqlparser::ast::JoinOperator::Right(c)
+            | sqlparser::ast::JoinOperator::RightOuter(c) => {
                 sqlparser::ast::JoinOperator::Right(normalize_join_constraint(c))
             }
             sqlparser::ast::JoinOperator::FullOuter(c) => {
@@ -1605,7 +1599,7 @@ mod tests {
     #[test]
     fn nested_join_preserves_join_types() {
         let schema_form = "SELECT 1 FROM a INNER JOIN b ON a.id = b.id LEFT JOIN c ON b.id = c.id";
-        let db_form = "SELECT 1 FROM ((a INNER JOIN b ON a.id = b.id) LEFT JOIN c ON b.id = c.id)";
+        let db_form = "SELECT 1 FROM ((a JOIN b ON a.id = b.id) LEFT JOIN c ON b.id = c.id)";
 
         assert!(
             views_semantically_equal(schema_form, db_form),
