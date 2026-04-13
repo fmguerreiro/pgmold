@@ -1056,9 +1056,13 @@ fn normalize_expr(expr: &Expr) -> Expr {
             if let Expr::Value(v) = &norm_inner {
                 let should_strip = match &v.value {
                     sqlparser::ast::Value::SingleQuotedString(_) => {
-                        // PostgreSQL always emits an explicit array cast; strip it to match bare literal form.
-                        matches!(data_type, DataType::Custom(_, _))
-                            || matches!(data_type, DataType::Array(_))
+                        matches!(
+                            data_type,
+                            DataType::Custom(_, _)
+                                | DataType::Array(_)
+                                | DataType::CharacterVarying(_)
+                                | DataType::Varchar(_)
+                        )
                     }
                     sqlparser::ast::Value::Number(_, _) => is_numeric_type(data_type),
                     sqlparser::ast::Value::Null => true,
@@ -2154,6 +2158,16 @@ fn varchar_cast_on_compound_identifier_stripped() {
     assert!(
         expressions_semantically_equal(schema_expr, db_expr),
         "Compound identifier varchar cast should be stripped"
+    );
+}
+
+#[test]
+fn varchar_cast_on_string_literal_stripped() {
+    let schema_expr = "COALESCE(col, 'unknown')";
+    let db_expr = "COALESCE(col, 'unknown'::character varying)";
+    assert!(
+        expressions_semantically_equal(schema_expr, db_expr),
+        "PostgreSQL adds ::character varying casts to string literals in COALESCE with varchar columns"
     );
 }
 
