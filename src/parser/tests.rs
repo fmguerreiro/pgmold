@@ -3380,6 +3380,9 @@ fn parses_inline_column_named_unique_constraint() {
 
 #[test]
 fn inline_unique_matches_out_of_line_unique() {
+    // Both forms use the UNNAMED out-of-line constraint to exercise the default-name
+    // fallback path. Postgres introspection names this `{table}_{column}_key` regardless
+    // of whether the UNIQUE was written inline or out-of-line, so the parser must agree.
     let inline_sql = r#"
         CREATE TABLE users (
             id BIGINT PRIMARY KEY,
@@ -3390,7 +3393,7 @@ fn inline_unique_matches_out_of_line_unique() {
         CREATE TABLE users (
             id BIGINT PRIMARY KEY,
             email TEXT NOT NULL,
-            CONSTRAINT users_email_key UNIQUE (email)
+            UNIQUE (email)
         );
     "#;
 
@@ -3549,5 +3552,171 @@ fn inline_column_constraints_survive_dump_roundtrip() {
         schema.tables.get("public.enrollments"),
         reparsed.tables.get("public.enrollments"),
         "enrollments table should be identical after dump+reparse"
+    );
+}
+
+#[test]
+fn inline_references_without_column_list_is_rejected() {
+    // Inline `REFERENCES parent` with no column list is ambiguous for us: Postgres resolves
+    // it to the parent's PK at DDL time and `pg_catalog` stores the actual column. If the
+    // parser stored an empty `referenced_columns`, every subsequent `plan` would emit a
+    // spurious DROP+ADD cycle. Require the column to be explicit.
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users
+        );
+    "#;
+
+    let err = parse_sql_string(sql).expect_err(
+        "inline REFERENCES without a column list must be rejected, not silently accepted",
+    );
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("REFERENCES") && msg.contains("column"),
+        "error message should explain the missing column list; got: {msg}"
+    );
+}
+
+#[test]
+fn inline_fk_matches_out_of_line_fk() {
+    // Exercise the unnamed out-of-line FK default-name fallback. Postgres names unnamed
+    // FKs `{table}_{col1}_..._fkey`.
+    let inline_sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id)
+        );
+    "#;
+    let out_of_line_sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+    "#;
+
+    let inline = parse_sql_string(inline_sql).unwrap();
+    let out_of_line = parse_sql_string(out_of_line_sql).unwrap();
+
+    assert_eq!(
+        inline
+            .tables
+            .get("public.enrollments")
+            .unwrap()
+            .foreign_keys,
+        out_of_line
+            .tables
+            .get("public.enrollments")
+            .unwrap()
+            .foreign_keys
+    );
+}
+
+#[test]
+fn inline_check_matches_out_of_line_check() {
+    // Exercise the unnamed out-of-line CHECK default-name fallback. Postgres inspects the
+    // CHECK expression: when it references exactly one column, the name is
+    // `{table}_{column}_check` (matching the inline form); otherwise `{table}_check`.
+    let inline_sql = r#"
+        CREATE TABLE products (
+            id SERIAL PRIMARY KEY,
+            price BIGINT NOT NULL CHECK (price > 0)
+        );
+    "#;
+    let out_of_line_sql = r#"
+        CREATE TABLE products (
+            id SERIAL PRIMARY KEY,
+            price BIGINT NOT NULL,
+            CHECK (price > 0)
+        );
+    "#;
+
+    let inline = parse_sql_string(inline_sql).unwrap();
+    let out_of_line = parse_sql_string(out_of_line_sql).unwrap();
+
+    assert_eq!(
+        inline
+            .tables
+            .get("public.products")
+            .unwrap()
+            .check_constraints,
+        out_of_line
+            .tables
+            .get("public.products")
+            .unwrap()
+            .check_constraints
+    );
+}
+
+#[test]
+fn out_of_line_unnamed_unique_multi_column_name_matches_postgres() {
+    // Postgres names an unnamed multi-column UNIQUE as `{table}_{col1}_{col2}..._key`.
+    let sql = r#"
+        CREATE TABLE sessions (
+            a INTEGER NOT NULL,
+            b INTEGER NOT NULL,
+            c INTEGER NOT NULL,
+            UNIQUE (a, b)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let sessions = schema.tables.get("public.sessions").unwrap();
+
+    let idx = sessions
+        .indexes
+        .iter()
+        .find(|i| i.columns == vec!["a".to_string(), "b".to_string()])
+        .expect("UNIQUE (a, b) index should exist");
+    assert_eq!(idx.name, "sessions_a_b_key");
+}
+
+#[test]
+fn out_of_line_unnamed_check_multi_column_name_matches_postgres() {
+    // A CHECK expression referencing multiple columns gets the bare `{table}_check` name
+    // from Postgres — there is no single column to embed.
+    let sql = r#"
+        CREATE TABLE ranges (
+            lo INTEGER NOT NULL,
+            hi INTEGER NOT NULL,
+            CHECK (lo < hi)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let ranges = schema.tables.get("public.ranges").unwrap();
+
+    assert_eq!(ranges.check_constraints.len(), 1);
+    assert_eq!(ranges.check_constraints[0].name, "ranges_check");
+}
+
+#[test]
+fn inline_check_constraint_name_is_truncated_to_63_bytes() {
+    // Postgres silently truncates identifiers at NAMEDATALEN-1 (63 bytes). If the parser
+    // emits a longer name than introspection observes, every plan will emit DROP+ADD.
+    let sql = r#"
+        CREATE TABLE a_very_long_table_name_that_pushes_limits (
+            a_very_long_column_name_also_pushing_limits BIGINT NOT NULL CHECK (a_very_long_column_name_also_pushing_limits > 0)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema
+        .tables
+        .get("public.a_very_long_table_name_that_pushes_limits")
+        .unwrap();
+    assert_eq!(table.check_constraints.len(), 1);
+    let name = &table.check_constraints[0].name;
+    assert!(
+        name.len() <= 63,
+        "inline CHECK default name must be truncated to 63 bytes; got {} bytes: {name}",
+        name.len()
     );
 }
