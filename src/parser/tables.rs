@@ -346,7 +346,7 @@ pub(super) fn parse_referential_action(action: &Option<SqlReferentialAction>) ->
 fn collect_referenced_columns(expr: &Expr, known_columns: &[&str]) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
     walk_expr_identifiers(expr, &mut |name: &str| {
-        if known_columns.iter().any(|c| *c == name) && !seen.iter().any(|s| s == name) {
+        if known_columns.contains(&name) && !seen.iter().any(|s| s == name) {
             seen.push(name.to_string());
         }
     });
