@@ -3574,11 +3574,18 @@ fn inline_references_without_column_list_is_rejected() {
     let err = parse_sql_string(sql).expect_err(
         "inline REFERENCES without a column list must be rejected, not silently accepted",
     );
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("REFERENCES") && msg.contains("column"),
-        "error message should explain the missing column list; got: {msg}"
-    );
+    match err {
+        crate::util::SchemaError::ParseError(msg) => {
+            let expected = "Inline REFERENCES on column \"public\".\"enrollments\".\"user_id\" \
+                must specify the referenced column explicitly (e.g. REFERENCES \"users\"(id)). \
+                Postgres resolves the bare form to the parent's primary key at DDL time and \
+                stores the resolved column in pg_catalog; the parser cannot infer it without \
+                ordering-sensitive lookups, so leaving it empty would cause a spurious \
+                DROP+ADD cycle on every subsequent plan.";
+            assert_eq!(msg, expected);
+        }
+        other => panic!("expected SchemaError::ParseError, got {other:?}"),
+    }
 }
 
 #[test]
