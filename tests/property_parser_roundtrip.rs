@@ -71,17 +71,15 @@ fn constraint_heavy_schema_strategy() -> BoxedStrategy<String> {
             for (i, name) in table_names.iter().enumerate() {
                 let mut columns: Vec<String> = vec![
                     "    id bigserial PRIMARY KEY".to_string(),
-                    format!("    email text NOT NULL UNIQUE"),
-                    format!(
-                        "    kind text NOT NULL CHECK (kind IN ('a', 'b', 'c'))"
-                    ),
+                    "    email text NOT NULL UNIQUE".to_string(),
+                    "    kind text NOT NULL CHECK (kind IN ('a', 'b', 'c'))".to_string(),
                     format!(
                         "    status {schema_name}.status_enum NOT NULL DEFAULT 'active'::{schema_name}.status_enum"
                     ),
                     format!("    score {schema_name}.positive_int"),
-                    format!("    created_at timestamptz NOT NULL DEFAULT now()"),
-                    format!("    token uuid NOT NULL DEFAULT gen_random_uuid()"),
-                    format!("    ttl interval NOT NULL DEFAULT '1 day'::interval"),
+                    "    created_at timestamptz NOT NULL DEFAULT now()".to_string(),
+                    "    token uuid NOT NULL DEFAULT gen_random_uuid()".to_string(),
+                    "    ttl interval NOT NULL DEFAULT '1 day'::interval".to_string(),
                 ];
 
                 if (variant_mask >> (i % 4)) & 1 == 1 && i > 0 {
@@ -149,10 +147,9 @@ proptest! {
     fn parse_dump_parse_is_stable_constraint_heavy(
         sql in constraint_heavy_schema_strategy()
     ) {
-        let schema_a = match parse_sql_string(&sql) {
-            Ok(s) => s,
-            Err(_) => return Ok(()),
-        };
+        let schema_a = parse_sql_string(&sql);
+        prop_assume!(schema_a.is_ok(), "generated SQL did not parse");
+        let schema_a = schema_a.unwrap();
 
         let dumped = generate_dump(&schema_a, None);
 
