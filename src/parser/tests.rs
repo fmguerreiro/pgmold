@@ -3336,3 +3336,438 @@ fn btree_index_method_defaults_when_no_using_clause() {
         .expect("index should exist");
     assert_eq!(index.index_type, IndexType::BTree);
 }
+
+#[test]
+fn parses_inline_column_unique_constraint() {
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.users").unwrap();
+
+    let unique_idx = table
+        .indexes
+        .iter()
+        .find(|idx| idx.columns == vec!["email".to_string()])
+        .expect("inline UNIQUE should produce a unique index on email");
+
+    assert!(unique_idx.unique);
+    assert!(unique_idx.is_constraint);
+    assert_eq!(unique_idx.name, "users_email_key");
+    assert_eq!(unique_idx.index_type, IndexType::BTree);
+    assert!(unique_idx.predicate.is_none());
+}
+
+#[test]
+fn parses_inline_column_named_unique_constraint() {
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL CONSTRAINT users_email_uniq UNIQUE
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.users").unwrap();
+
+    let unique_idx = table
+        .indexes
+        .iter()
+        .find(|idx| idx.name == "users_email_uniq")
+        .expect("named inline UNIQUE should use the provided constraint name");
+
+    assert!(unique_idx.unique);
+    assert!(unique_idx.is_constraint);
+    assert_eq!(unique_idx.columns, vec!["email".to_string()]);
+}
+
+#[test]
+fn inline_unique_matches_out_of_line_unique() {
+    // Both forms use the UNNAMED out-of-line constraint to exercise the default-name
+    // fallback path. Postgres introspection names this `{table}_{column}_key` regardless
+    // of whether the UNIQUE was written inline or out-of-line, so the parser must agree.
+    let inline_sql = r#"
+        CREATE TABLE users (
+            id BIGINT PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE
+        );
+    "#;
+    let out_of_line_sql = r#"
+        CREATE TABLE users (
+            id BIGINT PRIMARY KEY,
+            email TEXT NOT NULL,
+            UNIQUE (email)
+        );
+    "#;
+
+    let inline = parse_sql_string(inline_sql).unwrap();
+    let out_of_line = parse_sql_string(out_of_line_sql).unwrap();
+
+    let inline_table = inline.tables.get("public.users").unwrap();
+    let ool_table = out_of_line.tables.get("public.users").unwrap();
+
+    assert_eq!(inline_table.indexes, ool_table.indexes);
+}
+
+#[test]
+fn parses_inline_column_references_foreign_key() {
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let enrollments = schema.tables.get("public.enrollments").unwrap();
+
+    assert_eq!(enrollments.foreign_keys.len(), 1);
+    let fk = &enrollments.foreign_keys[0];
+    assert_eq!(fk.name, "enrollments_user_id_fkey");
+    assert_eq!(fk.columns, vec!["user_id".to_string()]);
+    assert_eq!(fk.referenced_schema, "public");
+    assert_eq!(fk.referenced_table, "users");
+    assert_eq!(fk.referenced_columns, vec!["id".to_string()]);
+    assert_eq!(fk.on_delete, ReferentialAction::NoAction);
+    assert_eq!(fk.on_update, ReferentialAction::NoAction);
+}
+
+#[test]
+fn parses_inline_column_references_with_on_delete_cascade() {
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE ON UPDATE RESTRICT
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let enrollments = schema.tables.get("public.enrollments").unwrap();
+    let fk = &enrollments.foreign_keys[0];
+
+    assert_eq!(fk.on_delete, ReferentialAction::Cascade);
+    assert_eq!(fk.on_update, ReferentialAction::Restrict);
+}
+
+#[test]
+fn parses_inline_column_references_cross_schema() {
+    let sql = r#"
+        CREATE SCHEMA auth;
+        CREATE TABLE auth.users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE public.enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES auth.users(id)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let enrollments = schema.tables.get("public.enrollments").unwrap();
+    let fk = &enrollments.foreign_keys[0];
+
+    assert_eq!(fk.referenced_schema, "auth");
+    assert_eq!(fk.referenced_table, "users");
+    assert_eq!(fk.referenced_columns, vec!["id".to_string()]);
+}
+
+#[test]
+fn parses_inline_column_named_references_foreign_key() {
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL
+                CONSTRAINT enrollments_user_fk REFERENCES users(id)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let enrollments = schema.tables.get("public.enrollments").unwrap();
+
+    assert_eq!(enrollments.foreign_keys.len(), 1);
+    assert_eq!(enrollments.foreign_keys[0].name, "enrollments_user_fk");
+}
+
+#[test]
+fn parses_inline_column_check_constraint() {
+    let sql = r#"
+        CREATE TABLE products (
+            id SERIAL PRIMARY KEY,
+            price BIGINT NOT NULL CHECK (price > 0)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let products = schema.tables.get("public.products").unwrap();
+
+    assert_eq!(products.check_constraints.len(), 1);
+    let check = &products.check_constraints[0];
+    assert_eq!(check.name, "products_price_check");
+    assert_eq!(check.expression, "price > 0");
+}
+
+#[test]
+fn parses_inline_column_named_check_constraint() {
+    let sql = r#"
+        CREATE TABLE products (
+            id SERIAL PRIMARY KEY,
+            price BIGINT NOT NULL CONSTRAINT price_positive CHECK (price > 0)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let products = schema.tables.get("public.products").unwrap();
+
+    assert_eq!(products.check_constraints.len(), 1);
+    assert_eq!(products.check_constraints[0].name, "price_positive");
+    assert_eq!(products.check_constraints[0].expression, "price > 0");
+}
+
+#[test]
+fn inline_column_constraints_survive_dump_roundtrip() {
+    use crate::dump::generate_dump;
+
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            seats INTEGER NOT NULL CHECK (seats > 0)
+        );
+    "#;
+
+    let schema = parse_sql_string(sql).unwrap();
+    let dump = generate_dump(&schema, None);
+    let reparsed = parse_sql_string(&dump).unwrap();
+
+    assert_eq!(
+        schema.tables.get("public.users"),
+        reparsed.tables.get("public.users"),
+        "users table should be identical after dump+reparse"
+    );
+    assert_eq!(
+        schema.tables.get("public.enrollments"),
+        reparsed.tables.get("public.enrollments"),
+        "enrollments table should be identical after dump+reparse"
+    );
+}
+
+#[test]
+fn inline_references_without_column_list_is_rejected() {
+    // Inline `REFERENCES parent` with no column list is ambiguous for us: Postgres resolves
+    // it to the parent's PK at DDL time and `pg_catalog` stores the actual column. If the
+    // parser stored an empty `referenced_columns`, every subsequent `plan` would emit a
+    // spurious DROP+ADD cycle. Require the column to be explicit.
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users
+        );
+    "#;
+
+    let err = parse_sql_string(sql).expect_err(
+        "inline REFERENCES without a column list must be rejected, not silently accepted",
+    );
+    match err {
+        crate::util::SchemaError::ParseError(msg) => {
+            let expected = "Inline REFERENCES on column \"public\".\"enrollments\".\"user_id\" \
+                must specify the referenced column explicitly (e.g. REFERENCES \"users\"(id)). \
+                Postgres resolves the bare form to the parent's primary key at DDL time and \
+                stores the resolved column in pg_catalog; the parser cannot infer it without \
+                ordering-sensitive lookups, so leaving it empty would cause a spurious \
+                DROP+ADD cycle on every subsequent plan.";
+            assert_eq!(msg, expected);
+        }
+        other => panic!("expected SchemaError::ParseError, got {other:?}"),
+    }
+}
+
+#[test]
+fn inline_fk_matches_out_of_line_fk() {
+    // Exercise the unnamed out-of-line FK default-name fallback. Postgres names unnamed
+    // FKs `{table}_{col1}_..._fkey`.
+    let inline_sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id)
+        );
+    "#;
+    let out_of_line_sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+    "#;
+
+    let inline = parse_sql_string(inline_sql).unwrap();
+    let out_of_line = parse_sql_string(out_of_line_sql).unwrap();
+
+    assert_eq!(
+        inline
+            .tables
+            .get("public.enrollments")
+            .unwrap()
+            .foreign_keys,
+        out_of_line
+            .tables
+            .get("public.enrollments")
+            .unwrap()
+            .foreign_keys
+    );
+}
+
+#[test]
+fn inline_check_matches_out_of_line_check() {
+    // Exercise the unnamed out-of-line CHECK default-name fallback. Postgres inspects the
+    // CHECK expression: when it references exactly one column, the name is
+    // `{table}_{column}_check` (matching the inline form); otherwise `{table}_check`.
+    let inline_sql = r#"
+        CREATE TABLE products (
+            id SERIAL PRIMARY KEY,
+            price BIGINT NOT NULL CHECK (price > 0)
+        );
+    "#;
+    let out_of_line_sql = r#"
+        CREATE TABLE products (
+            id SERIAL PRIMARY KEY,
+            price BIGINT NOT NULL,
+            CHECK (price > 0)
+        );
+    "#;
+
+    let inline = parse_sql_string(inline_sql).unwrap();
+    let out_of_line = parse_sql_string(out_of_line_sql).unwrap();
+
+    assert_eq!(
+        inline
+            .tables
+            .get("public.products")
+            .unwrap()
+            .check_constraints,
+        out_of_line
+            .tables
+            .get("public.products")
+            .unwrap()
+            .check_constraints
+    );
+}
+
+#[test]
+fn out_of_line_unnamed_unique_multi_column_name_matches_postgres() {
+    // Postgres names an unnamed multi-column UNIQUE as `{table}_{col1}_{col2}..._key`.
+    let sql = r#"
+        CREATE TABLE sessions (
+            a INTEGER NOT NULL,
+            b INTEGER NOT NULL,
+            c INTEGER NOT NULL,
+            UNIQUE (a, b)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let sessions = schema.tables.get("public.sessions").unwrap();
+
+    let idx = sessions
+        .indexes
+        .iter()
+        .find(|i| i.columns == vec!["a".to_string(), "b".to_string()])
+        .expect("UNIQUE (a, b) index should exist");
+    assert_eq!(idx.name, "sessions_a_b_key");
+}
+
+#[test]
+fn out_of_line_unnamed_check_multi_column_name_matches_postgres() {
+    // A CHECK expression referencing multiple columns gets the bare `{table}_check` name
+    // from Postgres — there is no single column to embed.
+    let sql = r#"
+        CREATE TABLE ranges (
+            lo INTEGER NOT NULL,
+            hi INTEGER NOT NULL,
+            CHECK (lo < hi)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let ranges = schema.tables.get("public.ranges").unwrap();
+
+    assert_eq!(ranges.check_constraints.len(), 1);
+    assert_eq!(ranges.check_constraints[0].name, "ranges_check");
+}
+
+#[test]
+fn inline_check_referencing_different_column_uses_referenced_column_name() {
+    // Postgres names unnamed CHECK constraints after the columns the expression *references*,
+    // not the column they are attached to. If the inline path naively embeds the defining
+    // column into the default name, convergence fails: introspection observes
+    // `{table}_{referenced}_check`, the parser emits `{table}_{defining}_check`, and every
+    // plan cycles DROP+ADD.
+    let sql = r#"
+        CREATE TABLE products (
+            price INTEGER NOT NULL,
+            quantity INTEGER NOT NULL CHECK (price > 0)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let products = schema.tables.get("public.products").unwrap();
+
+    assert_eq!(products.check_constraints.len(), 1);
+    assert_eq!(
+        products.check_constraints[0].name, "products_price_check",
+        "inline CHECK naming must follow the referenced column, not the defining column"
+    );
+}
+
+#[test]
+fn inline_check_referencing_no_column_uses_table_name() {
+    // An inline CHECK whose expression references no table column (e.g. `CHECK (true)`) has
+    // no single column to embed; Postgres falls back to the bare `{table}_check` name.
+    let sql = r#"
+        CREATE TABLE flags (
+            id INTEGER NOT NULL CHECK (true)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let flags = schema.tables.get("public.flags").unwrap();
+
+    assert_eq!(flags.check_constraints.len(), 1);
+    assert_eq!(flags.check_constraints[0].name, "flags_check");
+}
+
+#[test]
+fn inline_check_constraint_name_is_truncated_to_63_bytes() {
+    // Postgres silently truncates identifiers at NAMEDATALEN-1 (63 bytes). If the parser
+    // emits a longer name than introspection observes, every plan will emit DROP+ADD.
+    let sql = r#"
+        CREATE TABLE a_very_long_table_name_that_pushes_limits (
+            a_very_long_column_name_also_pushing_limits BIGINT NOT NULL CHECK (a_very_long_column_name_also_pushing_limits > 0)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema
+        .tables
+        .get("public.a_very_long_table_name_that_pushes_limits")
+        .unwrap();
+    assert_eq!(table.check_constraints.len(), 1);
+    let name = &table.check_constraints[0].name;
+    assert!(
+        name.len() <= 63,
+        "inline CHECK default name must be truncated to 63 bytes; got {} bytes: {name}",
+        name.len()
+    );
+}
