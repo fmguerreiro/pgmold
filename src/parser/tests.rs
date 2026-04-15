@@ -3331,3 +3331,223 @@ fn btree_index_method_defaults_when_no_using_clause() {
         .expect("index should exist");
     assert_eq!(index.index_type, IndexType::BTree);
 }
+
+#[test]
+fn parses_inline_column_unique_constraint() {
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.users").unwrap();
+
+    let unique_idx = table
+        .indexes
+        .iter()
+        .find(|idx| idx.columns == vec!["email".to_string()])
+        .expect("inline UNIQUE should produce a unique index on email");
+
+    assert!(unique_idx.unique);
+    assert!(unique_idx.is_constraint);
+    assert_eq!(unique_idx.name, "users_email_key");
+    assert_eq!(unique_idx.index_type, IndexType::BTree);
+    assert!(unique_idx.predicate.is_none());
+}
+
+#[test]
+fn parses_inline_column_named_unique_constraint() {
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL CONSTRAINT users_email_uniq UNIQUE
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.users").unwrap();
+
+    let unique_idx = table
+        .indexes
+        .iter()
+        .find(|idx| idx.name == "users_email_uniq")
+        .expect("named inline UNIQUE should use the provided constraint name");
+
+    assert!(unique_idx.unique);
+    assert!(unique_idx.is_constraint);
+    assert_eq!(unique_idx.columns, vec!["email".to_string()]);
+}
+
+#[test]
+fn inline_unique_matches_out_of_line_unique() {
+    let inline_sql = r#"
+        CREATE TABLE users (
+            id BIGINT PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE
+        );
+    "#;
+    let out_of_line_sql = r#"
+        CREATE TABLE users (
+            id BIGINT PRIMARY KEY,
+            email TEXT NOT NULL,
+            CONSTRAINT users_email_key UNIQUE (email)
+        );
+    "#;
+
+    let inline = parse_sql_string(inline_sql).unwrap();
+    let out_of_line = parse_sql_string(out_of_line_sql).unwrap();
+
+    let inline_table = inline.tables.get("public.users").unwrap();
+    let ool_table = out_of_line.tables.get("public.users").unwrap();
+
+    assert_eq!(inline_table.indexes, ool_table.indexes);
+}
+
+#[test]
+fn parses_inline_column_references_foreign_key() {
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let enrollments = schema.tables.get("public.enrollments").unwrap();
+
+    assert_eq!(enrollments.foreign_keys.len(), 1);
+    let fk = &enrollments.foreign_keys[0];
+    assert_eq!(fk.name, "enrollments_user_id_fkey");
+    assert_eq!(fk.columns, vec!["user_id".to_string()]);
+    assert_eq!(fk.referenced_schema, "public");
+    assert_eq!(fk.referenced_table, "users");
+    assert_eq!(fk.referenced_columns, vec!["id".to_string()]);
+    assert_eq!(fk.on_delete, ReferentialAction::NoAction);
+    assert_eq!(fk.on_update, ReferentialAction::NoAction);
+}
+
+#[test]
+fn parses_inline_column_references_with_on_delete_cascade() {
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE ON UPDATE RESTRICT
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let enrollments = schema.tables.get("public.enrollments").unwrap();
+    let fk = &enrollments.foreign_keys[0];
+
+    assert_eq!(fk.on_delete, ReferentialAction::Cascade);
+    assert_eq!(fk.on_update, ReferentialAction::Restrict);
+}
+
+#[test]
+fn parses_inline_column_references_cross_schema() {
+    let sql = r#"
+        CREATE SCHEMA auth;
+        CREATE TABLE auth.users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE public.enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES auth.users(id)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let enrollments = schema.tables.get("public.enrollments").unwrap();
+    let fk = &enrollments.foreign_keys[0];
+
+    assert_eq!(fk.referenced_schema, "auth");
+    assert_eq!(fk.referenced_table, "users");
+    assert_eq!(fk.referenced_columns, vec!["id".to_string()]);
+}
+
+#[test]
+fn parses_inline_column_named_references_foreign_key() {
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL
+                CONSTRAINT enrollments_user_fk REFERENCES users(id)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let enrollments = schema.tables.get("public.enrollments").unwrap();
+
+    assert_eq!(enrollments.foreign_keys.len(), 1);
+    assert_eq!(enrollments.foreign_keys[0].name, "enrollments_user_fk");
+}
+
+#[test]
+fn parses_inline_column_check_constraint() {
+    let sql = r#"
+        CREATE TABLE products (
+            id SERIAL PRIMARY KEY,
+            price BIGINT NOT NULL CHECK (price > 0)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let products = schema.tables.get("public.products").unwrap();
+
+    assert_eq!(products.check_constraints.len(), 1);
+    let check = &products.check_constraints[0];
+    assert_eq!(check.name, "products_price_check");
+    assert_eq!(check.expression, "price > 0");
+}
+
+#[test]
+fn parses_inline_column_named_check_constraint() {
+    let sql = r#"
+        CREATE TABLE products (
+            id SERIAL PRIMARY KEY,
+            price BIGINT NOT NULL CONSTRAINT price_positive CHECK (price > 0)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let products = schema.tables.get("public.products").unwrap();
+
+    assert_eq!(products.check_constraints.len(), 1);
+    assert_eq!(products.check_constraints[0].name, "price_positive");
+    assert_eq!(products.check_constraints[0].expression, "price > 0");
+}
+
+#[test]
+fn inline_column_constraints_survive_dump_roundtrip() {
+    use crate::dump::generate_dump;
+
+    let sql = r#"
+        CREATE TABLE users (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE
+        );
+        CREATE TABLE enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            seats INTEGER NOT NULL CHECK (seats > 0)
+        );
+    "#;
+
+    let schema = parse_sql_string(sql).unwrap();
+    let dump = generate_dump(&schema, None);
+    let reparsed = parse_sql_string(&dump).unwrap();
+
+    assert_eq!(
+        schema.tables.get("public.users"),
+        reparsed.tables.get("public.users"),
+        "users table should be identical after dump+reparse"
+    );
+    assert_eq!(
+        schema.tables.get("public.enrollments"),
+        reparsed.tables.get("public.enrollments"),
+        "enrollments table should be identical after dump+reparse"
+    );
+}
