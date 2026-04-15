@@ -50,15 +50,63 @@ pub(super) fn parse_create_table(
     }
 
     for col_def in columns {
+        let col_name = unquote_ident(&col_def.name.to_string()).to_string();
         for option in &col_def.options {
-            if matches!(option.option, ColumnOption::PrimaryKey(_)) {
-                let pk_col = unquote_ident(&col_def.name.to_string()).to_string();
-                table.primary_key = Some(PrimaryKey {
-                    columns: vec![pk_col.clone()],
-                });
-                if let Some(col) = table.columns.get_mut(&pk_col) {
-                    col.nullable = false;
+            let explicit_name = option
+                .name
+                .as_ref()
+                .map(|n| unquote_ident(&n.to_string()).to_string());
+            match &option.option {
+                ColumnOption::PrimaryKey(_) => {
+                    table.primary_key = Some(PrimaryKey {
+                        columns: vec![col_name.clone()],
+                    });
+                    if let Some(col) = table.columns.get_mut(&col_name) {
+                        col.nullable = false;
+                    }
                 }
+                ColumnOption::Unique(_) => {
+                    let constraint_name = explicit_name
+                        .clone()
+                        .unwrap_or_else(|| format!("{}_{}_key", table.name, col_name));
+                    table.indexes.push(Index {
+                        name: truncate_identifier(&constraint_name),
+                        columns: vec![col_name.clone()],
+                        unique: true,
+                        index_type: IndexType::BTree,
+                        predicate: None,
+                        is_constraint: true,
+                    });
+                }
+                ColumnOption::ForeignKey(fk) => {
+                    let constraint_name = explicit_name
+                        .clone()
+                        .unwrap_or_else(|| format!("{}_{}_fkey", table.name, col_name));
+                    let (ref_schema, ref_table) = extract_qualified_name(&fk.foreign_table);
+                    table.foreign_keys.push(ForeignKey {
+                        name: truncate_identifier(&constraint_name),
+                        columns: vec![col_name.clone()],
+                        referenced_schema: ref_schema,
+                        referenced_table: ref_table,
+                        referenced_columns: fk
+                            .referred_columns
+                            .iter()
+                            .map(|c| unquote_ident(&c.to_string()).to_string())
+                            .collect(),
+                        on_delete: parse_referential_action(&fk.on_delete),
+                        on_update: parse_referential_action(&fk.on_update),
+                    });
+                }
+                ColumnOption::Check(chk) => {
+                    let constraint_name = explicit_name
+                        .clone()
+                        .unwrap_or_else(|| format!("{}_{}_check", table.name, col_name));
+                    table.check_constraints.push(CheckConstraint {
+                        name: constraint_name,
+                        expression: normalize_expr(&chk.expr.to_string()),
+                    });
+                }
+                _ => {}
             }
         }
     }
