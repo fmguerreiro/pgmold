@@ -1,3 +1,8 @@
+// TODO: replace the `_ =>` wildcards in this file with explicit variant
+// listings (see tables.rs / mod.rs for the pattern). Out of scope for the
+// initial ban-wildcards pass; tracked as follow-up.
+#![allow(clippy::wildcard_enum_match_arm)]
+
 use crate::model::*;
 use crate::util::Result;
 use sqlparser::ast::{DataType, Expr, ObjectName, SequenceOptions, UnaryOperator, Value};
