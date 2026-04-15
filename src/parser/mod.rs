@@ -489,7 +489,15 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 expression: normalize_expr(&chk.expr.to_string()),
                             });
                         }
-                        _ => {
+                        // Every remaining variant is passed through the
+                        // NOT-NULL string fallback. Listed explicitly so
+                        // additions to `TableConstraint` upstream force a
+                        // review here instead of being silently swallowed.
+                        TableConstraint::Unique(_)
+                        | TableConstraint::PrimaryKey(_)
+                        | TableConstraint::ForeignKey(_)
+                        | TableConstraint::Index(_)
+                        | TableConstraint::FulltextOrSpatial(_) => {
                             let constraint_str = constraint.to_string().to_uppercase();
                             if constraint_str.contains("NOT NULL") {
                                 not_null = true;

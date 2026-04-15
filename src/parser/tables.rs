@@ -1,3 +1,10 @@
+#![warn(clippy::wildcard_enum_match_arm)]
+//! Enums from the upstream `sqlparser` crate (`ColumnOption`, `TableConstraint`,
+//! `DataType`, `Expr`, etc.) must never be matched with a bare `_ => ...`
+//! wildcard. When sqlparser adds a variant we want a compile-time warning
+//! forcing explicit triage, not silent data loss. See ARCHITECTURE.md §
+//! "Match arm discipline".
+
 use crate::model::*;
 use crate::util::Result;
 use sqlparser::ast::{
@@ -144,7 +151,13 @@ pub(super) fn parse_create_table(
                     is_constraint: true,
                 });
             }
-            _ => {}
+            // MySQL-specific constraints that have no PostgreSQL equivalent.
+            // Listed explicitly (instead of a bare `_`) so adding a new
+            // `TableConstraint` variant upstream forces a compile-time review.
+            // MySQL-specific constraints that have no PostgreSQL equivalent.
+            // Listed explicitly (instead of a bare `_`) so adding a new
+            // `TableConstraint` variant upstream forces a compile-time review.
+            TableConstraint::Index(_) | TableConstraint::FulltextOrSpatial(_) => {}
         }
     }
 
@@ -170,7 +183,36 @@ pub(super) fn parse_column_with_serial(
             ColumnOption::Default(expr) => {
                 default = Some(normalize_expr(&expr.to_string()));
             }
-            _ => {}
+            // `PrimaryKey` is applied in a second pass on the caller in
+            // `parse_create_table` and intentionally not handled here.
+            ColumnOption::PrimaryKey(_)
+            // `Unique`, `ForeignKey`, and `Check` inline on a column are
+            // currently dropped. The fix lives on a separate branch
+            // (`fix/parser-inline-column-constraints`) — do NOT inline it
+            // here. This arm exists only so the variants are listed by name
+            // and an upstream addition triggers the clippy lint above.
+            | ColumnOption::Unique(_)
+            | ColumnOption::ForeignKey(_)
+            | ColumnOption::Check(_)
+            // Postgres-relevant annotations we don't yet consume.
+            | ColumnOption::Generated { .. }
+            | ColumnOption::Identity(_)
+            | ColumnOption::Comment(_)
+            | ColumnOption::Collation(_)
+            | ColumnOption::CharacterSet(_)
+            // Dialect-specific variants (ClickHouse, BigQuery, Snowflake,
+            // MySQL, MSSQL, SQLite) that have no PostgreSQL meaning.
+            | ColumnOption::DialectSpecific(_)
+            | ColumnOption::OnUpdate(_)
+            | ColumnOption::OnConflict(_)
+            | ColumnOption::Materialized(_)
+            | ColumnOption::Ephemeral(_)
+            | ColumnOption::Alias(_)
+            | ColumnOption::Options(_)
+            | ColumnOption::Policy(_)
+            | ColumnOption::Tags(_)
+            | ColumnOption::Srid(_)
+            | ColumnOption::Invisible => {}
         }
     }
 
@@ -242,6 +284,8 @@ pub(super) fn parse_column_with_serial(
 pub(super) fn detect_serial_type(dt: &DataType) -> Option<SequenceDataType> {
     if let DataType::Custom(name, _) = dt {
         let type_name = name.to_string().to_lowercase();
+        // String match on the rendered type name; not an enum match, so the
+        // `_` arm here is intentional and unaffected by the module lint.
         match type_name.as_str() {
             "serial" => Some(SequenceDataType::Integer),
             "bigserial" => Some(SequenceDataType::BigInt),
@@ -265,39 +309,52 @@ pub(super) fn parse_referential_action(action: &Option<SqlReferentialAction>) ->
 }
 
 fn parse_partition_by(expr: &Expr) -> Option<PartitionKey> {
-    match expr {
-        Expr::Function(func) => {
-            let strategy_name = func.name.to_string().to_uppercase();
-            let strategy = match strategy_name.as_str() {
-                "RANGE" => PartitionStrategy::Range,
-                "LIST" => PartitionStrategy::List,
-                "HASH" => PartitionStrategy::Hash,
-                _ => return None,
-            };
+    // `Expr` is one of the largest upstream enums (100+ variants spanning
+    // many SQL dialects). Listing every variant here would be obnoxious and
+    // unstable across sqlparser releases, so we opt out of the lint on this
+    // single match and rely on `if let Expr::Function(_) = ...` semantics.
+    #[allow(clippy::wildcard_enum_match_arm)]
+    let func = match expr {
+        Expr::Function(func) => func,
+        _ => return None,
+    };
 
-            let columns: Vec<String> = match &func.args {
-                FunctionArguments::List(args) => args
-                    .args
-                    .iter()
-                    .filter_map(|arg| match arg {
-                        SqlFunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Identifier(ident))) => {
-                            Some(ident.value.clone())
-                        }
-                        SqlFunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {
-                            Some(expr.to_string())
-                        }
-                        _ => None,
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            };
+    let strategy_name = func.name.to_string().to_uppercase();
+    let strategy = match strategy_name.as_str() {
+        "RANGE" => PartitionStrategy::Range,
+        "LIST" => PartitionStrategy::List,
+        "HASH" => PartitionStrategy::Hash,
+        _ => return None,
+    };
 
-            Some(PartitionKey {
-                strategy,
-                columns,
-                expressions: Vec::new(),
+    let columns: Vec<String> = match &func.args {
+        FunctionArguments::List(args) => args
+            .args
+            .iter()
+            .filter_map(|arg| match arg {
+                SqlFunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Identifier(ident))) => {
+                    Some(ident.value.clone())
+                }
+                SqlFunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => Some(expr.to_string()),
+                // `FunctionArgExpr` has `QualifiedWildcard` and `Wildcard`
+                // variants that never appear in a PARTITION BY expression,
+                // and `FunctionArg::Named`/`ExprNamed` are dialect features
+                // (MSSQL/BigQuery) PostgreSQL's partition key syntax can't
+                // emit. Ignored, but enumerated so upstream additions force
+                // review.
+                SqlFunctionArg::Unnamed(
+                    FunctionArgExpr::QualifiedWildcard(_) | FunctionArgExpr::Wildcard,
+                )
+                | SqlFunctionArg::Named { .. }
+                | SqlFunctionArg::ExprNamed { .. } => None,
             })
-        }
-        _ => None,
-    }
+            .collect(),
+        FunctionArguments::None | FunctionArguments::Subquery(_) => Vec::new(),
+    };
+
+    Some(PartitionKey {
+        strategy,
+        columns,
+        expressions: Vec::new(),
+    })
 }

@@ -258,6 +258,31 @@ Filters apply to both source and target schemas before diffing.
 
 Lock hazard detection warns about operations that acquire exclusive locks.
 
+## Match Arm Discipline
+
+Parser modules that destructure enums from the upstream `sqlparser` crate
+(`ColumnOption`, `TableConstraint`, `FunctionArg`, etc.) must never terminate
+a `match` with a bare `_ => ...` wildcard. The `parser::tables` module opts
+into `#![warn(clippy::wildcard_enum_match_arm)]` at the top of the file so
+that when `sqlparser` ships a new variant, `cargo clippy` surfaces a warning
+forcing explicit triage rather than silently swallowing it.
+
+This rule exists because the original `ColumnOption` match dropped
+`Unique`, `ForeignKey`, and `Check` column-level constraints for months
+without anyone noticing — a bare `_ => {}` arm will always compile, even
+after upstream breaks the enum apart.
+
+When adding a new upstream-enum match in parser code:
+
+1. Enumerate every variant by name (or use `|`-alternates to group
+   dialect-specific variants into a single ignored arm).
+2. Add a comment naming why a variant is intentionally ignored (MySQL-only,
+   Snowflake-only, deferred to a later pass, etc.).
+3. For genuinely huge upstream enums (`Expr`, `Statement`, `DataType`) the
+   cost of listing every variant outweighs the benefit. In those narrow
+   cases use `#[allow(clippy::wildcard_enum_match_arm)]` directly above the
+   single match, with a comment explaining the exemption.
+
 ## Module Dependencies
 
 ```
