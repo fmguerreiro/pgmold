@@ -83,16 +83,29 @@ pub(super) fn parse_create_table(
                         .clone()
                         .unwrap_or_else(|| format!("{}_{}_fkey", table.name, col_name));
                     let (ref_schema, ref_table) = extract_qualified_name(&fk.foreign_table);
+                    if fk.referred_columns.is_empty() {
+                        return Err(crate::util::SchemaError::ParseError(format!(
+                            "Inline REFERENCES on column \"{}\".\"{}\".\"{}\" must specify \
+                             the referenced column explicitly (e.g. REFERENCES \"{}\"(id)). \
+                             Postgres resolves the bare form to the parent's primary key at \
+                             DDL time and stores the resolved column in pg_catalog; the \
+                             parser cannot infer it without ordering-sensitive lookups, so \
+                             leaving it empty would cause a spurious DROP+ADD cycle on every \
+                             subsequent plan.",
+                            schema, name, col_name, ref_table
+                        )));
+                    }
+                    let referenced_columns: Vec<String> = fk
+                        .referred_columns
+                        .iter()
+                        .map(|c| unquote_ident(&c.to_string()).to_string())
+                        .collect();
                     table.foreign_keys.push(ForeignKey {
                         name: truncate_identifier(&constraint_name),
                         columns: vec![col_name.clone()],
                         referenced_schema: ref_schema,
                         referenced_table: ref_table,
-                        referenced_columns: fk
-                            .referred_columns
-                            .iter()
-                            .map(|c| unquote_ident(&c.to_string()).to_string())
-                            .collect(),
+                        referenced_columns,
                         on_delete: parse_referential_action(&fk.on_delete),
                         on_update: parse_referential_action(&fk.on_update),
                     });
