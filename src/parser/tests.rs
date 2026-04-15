@@ -3699,6 +3699,45 @@ fn out_of_line_unnamed_check_multi_column_name_matches_postgres() {
 }
 
 #[test]
+fn inline_check_referencing_different_column_uses_referenced_column_name() {
+    // Postgres names unnamed CHECK constraints after the columns the expression *references*,
+    // not the column they are attached to. If the inline path naively embeds the defining
+    // column into the default name, convergence fails: introspection observes
+    // `{table}_{referenced}_check`, the parser emits `{table}_{defining}_check`, and every
+    // plan cycles DROP+ADD.
+    let sql = r#"
+        CREATE TABLE products (
+            price INTEGER NOT NULL,
+            quantity INTEGER NOT NULL CHECK (price > 0)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let products = schema.tables.get("public.products").unwrap();
+
+    assert_eq!(products.check_constraints.len(), 1);
+    assert_eq!(
+        products.check_constraints[0].name, "products_price_check",
+        "inline CHECK naming must follow the referenced column, not the defining column"
+    );
+}
+
+#[test]
+fn inline_check_referencing_no_column_uses_table_name() {
+    // An inline CHECK whose expression references no table column (e.g. `CHECK (true)`) has
+    // no single column to embed; Postgres falls back to the bare `{table}_check` name.
+    let sql = r#"
+        CREATE TABLE flags (
+            id INTEGER NOT NULL CHECK (true)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let flags = schema.tables.get("public.flags").unwrap();
+
+    assert_eq!(flags.check_constraints.len(), 1);
+    assert_eq!(flags.check_constraints[0].name, "flags_check");
+}
+
+#[test]
 fn inline_check_constraint_name_is_truncated_to_63_bytes() {
     // Postgres silently truncates identifiers at NAMEDATALEN-1 (63 bytes). If the parser
     // emits a longer name than introspection observes, every plan will emit DROP+ADD.
