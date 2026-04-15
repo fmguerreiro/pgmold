@@ -1,3 +1,10 @@
+#![warn(clippy::wildcard_enum_match_arm)]
+//! Enums from the upstream `sqlparser` crate (`Statement`, `ObjectType`,
+//! `AlterTableOperation`, etc.) must never be matched with a bare `_ => ...`
+//! wildcard. When sqlparser adds a variant we want a compile-time warning
+//! forcing explicit triage, not silent data loss. See ARCHITECTURE.md §
+//! "Match arm discipline".
+
 mod comments;
 mod dependencies;
 mod functions;
@@ -379,7 +386,52 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 }
                             }
                         }
-                        _ => {}
+                        // PostgreSQL `ALTER TABLE` variants pgmold does not yet
+                        // consume. Tracked as future work; listed explicitly
+                        // so an upstream addition to `AlterTableOperation`
+                        // does not silently slip past.
+                        AlterTableOperation::AlterColumn { .. }
+                        | AlterTableOperation::DropConstraint { .. }
+                        | AlterTableOperation::ValidateConstraint { .. }
+                        | AlterTableOperation::DropPrimaryKey { .. }
+                        | AlterTableOperation::ReplicaIdentity { .. }
+                        | AlterTableOperation::OwnerTo { .. }
+                        | AlterTableOperation::SetOptionsParens { .. }
+                        | AlterTableOperation::EnableRule { .. }
+                        | AlterTableOperation::DisableRule { .. }
+                        | AlterTableOperation::EnableAlwaysRule { .. }
+                        | AlterTableOperation::EnableReplicaRule { .. }
+                        // ClickHouse-specific: projections and partition ops
+                        // have no PostgreSQL equivalent.
+                        | AlterTableOperation::AddProjection { .. }
+                        | AlterTableOperation::DropProjection { .. }
+                        | AlterTableOperation::MaterializeProjection { .. }
+                        | AlterTableOperation::ClearProjection { .. }
+                        | AlterTableOperation::AttachPartition { .. }
+                        | AlterTableOperation::DetachPartition { .. }
+                        | AlterTableOperation::FreezePartition { .. }
+                        | AlterTableOperation::UnfreezePartition { .. }
+                        | AlterTableOperation::AddPartitions { .. }
+                        | AlterTableOperation::DropPartitions { .. }
+                        | AlterTableOperation::RenamePartitions { .. }
+                        // MySQL-specific: no PostgreSQL equivalent.
+                        | AlterTableOperation::DropForeignKey { .. }
+                        | AlterTableOperation::DropIndex { .. }
+                        | AlterTableOperation::ChangeColumn { .. }
+                        | AlterTableOperation::ModifyColumn { .. }
+                        | AlterTableOperation::Algorithm { .. }
+                        | AlterTableOperation::Lock { .. }
+                        | AlterTableOperation::AutoIncrement { .. }
+                        // Snowflake-specific: dynamic-table and clustering ops.
+                        | AlterTableOperation::SwapWith { .. }
+                        | AlterTableOperation::SetTblProperties { .. }
+                        | AlterTableOperation::ClusterBy { .. }
+                        | AlterTableOperation::DropClusteringKey
+                        | AlterTableOperation::SuspendRecluster
+                        | AlterTableOperation::ResumeRecluster
+                        | AlterTableOperation::Refresh
+                        | AlterTableOperation::Suspend
+                        | AlterTableOperation::Resume => {}
                     }
                 }
             }
@@ -712,7 +764,16 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 partition.indexes.retain(|idx| idx.name != obj_name);
                             }
                         }
-                        _ => {}
+                        // Cluster-level objects (Database, Role, User) and
+                        // Snowflake-specific objects (Stage, Stream) are not
+                        // part of the schema model pgmold tracks. Listed
+                        // explicitly so an upstream `ObjectType` addition
+                        // forces a compile-time review.
+                        ObjectType::Database
+                        | ObjectType::Role
+                        | ObjectType::User
+                        | ObjectType::Stage
+                        | ObjectType::Stream => {}
                     }
                 }
             }
@@ -780,7 +841,148 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     schema.extensions.remove(&ext_name);
                 }
             }
-            _ => {}
+            // Non-DDL and dialect-specific statements that pgmold does not
+            // model. Listed explicitly (instead of a bare `_`) so adding a
+            // new `Statement` variant upstream triggers a clippy warning and
+            // forces triage. See ARCHITECTURE.md § "Match arm discipline".
+
+            // Data-manipulation and query statements.
+            Statement::Query(_)
+            | Statement::Insert(_)
+            | Statement::Update(_)
+            | Statement::Delete(_)
+            | Statement::Merge(_)
+            | Statement::Truncate(_)
+            | Statement::Copy { .. }
+            | Statement::CopyIntoSnowflake { .. }
+            // Session / transaction control.
+            | Statement::Set(_)
+            | Statement::Commit { .. }
+            | Statement::Rollback { .. }
+            | Statement::StartTransaction { .. }
+            | Statement::Savepoint { .. }
+            | Statement::ReleaseSavepoint { .. }
+            | Statement::Discard { .. }
+            | Statement::Use(_)
+            | Statement::AlterSession { .. }
+            | Statement::Reset(_)
+            // PL/pgSQL control-flow statements (parsed inside function bodies
+            // via a separate code path; ignored at the top level).
+            | Statement::Case(_)
+            | Statement::If(_)
+            | Statement::While(_)
+            | Statement::Raise(_)
+            | Statement::Return(_)
+            | Statement::Declare { .. }
+            | Statement::Fetch { .. }
+            | Statement::Open(_)
+            | Statement::Close { .. }
+            | Statement::Call(_)
+            | Statement::Assert { .. }
+            | Statement::Print(_)
+            // Prepared-statement plumbing.
+            | Statement::Prepare { .. }
+            | Statement::Execute { .. }
+            | Statement::Deallocate { .. }
+            // Introspection / SHOW commands.
+            | Statement::ShowFunctions { .. }
+            | Statement::ShowVariable { .. }
+            | Statement::ShowStatus { .. }
+            | Statement::ShowVariables { .. }
+            | Statement::ShowCreate { .. }
+            | Statement::ShowColumns { .. }
+            | Statement::ShowDatabases { .. }
+            | Statement::ShowSchemas { .. }
+            | Statement::ShowCharset(_)
+            | Statement::ShowObjects(_)
+            | Statement::ShowTables { .. }
+            | Statement::ShowViews { .. }
+            | Statement::ShowCollation { .. }
+            | Statement::Explain { .. }
+            | Statement::ExplainTable { .. }
+            // Authorization (handled via separate `parse_grant_statements`
+            // pass that re-parses the raw SQL, so the AST-level variants are
+            // intentionally ignored here).
+            | Statement::Grant { .. }
+            | Statement::Revoke { .. }
+            | Statement::Deny(_)
+            // Comments are processed by `parse_comment_statements` on the
+            // raw SQL below; ignore the AST-level variant here.
+            | Statement::Comment { .. }
+            // Cluster-level and role / user management — not part of the
+            // schema model pgmold tracks.
+            | Statement::CreateRole(_)
+            | Statement::AlterRole { .. }
+            | Statement::CreateUser(_)
+            | Statement::AlterUser(_)
+            | Statement::CreateDatabase { .. }
+            | Statement::AttachDatabase { .. }
+            // Procedures, macros, operators, domains-as-alter — pgmold does
+            // not yet model these. Tracked as future work.
+            | Statement::CreateProcedure { .. }
+            | Statement::DropProcedure { .. }
+            | Statement::CreateMacro { .. }
+            | Statement::CreateOperator(_)
+            | Statement::CreateOperatorClass(_)
+            | Statement::CreateOperatorFamily(_)
+            | Statement::AlterOperator(_)
+            | Statement::DropOperator(_)
+            | Statement::DropOperatorClass(_)
+            | Statement::DropOperatorFamily(_)
+            // pgmold consumes `AlterTable` (above) but not these sibling
+            // ALTER variants yet.
+            | Statement::AlterIndex { .. }
+            | Statement::AlterView { .. }
+            | Statement::AlterType(_)
+            | Statement::AlterSchema(_)
+            | Statement::AlterPolicy { .. }
+            | Statement::RenameTable(_)
+            // Maintenance ops (VACUUM / ANALYZE / LOCK TABLE, etc.).
+            | Statement::Analyze(_)
+            | Statement::Vacuum(_)
+            | Statement::OptimizeTable { .. }
+            | Statement::LockTables { .. }
+            | Statement::UnlockTables
+            | Statement::Flush { .. }
+            | Statement::Cache { .. }
+            | Statement::UNCache { .. }
+            // LISTEN / NOTIFY — runtime messaging, not schema.
+            | Statement::LISTEN { .. }
+            | Statement::UNLISTEN { .. }
+            | Statement::NOTIFY { .. }
+            // Data loading / export.
+            | Statement::Load { .. }
+            | Statement::LoadData { .. }
+            | Statement::Install { .. }
+            | Statement::Directory { .. }
+            | Statement::Unload { .. }
+            | Statement::ExportData(_)
+            | Statement::Msck(_)
+            // Error-raising variants from dialect extensions.
+            | Statement::RaisError { .. }
+            | Statement::Kill { .. }
+            // Dialect-specific connectors, secrets, servers, stages, virtual
+            // tables, and DuckDB / Snowflake / ClickHouse / MSSQL-specific
+            // plumbing.
+            | Statement::CreateVirtualTable { .. }
+            | Statement::CreateSecret { .. }
+            | Statement::DropSecret { .. }
+            | Statement::CreateServer(_)
+            | Statement::CreateConnector(_)
+            | Statement::AlterConnector { .. }
+            | Statement::DropConnector { .. }
+            | Statement::AttachDuckDBDatabase { .. }
+            | Statement::DetachDuckDBDatabase { .. }
+            | Statement::CreateStage { .. }
+            | Statement::List(_)
+            | Statement::Remove(_)
+            | Statement::Pragma { .. }
+            // `CreateType` representations other than `Enum` (Composite /
+            // Range / SqlDefinition, and the bare `representation: None`
+            // form) are currently dropped. This is a real pgmold gap tracked
+            // separately; the previously wildcarded behaviour is preserved
+            // here.
+            | Statement::CreateType { .. } => {}
         }
     }
 
