@@ -1203,3 +1203,56 @@ async fn unique_constraint_dump_round_trip() {
         dump_output
     );
 }
+
+// ---------------------------------------------------------------------------
+// Inline column-constraint convergence
+//
+// These round-trip tests exercise the parser -> apply -> introspect -> diff
+// pipeline for inline (column-level) UNIQUE / FOREIGN KEY / CHECK constraints.
+// A unit-level parse->dump->parse round-trip would pass even with bugs that
+// only surface when the schema is actually round-tripped through a real
+// PostgreSQL server (for instance, an empty `referenced_columns` vector that
+// Postgres fills in from the parent's PK). These tests close that gap.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn inline_unique_constraint_converges() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.users (
+            id BIGINT PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE
+        );
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn inline_foreign_key_with_explicit_column_converges() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.users (
+            id INTEGER PRIMARY KEY
+        );
+        CREATE TABLE public.enrollments (
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE
+        );
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn inline_check_constraint_converges() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.products (
+            id INTEGER PRIMARY KEY,
+            price BIGINT NOT NULL CHECK (price > 0)
+        );
+        "#,
+    )
+    .await;
+}
