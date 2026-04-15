@@ -137,7 +137,23 @@ pub(super) fn parse_create_table(
                         expression: normalize_expr(&chk.expr.to_string()),
                     });
                 }
-                _ => {}
+                ColumnOption::Null | ColumnOption::NotNull | ColumnOption::Default(_) => {}
+                ColumnOption::Generated { .. }
+                | ColumnOption::Identity(_)
+                | ColumnOption::Comment(_)
+                | ColumnOption::Collation(_)
+                | ColumnOption::OnUpdate(_)
+                | ColumnOption::OnConflict(_)
+                | ColumnOption::CharacterSet(_)
+                | ColumnOption::Materialized(_)
+                | ColumnOption::Ephemeral(_)
+                | ColumnOption::Alias(_)
+                | ColumnOption::DialectSpecific(_)
+                | ColumnOption::Options(_)
+                | ColumnOption::Policy(_)
+                | ColumnOption::Tags(_)
+                | ColumnOption::Srid(_)
+                | ColumnOption::Invisible => {}
             }
         }
     }
@@ -405,6 +421,12 @@ fn collect_referenced_columns(expr: &Expr, known_columns: &[&str]) -> Vec<String
     seen
 }
 
+// `Expr` has 100+ variants across many SQL dialects; enumerating every
+// irrelevant one here would be noisy and unstable across sqlparser upgrades.
+// The arms below cover every AST shape we care about for CHECK-expression
+// naming; unknown shapes fall through to "no column referenced" and the
+// constraint name collapses to `{table}_check`.
+#[allow(clippy::wildcard_enum_match_arm)]
 fn walk_expr_identifiers<F: FnMut(&str)>(expr: &Expr, visit: &mut F) {
     use sqlparser::ast::Expr as E;
     match expr {
@@ -461,8 +483,6 @@ fn walk_expr_identifiers<F: FnMut(&str)>(expr: &Expr, visit: &mut F) {
             // backend only uses `{column}_check` for single-column references in the
             // pg_get_constraintdef sense. Revisit if convergence failures surface.
         }
-        // TODO: extend walker as needed (Array, Subquery, etc.) for richer CHECK
-        // expressions. Out of scope for the current iteration.
         _ => {}
     }
 }
