@@ -111,9 +111,20 @@ pub(super) fn parse_create_table(
                     });
                 }
                 ColumnOption::Check(chk) => {
-                    let constraint_name = explicit_name
-                        .clone()
-                        .unwrap_or_else(|| format!("{}_{}_check", table.name, col_name));
+                    let constraint_name = explicit_name.clone().unwrap_or_else(|| {
+                        // Postgres names unnamed CHECKs after the columns the expression
+                        // *references*, not the column they are attached to. Walk the
+                        // expression and apply the same single-vs-multi logic as the
+                        // out-of-line path so inline and table-level CHECKs converge.
+                        let table_cols: Vec<&str> =
+                            table.columns.keys().map(|s| s.as_str()).collect();
+                        let referenced = collect_referenced_columns(&chk.expr, &table_cols);
+                        if referenced.len() == 1 {
+                            format!("{}_{}_check", table.name, referenced[0])
+                        } else {
+                            format!("{}_check", table.name)
+                        }
+                    });
                     table.check_constraints.push(CheckConstraint {
                         name: truncate_identifier(&constraint_name),
                         expression: normalize_expr(&chk.expr.to_string()),
