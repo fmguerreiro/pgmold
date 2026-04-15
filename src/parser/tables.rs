@@ -154,9 +154,6 @@ pub(super) fn parse_create_table(
             // MySQL-specific constraints that have no PostgreSQL equivalent.
             // Listed explicitly (instead of a bare `_`) so adding a new
             // `TableConstraint` variant upstream forces a compile-time review.
-            // MySQL-specific constraints that have no PostgreSQL equivalent.
-            // Listed explicitly (instead of a bare `_`) so adding a new
-            // `TableConstraint` variant upstream forces a compile-time review.
             TableConstraint::Index(_) | TableConstraint::FulltextOrSpatial(_) => {}
         }
     }
