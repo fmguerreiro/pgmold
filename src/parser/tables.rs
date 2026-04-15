@@ -115,7 +115,7 @@ pub(super) fn parse_create_table(
                         .clone()
                         .unwrap_or_else(|| format!("{}_{}_check", table.name, col_name));
                     table.check_constraints.push(CheckConstraint {
-                        name: constraint_name,
+                        name: truncate_identifier(&constraint_name),
                         expression: normalize_expr(&chk.expr.to_string()),
                     });
                 }
