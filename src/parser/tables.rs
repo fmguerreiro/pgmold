@@ -10,7 +10,7 @@ use crate::util::Result;
 use sqlparser::ast::{
     ColumnDef, ColumnOption, DataType, Expr, FunctionArg as SqlFunctionArg, FunctionArgExpr,
     FunctionArguments, GeneratedAs, GeneratedExpressionMode,
-    ReferentialAction as SqlReferentialAction, TableConstraint,
+    ReferentialAction as SqlReferentialAction, TableConstraint, Value,
 };
 use std::collections::BTreeMap;
 
@@ -333,7 +333,9 @@ pub(super) fn parse_column_with_serial(
             ColumnOption::NotNull => nullable = false,
             ColumnOption::Null => nullable = true,
             ColumnOption::Default(expr) => {
-                default = Some(normalize_expr(&expr.to_string()));
+                if !is_null_expr(expr) {
+                    default = Some(normalize_expr(&expr.to_string()));
+                }
             }
             ColumnOption::Generated {
                 generated_as,
@@ -562,6 +564,15 @@ fn walk_expr_identifiers<F: FnMut(&str)>(expr: &Expr, visit: &mut F) {
             // pg_get_constraintdef sense. Revisit if convergence failures surface.
         }
         _ => {}
+    }
+}
+
+#[allow(clippy::wildcard_enum_match_arm)]
+fn is_null_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Value(v) => matches!(v.value, Value::Null),
+        Expr::Cast { expr: inner, .. } => is_null_expr(inner),
+        _ => false,
     }
 }
 

@@ -1537,7 +1537,7 @@ async fn introspect_functions(
         let arguments = if let Some(modes) = arg_modes_raw {
             arguments
                 .into_iter()
-                .zip(modes.into_iter())
+                .zip(modes)
                 .map(|(mut arg, mode)| {
                     arg.mode = match pg_char(mode) {
                         'o' => crate::model::ArgMode::Out,
