@@ -49,11 +49,7 @@ pub(super) fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<Migratio
 }
 
 fn generated_expression_changed(from: &Column, to: &Column) -> bool {
-    match (&from.generated, &to.generated) {
-        (None, None) => false,
-        (Some(a), Some(b)) => !optional_expressions_equal(&Some(a.clone()), &Some(b.clone())),
-        _ => true,
-    }
+    !optional_expressions_equal(&from.generated, &to.generated)
 }
 
 pub(super) fn compute_column_changes(from: &Column, to: &Column) -> ColumnChanges {

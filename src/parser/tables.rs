@@ -265,26 +265,19 @@ pub(super) fn parse_column_with_serial(
                 ..
             } => {
                 let col_name = unquote_ident(&col_def.name.to_string()).to_string();
-                match generation_expr_mode {
-                    Some(GeneratedExpressionMode::Virtual) => {
-                        return Err(crate::util::SchemaError::ParseError(format!(
-                            "Column \"{col_name}\": GENERATED ALWAYS AS ... VIRTUAL is not \
-                             supported by PostgreSQL; only STORED is allowed"
-                        )));
-                    }
-                    _ => {}
+                if matches!(generation_expr_mode, Some(GeneratedExpressionMode::Virtual)) {
+                    return Err(crate::util::SchemaError::ParseError(format!(
+                        "Column \"{col_name}\": GENERATED ALWAYS AS ... VIRTUAL is not \
+                         supported by PostgreSQL; only STORED is allowed"
+                    )));
                 }
-                match generated_as {
-                    GeneratedAs::Always => {
-                        generated = Some(normalize_expr(&expr.to_string()));
-                    }
-                    _ => {
-                        return Err(crate::util::SchemaError::ParseError(format!(
-                            "Column \"{col_name}\": only GENERATED ALWAYS AS ... STORED is \
-                             supported for computed columns"
-                        )));
-                    }
+                if !matches!(generated_as, GeneratedAs::Always) {
+                    return Err(crate::util::SchemaError::ParseError(format!(
+                        "Column \"{col_name}\": only GENERATED ALWAYS AS ... STORED is \
+                         supported for computed columns"
+                    )));
                 }
+                generated = Some(normalize_expr(&expr.to_string()));
             }
             _ => {}
         }
