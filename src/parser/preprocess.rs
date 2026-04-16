@@ -303,7 +303,6 @@ pub(super) fn preprocess_sql(sql: &str) -> String {
         r"(?i)ALTER\s+MATERIALIZED\s+VIEW\s+[^;]+;",
         r"(?i)ALTER\s+VIEW\s+[^;]+;",
         r"(?i)ALTER\s+SEQUENCE\s+[^;]+;",
-        r"(?i)ALTER\s+TYPE\s+[^;]+;",
         r"(?i)ALTER\s+DOMAIN\s+[^;]+;",
         r"(?i)ALTER\s+DEFAULT\s+PRIVILEGES\s+[^;]+;",
         r"(?i)COMMENT\s+ON\s+\w+(?:\s+\w+)*\s+.+?\s+IS\s+(?:'(?:[^']|'')*'|NULL)\s*;",
