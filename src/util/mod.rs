@@ -31,6 +31,9 @@ static RE_NULL_CAST: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)\bNULL::[a-zA-Z0-9_."]+(?:\.[a-zA-Z0-9_."]+)?"#).expect("valid regex")
 });
 
+static RE_NEXTVAL_PUBLIC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)\bnextval\s*\(\s*'public\.([^']+)'"#).expect("valid regex"));
+
 static RE_NOT_ILIKE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\s*!~~\*\s*").expect("valid regex"));
 
@@ -255,6 +258,7 @@ fn normalize_expression_regex(expr: &str) -> String {
     let result = RE_STRING_CUSTOM_CAST.replace_all(expr, "'$1'");
     let result = RE_STRING_TEXT_CAST.replace_all(&result, "'$1'");
     let result = RE_NULL_CAST.replace_all(&result, "NULL");
+    let result = RE_NEXTVAL_PUBLIC.replace_all(&result, "nextval('$1'");
     apply_common_normalizations(&result)
 }
 
@@ -637,6 +641,60 @@ fn normalize_object_name(name: &sqlparser::ast::ObjectName) -> sqlparser::ast::O
     }
 
     sqlparser::ast::ObjectName(normalized_parts)
+}
+
+/// Strips the `public.` schema prefix from the sequence name inside `nextval(...)` calls.
+/// PostgreSQL stores `nextval('invoice_seq'::regclass)` (unqualified) for sequences in the
+/// public schema, while schema files typically write `nextval('public.invoice_seq')` or
+/// the unqualified form. After the `::regclass` cast is stripped by the caller, both forms
+/// reduce to a string literal — normalize both to the unqualified form so they compare equal.
+fn normalize_nextval_args(expr: Expr) -> Expr {
+    let Expr::Function(mut func) = expr else {
+        unreachable!("normalize_nextval_args called with non-Function expr")
+    };
+    let is_nextval = func.name.0.last().and_then(|part| {
+        if let sqlparser::ast::ObjectNamePart::Identifier(ident) = part {
+            Some(ident.value.as_str() == "nextval")
+        } else {
+            None
+        }
+    }) == Some(true);
+    if !is_nextval {
+        return Expr::Function(func);
+    }
+    let sqlparser::ast::FunctionArguments::List(ref mut arg_list) = func.args else {
+        return Expr::Function(func);
+    };
+    if arg_list.args.len() != 1 {
+        return Expr::Function(func);
+    }
+    let sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(ref inner)) =
+        arg_list.args[0]
+    else {
+        return Expr::Function(func);
+    };
+    let value_expr = match inner {
+        Expr::Cast {
+            expr,
+            data_type: sqlparser::ast::DataType::Regclass,
+            ..
+        } => expr.as_ref(),
+        other => other,
+    };
+    let Expr::Value(val_with_span) = value_expr else {
+        return Expr::Function(func);
+    };
+    let sqlparser::ast::Value::SingleQuotedString(ref seq_name) = val_with_span.value else {
+        return Expr::Function(func);
+    };
+    let normalized = seq_name
+        .strip_prefix("public.")
+        .unwrap_or(seq_name)
+        .to_string();
+    arg_list.args[0] = sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(
+        Expr::Value(sqlparser::ast::Value::SingleQuotedString(normalized).with_empty_span()),
+    ));
+    Expr::Function(func)
 }
 
 /// Normalizes a FunctionArgExpr, recursively normalizing contained expressions.
@@ -1202,7 +1260,7 @@ fn normalize_expr(expr: &Expr) -> Expr {
                 }
                 other => other.clone(),
             });
-            Expr::Function(func)
+            normalize_nextval_args(Expr::Function(func))
         }
 
         Expr::UnaryOp { op, expr: inner } => {
@@ -2612,10 +2670,37 @@ fn expressions_equal_empty_array_literal_vs_uuid_array_cast() {
 }
 
 #[test]
+fn nextval_public_qualified_equals_unqualified() {
+    let schema_form = "nextval('public.invoice_seq')";
+    let db_form = "nextval('invoice_seq'::regclass)";
+    assert!(
+        expressions_semantically_equal(schema_form, db_form),
+        "nextval with public. prefix should equal unqualified form.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
+fn nextval_public_qualified_equals_public_qualified_with_regclass() {
+    let schema_form = "nextval('public.invoice_seq')";
+    let db_form = "nextval('public.invoice_seq'::regclass)";
+    assert!(
+        expressions_semantically_equal(schema_form, db_form),
+        "nextval with public. prefix should equal public.-qualified with regclass.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
+fn nextval_non_public_schema_not_stripped() {
+    let schema_form = "nextval('auth.refresh_seq')";
+    let db_form = "nextval('auth.refresh_seq'::regclass)";
+    assert!(
+        expressions_semantically_equal(schema_form, db_form),
+        "nextval with non-public schema prefix should remain qualified.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
 fn materialized_view_date_trunc_with_implicit_timestamp_cast() {
-    // PostgreSQL rewrites DATE_TRUNC('month', period) when period is a DATE column.
-    // It adds an implicit cast to timestamp with time zone and lowercases the function name.
-    // The string arg also gets a ::text cast.
     let schema_form = r#"SELECT tenant_id, resource, DATE_TRUNC('month', period) AS month, SUM(quantity) AS total_quantity FROM public.resource_usage GROUP BY tenant_id, resource, DATE_TRUNC('month', period)"#;
     let db_form = r#"SELECT tenant_id, resource, date_trunc('month'::text, (period)::timestamp with time zone) AS month, sum(quantity) AS total_quantity FROM resource_usage GROUP BY tenant_id, resource, date_trunc('month'::text, (period)::timestamp with time zone)"#;
     assert!(

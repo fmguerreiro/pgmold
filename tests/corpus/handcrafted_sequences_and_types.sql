@@ -1,4 +1,3 @@
--- IGNORE: pgmold-252 domain type and sequence default convergence failure
 -- Source: hand-crafted for pgmold
 -- Commit: n/a
 -- License: Apache-2.0

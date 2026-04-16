@@ -726,6 +726,8 @@ async fn introspect_all_columns(
             c.column_default,
             c.udt_name,
             c.udt_schema,
+            c.domain_schema,
+            c.domain_name,
             a.atttypmod,
             a.attgenerated,
             CASE WHEN a.attgenerated = 's'
@@ -759,16 +761,21 @@ async fn introspect_all_columns(
         let column_default: Option<String> = row.get("column_default");
         let udt_name: String = row.get("udt_name");
         let udt_schema: String = row.get("udt_schema");
+        let domain_schema: Option<String> = row.get("domain_schema");
+        let domain_name: Option<String> = row.get("domain_name");
         let atttypmod: i32 = row.get("atttypmod");
         let generation_expression: Option<String> = row.get("generation_expression");
 
-        let pg_type = map_pg_type(
-            &data_type,
-            char_max_length,
-            &udt_schema,
-            &udt_name,
-            atttypmod,
-        )?;
+        let pg_type = match (domain_schema, domain_name) {
+            (Some(schema), Some(name)) => PgType::UserDefined(format!("{schema}.{name}")),
+            _ => map_pg_type(
+                &data_type,
+                char_max_length,
+                &udt_schema,
+                &udt_name,
+                atttypmod,
+            )?,
+        };
 
         result
             .entry(qualified_name(&table_schema, &table_name))
@@ -838,6 +845,13 @@ fn map_pg_type(
     udt_name: &str,
     atttypmod: i32,
 ) -> Result<PgType> {
+    if udt_schema != "pg_catalog"
+        && udt_schema != "information_schema"
+        && data_type != "USER-DEFINED"
+        && data_type != "ARRAY"
+    {
+        return Ok(PgType::UserDefined(format!("{udt_schema}.{udt_name}")));
+    }
     match data_type {
         "integer" => Ok(PgType::Integer),
         "bigint" => Ok(PgType::BigInt),
@@ -2514,5 +2528,35 @@ mod tests {
     #[test]
     fn normalize_proconfig_single_quoted_passthrough() {
         assert_eq!(normalize_proconfig_value("'64MB'"), "'64MB'");
+    }
+
+    #[test]
+    fn map_pg_type_domain_based_on_numeric_returns_user_defined() {
+        let result = map_pg_type("numeric", None, "public", "positive_money", -1).unwrap();
+        assert_eq!(
+            result,
+            PgType::UserDefined("public.positive_money".to_string())
+        );
+    }
+
+    #[test]
+    fn map_pg_type_domain_based_on_text_returns_user_defined() {
+        let result = map_pg_type("text", None, "public", "email_address", -1).unwrap();
+        assert_eq!(
+            result,
+            PgType::UserDefined("public.email_address".to_string())
+        );
+    }
+
+    #[test]
+    fn map_pg_type_builtin_numeric_stays_builtin() {
+        let result = map_pg_type("numeric", None, "pg_catalog", "numeric", -1).unwrap();
+        assert_eq!(result, PgType::BuiltinNamed("numeric".to_string()));
+    }
+
+    #[test]
+    fn map_pg_type_builtin_text_stays_builtin() {
+        let result = map_pg_type("text", None, "pg_catalog", "text", -1).unwrap();
+        assert_eq!(result, PgType::Text);
     }
 }

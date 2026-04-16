@@ -132,6 +132,7 @@ fn diff_produces_drop_exclusion_constraint_when_removed() {
             nullable: false,
             default: None,
             comment: None,
+            generated: None,
         },
     );
     from_schema
