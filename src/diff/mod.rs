@@ -26,8 +26,8 @@ use objects::{
     diff_sequences, diff_tables, diff_triggers, diff_views,
 };
 use table_elements::{
-    diff_check_constraints, diff_columns, diff_force_rls, diff_foreign_keys, diff_indexes,
-    diff_policies, diff_primary_keys, diff_rls,
+    diff_check_constraints, diff_columns, diff_exclusion_constraints, diff_force_rls,
+    diff_foreign_keys, diff_indexes, diff_policies, diff_primary_keys, diff_rls,
 };
 
 pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
@@ -66,6 +66,7 @@ pub fn compute_diff_with_flags(
             ops.extend(diff_indexes(from_table, to_table));
             ops.extend(diff_foreign_keys(from_table, to_table));
             ops.extend(diff_check_constraints(from_table, to_table));
+            ops.extend(diff_exclusion_constraints(from_table, to_table));
             ops.extend(diff_rls(from_table, to_table));
             ops.extend(diff_force_rls(from_table, to_table));
             ops.extend(diff_policies(from_table, to_table));
@@ -345,6 +346,7 @@ pub(super) mod test_helpers {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+            exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -3419,6 +3421,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 bound: PartitionBound::Default,
                 indexes: Vec::new(),
                 check_constraints: Vec::new(),
+
                 owner: Some("oldowner".to_string()),
             },
         );
@@ -3434,6 +3437,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 bound: PartitionBound::Default,
                 indexes: Vec::new(),
                 check_constraints: Vec::new(),
+
                 owner: Some("newowner".to_string()),
             },
         );
@@ -3468,6 +3472,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 bound: PartitionBound::Default,
                 indexes: Vec::new(),
                 check_constraints: Vec::new(),
+
                 owner: Some("oldowner".to_string()),
             },
         );
@@ -3483,6 +3488,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 bound: PartitionBound::Default,
                 indexes: Vec::new(),
                 check_constraints: Vec::new(),
+
                 owner: Some("newowner".to_string()),
             },
         );

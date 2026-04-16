@@ -156,6 +156,11 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
                 "macaddr8" => return Ok(PgType::Macaddr8),
                 "point" => return Ok(PgType::Point),
                 "xml" => return Ok(PgType::Xml),
+                "int4range" | "int8range" | "numrange" | "tsrange" | "tstzrange" | "daterange"
+                | "int4multirange" | "int8multirange" | "nummultirange" | "tsmultirange"
+                | "tstzmultirange" | "datemultirange" => {
+                    return Ok(PgType::BuiltinNamed(type_name_lower));
+                }
                 _ => {}
             }
 

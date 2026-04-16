@@ -1,4 +1,3 @@
--- IGNORE: pgmold-251 exclusion constraints (EXCLUDE USING) are not yet supported by the parser
 -- Source: hand-crafted for pgmold
 -- Commit: n/a
 -- License: Apache-2.0

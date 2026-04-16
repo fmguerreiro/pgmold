@@ -38,6 +38,7 @@ pub(super) fn parse_create_table(
         primary_key: None,
         foreign_keys: Vec::new(),
         check_constraints: Vec::new(),
+        exclusion_constraints: Vec::new(),
         comment: None,
         row_level_security: false,
         force_row_level_security: false,
@@ -254,6 +255,55 @@ pub(super) fn parse_create_table(
                     is_constraint: true,
                 });
             }
+            TableConstraint::Exclusion(exc) => {
+                let constraint_name = exc
+                    .name
+                    .as_ref()
+                    .map(|n| unquote_ident(&n.to_string()).to_string())
+                    .unwrap_or_else(|| format!("{}_exclusion", table.name));
+
+                let index_method = exc
+                    .index_method
+                    .as_ref()
+                    .map(|m| m.to_string().to_lowercase())
+                    .unwrap_or_else(|| "gist".to_string());
+
+                let elements = exc
+                    .elements
+                    .iter()
+                    .map(|el| crate::model::ExclusionElement {
+                        column_or_expression: unquote_ident(&el.expr.to_string()).to_string(),
+                        operator: el.operator.clone(),
+                    })
+                    .collect();
+
+                let where_clause = exc
+                    .where_clause
+                    .as_ref()
+                    .map(|w| normalize_expr(&w.to_string()));
+
+                let deferrable = exc
+                    .characteristics
+                    .as_ref()
+                    .and_then(|c| c.deferrable)
+                    .unwrap_or(false);
+                let initially_deferred = exc
+                    .characteristics
+                    .as_ref()
+                    .and_then(|c| c.initially)
+                    .is_some_and(|i| matches!(i, sqlparser::ast::DeferrableInitial::Deferred));
+
+                table
+                    .exclusion_constraints
+                    .push(crate::model::ExclusionConstraint {
+                        name: truncate_identifier(&constraint_name),
+                        index_method,
+                        elements,
+                        where_clause,
+                        deferrable,
+                        initially_deferred,
+                    });
+            }
             // MySQL-specific constraints that have no PostgreSQL equivalent.
             // Listed explicitly (instead of a bare `_`) so adding a new
             // `TableConstraint` variant upstream forces a compile-time review.
@@ -263,6 +313,7 @@ pub(super) fn parse_create_table(
 
     table.foreign_keys.sort();
     table.check_constraints.sort();
+    table.exclusion_constraints.sort();
     table.indexes.sort();
 
     Ok(ParsedTable { table, sequences })

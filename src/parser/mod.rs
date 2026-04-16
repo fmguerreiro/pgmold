@@ -80,6 +80,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         bound,
                         indexes: Vec::new(),
                         check_constraints: Vec::new(),
+
                         owner: None,
                     };
                     let key = qualified_name(&table_schema, &table_name);
@@ -549,7 +550,8 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         | TableConstraint::PrimaryKey(_)
                         | TableConstraint::ForeignKey(_)
                         | TableConstraint::Index(_)
-                        | TableConstraint::FulltextOrSpatial(_) => {
+                        | TableConstraint::FulltextOrSpatial(_)
+                        | TableConstraint::Exclusion(_) => {
                             let constraint_str = constraint.to_string().to_uppercase();
                             if constraint_str.contains("NOT NULL") {
                                 not_null = true;
