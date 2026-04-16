@@ -19,7 +19,7 @@ fn parse_exclude_constraint_inline() {
     assert_eq!(excl.name, "bookings_during_excl");
     assert_eq!(excl.index_method, "gist");
     assert_eq!(excl.elements.len(), 1);
-    assert_eq!(excl.elements[0].column_or_expression, "\"during\"");
+    assert_eq!(excl.elements[0].column_or_expression, "during");
     assert_eq!(excl.elements[0].operator, "&&");
     assert!(!excl.deferrable);
 }
