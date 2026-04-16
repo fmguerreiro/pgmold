@@ -964,6 +964,10 @@ async fn introspect_all_indexes(
           AND NOT ix.indisprimary
           AND t.relkind IN ('r', 'p')
           AND t.relispartition = false
+          AND NOT EXISTS (
+              SELECT 1 FROM pg_constraint ex
+              WHERE ex.conindid = ix.indexrelid AND ex.contype = 'x'
+          )
         "#,
     )
     .bind(target_schemas)
