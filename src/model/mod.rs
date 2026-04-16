@@ -133,6 +133,7 @@ pub struct PendingRevoke {
 pub struct Schema {
     pub schemas: BTreeMap<String, PgSchema>,
     pub extensions: BTreeMap<String, Extension>,
+    pub servers: BTreeMap<String, Server>,
     pub tables: BTreeMap<String, Table>,
     pub enums: BTreeMap<String, EnumType>,
     pub domains: BTreeMap<String, Domain>,
@@ -386,6 +387,17 @@ pub struct Extension {
     pub name: String,
     pub version: Option<String>,
     pub schema: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Server {
+    pub name: String,
+    pub foreign_data_wrapper: String,
+    pub server_type: Option<String>,
+    pub server_version: Option<String>,
+    pub options: BTreeMap<String, String>,
+    pub owner: Option<String>,
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -866,6 +878,7 @@ impl Schema {
         Schema {
             schemas: BTreeMap::new(),
             extensions: BTreeMap::new(),
+            servers: BTreeMap::new(),
             tables: BTreeMap::new(),
             enums: BTreeMap::new(),
             domains: BTreeMap::new(),
