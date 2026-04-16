@@ -110,9 +110,10 @@ fn corpus_convergence() {
                 for schema in &schema_names {
                     if schema != "public" {
                         rt.block_on(async {
-                            let _ = sqlx::query(&format!("DROP SCHEMA IF EXISTS \"{schema}\" CASCADE"))
-                                .execute(connection.pool())
-                                .await;
+                            let _ =
+                                sqlx::query(&format!("DROP SCHEMA IF EXISTS \"{schema}\" CASCADE"))
+                                    .execute(connection.pool())
+                                    .await;
                         });
                     }
                 }
@@ -130,9 +131,7 @@ fn corpus_convergence() {
 
         let mut apply_failed = false;
         for stmt in &sql_stmts {
-            let result = rt.block_on(async {
-                sqlx::query(stmt).execute(connection.pool()).await
-            });
+            let result = rt.block_on(async { sqlx::query(stmt).execute(connection.pool()).await });
             if let Err(e) = result {
                 println!("FAIL  {name}  (apply error on statement)\n  stmt: {stmt}\n  error: {e}");
                 failed += 1;
@@ -197,7 +196,6 @@ fn corpus_convergence() {
                 .execute(connection.pool())
                 .await;
         });
-
     }
 
     rt.block_on(async {
