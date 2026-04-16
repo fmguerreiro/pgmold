@@ -271,7 +271,7 @@ pub(super) fn parse_create_table(
                     .elements
                     .iter()
                     .map(|el| crate::model::ExclusionElement {
-                        column_or_expression: el.expr.to_string(),
+                        column_or_expression: unquote_ident(&el.expr.to_string()).to_string(),
                         operator: el.operator.clone(),
                     })
                     .collect();
