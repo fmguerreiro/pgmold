@@ -1,3 +1,8 @@
+// TODO: replace the `_ =>` wildcards on `PartitionBound` in this file with
+// explicit variant listings. Test-only assertions; low priority but tracked
+// with the same follow-up as parser/sequences.rs and parser/util.rs.
+#![allow(clippy::wildcard_enum_match_arm)]
+
 use super::*;
 use std::collections::BTreeMap;
 
