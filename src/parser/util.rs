@@ -1,3 +1,8 @@
+// TODO: replace the `other =>` wildcard on `DataType` in this file with an
+// explicit variant listing (see tables.rs / mod.rs for the pattern). Out of
+// scope for the initial ban-wildcards pass; tracked as follow-up.
+#![allow(clippy::wildcard_enum_match_arm)]
+
 use crate::model::*;
 use crate::util::{normalize_type_casts, Result, SchemaError};
 use sqlparser::ast::{

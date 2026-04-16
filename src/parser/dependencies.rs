@@ -1,3 +1,9 @@
+// TODO: replace the `_ =>` wildcards on `Statement`, `SetExpr`,
+// `TableFactor`, and `Expr` in this file with explicit variant listings
+// (see tables.rs / mod.rs for the pattern). Out of scope for the initial
+// ban-wildcards pass; tracked as follow-up.
+#![allow(clippy::wildcard_enum_match_arm)]
+
 /// Extract dependencies from SQL statements.
 ///
 /// This module parses SQL DDL to identify object references, enabling
