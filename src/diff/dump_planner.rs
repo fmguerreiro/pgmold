@@ -26,7 +26,9 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     for op in ops {
         match op {
             MigrationOp::CreateSchema(_) => create_schemas.push(op),
-            MigrationOp::CreateExtension(_) => create_extensions.push(op),
+            MigrationOp::CreateExtension(_) | MigrationOp::CreateServer(_) => {
+                create_extensions.push(op)
+            }
             MigrationOp::CreateEnum(_) => create_enums.push(op),
             MigrationOp::CreateDomain(_) => create_domains.push(op),
             MigrationOp::CreateTable(_) => create_tables.push(op),
@@ -44,6 +46,8 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::SetComment { .. } => set_comments.push(op),
             MigrationOp::DropSchema(_)
             | MigrationOp::DropExtension(_)
+            | MigrationOp::DropServer(_)
+            | MigrationOp::AlterServer { .. }
             | MigrationOp::DropEnum(_)
             | MigrationOp::AddEnumValue { .. }
             | MigrationOp::DropDomain(_)

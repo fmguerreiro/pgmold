@@ -35,6 +35,9 @@ pub(crate) enum OpKey {
     DropSchema(String),
     CreateExtension(String),
     DropExtension(String),
+    CreateServer(String),
+    DropServer(String),
+    AlterServer(String),
     CreateEnum(String),
     DropEnum(String),
     AddEnumValue {
@@ -212,6 +215,9 @@ impl OpKey {
             MigrationOp::DropSchema(name) => OpKey::DropSchema(name.clone()),
             MigrationOp::CreateExtension(ext) => OpKey::CreateExtension(ext.name.clone()),
             MigrationOp::DropExtension(name) => OpKey::DropExtension(name.clone()),
+            MigrationOp::CreateServer(s) => OpKey::CreateServer(s.name.clone()),
+            MigrationOp::DropServer(name) => OpKey::DropServer(name.clone()),
+            MigrationOp::AlterServer { name, .. } => OpKey::AlterServer(name.clone()),
             MigrationOp::CreateEnum(e) => OpKey::CreateEnum(qualified_name(&e.schema, &e.name)),
             MigrationOp::DropEnum(name) => OpKey::DropEnum(name.clone()),
             MigrationOp::AddEnumValue {

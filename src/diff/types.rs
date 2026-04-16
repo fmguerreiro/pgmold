@@ -3,7 +3,8 @@ use std::collections::HashSet;
 use crate::model::{
     CheckConstraint, Column, Domain, EnumType, ExclusionConstraint, Extension, ForeignKey,
     Function, Index, Partition, PgSchema, PgType, Policy, PrimaryKey, Privilege, QualifiedName,
-    Sequence, SequenceDataType, SequenceOwner, Table, Trigger, TriggerEnabled, VersionView, View,
+    Sequence, SequenceDataType, SequenceOwner, Server, Table, Trigger, TriggerEnabled, VersionView,
+    View,
 };
 
 pub struct DiffOptions<'a> {
@@ -55,6 +56,12 @@ pub enum MigrationOp {
     DropSchema(String),
     CreateExtension(Extension),
     DropExtension(String),
+    CreateServer(Server),
+    DropServer(String),
+    AlterServer {
+        name: String,
+        new_server: Server,
+    },
     CreateEnum(EnumType),
     DropEnum(String),
     AddEnumValue {

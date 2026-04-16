@@ -45,6 +45,18 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             vec![format!("DROP EXTENSION IF EXISTS {};", quote_ident(name))]
         }
 
+        MigrationOp::CreateServer(server) => {
+            vec![generate_create_server(server)]
+        }
+
+        MigrationOp::DropServer(name) => {
+            vec![format!("DROP SERVER IF EXISTS {};", quote_ident(name))]
+        }
+
+        MigrationOp::AlterServer { new_server, .. } => {
+            vec![generate_alter_server(new_server)]
+        }
+
         MigrationOp::CreateEnum(enum_type) => vec![format!(
             "CREATE TYPE {} AS ENUM ({});",
             quote_qualified(&enum_type.schema, &enum_type.name),
@@ -627,6 +639,46 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             )]
         }
     }
+}
+
+fn generate_create_server(server: &crate::model::Server) -> String {
+    let mut sql = format!("CREATE SERVER {}", quote_ident(&server.name));
+    if let Some(ref server_type) = server.server_type {
+        sql.push_str(&format!(" TYPE '{}'", escape_string(server_type)));
+    }
+    if let Some(ref version) = server.server_version {
+        sql.push_str(&format!(" VERSION '{}'", escape_string(version)));
+    }
+    sql.push_str(&format!(
+        " FOREIGN DATA WRAPPER {}",
+        quote_ident(&server.foreign_data_wrapper)
+    ));
+    if !server.options.is_empty() {
+        let opts: Vec<String> = server
+            .options
+            .iter()
+            .map(|(k, v)| format!("{} '{}'", quote_ident(k), escape_string(v)))
+            .collect();
+        sql.push_str(&format!(" OPTIONS ({})", opts.join(", ")));
+    }
+    sql.push(';');
+    sql
+}
+
+fn generate_alter_server(server: &crate::model::Server) -> String {
+    let mut sql = format!("ALTER SERVER {}", quote_ident(&server.name));
+    if server.options.is_empty() {
+        sql.push_str(" OPTIONS ()");
+    } else {
+        let opts: Vec<String> = server
+            .options
+            .iter()
+            .map(|(k, v)| format!("SET {} '{}'", quote_ident(k), escape_string(v)))
+            .collect();
+        sql.push_str(&format!(" OPTIONS ({})", opts.join(", ")));
+    }
+    sql.push(';');
+    sql
 }
 
 fn generate_create_table(table: &Table) -> Vec<String> {
