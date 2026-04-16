@@ -38,6 +38,7 @@ struct NodeSets {
     add_indexes: Vec<NodeIndex>,
     add_fks: Vec<NodeIndex>,
     add_checks: Vec<NodeIndex>,
+    add_exclusions: Vec<NodeIndex>,
     enable_rls: Vec<NodeIndex>,
     force_rls: Vec<NodeIndex>,
     policies: Vec<NodeIndex>,
@@ -51,6 +52,7 @@ struct NodeSets {
     drop_fks: Vec<NodeIndex>,
     drop_indexes: Vec<NodeIndex>,
     drop_checks: Vec<NodeIndex>,
+    drop_exclusions: Vec<NodeIndex>,
     drop_policies: Vec<NodeIndex>,
     drop_triggers: Vec<NodeIndex>,
     drop_views: Vec<NodeIndex>,
@@ -87,6 +89,8 @@ impl NodeSets {
             add_indexes: graph.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. })),
             add_fks: graph.nodes_matching(|k| matches!(k, OpKey::AddForeignKey { .. })),
             add_checks: graph.nodes_matching(|k| matches!(k, OpKey::AddCheckConstraint { .. })),
+            add_exclusions: graph
+                .nodes_matching(|k| matches!(k, OpKey::AddExclusionConstraint { .. })),
             enable_rls: graph.nodes_matching(|k| matches!(k, OpKey::EnableRls { .. })),
             force_rls: graph
                 .nodes_matching(|k| matches!(k, OpKey::ForceRls { .. } | OpKey::NoForceRls { .. })),
@@ -101,6 +105,8 @@ impl NodeSets {
             drop_fks: graph.nodes_matching(|k| matches!(k, OpKey::DropForeignKey { .. })),
             drop_indexes: graph.nodes_matching(|k| matches!(k, OpKey::DropIndex { .. })),
             drop_checks: graph.nodes_matching(|k| matches!(k, OpKey::DropCheckConstraint { .. })),
+            drop_exclusions: graph
+                .nodes_matching(|k| matches!(k, OpKey::DropExclusionConstraint { .. })),
             drop_policies: graph.nodes_matching(|k| matches!(k, OpKey::DropPolicy { .. })),
             drop_triggers: graph.nodes_matching(|k| matches!(k, OpKey::DropTrigger { .. })),
             drop_views: graph.nodes_matching(|k| matches!(k, OpKey::DropView(_))),
@@ -283,6 +289,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.tables, &ns.add_indexes);
         self.edges_all_to_all(&ns.tables, &ns.add_fks);
         self.edges_all_to_all(&ns.tables, &ns.add_checks);
+        self.edges_all_to_all(&ns.tables, &ns.add_exclusions);
         self.edges_all_to_all(&ns.tables, &ns.enable_rls);
         self.edges_all_to_all(&ns.tables, &ns.force_rls);
         self.edges_all_to_all(&ns.tables, &ns.policies);
@@ -296,6 +303,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.add_columns, &ns.add_indexes);
         self.edges_all_to_all(&ns.add_columns, &ns.add_fks);
         self.edges_all_to_all(&ns.add_columns, &ns.add_checks);
+        self.edges_all_to_all(&ns.add_columns, &ns.add_exclusions);
 
         self.edges_all_to_all(&ns.add_columns, &ns.views);
         self.edges_all_to_all(&ns.add_columns, &ns.alter_views);
@@ -315,6 +323,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.drop_fks, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_indexes, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_checks, &ns.drop_tables);
+        self.edges_all_to_all(&ns.drop_exclusions, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_policies, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_triggers, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_pks, &ns.drop_tables);
