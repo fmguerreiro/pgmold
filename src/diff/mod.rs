@@ -23,7 +23,7 @@ use dependencies::{
 use grants::diff_default_privileges;
 use objects::{
     diff_domains, diff_enums, diff_extensions, diff_functions, diff_partitions, diff_schemas,
-    diff_sequences, diff_tables, diff_triggers, diff_views,
+    diff_sequences, diff_servers, diff_tables, diff_triggers, diff_views,
 };
 use table_elements::{
     diff_check_constraints, diff_columns, diff_exclusion_constraints, diff_force_rls,
@@ -50,6 +50,7 @@ pub fn compute_diff_with_flags(
 
     ops.extend(diff_schemas(from, to, &options));
     ops.extend(diff_extensions(from, to, &options));
+    ops.extend(diff_servers(from, to, &options));
     ops.extend(diff_enums(from, to, &options));
     ops.extend(diff_domains(from, to, &options));
     ops.extend(diff_tables(from, to, &options));

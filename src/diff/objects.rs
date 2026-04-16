@@ -187,6 +187,32 @@ pub(super) fn diff_schemas(from: &Schema, to: &Schema, options: &DiffOptions) ->
     ops
 }
 
+pub(super) fn diff_servers(
+    from: &Schema,
+    to: &Schema,
+    _options: &DiffOptions,
+) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+    for (name, to_server) in &to.servers {
+        if let Some(from_server) = from.servers.get(name) {
+            if from_server != to_server {
+                ops.push(MigrationOp::AlterServer {
+                    name: name.clone(),
+                    new_server: to_server.clone(),
+                });
+            }
+        } else {
+            ops.push(MigrationOp::CreateServer(to_server.clone()));
+        }
+    }
+    for name in from.servers.keys() {
+        if !to.servers.contains_key(name) {
+            ops.push(MigrationOp::DropServer(name.clone()));
+        }
+    }
+    ops
+}
+
 pub(super) fn diff_extensions(
     from: &Schema,
     to: &Schema,
