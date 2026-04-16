@@ -31,9 +31,8 @@ static RE_NULL_CAST: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)\bNULL::[a-zA-Z0-9_."]+(?:\.[a-zA-Z0-9_."]+)?"#).expect("valid regex")
 });
 
-static RE_NEXTVAL_PUBLIC: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)\bnextval\s*\(\s*'public\.([^']+)'"#).expect("valid regex")
-});
+static RE_NEXTVAL_PUBLIC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)\bnextval\s*\(\s*'public\.([^']+)'"#).expect("valid regex"));
 
 static RE_NOT_ILIKE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\s*!~~\*\s*").expect("valid regex"));
@@ -676,11 +675,9 @@ fn normalize_nextval_args(expr: Expr) -> Expr {
             None => return Expr::Function(func),
         }
     };
-    arg_list.args[0] = sqlparser::ast::FunctionArg::Unnamed(
-        sqlparser::ast::FunctionArgExpr::Expr(Expr::Value(
-            sqlparser::ast::Value::SingleQuotedString(stripped).with_empty_span(),
-        )),
-    );
+    arg_list.args[0] = sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(
+        Expr::Value(sqlparser::ast::Value::SingleQuotedString(stripped).with_empty_span()),
+    ));
     Expr::Function(func)
 }
 

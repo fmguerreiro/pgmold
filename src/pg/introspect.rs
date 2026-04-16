@@ -2346,13 +2346,19 @@ mod tests {
     #[test]
     fn map_pg_type_domain_based_on_numeric_returns_user_defined() {
         let result = map_pg_type("numeric", None, "public", "positive_money", -1).unwrap();
-        assert_eq!(result, PgType::UserDefined("public.positive_money".to_string()));
+        assert_eq!(
+            result,
+            PgType::UserDefined("public.positive_money".to_string())
+        );
     }
 
     #[test]
     fn map_pg_type_domain_based_on_text_returns_user_defined() {
         let result = map_pg_type("text", None, "public", "email_address", -1).unwrap();
-        assert_eq!(result, PgType::UserDefined("public.email_address".to_string()));
+        assert_eq!(
+            result,
+            PgType::UserDefined("public.email_address".to_string())
+        );
     }
 
     #[test]
