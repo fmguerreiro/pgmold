@@ -1613,7 +1613,8 @@ dependencies = [
 [[package]]
 name = "pgmold-sqlparser"
 version = "0.60.6"
-source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs.git?branch=feat%2Fexclude-constraint#d819ea0cdde3def62fd4ee163ff030c20acff6b2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b42b6abe4eaef0491924fbc74efecd8ffc28c31df5d5f9754a753fa5a095664d"
 dependencies = [
  "log",
  "recursive",
@@ -2398,7 +2399,8 @@ dependencies = [
 [[package]]
 name = "sqlparser_derive"
 version = "0.4.0"
-source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs.git?branch=feat%2Fexclude-constraint#d819ea0cdde3def62fd4ee163ff030c20acff6b2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "028e551d5e270b31b9f3ea271778d9d827148d4287a5d96167b6bb9787f5cc38"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2611,6 +2613,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
+ "windows-sys 0.52.0",
  "windows-sys 0.59.0",
 ]
 
