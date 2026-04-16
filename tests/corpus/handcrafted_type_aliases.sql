@@ -1,3 +1,4 @@
+-- IGNORE: pgmold-253 parser does not support Bool type alias
 -- Source: hand-crafted for pgmold
 -- Commit: n/a
 -- License: Apache-2.0

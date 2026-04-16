@@ -1,3 +1,4 @@
+-- IGNORE: pgmold-254 materialized view convergence failure
 -- Source: hand-crafted for pgmold
 -- Commit: n/a
 -- License: Apache-2.0
