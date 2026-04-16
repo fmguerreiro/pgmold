@@ -187,11 +187,7 @@ pub(super) fn diff_schemas(from: &Schema, to: &Schema, options: &DiffOptions) ->
     ops
 }
 
-pub(super) fn diff_servers(
-    from: &Schema,
-    to: &Schema,
-    _options: &DiffOptions,
-) -> Vec<MigrationOp> {
+pub(super) fn diff_servers(from: &Schema, to: &Schema, _options: &DiffOptions) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
     for (name, to_server) in &to.servers {
         if let Some(from_server) = from.servers.get(name) {

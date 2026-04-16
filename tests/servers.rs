@@ -20,7 +20,10 @@ fn parse_create_server_statement() {
     assert_eq!(server.foreign_data_wrapper, "mysql_fdw");
     assert_eq!(server.server_type.as_deref(), Some("mysql"));
     assert_eq!(server.server_version.as_deref(), Some("5.6"));
-    assert_eq!(server.options.get("host").map(|s| s.as_str()), Some("localhost"));
+    assert_eq!(
+        server.options.get("host").map(|s| s.as_str()),
+        Some("localhost")
+    );
     assert_eq!(server.options.get("port").map(|s| s.as_str()), Some("3306"));
 }
 
@@ -69,10 +72,8 @@ fn diff_add_server() {
 
 #[test]
 fn diff_drop_server() {
-    let from = parse_sql_string(
-        "CREATE SERVER myserver FOREIGN DATA WRAPPER postgres_fdw;",
-    )
-    .unwrap();
+    let from =
+        parse_sql_string("CREATE SERVER myserver FOREIGN DATA WRAPPER postgres_fdw;").unwrap();
     let to = parse_sql_string("").unwrap();
 
     let ops = compute_diff(&from, &to);
@@ -227,7 +228,10 @@ fn make_server(name: &str, fdw: &str) -> Server {
 
 #[test]
 fn create_server_sqlgen_minimal() {
-    let ops = vec![MigrationOp::CreateServer(make_server("srv", "postgres_fdw"))];
+    let ops = vec![MigrationOp::CreateServer(make_server(
+        "srv",
+        "postgres_fdw",
+    ))];
     let planned = plan_migration(ops);
     let sql = generate_sql(&planned);
 
