@@ -719,6 +719,8 @@ async fn introspect_all_columns(
             c.column_default,
             c.udt_name,
             c.udt_schema,
+            c.domain_schema,
+            c.domain_name,
             a.atttypmod
         FROM information_schema.columns c
         JOIN pg_catalog.pg_class t ON t.relname = c.table_name
@@ -746,15 +748,20 @@ async fn introspect_all_columns(
         let column_default: Option<String> = row.get("column_default");
         let udt_name: String = row.get("udt_name");
         let udt_schema: String = row.get("udt_schema");
+        let domain_schema: Option<String> = row.get("domain_schema");
+        let domain_name: Option<String> = row.get("domain_name");
         let atttypmod: i32 = row.get("atttypmod");
 
-        let pg_type = map_pg_type(
-            &data_type,
-            char_max_length,
-            &udt_schema,
-            &udt_name,
-            atttypmod,
-        )?;
+        let pg_type = match (domain_schema, domain_name) {
+            (Some(schema), Some(name)) => PgType::UserDefined(format!("{schema}.{name}")),
+            _ => map_pg_type(
+                &data_type,
+                char_max_length,
+                &udt_schema,
+                &udt_name,
+                atttypmod,
+            )?,
+        };
 
         result
             .entry(qualified_name(&table_schema, &table_name))
