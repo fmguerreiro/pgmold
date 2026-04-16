@@ -93,6 +93,16 @@ jobs:
       - name: Run integration tests
         run: cargo test --all-features --test '*' -- --test-threads=4
 
+  corpus:
+    name: Corpus Convergence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run corpus convergence tests
+        run: cargo test --all-features --test corpus -- --ignored --test-threads=1
+
   pg-version-matrix:
     name: PG ${{ matrix.pg-version }}
     runs-on: ubuntu-latest
