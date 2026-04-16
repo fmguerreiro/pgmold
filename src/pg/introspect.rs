@@ -500,7 +500,6 @@ async fn introspect_tables(
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
-
             exclusion_constraints: Vec::new(),
             // TODO: read table comment from pg_description
             comment: None,

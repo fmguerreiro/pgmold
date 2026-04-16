@@ -1400,7 +1400,6 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
-
                 exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
@@ -1423,7 +1422,6 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
-
                 exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
@@ -1570,7 +1568,6 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
-
                 exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
@@ -1626,7 +1623,6 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
-
             exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
@@ -1748,7 +1744,6 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
-
                 exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
@@ -1771,7 +1766,6 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
-
                 exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
@@ -2202,7 +2196,6 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
-
             exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
@@ -2272,7 +2265,6 @@ mod tests {
             not_null: false,
             collation: None,
             check_constraints: Vec::new(),
-
             exclusion_constraints: Vec::new(),
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
@@ -2307,7 +2299,6 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
-
             exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
@@ -2326,7 +2317,6 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
-
             exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
@@ -2350,7 +2340,6 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
-
             exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
@@ -2380,7 +2369,6 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
-
                 exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
@@ -2403,7 +2391,6 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
-
                 exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
@@ -2440,7 +2427,6 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
-
             exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
@@ -2468,7 +2454,6 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
-
             exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
