@@ -89,10 +89,8 @@ mod tests {
 
     async fn setup_temp_postgres() -> (testcontainers::ContainerAsync<Postgres>, String) {
         let pg = Postgres::default();
-        let container = match std::env::var("PGMOLD_TEST_PG_VERSION") {
-            Ok(version) => pg.with_tag(version).start().await.unwrap(),
-            Err(_) => pg.start().await.unwrap(),
-        };
+        let version = std::env::var("PGMOLD_TEST_PG_VERSION").unwrap_or_else(|_| "16".to_string());
+        let container = pg.with_tag(version).start().await.unwrap();
         let port = container.get_host_port_ipv4(5432).await.unwrap();
         let url = format!("postgres://postgres:postgres@localhost:{port}/postgres");
         (container, url)

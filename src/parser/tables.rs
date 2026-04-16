@@ -2,8 +2,8 @@ use crate::model::*;
 use crate::util::Result;
 use sqlparser::ast::{
     ColumnDef, ColumnOption, DataType, Expr, FunctionArg as SqlFunctionArg, FunctionArgExpr,
-    FunctionArguments, GeneratedAs, GeneratedExpressionMode, ReferentialAction as SqlReferentialAction,
-    TableConstraint,
+    FunctionArguments, GeneratedAs, GeneratedExpressionMode,
+    ReferentialAction as SqlReferentialAction, TableConstraint,
 };
 use std::collections::BTreeMap;
 
