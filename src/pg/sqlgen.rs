@@ -1577,6 +1577,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
 
@@ -1614,6 +1615,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         columns.insert(
@@ -1624,6 +1626,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
 
@@ -2037,6 +2040,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
 
@@ -3719,6 +3723,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
 
@@ -3740,6 +3745,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
 
@@ -3761,6 +3767,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
 
@@ -3845,6 +3852,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
         let sql = generate_sql(&ops);
@@ -3865,6 +3873,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
         let sql = generate_sql(&ops);
@@ -3885,6 +3894,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
         let sql = generate_sql(&ops);
@@ -3905,6 +3915,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
         let sql = generate_sql(&ops);
@@ -3926,6 +3937,7 @@ mod tests {
                     nullable: false,
                     default: None,
                     comment: None,
+                    generated: None,
                 },
             },
             MigrationOp::AddColumn {
@@ -3936,6 +3948,7 @@ mod tests {
                     nullable: false,
                     default: None,
                     comment: None,
+                    generated: None,
                 },
             },
         ];
@@ -3962,6 +3975,7 @@ mod tests {
                     nullable: false,
                     default: None,
                     comment: None,
+                    generated: None,
                 },
             },
             MigrationOp::AddColumn {
@@ -3972,6 +3986,7 @@ mod tests {
                     nullable: false,
                     default: None,
                     comment: None,
+                    generated: None,
                 },
             },
         ];

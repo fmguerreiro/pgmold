@@ -768,6 +768,7 @@ async fn introspect_all_columns(
                     default: column_default,
                     // TODO: read column comment from pg_description
                     comment: None,
+                    generated: None,
                 },
             );
     }

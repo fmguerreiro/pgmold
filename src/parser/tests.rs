@@ -1466,6 +1466,7 @@ fn domain_round_trip_with_table_using_domain() {
             nullable: false,
             default: None,
             comment: None,
+            generated: None,
         },
     );
     users_columns.insert(
@@ -1476,6 +1477,7 @@ fn domain_round_trip_with_table_using_domain() {
             nullable: false,
             default: None,
             comment: None,
+            generated: None,
         },
     );
 

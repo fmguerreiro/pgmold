@@ -290,6 +290,7 @@ pub(super) fn parse_column_with_serial(
             nullable,
             default: Some(format!("nextval('{nextval_ref}'::regclass)")),
             comment: None,
+            generated: None,
         };
 
         let sequence = Sequence {
@@ -320,6 +321,7 @@ pub(super) fn parse_column_with_serial(
             nullable,
             default,
             comment: None,
+            generated: None,
         };
         Ok((column, None))
     }
