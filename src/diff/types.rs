@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use crate::model::{
-    CheckConstraint, Column, Domain, EnumType, Extension, ForeignKey, Function, Index, Partition,
-    PgSchema, PgType, Policy, PrimaryKey, Privilege, QualifiedName, Sequence, SequenceDataType,
-    SequenceOwner, Table, Trigger, TriggerEnabled, VersionView, View,
+    CheckConstraint, Column, Domain, EnumType, ExclusionConstraint, Extension, ForeignKey,
+    Function, Index, Partition, PgSchema, PgType, Policy, PrimaryKey, Privilege, QualifiedName,
+    Sequence, SequenceDataType, SequenceOwner, Table, Trigger, TriggerEnabled, VersionView, View,
 };
 
 pub struct DiffOptions<'a> {
@@ -117,6 +117,14 @@ pub enum MigrationOp {
         check_constraint: CheckConstraint,
     },
     DropCheckConstraint {
+        table: QualifiedName,
+        constraint_name: String,
+    },
+    AddExclusionConstraint {
+        table: QualifiedName,
+        exclusion_constraint: ExclusionConstraint,
+    },
+    DropExclusionConstraint {
         table: QualifiedName,
         constraint_name: String,
     },

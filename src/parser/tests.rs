@@ -1471,6 +1471,7 @@ fn domain_round_trip_with_table_using_domain() {
             nullable: false,
             default: None,
             comment: None,
+            generated: None,
         },
     );
     users_columns.insert(
@@ -1481,6 +1482,7 @@ fn domain_round_trip_with_table_using_domain() {
             nullable: false,
             default: None,
             comment: None,
+            generated: None,
         },
     );
 
@@ -1496,6 +1498,7 @@ fn domain_round_trip_with_table_using_domain() {
             indexes: Vec::new(),
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+            exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             force_row_level_security: false,

@@ -124,6 +124,26 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     ),
                 });
             }
+            MigrationOp::AddExclusionConstraint { table, .. } => {
+                warnings.push(LockWarning {
+                    operation: "AddExclusionConstraint".to_string(),
+                    table: table.to_string(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "ADD EXCLUDE CONSTRAINT acquires ACCESS EXCLUSIVE lock on table {table}"
+                    ),
+                });
+            }
+            MigrationOp::DropExclusionConstraint { table, .. } => {
+                warnings.push(LockWarning {
+                    operation: "DropExclusionConstraint".to_string(),
+                    table: table.to_string(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "DROP EXCLUDE CONSTRAINT acquires ACCESS EXCLUSIVE lock on table {table}"
+                    ),
+                });
+            }
             MigrationOp::DropIndex { table, index_name } => {
                 warnings.push(LockWarning {
                     operation: "DropIndex".to_string(),
@@ -507,6 +527,7 @@ mod tests {
                     nullable: true,
                     default: None,
                     comment: None,
+                    generated: None,
                 },
             },
             MigrationOp::AlterColumn {

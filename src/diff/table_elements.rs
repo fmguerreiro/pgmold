@@ -3,19 +3,78 @@ use crate::util::{expressions_semantically_equal, optional_expressions_equal};
 
 use super::{ColumnChanges, MigrationOp, PolicyChanges};
 
+pub(super) fn diff_exclusion_constraints(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+    let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
+
+    for to_constraint in &to_table.exclusion_constraints {
+        let matching_from = from_table
+            .exclusion_constraints
+            .iter()
+            .find(|ec| ec.name == to_constraint.name);
+
+        match matching_from {
+            Some(from_constraint) => {
+                if from_constraint != to_constraint {
+                    ops.push(MigrationOp::DropExclusionConstraint {
+                        table: qualified_table_name.clone(),
+                        constraint_name: from_constraint.name.clone(),
+                    });
+                    ops.push(MigrationOp::AddExclusionConstraint {
+                        table: qualified_table_name.clone(),
+                        exclusion_constraint: to_constraint.clone(),
+                    });
+                }
+            }
+            None => {
+                ops.push(MigrationOp::AddExclusionConstraint {
+                    table: qualified_table_name.clone(),
+                    exclusion_constraint: to_constraint.clone(),
+                });
+            }
+        }
+    }
+
+    for from_constraint in &from_table.exclusion_constraints {
+        if !to_table
+            .exclusion_constraints
+            .iter()
+            .any(|ec| ec.name == from_constraint.name)
+        {
+            ops.push(MigrationOp::DropExclusionConstraint {
+                table: QualifiedName::new(&from_table.schema, &from_table.name),
+                constraint_name: from_constraint.name.clone(),
+            });
+        }
+    }
+
+    ops
+}
+
 pub(super) fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
     let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
 
     for (name, column) in &to_table.columns {
         if let Some(from_column) = from_table.columns.get(name) {
-            let changes = compute_column_changes(from_column, column);
-            if changes.has_changes() {
-                ops.push(MigrationOp::AlterColumn {
-                    table: qualified_table_name.clone(),
+            if generated_expression_changed(from_column, column) {
+                ops.push(MigrationOp::DropColumn {
+                    table: QualifiedName::new(&from_table.schema, &from_table.name),
                     column: name.clone(),
-                    changes,
                 });
+                ops.push(MigrationOp::AddColumn {
+                    table: qualified_table_name.clone(),
+                    column: column.clone(),
+                });
+            } else {
+                let changes = compute_column_changes(from_column, column);
+                if changes.has_changes() {
+                    ops.push(MigrationOp::AlterColumn {
+                        table: qualified_table_name.clone(),
+                        column: name.clone(),
+                        changes,
+                    });
+                }
             }
         } else {
             ops.push(MigrationOp::AddColumn {
@@ -35,6 +94,10 @@ pub(super) fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<Migratio
     }
 
     ops
+}
+
+fn generated_expression_changed(from: &Column, to: &Column) -> bool {
+    !optional_expressions_equal(&from.generated, &to.generated)
 }
 
 pub(super) fn compute_column_changes(from: &Column, to: &Column) -> ColumnChanges {

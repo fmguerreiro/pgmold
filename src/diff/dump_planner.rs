@@ -62,6 +62,8 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             | MigrationOp::DropForeignKey { .. }
             | MigrationOp::AddCheckConstraint { .. }
             | MigrationOp::DropCheckConstraint { .. }
+            | MigrationOp::AddExclusionConstraint { .. }
+            | MigrationOp::DropExclusionConstraint { .. }
             | MigrationOp::DisableRls { .. }
             | MigrationOp::NoForceRls { .. }
             | MigrationOp::DropPolicy { .. }

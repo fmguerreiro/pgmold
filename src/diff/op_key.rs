@@ -90,6 +90,14 @@ pub(crate) enum OpKey {
         table: QualifiedName,
         name: String,
     },
+    AddExclusionConstraint {
+        table: QualifiedName,
+        name: String,
+    },
+    DropExclusionConstraint {
+        table: QualifiedName,
+        name: String,
+    },
     EnableRls {
         table: QualifiedName,
     },
@@ -279,6 +287,20 @@ impl OpKey {
                 table,
                 constraint_name,
             } => OpKey::DropCheckConstraint {
+                table: table.clone(),
+                name: constraint_name.clone(),
+            },
+            MigrationOp::AddExclusionConstraint {
+                table,
+                exclusion_constraint,
+            } => OpKey::AddExclusionConstraint {
+                table: table.clone(),
+                name: exclusion_constraint.name.clone(),
+            },
+            MigrationOp::DropExclusionConstraint {
+                table,
+                constraint_name,
+            } => OpKey::DropExclusionConstraint {
                 table: table.clone(),
                 name: constraint_name.clone(),
             },

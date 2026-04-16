@@ -274,6 +274,7 @@ mod tests {
             nullable: false,
             default: None,
             comment: None,
+            generated: None,
         };
 
         let ops = vec![MigrationOp::AddColumn {
@@ -321,6 +322,7 @@ mod tests {
             nullable: true,
             default: None,
             comment: None,
+            generated: None,
         };
 
         let ops = vec![MigrationOp::AddColumn {
@@ -354,6 +356,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         Table {
@@ -364,6 +367,7 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+            exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -385,6 +389,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         table.columns.insert(
@@ -395,6 +400,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
 
@@ -419,6 +425,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
 
@@ -453,6 +460,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         schema.tables.insert("public.users".to_string(), table);
@@ -518,6 +526,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         schema.tables.insert("public.users".to_string(), table);
@@ -528,6 +537,7 @@ mod tests {
             nullable: true,
             default: None,
             comment: None,
+            generated: None,
         };
 
         let ops = vec![MigrationOp::AddColumn {
@@ -570,6 +580,7 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+            exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             force_row_level_security: false,

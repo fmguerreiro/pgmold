@@ -241,6 +241,8 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         | MigrationOp::DropForeignKey { .. }
         | MigrationOp::AddCheckConstraint { .. }
         | MigrationOp::DropCheckConstraint { .. }
+        | MigrationOp::AddExclusionConstraint { .. }
+        | MigrationOp::DropExclusionConstraint { .. }
         | MigrationOp::EnableRls { .. }
         | MigrationOp::DisableRls { .. }
         | MigrationOp::ForceRls { .. }
