@@ -820,6 +820,13 @@ fn map_pg_type(
     udt_name: &str,
     atttypmod: i32,
 ) -> Result<PgType> {
+    if udt_schema != "pg_catalog"
+        && udt_schema != "information_schema"
+        && data_type != "USER-DEFINED"
+        && data_type != "ARRAY"
+    {
+        return Ok(PgType::UserDefined(format!("{udt_schema}.{udt_name}")));
+    }
     match data_type {
         "integer" => Ok(PgType::Integer),
         "bigint" => Ok(PgType::BigInt),
@@ -2334,5 +2341,29 @@ mod tests {
     #[test]
     fn normalize_proconfig_single_quoted_passthrough() {
         assert_eq!(normalize_proconfig_value("'64MB'"), "'64MB'");
+    }
+
+    #[test]
+    fn map_pg_type_domain_based_on_numeric_returns_user_defined() {
+        let result = map_pg_type("numeric", None, "public", "positive_money", -1).unwrap();
+        assert_eq!(result, PgType::UserDefined("public.positive_money".to_string()));
+    }
+
+    #[test]
+    fn map_pg_type_domain_based_on_text_returns_user_defined() {
+        let result = map_pg_type("text", None, "public", "email_address", -1).unwrap();
+        assert_eq!(result, PgType::UserDefined("public.email_address".to_string()));
+    }
+
+    #[test]
+    fn map_pg_type_builtin_numeric_stays_builtin() {
+        let result = map_pg_type("numeric", None, "pg_catalog", "numeric", -1).unwrap();
+        assert_eq!(result, PgType::BuiltinNamed("numeric".to_string()));
+    }
+
+    #[test]
+    fn map_pg_type_builtin_text_stays_builtin() {
+        let result = map_pg_type("text", None, "pg_catalog", "text", -1).unwrap();
+        assert_eq!(result, PgType::Text);
     }
 }
