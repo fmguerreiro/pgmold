@@ -9,12 +9,12 @@ fn corpus_dir() -> std::path::PathBuf {
 }
 
 fn read_ignore_marker(content: &str) -> Option<String> {
-    let first_line = content.lines().next().unwrap_or("");
-    if let Some(rest) = first_line.strip_prefix("-- IGNORE:") {
-        Some(rest.trim().to_string())
-    } else {
-        None
-    }
+    content
+        .lines()
+        .next()
+        .unwrap_or("")
+        .strip_prefix("-- IGNORE:")
+        .map(|rest| rest.trim().to_string())
 }
 
 fn extract_schema_names(sql: &str) -> BTreeSet<String> {
