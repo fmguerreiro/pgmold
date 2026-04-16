@@ -1709,7 +1709,10 @@ fn default_coalesce_with_null_preserved() {
     let sql = "CREATE TABLE t (col TEXT DEFAULT COALESCE(NULL, 'x'));";
     let schema = parse_sql_string(sql).unwrap();
     let col = schema.tables["public.t"].columns.get("col").unwrap();
-    assert!(col.default.is_some(), "COALESCE(NULL, 'x') is not a null default");
+    assert!(
+        col.default.is_some(),
+        "COALESCE(NULL, 'x') is not a null default"
+    );
 }
 
 #[test]
