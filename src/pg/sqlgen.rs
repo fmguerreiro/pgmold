@@ -824,7 +824,9 @@ fn format_column(column: &Column) -> String {
         parts.push("NOT NULL".to_string());
     }
 
-    if let Some(ref default) = column.default {
+    if let Some(ref expr) = column.generated {
+        parts.push(format!("GENERATED ALWAYS AS ({expr}) STORED"));
+    } else if let Some(ref default) = column.default {
         parts.push(format!("DEFAULT {default}"));
     }
 

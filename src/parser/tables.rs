@@ -2,7 +2,8 @@ use crate::model::*;
 use crate::util::Result;
 use sqlparser::ast::{
     ColumnDef, ColumnOption, DataType, Expr, FunctionArg as SqlFunctionArg, FunctionArgExpr,
-    FunctionArguments, ReferentialAction as SqlReferentialAction, TableConstraint,
+    FunctionArguments, GeneratedAs, GeneratedExpressionMode, ReferentialAction as SqlReferentialAction,
+    TableConstraint,
 };
 use std::collections::BTreeMap;
 
@@ -248,6 +249,7 @@ pub(super) fn parse_column_with_serial(
 ) -> Result<(Column, Option<Sequence>)> {
     let mut nullable = true;
     let mut default = None;
+    let mut generated = None;
 
     for option in &col_def.options {
         match &option.option {
@@ -256,11 +258,51 @@ pub(super) fn parse_column_with_serial(
             ColumnOption::Default(expr) => {
                 default = Some(normalize_expr(&expr.to_string()));
             }
+            ColumnOption::Generated {
+                generated_as,
+                generation_expr: Some(expr),
+                generation_expr_mode,
+                ..
+            } => {
+                let col_name = unquote_ident(&col_def.name.to_string()).to_string();
+                match generation_expr_mode {
+                    Some(GeneratedExpressionMode::Virtual) => {
+                        return Err(crate::util::SchemaError::ParseError(format!(
+                            "Column \"{col_name}\": GENERATED ALWAYS AS ... VIRTUAL is not \
+                             supported by PostgreSQL; only STORED is allowed"
+                        )));
+                    }
+                    _ => {}
+                }
+                match generated_as {
+                    GeneratedAs::Always => {
+                        generated = Some(normalize_expr(&expr.to_string()));
+                    }
+                    _ => {
+                        return Err(crate::util::SchemaError::ParseError(format!(
+                            "Column \"{col_name}\": only GENERATED ALWAYS AS ... STORED is \
+                             supported for computed columns"
+                        )));
+                    }
+                }
+            }
             _ => {}
         }
     }
 
     let col_name = unquote_ident(&col_def.name.to_string()).to_string();
+
+    if generated.is_some() {
+        let column = Column {
+            name: col_name,
+            data_type: parse_data_type(&col_def.data_type)?,
+            nullable,
+            default: None,
+            comment: None,
+            generated,
+        };
+        return Ok((column, None));
+    }
 
     if let Some(seq_data_type) = detect_serial_type(&col_def.data_type) {
         let seq_name = format!("{table_name}_{col_name}_seq");
