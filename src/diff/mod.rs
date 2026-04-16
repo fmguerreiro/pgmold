@@ -362,6 +362,7 @@ pub(super) mod test_helpers {
             nullable: true,
             default: None,
             comment: None,
+            generated: None,
         }
     }
 }
@@ -2304,6 +2305,7 @@ mod tests {
                 nullable: true,
                 default: Some("''::character varying".to_string()),
                 comment: None,
+                generated: None,
             },
         );
         from.tables.insert("public.users".to_string(), from_table);
@@ -2318,6 +2320,7 @@ mod tests {
                 nullable: true,
                 default: Some("''::character VARYING".to_string()),
                 comment: None,
+                generated: None,
             },
         );
         to.tables.insert("public.users".to_string(), to_table);
@@ -2341,6 +2344,7 @@ mod tests {
                 nullable: true,
                 default: Some("NULL::character varying".to_string()),
                 comment: None,
+                generated: None,
             },
         );
         from.tables.insert("public.users".to_string(), from_table);
@@ -2355,6 +2359,7 @@ mod tests {
                 nullable: true,
                 default: Some("NULL::character VARYING".to_string()),
                 comment: None,
+                generated: None,
             },
         );
         to.tables.insert("public.users".to_string(), to_table);

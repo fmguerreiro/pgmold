@@ -9,13 +9,24 @@ pub(super) fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<Migratio
 
     for (name, column) in &to_table.columns {
         if let Some(from_column) = from_table.columns.get(name) {
-            let changes = compute_column_changes(from_column, column);
-            if changes.has_changes() {
-                ops.push(MigrationOp::AlterColumn {
-                    table: qualified_table_name.clone(),
+            if generated_expression_changed(from_column, column) {
+                ops.push(MigrationOp::DropColumn {
+                    table: QualifiedName::new(&from_table.schema, &from_table.name),
                     column: name.clone(),
-                    changes,
                 });
+                ops.push(MigrationOp::AddColumn {
+                    table: qualified_table_name.clone(),
+                    column: column.clone(),
+                });
+            } else {
+                let changes = compute_column_changes(from_column, column);
+                if changes.has_changes() {
+                    ops.push(MigrationOp::AlterColumn {
+                        table: qualified_table_name.clone(),
+                        column: name.clone(),
+                        changes,
+                    });
+                }
             }
         } else {
             ops.push(MigrationOp::AddColumn {
@@ -35,6 +46,10 @@ pub(super) fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<Migratio
     }
 
     ops
+}
+
+fn generated_expression_changed(from: &Column, to: &Column) -> bool {
+    !optional_expressions_equal(&from.generated, &to.generated)
 }
 
 pub(super) fn compute_column_changes(from: &Column, to: &Column) -> ColumnChanges {

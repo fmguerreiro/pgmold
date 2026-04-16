@@ -9,7 +9,8 @@ use crate::model::*;
 use crate::util::Result;
 use sqlparser::ast::{
     ColumnDef, ColumnOption, DataType, Expr, FunctionArg as SqlFunctionArg, FunctionArgExpr,
-    FunctionArguments, ReferentialAction as SqlReferentialAction, TableConstraint,
+    FunctionArguments, GeneratedAs, GeneratedExpressionMode,
+    ReferentialAction as SqlReferentialAction, TableConstraint,
 };
 use std::collections::BTreeMap;
 
@@ -274,6 +275,7 @@ pub(super) fn parse_column_with_serial(
 ) -> Result<(Column, Option<Sequence>)> {
     let mut nullable = true;
     let mut default = None;
+    let mut generated = None;
 
     for option in &col_def.options {
         match &option.option {
@@ -282,25 +284,36 @@ pub(super) fn parse_column_with_serial(
             ColumnOption::Default(expr) => {
                 default = Some(normalize_expr(&expr.to_string()));
             }
-            // `PrimaryKey` is applied in a second pass on the caller in
-            // `parse_create_table` and intentionally not handled here.
+            ColumnOption::Generated {
+                generated_as,
+                generation_expr: Some(expr),
+                generation_expr_mode,
+                ..
+            } => {
+                let col_name = unquote_ident(&col_def.name.to_string()).to_string();
+                if matches!(generation_expr_mode, Some(GeneratedExpressionMode::Virtual)) {
+                    return Err(crate::util::SchemaError::ParseError(format!(
+                        "Column \"{col_name}\": GENERATED ALWAYS AS ... VIRTUAL is not \
+                         supported by PostgreSQL; only STORED is allowed"
+                    )));
+                }
+                if !matches!(generated_as, GeneratedAs::ExpStored) {
+                    return Err(crate::util::SchemaError::ParseError(format!(
+                        "Column \"{col_name}\": only GENERATED ALWAYS AS ... STORED is \
+                         supported for computed columns"
+                    )));
+                }
+                generated = Some(normalize_expr(&expr.to_string()));
+            }
             ColumnOption::PrimaryKey(_)
-            // `Unique`, `ForeignKey`, and `Check` inline on a column are
-            // currently dropped. The fix lives on a separate branch
-            // (`fix/parser-inline-column-constraints`) — do NOT inline it
-            // here. This arm exists only so the variants are listed by name
-            // and an upstream addition triggers the clippy lint above.
             | ColumnOption::Unique(_)
             | ColumnOption::ForeignKey(_)
             | ColumnOption::Check(_)
-            // Postgres-relevant annotations we don't yet consume.
             | ColumnOption::Generated { .. }
             | ColumnOption::Identity(_)
             | ColumnOption::Comment(_)
             | ColumnOption::Collation(_)
             | ColumnOption::CharacterSet(_)
-            // Dialect-specific variants (ClickHouse, BigQuery, Snowflake,
-            // MySQL, MSSQL, SQLite) that have no PostgreSQL meaning.
             | ColumnOption::DialectSpecific(_)
             | ColumnOption::OnUpdate(_)
             | ColumnOption::OnConflict(_)
@@ -316,6 +329,18 @@ pub(super) fn parse_column_with_serial(
     }
 
     let col_name = unquote_ident(&col_def.name.to_string()).to_string();
+
+    if generated.is_some() {
+        let column = Column {
+            name: col_name,
+            data_type: parse_data_type(&col_def.data_type)?,
+            nullable,
+            default: None,
+            comment: None,
+            generated,
+        };
+        return Ok((column, None));
+    }
 
     if let Some(seq_data_type) = detect_serial_type(&col_def.data_type) {
         let seq_name = format!("{table_name}_{col_name}_seq");
@@ -345,6 +370,7 @@ pub(super) fn parse_column_with_serial(
             nullable,
             default: Some(format!("nextval('{nextval_ref}'::regclass)")),
             comment: None,
+            generated: None,
         };
 
         let sequence = Sequence {
@@ -375,6 +401,7 @@ pub(super) fn parse_column_with_serial(
             nullable,
             default,
             comment: None,
+            generated: None,
         };
         Ok((column, None))
     }

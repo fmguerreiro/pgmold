@@ -1058,6 +1058,7 @@ mod tests {
                     nullable: true,
                     default: None,
                     comment: None,
+                    generated: None,
                 },
             },
         ];
@@ -1143,6 +1144,7 @@ mod tests {
                     nullable: false,
                     default: None,
                     comment: None,
+                    generated: None,
                 },
             },
         ];
@@ -2155,6 +2157,7 @@ mod tests {
                 nullable: false,
                 default: Some("nextval('auth.refresh_tokens_id_seq'::regclass)".to_string()),
                 comment: None,
+                generated: None,
             },
         );
         columns.insert(
@@ -2165,6 +2168,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
 
@@ -2565,6 +2569,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         columns.insert(
@@ -2575,6 +2580,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
 
@@ -3200,6 +3206,7 @@ mod tests {
             nullable: true,
             default: None,
             comment: None,
+            generated: None,
         }
     }
 
@@ -4057,6 +4064,7 @@ mod tests {
                     nullable: true,
                     default: Some("auth.generate_tracking_id()".to_string()),
                     comment: None,
+                    generated: None,
                 },
             },
             MigrationOp::CreateFunction(make_simple_function("generate_tracking_id", "auth")),
@@ -4216,6 +4224,7 @@ mod tests {
                     nullable: false,
                     default: Some("true".to_string()),
                     comment: None,
+                    generated: None,
                 },
             },
             MigrationOp::CreateFunction(make_simple_function("some_func", "public")),
@@ -4249,6 +4258,7 @@ mod tests {
                     nullable: false,
                     default: Some("true".to_string()),
                     comment: None,
+                    generated: None,
                 },
             },
             MigrationOp::CreateFunction(make_simple_function("some_func", "public")),
@@ -4277,6 +4287,7 @@ mod tests {
                     nullable: false,
                     default: Some("true".to_string()),
                     comment: None,
+                    generated: None,
                 },
             },
         ];
@@ -4307,6 +4318,7 @@ mod tests {
                     nullable: false,
                     default: Some("true".to_string()),
                     comment: None,
+                    generated: None,
                 },
             },
         ];
@@ -4335,6 +4347,7 @@ mod tests {
                     nullable: true,
                     default: None,
                     comment: None,
+                    generated: None,
                 },
             },
         ];

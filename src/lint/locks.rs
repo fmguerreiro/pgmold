@@ -507,6 +507,7 @@ mod tests {
                     nullable: true,
                     default: None,
                     comment: None,
+                    generated: None,
                 },
             },
             MigrationOp::AlterColumn {

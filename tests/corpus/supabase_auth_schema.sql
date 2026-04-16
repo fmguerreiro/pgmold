@@ -1,4 +1,3 @@
--- IGNORE: pgmold-250 generated columns (GENERATED ALWAYS AS ... STORED) are not yet supported by the parser
 -- Source: https://github.com/supabase/supabase/tree/master/packages/migrations
 -- Commit: adapted from supabase/supabase (Apache-2.0)
 -- License: Apache-2.0

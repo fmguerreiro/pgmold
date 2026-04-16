@@ -412,6 +412,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         from.tables.insert("public.users".to_string(), users_table);
@@ -425,6 +426,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         posts_table.foreign_keys.push(ForeignKey {
@@ -448,6 +450,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         to.tables
@@ -462,6 +465,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         posts_table_uuid.foreign_keys.push(ForeignKey {
@@ -527,6 +531,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         from.tables
@@ -541,6 +546,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         fertilizer_app.foreign_keys.push(ForeignKey {
@@ -566,6 +572,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         to.tables
@@ -580,6 +587,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         fertilizer_app_uuid.foreign_keys.push(ForeignKey {
@@ -650,6 +658,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         users_table.policies.push(Policy {
@@ -673,6 +682,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         users_table_uuid.policies.push(Policy {
@@ -734,6 +744,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         from.tables.insert("public.users".to_string(), users_table);
@@ -768,6 +779,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         to.tables
@@ -840,6 +852,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         users_table.columns.insert(
@@ -850,6 +863,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         from.tables.insert("public.users".to_string(), users_table);
@@ -876,6 +890,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         users_table_uuid.columns.insert(
@@ -886,6 +901,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         to.tables
@@ -950,6 +966,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         users_table.columns.insert(
@@ -960,6 +977,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         users_table.policies.push(Policy {
@@ -983,6 +1001,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         users_table_to.policies.push(Policy {
@@ -1144,6 +1163,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         users_table.columns.insert(
@@ -1154,6 +1174,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         from.tables.insert("public.users".to_string(), users_table);
@@ -1188,6 +1209,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         to.tables.insert("public.users".to_string(), users_table_to);
@@ -1247,6 +1269,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         users_table.columns.insert(
@@ -1257,6 +1280,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         from.tables.insert("public.users".to_string(), users_table);
@@ -1283,6 +1307,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         to.tables.insert("public.users".to_string(), users_table_to);

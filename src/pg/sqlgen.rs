@@ -824,7 +824,9 @@ fn format_column(column: &Column) -> String {
         parts.push("NOT NULL".to_string());
     }
 
-    if let Some(ref default) = column.default {
+    if let Some(ref expr) = column.generated {
+        parts.push(format!("GENERATED ALWAYS AS ({expr}) STORED"));
+    } else if let Some(ref default) = column.default {
         parts.push(format!("DEFAULT {default}"));
     }
 
@@ -1577,6 +1579,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
 
@@ -1614,6 +1617,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
         columns.insert(
@@ -1624,6 +1628,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
 
@@ -2037,6 +2042,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         );
 
@@ -3719,6 +3725,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
 
@@ -3740,6 +3747,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
 
@@ -3761,6 +3769,7 @@ mod tests {
                 nullable: true,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
 
@@ -3845,6 +3854,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
         let sql = generate_sql(&ops);
@@ -3865,6 +3875,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
         let sql = generate_sql(&ops);
@@ -3885,6 +3896,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
         let sql = generate_sql(&ops);
@@ -3905,6 +3917,7 @@ mod tests {
                 nullable: false,
                 default: None,
                 comment: None,
+                generated: None,
             },
         }];
         let sql = generate_sql(&ops);
@@ -3926,6 +3939,7 @@ mod tests {
                     nullable: false,
                     default: None,
                     comment: None,
+                    generated: None,
                 },
             },
             MigrationOp::AddColumn {
@@ -3936,6 +3950,7 @@ mod tests {
                     nullable: false,
                     default: None,
                     comment: None,
+                    generated: None,
                 },
             },
         ];
@@ -3962,6 +3977,7 @@ mod tests {
                     nullable: false,
                     default: None,
                     comment: None,
+                    generated: None,
                 },
             },
             MigrationOp::AddColumn {
@@ -3972,6 +3988,7 @@ mod tests {
                     nullable: false,
                     default: None,
                     comment: None,
+                    generated: None,
                 },
             },
         ];

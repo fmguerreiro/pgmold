@@ -40,6 +40,7 @@ fn build_table(index: usize) -> Table {
             nullable: false,
             default: None,
             comment: None,
+            generated: None,
         },
     );
     columns.insert(
@@ -50,6 +51,7 @@ fn build_table(index: usize) -> Table {
             nullable: false,
             default: None,
             comment: None,
+            generated: None,
         },
     );
     columns.insert(
@@ -60,6 +62,7 @@ fn build_table(index: usize) -> Table {
             nullable: true,
             default: None,
             comment: None,
+            generated: None,
         },
     );
 

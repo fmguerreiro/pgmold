@@ -719,11 +719,17 @@ async fn introspect_all_columns(
             c.column_default,
             c.udt_name,
             c.udt_schema,
-            a.atttypmod
+            a.atttypmod,
+            a.attgenerated,
+            CASE WHEN a.attgenerated = 's'
+                 THEN pg_catalog.pg_get_expr(ad.adbin, a.attrelid)
+                 ELSE NULL
+            END AS generation_expression
         FROM information_schema.columns c
         JOIN pg_catalog.pg_class t ON t.relname = c.table_name
         JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace AND n.nspname = c.table_schema
         JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attname = c.column_name
+        LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
         WHERE c.table_schema = ANY($1::text[])
           AND t.relkind IN ('r', 'p')
           AND t.relispartition = false
@@ -747,6 +753,7 @@ async fn introspect_all_columns(
         let udt_name: String = row.get("udt_name");
         let udt_schema: String = row.get("udt_schema");
         let atttypmod: i32 = row.get("atttypmod");
+        let generation_expression: Option<String> = row.get("generation_expression");
 
         let pg_type = map_pg_type(
             &data_type,
@@ -768,6 +775,7 @@ async fn introspect_all_columns(
                     default: column_default,
                     // TODO: read column comment from pg_description
                     comment: None,
+                    generated: generation_expression,
                 },
             );
     }
