@@ -42,17 +42,15 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                 table,
                 column,
                 changes,
-            } => {
-                if changes.data_type.is_some() || changes.nullable == Some(false) {
-                    warnings.push(LockWarning {
-                        operation: "AlterColumn".to_string(),
-                        table: table.to_string(),
-                        lock_level: LockLevel::AccessExclusive,
-                        message: format!(
-                            "ALTER COLUMN acquires ACCESS EXCLUSIVE lock on table {table} (column {column})"
-                        ),
-                    });
-                }
+            } if changes.data_type.is_some() || changes.nullable == Some(false) => {
+                warnings.push(LockWarning {
+                    operation: "AlterColumn".to_string(),
+                    table: table.to_string(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "ALTER COLUMN acquires ACCESS EXCLUSIVE lock on table {table} (column {column})"
+                    ),
+                });
             }
             MigrationOp::AddIndex { table, .. } => {
                 warnings.push(LockWarning {
