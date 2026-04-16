@@ -345,6 +345,8 @@ pub(super) mod test_helpers {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+
+            exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -2927,6 +2929,8 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 not_null: false,
                 collation: None,
                 check_constraints: Vec::new(),
+
+                exclusion_constraints: Vec::new(),
                 owner: Some("oldowner".to_string()),
                 grants: Vec::new(),
                 comment: None,
@@ -2944,6 +2948,8 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 not_null: false,
                 collation: None,
                 check_constraints: Vec::new(),
+
+                exclusion_constraints: Vec::new(),
                 owner: Some("newowner".to_string()),
                 grants: Vec::new(),
                 comment: None,
@@ -3414,6 +3420,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 bound: PartitionBound::Default,
                 indexes: Vec::new(),
                 check_constraints: Vec::new(),
+
                 owner: Some("oldowner".to_string()),
             },
         );
@@ -3429,6 +3436,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 bound: PartitionBound::Default,
                 indexes: Vec::new(),
                 check_constraints: Vec::new(),
+
                 owner: Some("newowner".to_string()),
             },
         );
@@ -3463,6 +3471,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 bound: PartitionBound::Default,
                 indexes: Vec::new(),
                 check_constraints: Vec::new(),
+
                 owner: Some("oldowner".to_string()),
             },
         );
@@ -3478,6 +3487,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 bound: PartitionBound::Default,
                 indexes: Vec::new(),
                 check_constraints: Vec::new(),
+
                 owner: Some("newowner".to_string()),
             },
         );

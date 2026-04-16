@@ -80,6 +80,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         bound,
                         indexes: Vec::new(),
                         check_constraints: Vec::new(),
+
                         owner: None,
                     };
                     let key = qualified_name(&table_schema, &table_name);

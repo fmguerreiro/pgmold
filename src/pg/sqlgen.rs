@@ -1637,6 +1637,8 @@ mod tests {
             }),
             foreign_keys: vec![],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -2050,6 +2052,8 @@ mod tests {
             }),
             foreign_keys: vec![],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -2571,6 +2575,8 @@ mod tests {
             collation: None,
             check_constraints: vec![],
 
+            exclusion_constraints: vec![],
+
             owner: None,
             grants: Vec::new(),
             comment: None,
@@ -2597,6 +2603,8 @@ mod tests {
             not_null: true,
             collation: None,
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
 
             owner: None,
             grants: Vec::new(),

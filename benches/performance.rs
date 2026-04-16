@@ -78,6 +78,8 @@ fn build_table(index: usize) -> Table {
         }],
         foreign_keys: Vec::new(),
         check_constraints: Vec::new(),
+
+        exclusion_constraints: Vec::new(),
         comment: None,
         row_level_security: false,
         force_row_level_security: false,

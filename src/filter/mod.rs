@@ -577,6 +577,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: vec![],
                 check_constraints: vec![],
+
+                exclusion_constraints: vec![],
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -597,6 +599,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: vec![],
                 check_constraints: vec![],
+
+                exclusion_constraints: vec![],
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -617,6 +621,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: vec![],
                 check_constraints: vec![],
+
+                exclusion_constraints: vec![],
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -667,6 +673,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: vec![],
                 check_constraints: vec![],
+
+                exclusion_constraints: vec![],
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -687,6 +695,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: vec![],
                 check_constraints: vec![],
+
+                exclusion_constraints: vec![],
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -802,6 +812,8 @@ mod tests {
                 collation: None,
                 check_constraints: vec![],
 
+                exclusion_constraints: vec![],
+
                 owner: None,
                 grants: Vec::new(),
                 comment: None,
@@ -817,6 +829,8 @@ mod tests {
                 not_null: false,
                 collation: None,
                 check_constraints: vec![],
+
+                exclusion_constraints: vec![],
 
                 owner: None,
                 grants: Vec::new(),
@@ -873,6 +887,7 @@ mod tests {
                 bound: PartitionBound::Default,
                 indexes: vec![],
                 check_constraints: vec![],
+
                 owner: None,
             },
         );
@@ -886,6 +901,7 @@ mod tests {
                 bound: PartitionBound::Default,
                 indexes: vec![],
                 check_constraints: vec![],
+
                 owner: None,
             },
         );
@@ -1121,6 +1137,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: vec![],
                 check_constraints: vec![],
+
+                exclusion_constraints: vec![],
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -1169,6 +1187,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: vec![],
                 check_constraints: vec![],
+
+                exclusion_constraints: vec![],
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -1222,6 +1242,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: vec![],
                 check_constraints: vec![],
+
+                exclusion_constraints: vec![],
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -1374,6 +1396,8 @@ mod tests {
             primary_key: None,
             foreign_keys: vec![],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: true,
             force_row_level_security: false,
@@ -1435,6 +1459,8 @@ mod tests {
                 on_update: ReferentialAction::NoAction,
             }],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -1486,6 +1512,8 @@ mod tests {
             primary_key: None,
             foreign_keys: vec![],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: true,
             force_row_level_security: false,
@@ -1540,6 +1568,8 @@ mod tests {
             primary_key: None,
             foreign_keys: vec![],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: true,
             force_row_level_security: false,
@@ -1608,6 +1638,8 @@ mod tests {
             primary_key: None,
             foreign_keys: vec![],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: true,
             force_row_level_security: false,
@@ -1688,6 +1720,8 @@ mod tests {
             primary_key: None,
             foreign_keys: vec![],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -1773,6 +1807,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: vec![],
                 check_constraints: vec![],
+
+                exclusion_constraints: vec![],
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -1792,6 +1828,7 @@ mod tests {
                 bound: PartitionBound::Default,
                 indexes: vec![],
                 check_constraints: vec![],
+
                 owner: None,
             },
         );
@@ -1845,6 +1882,8 @@ mod tests {
             primary_key: None,
             foreign_keys: vec![],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -1888,6 +1927,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: vec![],
                 check_constraints: vec![],
+
+                exclusion_constraints: vec![],
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -1922,6 +1963,8 @@ mod tests {
             primary_key: None,
             foreign_keys: vec![],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -2019,6 +2062,8 @@ mod tests {
             not_null: false,
             collation: None,
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             owner: None,
             grants: Vec::new(),
             comment: None,
@@ -2039,6 +2084,7 @@ mod tests {
             bound: PartitionBound::Default,
             indexes: vec![],
             check_constraints: vec![],
+
             owner: None,
         }
     }

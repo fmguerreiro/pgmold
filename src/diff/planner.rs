@@ -2178,6 +2178,8 @@ mod tests {
             }),
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+
+            exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -2472,6 +2474,8 @@ mod tests {
             not_null: false,
             collation: None,
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             owner: None,
             grants: vec![],
             comment: None,
@@ -2596,6 +2600,8 @@ mod tests {
                 on_update: ReferentialAction::NoAction,
             }],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -2804,6 +2810,8 @@ mod tests {
             not_null: false,
             collation: None,
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             owner: None,
             grants: vec![],
             comment: None,
@@ -3169,6 +3177,8 @@ mod tests {
             not_null: false,
             collation: None,
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             owner: None,
             grants: vec![],
             comment: None,
@@ -3670,6 +3680,7 @@ mod tests {
             },
             indexes: vec![],
             check_constraints: vec![],
+
             owner: None,
         };
         let ops = vec![
@@ -5076,6 +5087,7 @@ mod tests {
             bound: crate::model::PartitionBound::Default,
             indexes: vec![],
             check_constraints: vec![],
+
             owner: None,
         };
         let ops = vec![

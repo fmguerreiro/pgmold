@@ -791,6 +791,8 @@ mod tests {
             primary_key: None,
             foreign_keys: vec![],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -925,6 +927,8 @@ mod tests {
             primary_key: None,
             foreign_keys: vec![],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -972,6 +976,8 @@ mod tests {
             primary_key: None,
             foreign_keys: vec![],
             check_constraints: vec![],
+
+            exclusion_constraints: vec![],
             comment: None,
             row_level_security: false,
             force_row_level_security: false,

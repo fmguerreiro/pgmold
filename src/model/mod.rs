@@ -195,6 +195,8 @@ pub struct Table {
     pub primary_key: Option<PrimaryKey>,
     pub foreign_keys: Vec<ForeignKey>,
     pub check_constraints: Vec<CheckConstraint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclusion_constraints: Vec<ExclusionConstraint>,
     pub comment: Option<String>,
     pub row_level_security: bool,
     #[serde(default)]
@@ -303,6 +305,22 @@ impl CheckConstraint {
         self.name == other.name
             && expressions_semantically_equal(&self.expression, &other.expression)
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ExclusionElement {
+    pub column_or_expression: String,
+    pub operator: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ExclusionConstraint {
+    pub name: String,
+    pub index_method: String,
+    pub elements: Vec<ExclusionElement>,
+    pub where_clause: Option<String>,
+    pub deferrable: bool,
+    pub initially_deferred: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1382,6 +1400,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
+
+                exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -1403,6 +1423,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
+
+                exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -1548,6 +1570,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
+
+                exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -1602,6 +1626,8 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+
+            exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -1722,6 +1748,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
+
+                exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -1743,6 +1771,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
+
+                exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -2172,6 +2202,8 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+
+            exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -2240,6 +2272,8 @@ mod tests {
             not_null: false,
             collation: None,
             check_constraints: Vec::new(),
+
+            exclusion_constraints: Vec::new(),
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
             comment: None,
@@ -2257,6 +2291,7 @@ mod tests {
             bound: PartitionBound::Default,
             indexes: Vec::new(),
             check_constraints: Vec::new(),
+
             owner: Some("postgres".to_string()),
         };
         assert_eq!(partition.owner, Some("postgres".to_string()));
@@ -2272,6 +2307,8 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+
+            exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -2289,6 +2326,8 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+
+            exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -2311,6 +2350,8 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+
+            exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -2339,6 +2380,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
+
+                exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -2360,6 +2403,8 @@ mod tests {
                 primary_key: None,
                 foreign_keys: Vec::new(),
                 check_constraints: Vec::new(),
+
+                exclusion_constraints: Vec::new(),
                 comment: None,
                 row_level_security: false,
                 force_row_level_security: false,
@@ -2395,6 +2440,8 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+
+            exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
@@ -2421,6 +2468,8 @@ mod tests {
             primary_key: None,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+
+            exclusion_constraints: Vec::new(),
             comment: None,
             row_level_security: false,
             force_row_level_security: false,
