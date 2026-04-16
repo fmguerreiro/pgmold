@@ -114,7 +114,7 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
             Ok(PgType::Char(size))
         }
         DataType::Text => Ok(PgType::Text),
-        DataType::Boolean => Ok(PgType::Boolean),
+        DataType::Bool | DataType::Boolean => Ok(PgType::Boolean),
         DataType::Timestamp(_, tz) => {
             if *tz == TimezoneInfo::WithTimeZone || *tz == TimezoneInfo::Tz {
                 Ok(PgType::TimestampTz)
