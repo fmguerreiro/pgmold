@@ -806,7 +806,6 @@ mod tests {
                 not_null: false,
                 collation: None,
                 check_constraints: vec![],
-                exclusion_constraints: vec![],
 
                 owner: None,
                 grants: Vec::new(),
@@ -823,7 +822,6 @@ mod tests {
                 not_null: false,
                 collation: None,
                 check_constraints: vec![],
-                exclusion_constraints: vec![],
 
                 owner: None,
                 grants: Vec::new(),
@@ -2042,7 +2040,6 @@ mod tests {
             not_null: false,
             collation: None,
             check_constraints: vec![],
-            exclusion_constraints: vec![],
             owner: None,
             grants: Vec::new(),
             comment: None,

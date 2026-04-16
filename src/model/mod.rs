@@ -2265,7 +2265,6 @@ mod tests {
             not_null: false,
             collation: None,
             check_constraints: Vec::new(),
-            exclusion_constraints: Vec::new(),
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
             comment: None,

@@ -281,11 +281,18 @@ pub(super) fn parse_create_table(
                     .as_ref()
                     .map(|w| normalize_expr(&w.to_string()));
 
-                let deferrable = exc.deferrable.unwrap_or(false);
-                let initially_deferred = matches!(
-                    exc.initially,
-                    Some(sqlparser::ast::DeferrableInitial::Deferred)
-                );
+                let deferrable = exc
+                    .characteristics
+                    .as_ref()
+                    .and_then(|c| c.deferrable)
+                    .unwrap_or(false);
+                let initially_deferred = exc
+                    .characteristics
+                    .as_ref()
+                    .and_then(|c| c.initially)
+                    .map_or(false, |i| {
+                        matches!(i, sqlparser::ast::DeferrableInitial::Deferred)
+                    });
 
                 table
                     .exclusion_constraints
