@@ -290,9 +290,7 @@ pub(super) fn parse_create_table(
                     .characteristics
                     .as_ref()
                     .and_then(|c| c.initially)
-                    .map_or(false, |i| {
-                        matches!(i, sqlparser::ast::DeferrableInitial::Deferred)
-                    });
+                    .is_some_and(|i| matches!(i, sqlparser::ast::DeferrableInitial::Deferred));
 
                 table
                     .exclusion_constraints
