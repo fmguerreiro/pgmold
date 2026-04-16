@@ -29,10 +29,11 @@ use crate::model::*;
 use crate::pg::sqlgen::strip_ident_quotes;
 use crate::util::{normalize_sql_whitespace, Result, SchemaError};
 use sqlparser::ast::{
-    AlterTable, AlterTableOperation, CreateDomain, CreateExtension, CreateFunction, CreateTrigger,
-    CreateView, DropDomain, DropExtension, DropFunction, DropTrigger, ObjectType,
-    RenameTableNameKind, SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent,
-    TriggerPeriod, TriggerReferencingType, UserDefinedTypeRepresentation,
+    AlterTable, AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
+    AlterTypeOperation, CreateDomain, CreateExtension, CreateFunction, CreateTrigger, CreateView,
+    DropDomain, DropExtension, DropFunction, DropTrigger, ObjectType, RenameTableNameKind,
+    SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent, TriggerPeriod,
+    TriggerReferencingType, UserDefinedTypeRepresentation,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -434,6 +435,64 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         | AlterTableOperation::Suspend
                         | AlterTableOperation::Resume => {}
                     }
+                }
+            }
+            Statement::AlterType(AlterType { name, operation }) => {
+                let (enum_schema, enum_name) = extract_qualified_name(&name);
+                let key = qualified_name(&enum_schema, &enum_name);
+
+                match operation {
+                    AlterTypeOperation::AddValue(AlterTypeAddValue {
+                        if_not_exists,
+                        value,
+                        position,
+                    }) => {
+                        let new_value = value.value.clone();
+
+                        let enum_type =
+                            schema.enums.get_mut(&key).ok_or_else(|| {
+                                SchemaError::ParseError(format!(
+                                    "ALTER TYPE: enum '{key}' not declared in schema"
+                                ))
+                            })?;
+
+                        if if_not_exists && enum_type.values.contains(&new_value) {
+                            continue;
+                        }
+
+                        match position {
+                            None => {
+                                enum_type.values.push(new_value);
+                            }
+                            Some(AlterTypeAddValuePosition::Before(neighbor)) => {
+                                let neighbor_value = neighbor.value.clone();
+                                let pos = enum_type
+                                    .values
+                                    .iter()
+                                    .position(|v| v == &neighbor_value)
+                                    .ok_or_else(|| {
+                                        SchemaError::ParseError(format!(
+                                            "ALTER TYPE: value '{neighbor_value}' not found in enum '{key}'"
+                                        ))
+                                    })?;
+                                enum_type.values.insert(pos, new_value);
+                            }
+                            Some(AlterTypeAddValuePosition::After(neighbor)) => {
+                                let neighbor_value = neighbor.value.clone();
+                                let pos = enum_type
+                                    .values
+                                    .iter()
+                                    .position(|v| v == &neighbor_value)
+                                    .ok_or_else(|| {
+                                        SchemaError::ParseError(format!(
+                                            "ALTER TYPE: value '{neighbor_value}' not found in enum '{key}'"
+                                        ))
+                                    })?;
+                                enum_type.values.insert(pos + 1, new_value);
+                            }
+                        }
+                    }
+                    AlterTypeOperation::Rename(_) | AlterTypeOperation::RenameValue(_) => {}
                 }
             }
             Statement::CreateFunction(CreateFunction {
@@ -935,7 +994,6 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             // ALTER variants yet.
             | Statement::AlterIndex { .. }
             | Statement::AlterView { .. }
-            | Statement::AlterType(_)
             | Statement::AlterSchema(_)
             | Statement::AlterPolicy { .. }
             | Statement::RenameTable(_)
