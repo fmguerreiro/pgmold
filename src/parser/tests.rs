@@ -1673,6 +1673,46 @@ fn type_casts_normalized_to_lowercase() {
 }
 
 #[test]
+fn default_null_uppercase_stored_as_no_default() {
+    let sql = "CREATE TABLE t (col TEXT[] DEFAULT NULL);";
+    let schema = parse_sql_string(sql).unwrap();
+    let col = schema.tables["public.t"].columns.get("col").unwrap();
+    assert_eq!(col.default, None);
+}
+
+#[test]
+fn default_null_lowercase_stored_as_no_default() {
+    let sql = "CREATE TABLE t (col TEXT[] DEFAULT null);";
+    let schema = parse_sql_string(sql).unwrap();
+    let col = schema.tables["public.t"].columns.get("col").unwrap();
+    assert_eq!(col.default, None);
+}
+
+#[test]
+fn default_null_cast_stored_as_no_default() {
+    let sql = "CREATE TABLE t (col TEXT[] DEFAULT NULL::text[]);";
+    let schema = parse_sql_string(sql).unwrap();
+    let col = schema.tables["public.t"].columns.get("col").unwrap();
+    assert_eq!(col.default, None);
+}
+
+#[test]
+fn default_string_null_literal_preserved() {
+    let sql = "CREATE TABLE t (col TEXT DEFAULT 'NULL'::text);";
+    let schema = parse_sql_string(sql).unwrap();
+    let col = schema.tables["public.t"].columns.get("col").unwrap();
+    assert_eq!(col.default, Some("'NULL'::text".to_string()));
+}
+
+#[test]
+fn default_coalesce_with_null_preserved() {
+    let sql = "CREATE TABLE t (col TEXT DEFAULT COALESCE(NULL, 'x'));";
+    let schema = parse_sql_string(sql).unwrap();
+    let col = schema.tables["public.t"].columns.get("col").unwrap();
+    assert!(col.default.is_some(), "COALESCE(NULL, 'x') is not a null default");
+}
+
+#[test]
 fn parses_trigger_on_cross_schema_table_with_qualified_function() {
     // Bug: triggers on non-public schema tables are not parsed correctly
     // when the function is also in a non-public schema
