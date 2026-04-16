@@ -223,6 +223,14 @@ fn is_numeric_type(dt: &DataType) -> bool {
     )
 }
 
+/// Check if a DataType is a date/time type.
+/// PostgreSQL implicitly casts DATE columns to TIMESTAMP when calling
+/// functions like date_trunc that require a timestamp argument.
+/// These implicit casts should be stripped during normalization.
+fn is_datetime_type(dt: &DataType) -> bool {
+    matches!(dt, DataType::Date | DataType::Timestamp(_, _))
+}
+
 /// Applies the normalization steps shared by both `normalize_expression_regex` and
 /// `normalize_view_query`: operator aliases, type cast lowercasing, whitespace collapse,
 /// and paren-spacing normalization.
@@ -1064,7 +1072,8 @@ fn normalize_expr(expr: &Expr) -> Expr {
                 norm_inner,
                 Expr::Identifier(_) | Expr::CompoundIdentifier(_)
             ) && (matches!(norm_data_type, DataType::CharacterVarying(None))
-                || is_numeric_type(&norm_data_type))
+                || is_numeric_type(&norm_data_type)
+                || is_datetime_type(&norm_data_type))
             {
                 return norm_inner;
             }
@@ -2599,5 +2608,18 @@ fn expressions_equal_empty_array_literal_vs_uuid_array_cast() {
     assert!(
         expressions_semantically_equal(schema_form, db_form),
         "Empty array literal should equal uuid[] typed cast form.\nSchema: {schema_form}\nDB: {db_form}"
+    );
+}
+
+#[test]
+fn materialized_view_date_trunc_with_implicit_timestamp_cast() {
+    // PostgreSQL rewrites DATE_TRUNC('month', period) when period is a DATE column.
+    // It adds an implicit cast to timestamp with time zone and lowercases the function name.
+    // The string arg also gets a ::text cast.
+    let schema_form = r#"SELECT tenant_id, resource, DATE_TRUNC('month', period) AS month, SUM(quantity) AS total_quantity FROM public.resource_usage GROUP BY tenant_id, resource, DATE_TRUNC('month', period)"#;
+    let db_form = r#"SELECT tenant_id, resource, date_trunc('month'::text, (period)::timestamp with time zone) AS month, sum(quantity) AS total_quantity FROM resource_usage GROUP BY tenant_id, resource, date_trunc('month'::text, (period)::timestamp with time zone)"#;
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "date_trunc with implicit timestamp cast should match source form.\nSchema: {schema_form}\nDB: {db_form}"
     );
 }

@@ -4,4 +4,6 @@ ignore = [
     "RUSTSEC-2023-0071",
     # tokio-tar file smuggling — dev-only dependency via testcontainers
     "RUSTSEC-2025-0111",
+    # rand unsound with custom global logger — pgmold does not register a custom logger
+    "RUSTSEC-2026-0097",
 ]
