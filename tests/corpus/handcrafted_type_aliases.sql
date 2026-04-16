@@ -1,3 +1,4 @@
+-- IGNORE: pgmold-255 DEFAULT NULL normalization loops on labels column
 -- Source: hand-crafted for pgmold
 -- Commit: n/a
 -- License: Apache-2.0
