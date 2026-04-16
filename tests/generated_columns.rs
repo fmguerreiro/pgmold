@@ -21,7 +21,11 @@ fn parse_create_table_with_stored_generated_column() {
         "price_usd should have a generated expression"
     );
     assert!(
-        price_usd.generated.as_deref().unwrap().contains("price_cents"),
+        price_usd
+            .generated
+            .as_deref()
+            .unwrap()
+            .contains("price_cents"),
         "generated expression should reference price_cents: {:?}",
         price_usd.generated
     );
@@ -61,7 +65,8 @@ fn parse_generates_create_table_op_with_generated_column() {
     let schema = parse_sql_string(sql).unwrap();
     let ops = compute_diff(&Schema::new(), &schema);
     assert!(
-        ops.iter().any(|op| matches!(op, MigrationOp::CreateTable(_))),
+        ops.iter()
+            .any(|op| matches!(op, MigrationOp::CreateTable(_))),
         "should produce CreateTable op"
     );
 }
@@ -126,12 +131,14 @@ fn diff_changing_generated_expression_produces_drop_then_add() {
     let ops = compute_diff(&from, &to);
 
     assert!(
-        ops.iter().any(|op| matches!(op, MigrationOp::DropColumn { table, column }
+        ops.iter()
+            .any(|op| matches!(op, MigrationOp::DropColumn { table, column }
             if table == "public.products" && column == "price_usd")),
         "should DropColumn when expression changes"
     );
     assert!(
-        ops.iter().any(|op| matches!(op, MigrationOp::AddColumn { table, column }
+        ops.iter()
+            .any(|op| matches!(op, MigrationOp::AddColumn { table, column }
             if table == "public.products" && column.name == "price_usd")),
         "should AddColumn with new expression when expression changes"
     );
