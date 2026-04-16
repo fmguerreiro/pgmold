@@ -35,6 +35,7 @@ pub async fn introspect_schema(
         mut all_indexes,
         mut all_foreign_keys,
         mut all_check_constraints,
+        mut all_exclusion_constraints,
         mut all_rls,
         mut all_force_rls,
         mut all_policies,
@@ -61,6 +62,7 @@ pub async fn introspect_schema(
         introspect_all_indexes(connection, target_schemas),
         introspect_all_foreign_keys(connection, target_schemas),
         introspect_all_check_constraints(connection, target_schemas),
+        introspect_all_exclusion_constraints(connection, target_schemas),
         introspect_all_rls(connection, target_schemas),
         introspect_all_force_rls(connection, target_schemas),
         introspect_all_policies(connection, target_schemas),
@@ -136,6 +138,10 @@ pub async fn introspect_schema(
         if let Some(mut check_constraints) = all_check_constraints.remove(qualified_name) {
             check_constraints.sort();
             table.check_constraints = check_constraints;
+        }
+        if let Some(mut exclusion_constraints) = all_exclusion_constraints.remove(qualified_name) {
+            exclusion_constraints.sort();
+            table.exclusion_constraints = exclusion_constraints;
         }
         if let Some(rls) = all_rls.remove(qualified_name) {
             table.row_level_security = rls;
@@ -1105,6 +1111,161 @@ async fn introspect_all_check_constraints(
     }
 
     Ok(result)
+}
+
+async fn introspect_all_exclusion_constraints(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<ExclusionConstraint>>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS table_schema,
+            class.relname AS table_name,
+            con.conname AS name,
+            COALESCE(am.amname, 'gist') AS index_method,
+            pg_get_constraintdef(con.oid) AS definition,
+            con.condeferrable AS deferrable,
+            con.condeferred AS initially_deferred
+        FROM pg_constraint con
+        JOIN pg_class class ON con.conrelid = class.oid
+        JOIN pg_namespace n ON n.oid = class.relnamespace
+        LEFT JOIN pg_class idx ON con.conindid = idx.oid
+        LEFT JOIN pg_am am ON idx.relam = am.oid
+        WHERE n.nspname = ANY($1::text[])
+          AND con.contype = 'x'
+          AND class.relkind IN ('r', 'p')
+          AND class.relispartition = false
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| {
+        SchemaError::DatabaseError(format!("Failed to fetch exclusion constraints: {e}"))
+    })?;
+
+    let mut result: BTreeMap<String, Vec<ExclusionConstraint>> = BTreeMap::new();
+    for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
+        let name: String = row.get("name");
+        let index_method: String = row.get("index_method");
+        let definition: String = row.get("definition");
+        let deferrable: bool = row.get("deferrable");
+        let initially_deferred: bool = row.get("initially_deferred");
+
+        let (elements, where_clause) = parse_exclusion_definition(&definition);
+
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(ExclusionConstraint {
+                name,
+                index_method,
+                elements,
+                where_clause,
+                deferrable,
+                initially_deferred,
+            });
+    }
+
+    Ok(result)
+}
+
+/// Parses a `pg_get_constraintdef` output for an EXCLUDE constraint.
+///
+/// Input looks like:
+///   `EXCLUDE USING gist (col1 WITH &&, col2 WITH =) WHERE (predicate)`
+///
+/// Returns the parsed elements and optional WHERE clause.
+fn parse_exclusion_definition(definition: &str) -> (Vec<ExclusionElement>, Option<String>) {
+    let rest = definition.trim();
+    let rest = rest.strip_prefix("EXCLUDE USING ").unwrap_or(rest);
+
+    // Skip the access method name up to the first '('
+    let paren_start = match rest.find('(') {
+        Some(p) => p,
+        None => return (Vec::new(), None),
+    };
+    let after_method = &rest[paren_start + 1..];
+
+    // Find the matching closing paren for the elements list
+    let mut depth = 1usize;
+    let mut end = 0;
+    for (i, ch) in after_method.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = i;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let elements_str = &after_method[..end];
+    let tail = after_method[end + 1..].trim();
+
+    let where_clause = if let Some(rest) = tail.strip_prefix("WHERE ") {
+        let rest = rest.trim();
+        let inner = rest.strip_prefix('(').and_then(|s| s.strip_suffix(')'));
+        Some(inner.unwrap_or(rest).to_string())
+    } else {
+        None
+    };
+
+    let elements = parse_exclusion_elements(elements_str);
+    (elements, where_clause)
+}
+
+/// Parses the comma-separated element list inside `EXCLUDE USING gist (...)`.
+///
+/// Each element looks like `col WITH operator` or `(expr) WITH operator`.
+/// Commas inside nested parens are treated as part of the expression.
+fn parse_exclusion_elements(elements_str: &str) -> Vec<ExclusionElement> {
+    let mut elements = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+
+    for (i, ch) in elements_str.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                let segment = elements_str[start..i].trim();
+                if let Some(element) = parse_single_exclusion_element(segment) {
+                    elements.push(element);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = elements_str[start..].trim();
+    if !last.is_empty() {
+        if let Some(element) = parse_single_exclusion_element(last) {
+            elements.push(element);
+        }
+    }
+
+    elements
+}
+
+fn parse_single_exclusion_element(segment: &str) -> Option<ExclusionElement> {
+    // Pattern: `<expr> WITH <operator>`
+    // Find " WITH " (case-insensitive) from the right to handle expressions containing WITH
+    let upper = segment.to_uppercase();
+    let with_pos = upper.rfind(" WITH ")?;
+    let column_or_expression = segment[..with_pos].trim().to_string();
+    let operator = segment[with_pos + " WITH ".len()..].trim().to_string();
+    Some(ExclusionElement {
+        column_or_expression,
+        operator,
+    })
 }
 
 /// Normalize a proconfig value from PostgreSQL's GUC format to valid SQL.
