@@ -50,7 +50,13 @@ fn parse_exclude_constraint_multi_element() {
 fn diff_produces_add_exclusion_constraint() {
     use pgmold::diff::MigrationOp;
 
-    let sql = r#"
+    let without_exclusion = r#"
+        CREATE TABLE "public"."bookings" (
+            "id" SERIAL PRIMARY KEY,
+            "during" tstzrange NOT NULL
+        );
+    "#;
+    let with_exclusion = r#"
         CREATE TABLE "public"."bookings" (
             "id" SERIAL PRIMARY KEY,
             "during" tstzrange NOT NULL,
@@ -58,9 +64,9 @@ fn diff_produces_add_exclusion_constraint() {
         );
     "#;
 
-    let empty = pgmold::model::Schema::new();
-    let schema = parse_sql_string(sql).unwrap();
-    let ops = compute_diff(&empty, &schema);
+    let from_schema = parse_sql_string(without_exclusion).unwrap();
+    let to_schema = parse_sql_string(with_exclusion).unwrap();
+    let ops = compute_diff(&from_schema, &to_schema);
 
     let exclusion_ops: Vec<_> = ops
         .iter()

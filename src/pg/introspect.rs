@@ -816,6 +816,9 @@ fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i
         }
         "point" => PgType::Point,
         "xml" => PgType::Xml,
+        "int4range" | "int8range" | "numrange" | "tsrange" | "tstzrange" | "daterange"
+        | "int4multirange" | "int8multirange" | "nummultirange" | "tsmultirange"
+        | "tstzmultirange" | "datemultirange" => PgType::BuiltinNamed(udt_name.to_string()),
         _ => PgType::UserDefined(format!("{udt_schema}.{udt_name}")),
     }
 }
@@ -854,6 +857,11 @@ fn map_pg_type(
         "macaddr8" => Ok(PgType::Macaddr8),
         "point" => Ok(PgType::Point),
         "xml" => Ok(PgType::Xml),
+        "int4range" | "int8range" | "numrange" | "tsrange" | "tstzrange" | "daterange"
+        | "int4multirange" | "int8multirange" | "nummultirange" | "tsmultirange"
+        | "tstzmultirange" | "datemultirange" => {
+            Ok(PgType::BuiltinNamed(data_type.to_string()))
+        }
         "USER-DEFINED" => {
             if udt_name == "vector" {
                 // pgvector stores dimension directly in atttypmod
