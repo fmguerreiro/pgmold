@@ -2951,6 +2951,15 @@ CREATE TABLE settings (
 }
 
 #[test]
+fn parse_bool_alias_column() {
+    let sql = "CREATE TABLE t (col Bool NOT NULL);";
+    let schema = parse_sql_string(sql).unwrap();
+    let col = schema.tables["public.t"].columns.get("col").unwrap();
+    assert_eq!(col.data_type, PgType::Boolean);
+    assert!(!col.nullable);
+}
+
+#[test]
 fn parse_integer_array_column() {
     let sql = "CREATE TABLE data (id BIGINT PRIMARY KEY, scores INTEGER[]);";
     let schema = parse_sql_string(sql).unwrap();
