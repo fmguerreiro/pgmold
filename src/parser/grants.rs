@@ -583,7 +583,7 @@ fn parse_function_signature(sig: &str) -> String {
 
     if let Some(paren_pos) = trimmed.find('(') {
         let before_paren = &trimmed[..paren_pos];
-        let args_part = &trimmed[paren_pos..];
+        let args_part = normalize_args(&trimmed[paren_pos..]);
 
         if let Some(dot_pos) = before_paren.rfind('.') {
             let schema_part = unquote_ident(&before_paren[..dot_pos]);
@@ -597,5 +597,96 @@ fn parse_function_signature(sig: &str) -> String {
         trimmed.to_string()
     } else {
         format!("public.{}", unquote_ident(trimmed))
+    }
+}
+
+/// Normalize the args portion of a GRANT function signature so it matches the
+/// key format used by `Function::signature()`. Without this, `GRANT EXECUTE ON
+/// FUNCTION foo(float8)` fails to attach to a function stored under the
+/// normalized key `foo(double precision)`, silently dropping the grant.
+fn normalize_args(args: &str) -> String {
+    let trimmed = args.trim();
+    let Some(inner) = trimmed.strip_prefix('(').and_then(|s| s.strip_suffix(')')) else {
+        return trimmed.to_string();
+    };
+
+    let normalized: Vec<String> = split_top_level_commas(inner)
+        .into_iter()
+        .map(|arg| normalize_pg_type(arg.trim()))
+        .collect();
+    format!("({})", normalized.join(", "))
+}
+
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if !s[start..].is_empty() {
+        parts.push(&s[start..]);
+    }
+    parts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_function_signature_normalizes_type_aliases() {
+        assert_eq!(
+            parse_function_signature("mrv.polygons_at_point(float8, float8, float8)"),
+            "mrv.polygons_at_point(double precision, double precision, double precision)"
+        );
+        assert_eq!(
+            parse_function_signature("foo(int4, int8, int2)"),
+            "public.foo(integer, bigint, smallint)"
+        );
+        assert_eq!(
+            parse_function_signature("foo(bool, varchar, timestamptz)"),
+            "public.foo(boolean, character varying, timestamp with time zone)"
+        );
+    }
+
+    #[test]
+    fn parse_function_signature_preserves_canonical_types() {
+        assert_eq!(
+            parse_function_signature("public.add_numbers(integer, integer)"),
+            "public.add_numbers(integer, integer)"
+        );
+    }
+
+    #[test]
+    fn parse_function_signature_handles_quoted_names() {
+        assert_eq!(
+            parse_function_signature("\"mrv\".\"polygons_at_point\"(float8, float8, float8)"),
+            "mrv.polygons_at_point(double precision, double precision, double precision)"
+        );
+    }
+
+    #[test]
+    fn parse_function_signature_handles_no_args() {
+        assert_eq!(
+            parse_function_signature("public.trigger_fn()"),
+            "public.trigger_fn()"
+        );
+    }
+
+    #[test]
+    fn parse_function_signature_handles_nested_parens_in_types() {
+        assert_eq!(
+            parse_function_signature("public.trunc(numeric(10,2))"),
+            "public.trunc(numeric(10,2))"
+        );
     }
 }
