@@ -297,7 +297,7 @@ pub(super) fn parse_column_with_serial(
                          supported by PostgreSQL; only STORED is allowed"
                     )));
                 }
-                if !matches!(generated_as, GeneratedAs::Always) {
+                if !matches!(generated_as, GeneratedAs::ExpStored) {
                     return Err(crate::util::SchemaError::ParseError(format!(
                         "Column \"{col_name}\": only GENERATED ALWAYS AS ... STORED is \
                          supported for computed columns"
