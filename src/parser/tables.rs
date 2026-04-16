@@ -287,14 +287,16 @@ pub(super) fn parse_create_table(
                     Some(sqlparser::ast::DeferrableInitial::Deferred)
                 );
 
-                table.exclusion_constraints.push(crate::model::ExclusionConstraint {
-                    name: truncate_identifier(&constraint_name),
-                    index_method,
-                    elements,
-                    where_clause,
-                    deferrable,
-                    initially_deferred,
-                });
+                table
+                    .exclusion_constraints
+                    .push(crate::model::ExclusionConstraint {
+                        name: truncate_identifier(&constraint_name),
+                        index_method,
+                        elements,
+                        where_clause,
+                        deferrable,
+                        initially_deferred,
+                    });
             }
             // MySQL-specific constraints that have no PostgreSQL equivalent.
             // Listed explicitly (instead of a bare `_`) so adding a new

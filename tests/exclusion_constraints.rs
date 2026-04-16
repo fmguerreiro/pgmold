@@ -128,12 +128,16 @@ fn diff_produces_drop_exclusion_constraint_when_removed() {
             comment: None,
         },
     );
-    from_schema.tables.insert("public.bookings".to_string(), table.clone());
+    from_schema
+        .tables
+        .insert("public.bookings".to_string(), table.clone());
 
     let mut to_schema = pgmold::model::Schema::new();
     let mut to_table = table;
     to_table.exclusion_constraints = vec![];
-    to_schema.tables.insert("public.bookings".to_string(), to_table);
+    to_schema
+        .tables
+        .insert("public.bookings".to_string(), to_table);
 
     let ops = compute_diff(&from_schema, &to_schema);
     let drop_ops: Vec<_> = ops
