@@ -4,10 +4,10 @@ use crate::diff::{
 };
 use crate::model::{
     parse_qualified_name, versioned_schema_name, ArgMode, CheckConstraint, Column, Domain,
-    ForeignKey, Function, Index, IndexType, Partition, PartitionBound, PartitionStrategy, PgType,
-    Policy, PolicyCommand, Privilege, QualifiedName, ReferentialAction, SecurityType, Sequence,
-    SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, VersionView,
-    View, Volatility,
+    ExclusionConstraint, ForeignKey, Function, Index, IndexType, Partition, PartitionBound,
+    PartitionStrategy, PgType, Policy, PolicyCommand, Privilege, QualifiedName, ReferentialAction,
+    SecurityType, Sequence, SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent,
+    TriggerTiming, VersionView, View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -212,6 +212,28 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
         }
 
         MigrationOp::DropCheckConstraint {
+            table,
+            constraint_name,
+        } => {
+            vec![format!(
+                "ALTER TABLE {} DROP CONSTRAINT {};",
+                quote_qualified(&table.schema, &table.name),
+                quote_ident(constraint_name)
+            )]
+        }
+
+        MigrationOp::AddExclusionConstraint {
+            table,
+            exclusion_constraint,
+        } => {
+            vec![generate_add_exclusion_constraint(
+                &table.schema,
+                &table.name,
+                exclusion_constraint,
+            )]
+        }
+
+        MigrationOp::DropExclusionConstraint {
             table,
             constraint_name,
         } => {
@@ -666,6 +688,14 @@ fn generate_create_table(table: &Table) -> Vec<String> {
         ));
     }
 
+    for exclusion_constraint in &table.exclusion_constraints {
+        statements.push(generate_add_exclusion_constraint(
+            &table.schema,
+            &table.name,
+            exclusion_constraint,
+        ));
+    }
+
     statements
 }
 
@@ -755,6 +785,44 @@ fn generate_add_check_constraint(
         quote_qualified(schema, table),
         quote_ident(&check_constraint.name),
         check_constraint.expression
+    )
+}
+
+fn generate_add_exclusion_constraint(
+    schema: &str,
+    table: &str,
+    exclusion_constraint: &ExclusionConstraint,
+) -> String {
+    let elements: Vec<String> = exclusion_constraint
+        .elements
+        .iter()
+        .map(|el| format!("{} WITH {}", el.column_or_expression, el.operator))
+        .collect();
+
+    let where_clause = exclusion_constraint
+        .where_clause
+        .as_ref()
+        .map(|w| format!(" WHERE ({w})"))
+        .unwrap_or_default();
+
+    let deferrable_clause = if exclusion_constraint.deferrable {
+        if exclusion_constraint.initially_deferred {
+            " DEFERRABLE INITIALLY DEFERRED"
+        } else {
+            " DEFERRABLE INITIALLY IMMEDIATE"
+        }
+    } else {
+        ""
+    };
+
+    format!(
+        "ALTER TABLE {} ADD CONSTRAINT {} EXCLUDE USING {} ({}){}{};",
+        quote_qualified(schema, table),
+        quote_ident(&exclusion_constraint.name),
+        exclusion_constraint.index_method,
+        elements.join(", "),
+        where_clause,
+        deferrable_clause,
     )
 }
 
