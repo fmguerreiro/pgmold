@@ -2719,6 +2719,46 @@ DROP INDEX users_email_idx;
 }
 
 #[test]
+fn parse_alter_index_rename_renames_in_model() {
+    let sql = r#"
+CREATE TABLE t (id INT);
+CREATE INDEX old_idx ON t (id);
+ALTER INDEX old_idx RENAME TO new_idx;
+"#;
+    let schema = parse_sql_string(sql).expect("Should parse");
+
+    let table = &schema.tables["public.t"];
+    assert_eq!(table.indexes.len(), 1);
+    assert_eq!(table.indexes[0].name, "new_idx");
+}
+
+#[test]
+fn parse_alter_index_rename_qualified() {
+    let sql = r#"
+CREATE TABLE t (id INT);
+CREATE INDEX old_idx ON t (id);
+ALTER INDEX public.old_idx RENAME TO new_idx;
+"#;
+    let schema = parse_sql_string(sql).expect("Should parse");
+
+    let table = &schema.tables["public.t"];
+    assert_eq!(table.indexes.len(), 1);
+    assert_eq!(table.indexes[0].name, "new_idx");
+}
+
+#[test]
+fn parse_alter_index_rename_unknown_errors() {
+    let sql = r#"
+CREATE TABLE t (id INT);
+ALTER INDEX notdeclared RENAME TO foo;
+"#;
+    let result = parse_sql_string(sql);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("notdeclared"));
+}
+
+#[test]
 fn parse_drop_sequence() {
     let sql = r#"
 CREATE SEQUENCE user_id_seq;
