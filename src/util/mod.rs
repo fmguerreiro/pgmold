@@ -660,23 +660,31 @@ fn normalize_nextval_args(expr: Expr) -> Expr {
     if arg_list.args.len() != 1 {
         return Expr::Function(func);
     }
-    let stripped = {
-        let sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(
-            Expr::Value(ref val_with_span),
-        )) = arg_list.args[0]
-        else {
-            return Expr::Function(func);
-        };
-        let sqlparser::ast::Value::SingleQuotedString(ref seq_name) = val_with_span.value else {
-            return Expr::Function(func);
-        };
-        match seq_name.strip_prefix("public.") {
-            Some(s) => s.to_string(),
-            None => return Expr::Function(func),
-        }
+    let sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(ref inner)) =
+        arg_list.args[0]
+    else {
+        return Expr::Function(func);
     };
+    let value_expr = match inner {
+        Expr::Cast {
+            expr,
+            data_type: sqlparser::ast::DataType::Regclass,
+            ..
+        } => expr.as_ref(),
+        other => other,
+    };
+    let Expr::Value(val_with_span) = value_expr else {
+        return Expr::Function(func);
+    };
+    let sqlparser::ast::Value::SingleQuotedString(ref seq_name) = val_with_span.value else {
+        return Expr::Function(func);
+    };
+    let normalized = seq_name
+        .strip_prefix("public.")
+        .unwrap_or(seq_name)
+        .to_string();
     arg_list.args[0] = sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(
-        Expr::Value(sqlparser::ast::Value::SingleQuotedString(stripped).with_empty_span()),
+        Expr::Value(sqlparser::ast::Value::SingleQuotedString(normalized).with_empty_span()),
     ));
     Expr::Function(func)
 }
