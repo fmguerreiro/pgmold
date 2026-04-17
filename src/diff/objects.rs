@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::model::{
-    parse_qualified_name, qualified_name, EnumType, Grant, Schema, Sequence, Trigger,
+    parse_qualified_name, qualified_name, EnumType, Grant, Schema, Sequence, Server, Trigger,
 };
 use crate::util::optional_expressions_equal;
 
@@ -191,7 +191,7 @@ pub(super) fn diff_servers(from: &Schema, to: &Schema, _options: &DiffOptions) -
     let mut ops = Vec::new();
     for (name, to_server) in &to.servers {
         if let Some(from_server) = from.servers.get(name) {
-            if from_server != to_server {
+            if servers_differ_ignoring_unmanaged(from_server, to_server) {
                 ops.push(MigrationOp::AlterServer {
                     name: name.clone(),
                     new_server: to_server.clone(),
@@ -207,6 +207,23 @@ pub(super) fn diff_servers(from: &Schema, to: &Schema, _options: &DiffOptions) -
         }
     }
     ops
+}
+
+fn servers_differ_ignoring_unmanaged(from: &Server, to: &Server) -> bool {
+    let from_normalized = Server {
+        owner: if to.owner.is_some() {
+            from.owner.clone()
+        } else {
+            None
+        },
+        comment: if to.comment.is_some() {
+            from.comment.clone()
+        } else {
+            None
+        },
+        ..from.clone()
+    };
+    from_normalized != *to
 }
 
 pub(super) fn diff_extensions(
