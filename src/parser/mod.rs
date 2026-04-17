@@ -29,11 +29,12 @@ use crate::model::*;
 use crate::pg::sqlgen::strip_ident_quotes;
 use crate::util::{normalize_sql_whitespace, Result, SchemaError};
 use sqlparser::ast::{
-    AlterTable, AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
-    AlterTypeOperation, CreateDomain, CreateExtension, CreateFunction, CreateServerStatement,
-    CreateTrigger, CreateView, DropDomain, DropExtension, DropFunction, DropTrigger, ObjectType,
-    RenameTableNameKind, SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent,
-    TriggerPeriod, TriggerReferencingType, UserDefinedTypeRepresentation,
+    AlterIndexOperation, AlterTable, AlterTableOperation, AlterType, AlterTypeAddValue,
+    AlterTypeAddValuePosition, AlterTypeOperation, CreateDomain, CreateExtension, CreateFunction,
+    CreateServerStatement, CreateTrigger, CreateView, DropDomain, DropExtension, DropFunction,
+    DropTrigger, ObjectType, RenameTableNameKind, SchemaName, Statement, TableConstraint,
+    TriggerEvent as SqlTriggerEvent, TriggerPeriod, TriggerReferencingType,
+    UserDefinedTypeRepresentation,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -989,11 +990,43 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             | Statement::AlterOperator(_)
             | Statement::DropOperator(_)
             | Statement::DropOperatorClass(_)
-            | Statement::DropOperatorFamily(_)
+            | Statement::DropOperatorFamily(_) => {}
+            Statement::AlterIndex { name, operation } => {
+                let (idx_schema, idx_name) = extract_qualified_name(&name);
+                match operation {
+                    AlterIndexOperation::RenameIndex { index_name } => {
+                        let (_, new_name) = extract_qualified_name(&index_name);
+                        let mut found = false;
+                        for table in schema.tables.values_mut() {
+                            for idx in &mut table.indexes {
+                                if idx.name == idx_name {
+                                    idx.name = new_name.clone();
+                                    found = true;
+                                }
+                            }
+                        }
+                        if !found {
+                            for partition in schema.partitions.values_mut() {
+                                for idx in &mut partition.indexes {
+                                    if idx.name == idx_name {
+                                        idx.name = new_name.clone();
+                                        found = true;
+                                    }
+                                }
+                            }
+                        }
+                        if !found {
+                            return Err(SchemaError::ParseError(format!(
+                                "ALTER INDEX: index '{}.{}' not declared in schema",
+                                idx_schema, idx_name
+                            )));
+                        }
+                    }
+                }
+            }
             // pgmold consumes `AlterTable` (above) but not these sibling
             // ALTER variants yet.
-            | Statement::AlterIndex { .. }
-            | Statement::AlterView { .. }
+            Statement::AlterView { .. }
             | Statement::AlterSchema(_)
             | Statement::AlterPolicy { .. }
             | Statement::RenameTable(_)
