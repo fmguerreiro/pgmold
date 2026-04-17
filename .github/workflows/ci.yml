@@ -103,6 +103,16 @@ jobs:
       - name: Run corpus convergence tests
         run: cargo test --all-features --test corpus -- --ignored --test-threads=1
 
+  parser-coverage-triage:
+    name: Parser Coverage Triage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run parser coverage triage report
+        run: cargo test --all-features --test parser_coverage_triage -- --ignored --nocapture
+
   pg-version-matrix:
     name: PG ${{ matrix.pg-version }}
     runs-on: ubuntu-latest
