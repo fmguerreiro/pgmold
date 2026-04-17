@@ -3866,3 +3866,69 @@ fn inline_check_constraint_name_is_truncated_to_63_bytes() {
         name.len()
     );
 }
+
+#[test]
+fn alter_type_add_value_appends() {
+    let sql = "CREATE TYPE color AS ENUM ('red', 'blue'); ALTER TYPE color ADD VALUE 'green';";
+    let schema = parse_sql_string(sql).expect("Should parse");
+    let enum_type = schema.enums.get("public.color").unwrap();
+    assert_eq!(
+        enum_type.values,
+        vec!["red".to_string(), "blue".to_string(), "green".to_string()]
+    );
+}
+
+#[test]
+fn alter_type_add_value_before() {
+    let sql =
+        "CREATE TYPE color AS ENUM ('red', 'blue'); ALTER TYPE color ADD VALUE 'green' BEFORE 'blue';";
+    let schema = parse_sql_string(sql).expect("Should parse");
+    let enum_type = schema.enums.get("public.color").unwrap();
+    assert_eq!(
+        enum_type.values,
+        vec!["red".to_string(), "green".to_string(), "blue".to_string()]
+    );
+}
+
+#[test]
+fn alter_type_add_value_after() {
+    let sql =
+        "CREATE TYPE color AS ENUM ('red', 'blue'); ALTER TYPE color ADD VALUE 'green' AFTER 'red';";
+    let schema = parse_sql_string(sql).expect("Should parse");
+    let enum_type = schema.enums.get("public.color").unwrap();
+    assert_eq!(
+        enum_type.values,
+        vec!["red".to_string(), "green".to_string(), "blue".to_string()]
+    );
+}
+
+#[test]
+fn alter_type_add_value_if_not_exists_skips() {
+    let sql = "CREATE TYPE color AS ENUM ('red', 'blue'); ALTER TYPE color ADD VALUE IF NOT EXISTS 'red';";
+    let schema = parse_sql_string(sql).expect("Should parse");
+    let enum_type = schema.enums.get("public.color").unwrap();
+    assert_eq!(
+        enum_type.values,
+        vec!["red".to_string(), "blue".to_string()]
+    );
+}
+
+#[test]
+fn alter_type_add_value_if_not_exists_new_value_appends() {
+    let sql = "CREATE TYPE color AS ENUM ('red', 'blue'); ALTER TYPE color ADD VALUE IF NOT EXISTS 'green';";
+    let schema = parse_sql_string(sql).expect("Should parse");
+    let enum_type = schema.enums.get("public.color").unwrap();
+    assert_eq!(
+        enum_type.values,
+        vec!["red".to_string(), "blue".to_string(), "green".to_string()]
+    );
+}
+
+#[test]
+fn alter_type_add_value_unknown_enum_errors() {
+    let sql = "ALTER TYPE notdeclared ADD VALUE 'x';";
+    let result = parse_sql_string(sql);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("notdeclared"));
+}
