@@ -31,9 +31,10 @@ use crate::util::{normalize_sql_whitespace, Result, SchemaError};
 use sqlparser::ast::{
     AlterIndexOperation, AlterTable, AlterTableOperation, AlterType, AlterTypeAddValue,
     AlterTypeAddValuePosition, AlterTypeOperation, CreateDomain, CreateExtension, CreateFunction,
-    CreateTrigger, CreateView, DropDomain, DropExtension, DropFunction, DropTrigger, ObjectType,
-    RenameTableNameKind, SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent,
-    TriggerPeriod, TriggerReferencingType, UserDefinedTypeRepresentation,
+    CreateServerStatement, CreateTrigger, CreateView, DropDomain, DropExtension, DropFunction,
+    DropTrigger, ObjectType, RenameTableNameKind, SchemaName, Statement, TableConstraint,
+    TriggerEvent as SqlTriggerEvent, TriggerPeriod, TriggerReferencingType,
+    UserDefinedTypeRepresentation,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -1059,7 +1060,6 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             | Statement::CreateVirtualTable { .. }
             | Statement::CreateSecret { .. }
             | Statement::DropSecret { .. }
-            | Statement::CreateServer(_)
             | Statement::CreateConnector(_)
             | Statement::AlterConnector { .. }
             | Statement::DropConnector { .. }
@@ -1075,6 +1075,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             // separately; the previously wildcarded behaviour is preserved
             // here.
             | Statement::CreateType { .. } => {}
+            Statement::CreateServer(stmt) => {
+                parse_create_server(stmt, &mut schema);
+            }
         }
     }
 
@@ -1087,6 +1090,31 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
     schema.pending_policies = schema.finalize_partial();
 
     Ok(schema)
+}
+
+fn parse_create_server(stmt: CreateServerStatement, schema: &mut Schema) {
+    let name = stmt.name.to_string();
+    let name = name.trim_matches('"').to_string();
+    let foreign_data_wrapper = stmt.foreign_data_wrapper.to_string();
+    let foreign_data_wrapper = foreign_data_wrapper.trim_matches('"').to_string();
+    let server_type = stmt.server_type.map(|t| t.value);
+    let server_version = stmt.version.map(|v| v.value);
+    let options = stmt
+        .options
+        .unwrap_or_default()
+        .into_iter()
+        .map(|opt| (opt.key.value, opt.value.value))
+        .collect();
+    let server = Server {
+        name: name.clone(),
+        foreign_data_wrapper,
+        server_type,
+        server_version,
+        options,
+        owner: None,
+        comment: None,
+    };
+    schema.servers.insert(name, server);
 }
 
 fn make_trigger_key(schema: &str, table: &str, trigger_name: &str) -> String {

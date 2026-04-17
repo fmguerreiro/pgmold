@@ -25,6 +25,7 @@ struct NodeSets {
     schemas: Vec<NodeIndex>,
     version_schemas: Vec<NodeIndex>,
     extensions: Vec<NodeIndex>,
+    servers: Vec<NodeIndex>,
     enums: Vec<NodeIndex>,
     add_enum_values: Vec<NodeIndex>,
     domains: Vec<NodeIndex>,
@@ -64,6 +65,7 @@ struct NodeSets {
     drop_domains: Vec<NodeIndex>,
     drop_enums: Vec<NodeIndex>,
     drop_extensions: Vec<NodeIndex>,
+    drop_servers: Vec<NodeIndex>,
     drop_version_schemas: Vec<NodeIndex>,
     drop_schemas: Vec<NodeIndex>,
     drop_version_views: Vec<NodeIndex>,
@@ -76,6 +78,7 @@ impl NodeSets {
             version_schemas: graph
                 .nodes_matching(|k| matches!(k, OpKey::CreateVersionSchema { .. })),
             extensions: graph.nodes_matching(|k| matches!(k, OpKey::CreateExtension(_))),
+            servers: graph.nodes_matching(|k| matches!(k, OpKey::CreateServer(_))),
             enums: graph.nodes_matching(|k| matches!(k, OpKey::CreateEnum(_))),
             add_enum_values: graph.nodes_matching(|k| matches!(k, OpKey::AddEnumValue { .. })),
             domains: graph.nodes_matching(|k| matches!(k, OpKey::CreateDomain(_))),
@@ -118,6 +121,7 @@ impl NodeSets {
             drop_domains: graph.nodes_matching(|k| matches!(k, OpKey::DropDomain(_))),
             drop_enums: graph.nodes_matching(|k| matches!(k, OpKey::DropEnum(_))),
             drop_extensions: graph.nodes_matching(|k| matches!(k, OpKey::DropExtension(_))),
+            drop_servers: graph.nodes_matching(|k| matches!(k, OpKey::DropServer(_))),
             drop_version_schemas: graph
                 .nodes_matching(|k| matches!(k, OpKey::DropVersionSchema { .. })),
             drop_schemas: graph.nodes_matching(|k| matches!(k, OpKey::DropSchema(_))),
@@ -208,6 +212,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.extensions, &ns.enums);
         self.edges_all_to_all(&ns.extensions, &ns.domains);
         self.edges_all_to_all(&ns.extensions, &ns.tables);
+        self.edges_all_to_all(&ns.extensions, &ns.servers);
     }
 
     /// Tier 2: Type system — enums, enum values, and domains before tables and columns.
@@ -344,6 +349,7 @@ impl MigrationGraph {
 
         self.edges_all_to_all(&ns.drop_enums, &ns.drop_extensions);
         self.edges_all_to_all(&ns.drop_domains, &ns.drop_extensions);
+        self.edges_all_to_all(&ns.drop_servers, &ns.drop_extensions);
 
         self.edges_all_to_all(&ns.drop_extensions, &ns.drop_schemas);
     }
@@ -406,6 +412,7 @@ impl MigrationGraph {
             &ns.schemas,
             &ns.version_schemas,
             &ns.extensions,
+            &ns.servers,
             &ns.enums,
             &ns.add_enum_values,
             &ns.domains,
@@ -440,6 +447,7 @@ impl MigrationGraph {
             &ns.drop_sequences,
             &ns.drop_domains,
             &ns.drop_enums,
+            &ns.drop_servers,
             &ns.drop_extensions,
             &ns.drop_version_schemas,
             &ns.drop_schemas,

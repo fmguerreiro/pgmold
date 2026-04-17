@@ -16,6 +16,7 @@ pub async fn introspect_schema(
     let (
         schemas,
         extensions,
+        servers,
         enums,
         domains,
         tables,
@@ -43,6 +44,7 @@ pub async fn introspect_schema(
     ) = tokio::try_join!(
         introspect_schemas(connection, target_schemas),
         introspect_extensions(connection),
+        introspect_servers(connection),
         introspect_enums(connection, target_schemas, include_extension_objects),
         introspect_domains(connection, target_schemas, include_extension_objects),
         introspect_tables(connection, target_schemas, include_extension_objects),
@@ -72,6 +74,7 @@ pub async fn introspect_schema(
     let mut schema = Schema::new();
     schema.schemas = schemas;
     schema.extensions = extensions;
+    schema.servers = servers;
     schema.enums = enums;
     schema.domains = domains;
     schema.tables = tables;
@@ -232,6 +235,60 @@ async fn introspect_extensions(connection: &PgConnection) -> Result<BTreeMap<Str
     }
 
     Ok(extensions)
+}
+
+async fn introspect_servers(connection: &PgConnection) -> Result<BTreeMap<String, Server>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            s.srvname AS name,
+            s.srvtype AS server_type,
+            s.srvversion AS server_version,
+            fdw.fdwname AS foreign_data_wrapper,
+            u.rolname AS owner,
+            s.srvoptions AS options
+        FROM pg_foreign_server s
+        JOIN pg_foreign_data_wrapper fdw ON fdw.oid = s.srvfdw
+        LEFT JOIN pg_authid u ON u.oid = s.srvowner
+        "#,
+    )
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch foreign servers: {e}")))?;
+
+    let mut servers = BTreeMap::new();
+    for row in rows {
+        let name: String = row.get("name");
+        let server_type: Option<String> = row.get("server_type");
+        let server_version: Option<String> = row.get("server_version");
+        let foreign_data_wrapper: String = row.get("foreign_data_wrapper");
+        let owner: Option<String> = row.get("owner");
+        let raw_options: Option<Vec<String>> = row.get("options");
+
+        let options = raw_options
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|opt| {
+                let (key, value) = opt.split_once('=')?;
+                Some((key.to_string(), value.to_string()))
+            })
+            .collect();
+
+        servers.insert(
+            name.clone(),
+            Server {
+                name,
+                foreign_data_wrapper,
+                server_type,
+                server_version,
+                options,
+                owner,
+                comment: None,
+            },
+        );
+    }
+
+    Ok(servers)
 }
 
 async fn introspect_enums(

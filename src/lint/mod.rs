@@ -225,6 +225,9 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
 
         MigrationOp::CreateSchema(_)
         | MigrationOp::CreateExtension(_)
+        | MigrationOp::CreateServer(_)
+        | MigrationOp::DropServer(_)
+        | MigrationOp::AlterServer { .. }
         | MigrationOp::CreateEnum(_)
         | MigrationOp::AddEnumValue { .. }
         | MigrationOp::CreateDomain(_)

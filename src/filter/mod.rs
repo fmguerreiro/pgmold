@@ -254,6 +254,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
     Schema {
         schemas,
         extensions: filter_field(&schema.extensions, filter, ObjectType::Extensions),
+        servers: schema.servers.clone(),
         tables: if filter.should_include_type(ObjectType::Tables) {
             schema
                 .tables
@@ -335,6 +336,7 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
     Schema {
         schemas: retain_by_schema(&schema.schemas, &allowed, |s| &s.name),
         extensions: schema.extensions.clone(),
+        servers: schema.servers.clone(),
         tables: retain_by_schema(&schema.tables, &allowed, |t| &t.schema),
         enums: retain_by_schema(&schema.enums, &allowed, |e| &e.schema),
         domains: retain_by_schema(&schema.domains, &allowed, |d| &d.schema),

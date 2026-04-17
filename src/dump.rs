@@ -178,6 +178,10 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
         ops.push(MigrationOp::CreateExtension(extension.clone()));
     }
 
+    for server in schema.servers.values() {
+        ops.push(MigrationOp::CreateServer(server.clone()));
+    }
+
     for enum_type in schema.enums.values() {
         ops.push(MigrationOp::CreateEnum(enum_type.clone()));
         push_owner_and_grant_ops(
@@ -429,7 +433,9 @@ pub fn generate_split_dump(schema: &Schema) -> SplitDump {
 
     for op in planned {
         match &op {
-            MigrationOp::CreateExtension(_) => extension_ops.push(op),
+            MigrationOp::CreateExtension(_) | MigrationOp::CreateServer(_) => {
+                extension_ops.push(op)
+            }
             MigrationOp::CreateEnum(_) | MigrationOp::CreateDomain(_) => type_ops.push(op),
             MigrationOp::CreateSequence(_) => sequence_ops.push(op),
             MigrationOp::CreateTable(_)
