@@ -811,6 +811,7 @@ fn normalize_table_factor(factor: &sqlparser::ast::TableFactor) -> sqlparser::as
             lateral,
             subquery,
             alias,
+            sample,
         } => TableFactor::Derived {
             lateral: *lateral,
             subquery: Box::new(normalize_query(subquery)),
@@ -819,6 +820,7 @@ fn normalize_table_factor(factor: &sqlparser::ast::TableFactor) -> sqlparser::as
                 explicit: a.explicit,
                 columns: a.columns.clone(),
             }),
+            sample: sample.clone(),
         },
         // Handle nested/parenthesized JOINs - PostgreSQL often wraps JOINs in parens
         // We unwrap by normalizing the inner TableWithJoins and returning the relation directly
@@ -1022,6 +1024,8 @@ fn normalize_select(select: &Select) -> Select {
         value_table_mode: select.value_table_mode,
         connect_by: select.connect_by.clone(),
         flavor: select.flavor.clone(),
+        optimizer_hints: select.optimizer_hints.clone(),
+        select_modifiers: select.select_modifiers.clone(),
     }
 }
 
@@ -1168,6 +1172,7 @@ fn normalize_expr(expr: &Expr) -> Expr {
                 kind: CastKind::DoubleColon,
                 expr: Box::new(norm_inner),
                 data_type: norm_data_type,
+                array: false,
                 format: format.clone(),
             }
         }

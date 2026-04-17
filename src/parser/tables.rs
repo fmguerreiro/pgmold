@@ -307,7 +307,10 @@ pub(super) fn parse_create_table(
             // MySQL-specific constraints that have no PostgreSQL equivalent.
             // Listed explicitly (instead of a bare `_`) so adding a new
             // `TableConstraint` variant upstream forces a compile-time review.
-            TableConstraint::Index(_) | TableConstraint::FulltextOrSpatial(_) => {}
+            TableConstraint::Index(_)
+            | TableConstraint::FulltextOrSpatial(_)
+            | TableConstraint::PrimaryKeyUsingIndex(_)
+            | TableConstraint::UniqueUsingIndex(_) => {}
         }
     }
 
@@ -611,7 +614,9 @@ fn parse_partition_by(expr: &Expr) -> Option<PartitionKey> {
                 // emit. Ignored, but enumerated so upstream additions force
                 // review.
                 SqlFunctionArg::Unnamed(
-                    FunctionArgExpr::QualifiedWildcard(_) | FunctionArgExpr::Wildcard,
+                    FunctionArgExpr::QualifiedWildcard(_)
+                    | FunctionArgExpr::Wildcard
+                    | FunctionArgExpr::WildcardWithOptions(_),
                 )
                 | SqlFunctionArg::Named { .. }
                 | SqlFunctionArg::ExprNamed { .. } => None,

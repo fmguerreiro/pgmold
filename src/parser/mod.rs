@@ -154,7 +154,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 let key = qualified_name(&enum_schema, &enum_name);
                 schema.enums.insert(key, enum_type);
             }
-            Statement::CreatePolicy {
+            Statement::CreatePolicy(sqlparser::ast::CreatePolicy {
                 name,
                 table_name,
                 command,
@@ -162,7 +162,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 using,
                 with_check,
                 ..
-            } => {
+            }) => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
                 let policy = Policy {
                     name: unquote_ident(&name.to_string()).to_string(),
@@ -172,7 +172,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     roles: {
                         let parsed_roles: Vec<String> = to
                             .iter()
-                            .flat_map(|owners| {
+                            .flat_map(|owners: &Vec<sqlparser::ast::Owner>| {
                                 owners.iter().map(|o| strip_ident_quotes(&o.to_string()))
                             })
                             .collect();
@@ -182,8 +182,8 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                             parsed_roles
                         }
                     },
-                    using_expr: using.as_ref().map(|e| normalize_expr(&e.to_string())),
-                    check_expr: with_check.as_ref().map(|e| normalize_expr(&e.to_string())),
+                    using_expr: using.as_ref().map(|e: &sqlparser::ast::Expr| normalize_expr(&e.to_string())),
+                    check_expr: with_check.as_ref().map(|e: &sqlparser::ast::Expr| normalize_expr(&e.to_string())),
                 };
                 schema.pending_policies.push(policy);
             }
@@ -432,9 +432,10 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         | AlterTableOperation::DropClusteringKey
                         | AlterTableOperation::SuspendRecluster
                         | AlterTableOperation::ResumeRecluster
-                        | AlterTableOperation::Refresh
+                        | AlterTableOperation::Refresh { .. }
                         | AlterTableOperation::Suspend
-                        | AlterTableOperation::Resume => {}
+                        | AlterTableOperation::Resume
+                        | AlterTableOperation::AlterSortKey { .. } => {}
                     }
                 }
             }
@@ -611,7 +612,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         | TableConstraint::ForeignKey(_)
                         | TableConstraint::Index(_)
                         | TableConstraint::FulltextOrSpatial(_)
-                        | TableConstraint::Exclusion(_) => {
+                        | TableConstraint::Exclusion(_)
+                        | TableConstraint::PrimaryKeyUsingIndex(_)
+                        | TableConstraint::UniqueUsingIndex(_) => {
                             let constraint_str = constraint.to_string().to_uppercase();
                             if constraint_str.contains("NOT NULL") {
                                 not_null = true;
@@ -835,7 +838,8 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         | ObjectType::Role
                         | ObjectType::User
                         | ObjectType::Stage
-                        | ObjectType::Stream => {}
+                        | ObjectType::Stream
+                        | ObjectType::Collation => {}
                     }
                 }
             }
@@ -880,9 +884,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 schema.triggers.remove(&trigger_key);
             }
             Statement::DropTrigger(DropTrigger { .. }) => {}
-            Statement::DropPolicy {
+            Statement::DropPolicy(sqlparser::ast::DropPolicy {
                 name, table_name, ..
-            } => {
+            }) => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
                 let policy_name = unquote_ident(&name.to_string()).to_string();
@@ -1074,7 +1078,17 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             // form) are currently dropped. This is a real pgmold gap tracked
             // separately; the previously wildcarded behaviour is preserved
             // here.
-            | Statement::CreateType { .. } => {}
+            | Statement::CreateType { .. }
+            | Statement::AlterFunction(_)
+            | Statement::AlterCollation(_)
+            | Statement::AlterOperatorFamily(_)
+            | Statement::AlterOperatorClass(_)
+            | Statement::CreateCollation(_)
+            | Statement::ShowCatalogs { .. }
+            | Statement::ShowProcessList { .. }
+            | Statement::Lock(_)
+            | Statement::Throw(_)
+            | Statement::WaitFor(_) => {}
             Statement::CreateServer(stmt) => {
                 parse_create_server(stmt, &mut schema);
             }

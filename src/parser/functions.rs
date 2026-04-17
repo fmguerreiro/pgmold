@@ -2,8 +2,8 @@ use crate::model::*;
 use crate::pg::sqlgen::strip_ident_quotes;
 use crate::util::{Result, SchemaError};
 use sqlparser::ast::{
-    ArgMode as SqlArgMode, CreateFunctionBody, DataType, FunctionBehavior,
-    FunctionDefinitionSetParam, FunctionSecurity, FunctionSetValue, Ident, OperateFunctionArg,
+    ArgMode as SqlArgMode, CreateFunctionBody, FunctionBehavior, FunctionDefinitionSetParam,
+    FunctionReturnType, FunctionSecurity, FunctionSetValue, Ident, OperateFunctionArg,
 };
 
 use crate::util::strip_dollar_quotes;
@@ -13,7 +13,7 @@ pub(super) fn parse_create_function(
     schema: &str,
     name: &str,
     args: Option<&[OperateFunctionArg]>,
-    return_type: Option<&DataType>,
+    return_type: Option<&FunctionReturnType>,
     function_body: Option<&CreateFunctionBody>,
     language: Option<&Ident>,
     behavior: Option<&FunctionBehavior>,
@@ -70,6 +70,7 @@ pub(super) fn parse_create_function(
                         Some(SqlArgMode::In) => ArgMode::In,
                         Some(SqlArgMode::Out) => ArgMode::Out,
                         Some(SqlArgMode::InOut) => ArgMode::InOut,
+                        Some(SqlArgMode::Variadic) => ArgMode::In,
                         None => ArgMode::In,
                     };
                     FunctionArg {
@@ -94,6 +95,7 @@ pub(super) fn parse_create_function(
                     .collect::<Vec<_>>()
                     .join(", "),
                 FunctionSetValue::FromCurrent => "FROM CURRENT".to_string(),
+                FunctionSetValue::Default => "DEFAULT".to_string(),
             };
             (key, value)
         })
