@@ -1023,7 +1023,7 @@ fn normalize_select(select: &Select) -> Select {
         window_before_qualify: select.window_before_qualify,
         value_table_mode: select.value_table_mode,
         connect_by: select.connect_by.clone(),
-        flavor: select.flavor.clone(),
+        flavor: select.flavor,
         optimizer_hints: select.optimizer_hints.clone(),
         select_modifiers: select.select_modifiers.clone(),
     }
