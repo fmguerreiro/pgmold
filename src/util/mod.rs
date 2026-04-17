@@ -540,7 +540,7 @@ fn normalize_query(query: &Query) -> Query {
                     alias: cte.alias.clone(),
                     query: Box::new(normalize_query(&cte.query)),
                     from: cte.from.clone(),
-                    materialized: cte.materialized.clone(),
+                    materialized: cte.materialized,
                     closing_paren_token: cte.closing_paren_token.clone(),
                 })
                 .collect(),
