@@ -407,10 +407,12 @@ These tools share pgmold's approach: define desired state, compute diffs automat
 | **Drift Detection** | ✅ | ✅ | ❌ | ❌ |
 | **Lock Hazard Warnings** | ✅ | ✅ | ✅ | ❌ |
 | **Safety Linting** | ✅ | ✅ | ❌ | ❌ |
-| **RLS Policies** | ✅ | ✅ | ❌ | ❌ |
-| **Partitioned Tables** | ✅ | ✅ | ✅ | ? |
+| **RLS Policies** | ✅ | ✅ | ❌ | ✅ |
+| **Partitioned Tables** | ✅ | ✅ | ✅ | ⚠️ parent only[^pgschema-partitions] |
 | **Cloud Service** | ❌ | Atlas Cloud | ❌ | ❌ |
 | **Library Mode** | ❌ | ❌ | ✅ | ❌ |
+
+[^pgschema-partitions]: pgschema v1.9.0 dumps the parent's `PARTITION BY` clause correctly but emits children as standalone `CREATE TABLE` statements without `PARTITION OF`, so re-applying a dump loses the partition hierarchy.
 
 ### vs Migration-Based Tools
 
