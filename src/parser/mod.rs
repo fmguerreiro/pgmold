@@ -1011,7 +1011,18 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             | Statement::CreateSubscription(_)
             | Statement::AlterDomain(_)
             | Statement::AlterTrigger(_)
-            | Statement::AlterExtension(_) => {}
+            | Statement::AlterExtension(_)
+            | Statement::CreateCast(_)
+            | Statement::CreateConversion(_)
+            | Statement::CreateLanguage(_)
+            | Statement::CreateRule(_)
+            | Statement::CreateStatistics(_)
+            | Statement::CreateAccessMethod(_)
+            | Statement::CreateEventTrigger(_)
+            | Statement::CreateTransform(_)
+            | Statement::SecurityLabel(_)
+            | Statement::CreateUserMapping(_)
+            | Statement::CreateTablespace(_) => {}
             Statement::AlterIndex { name, operation } => {
                 let (idx_schema, idx_name) = extract_qualified_name(&name);
                 match operation {
