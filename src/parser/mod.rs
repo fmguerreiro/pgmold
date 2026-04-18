@@ -983,8 +983,10 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             | Statement::AlterUser(_)
             | Statement::CreateDatabase { .. }
             | Statement::AttachDatabase { .. }
-            // Procedures, macros, operators, domains-as-alter — pgmold does
-            // not yet model these. Tracked as future work.
+            // Procedures, macros, operators, aggregates, text search,
+            // foreign tables / FDWs, domains-as-alter — pgmold does not yet
+            // model these. Parse-through keeps the rest of the schema valid;
+            // deeper modelling is tracked as future work.
             | Statement::CreateProcedure { .. }
             | Statement::DropProcedure { .. }
             | Statement::CreateMacro { .. }
@@ -994,7 +996,14 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             | Statement::AlterOperator(_)
             | Statement::DropOperator(_)
             | Statement::DropOperatorClass(_)
-            | Statement::DropOperatorFamily(_) => {}
+            | Statement::DropOperatorFamily(_)
+            | Statement::CreateAggregate(_)
+            | Statement::CreateTextSearchConfiguration(_)
+            | Statement::CreateTextSearchDictionary(_)
+            | Statement::CreateTextSearchParser(_)
+            | Statement::CreateTextSearchTemplate(_)
+            | Statement::CreateForeignTable(_)
+            | Statement::CreateForeignDataWrapper(_) => {}
             Statement::AlterIndex { name, operation } => {
                 let (idx_schema, idx_name) = extract_qualified_name(&name);
                 match operation {
