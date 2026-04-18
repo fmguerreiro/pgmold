@@ -435,7 +435,10 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         | AlterTableOperation::Refresh { .. }
                         | AlterTableOperation::Suspend
                         | AlterTableOperation::Resume
-                        | AlterTableOperation::AlterSortKey { .. } => {}
+                        | AlterTableOperation::AlterSortKey { .. }
+                        // Changing tablespace is a storage move, not a
+                        // schema change — pgmold does not track tablespaces.
+                        | AlterTableOperation::SetTablespace { .. } => {}
                     }
                 }
             }
@@ -1003,7 +1006,12 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             | Statement::CreateTextSearchParser(_)
             | Statement::CreateTextSearchTemplate(_)
             | Statement::CreateForeignTable(_)
-            | Statement::CreateForeignDataWrapper(_) => {}
+            | Statement::CreateForeignDataWrapper(_)
+            | Statement::CreatePublication(_)
+            | Statement::CreateSubscription(_)
+            | Statement::AlterDomain(_)
+            | Statement::AlterTrigger(_)
+            | Statement::AlterExtension(_) => {}
             Statement::AlterIndex { name, operation } => {
                 let (idx_schema, idx_name) = extract_qualified_name(&name);
                 match operation {
@@ -1035,6 +1043,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                             )));
                         }
                     }
+                    // Changing tablespace is a storage move, not a schema
+                    // change — pgmold does not track tablespaces.
+                    AlterIndexOperation::SetTablespace { .. } => {}
                 }
             }
             // pgmold consumes `AlterTable` (above) but not these sibling
