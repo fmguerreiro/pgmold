@@ -3932,3 +3932,53 @@ fn alter_type_add_value_unknown_enum_errors() {
     let err = result.unwrap_err().to_string();
     assert!(err.contains("notdeclared"));
 }
+
+#[test]
+fn parse_materialized_view_with_no_data() {
+    let sql = r#"
+CREATE TABLE payment (
+    payment_id BIGINT NOT NULL PRIMARY KEY,
+    amount NUMERIC NOT NULL
+);
+
+CREATE MATERIALIZED VIEW public.rental_by_category AS
+ SELECT sum(payment.amount) AS total_sales
+ FROM payment
+ GROUP BY payment.payment_id
+ WITH NO DATA;
+"#;
+
+    let schema = parse_sql_string(sql).expect("Should parse materialized view with WITH NO DATA");
+
+    assert_eq!(schema.views.len(), 1);
+    assert!(schema.views.contains_key("public.rental_by_category"));
+
+    let view = &schema.views["public.rental_by_category"];
+    assert_eq!(view.name, "rental_by_category");
+    assert!(view.materialized);
+}
+
+#[test]
+fn parse_materialized_view_with_data() {
+    let sql = r#"
+CREATE TABLE payment (
+    payment_id BIGINT NOT NULL PRIMARY KEY,
+    amount NUMERIC NOT NULL
+);
+
+CREATE MATERIALIZED VIEW public.rental_by_category AS
+ SELECT sum(payment.amount) AS total_sales
+ FROM payment
+ GROUP BY payment.payment_id
+ WITH DATA;
+"#;
+
+    let schema = parse_sql_string(sql).expect("Should parse materialized view with WITH DATA");
+
+    assert_eq!(schema.views.len(), 1);
+    assert!(schema.views.contains_key("public.rental_by_category"));
+
+    let view = &schema.views["public.rental_by_category"];
+    assert_eq!(view.name, "rental_by_category");
+    assert!(view.materialized);
+}
