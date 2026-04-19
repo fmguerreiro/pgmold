@@ -610,7 +610,7 @@ fn normalize_args(args: &str) -> String {
         return trimmed.to_string();
     };
 
-    let normalized: Vec<String> = split_top_level_commas(inner)
+    let normalized: Vec<_> = split_top_level_commas(inner)
         .into_iter()
         .map(|arg| normalize_pg_type(arg.trim()))
         .collect();
