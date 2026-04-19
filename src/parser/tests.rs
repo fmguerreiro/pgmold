@@ -4045,8 +4045,8 @@ CREATE TABLE public.language (
 
 ALTER TABLE ONLY public.language ADD CONSTRAINT language_pkey PRIMARY KEY (language_id);
 "#;
-    let schema = parse_sql_string(sql)
-        .expect("Should parse ALTER TABLE ADD CONSTRAINT ... PRIMARY KEY");
+    let schema =
+        parse_sql_string(sql).expect("Should parse ALTER TABLE ADD CONSTRAINT ... PRIMARY KEY");
 
     let table = schema
         .tables
