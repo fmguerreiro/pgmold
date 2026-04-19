@@ -4,7 +4,9 @@ use super::op_key::{
 };
 use super::{MigrationOp, OwnerObjectKind};
 use crate::model::{parse_qualified_name, qualified_name, QualifiedName};
-use crate::parser::{extract_function_references, extract_rowtype_references};
+use crate::parser::{
+    extract_function_references, extract_rowtype_references, extract_table_references,
+};
 use petgraph::algo::{tarjan_scc, toposort};
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet};
@@ -279,6 +281,15 @@ impl MigrationGraph {
                 let mut skip_tables: HashSet<String> = rowtype_tables;
                 if let Some(t) = setof_table {
                     skip_tables.insert(t);
+                }
+                // LANGUAGE sql function bodies are early-bound: PostgreSQL parses and
+                // validates the SQL at CREATE time, so any table referenced in the body
+                // must already exist. Treat body table refs the same as SETOF/ROWTYPE
+                // deps. plpgsql bodies are late-bound, so this isn't needed for them.
+                if f.language.eq_ignore_ascii_case("sql") {
+                    for r in extract_table_references(&f.body, &f.schema) {
+                        skip_tables.insert(qualified_name(&r.schema, &r.name));
+                    }
                 }
                 let mut stack: Vec<String> = skip_tables.iter().cloned().collect();
                 while let Some(table) = stack.pop() {
@@ -601,6 +612,22 @@ impl MigrationGraph {
                         for ref_obj in extract_rowtype_references(&func.body, &func.schema) {
                             let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
                             edges_to_add.push((OpKey::CreateTable(ref_qualified), key.clone()));
+                        }
+
+                        // LANGUAGE sql bodies are parsed and validated at CREATE time,
+                        // so every table/view referenced in the body must exist first.
+                        // (plpgsql resolves references lazily at call time.)
+                        if func.language.eq_ignore_ascii_case("sql") {
+                            for ref_obj in extract_table_references(&func.body, &func.schema) {
+                                let ref_qualified =
+                                    qualified_name(&ref_obj.schema, &ref_obj.name);
+                                edges_to_add.push((
+                                    OpKey::CreateTable(ref_qualified.clone()),
+                                    key.clone(),
+                                ));
+                                edges_to_add
+                                    .push((OpKey::CreateView(ref_qualified), key.clone()));
+                            }
                         }
                     }
                 }
@@ -5636,5 +5663,46 @@ mod tests {
         assert!(pos("address") < pos("customer"));
         assert!(pos("store") < pos("customer"));
         assert!(pos("customer") < pos("rewards_report"));
+    }
+
+    #[test]
+    fn sql_language_function_ordered_after_body_table_refs() {
+        let inventory = simple_table_with_fks("inventory", vec![]);
+
+        let film_in_stock = Function {
+            name: "film_in_stock".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "SETOF integer".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT inventory_id FROM inventory WHERE film_id = $1".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+            comment: None,
+        };
+
+        let ops = vec![
+            MigrationOp::CreateFunction(film_in_stock),
+            MigrationOp::CreateTable(inventory),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let table_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .unwrap();
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .unwrap();
+
+        assert!(
+            table_pos < func_pos,
+            "LANGUAGE sql function must come after tables referenced in its body (body parses at CREATE time). table at {table_pos}, func at {func_pos}"
+        );
     }
 }
