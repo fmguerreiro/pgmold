@@ -1,4 +1,4 @@
--- IGNORE: pgmold-256 parser rejects MATERIALIZED VIEW ... WITH NO DATA
+-- IGNORE: pgmold-258 parser rejects ALTER TABLE ... ATTACH PARTITION
 -- Source: https://github.com/devrimgunduz/pagila/blob/master/pagila-schema.sql
 -- Commit: 5ba5a57aeb159f75f02aca2432d3c262186d13d3
 -- License: MIT
