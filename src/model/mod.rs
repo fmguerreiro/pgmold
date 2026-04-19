@@ -1318,16 +1318,15 @@ impl Function {
 /// For `TABLE(...)` return types, quoted column names are preserved verbatim
 /// (they are case-sensitive in PostgreSQL), while type keywords are normalized.
 ///
-/// The return value is `Cow::Borrowed` on two paths:
-///   - Input is already ASCII-lowercase and not an alias → borrow the input slice.
-///   - Input (lower- or upper-case) resolves to a known alias → borrow the `'static`
-///     canonical target. Uppercase inputs still allocate transiently to lowercase,
-///     but the returned `Cow` does not own that buffer.
-/// Otherwise (uppercase non-alias, or `TABLE(...)` expansion) the return is `Cow::Owned`.
+/// Returns `Cow::Borrowed` in two cases: an ASCII-lowercase non-alias input
+/// borrows the input slice, and any alias (upper- or lower-case) borrows the
+/// `'static` canonical target. Uppercase alias inputs still allocate transiently
+/// for case folding, but the returned `Cow` does not own that buffer. Uppercase
+/// non-alias and `TABLE(...)` expansion return `Cow::Owned`.
 ///
 /// The main perf win is at comparison sites (`Function::semantically_equals`,
 /// `FunctionArg::semantically_equals`), which compare two `Cow`s via `PartialEq`
-/// without ever owning: canonical-on-both-sides comparisons now allocate zero times
+/// without ever owning: canonical-on-both-sides comparisons allocate zero times
 /// vs. two times previously. Sites that immediately `.into_owned()` (struct field
 /// assignments in `pg/introspect.rs`, `parser/functions.rs`) see no net change.
 pub fn normalize_pg_type(type_name: &str) -> Cow<'_, str> {
