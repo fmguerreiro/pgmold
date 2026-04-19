@@ -5,7 +5,7 @@ use super::op_key::{
 use super::{MigrationOp, OwnerObjectKind};
 use crate::model::{parse_qualified_name, qualified_name, QualifiedName};
 use crate::parser::{extract_function_references, extract_rowtype_references};
-use petgraph::algo::toposort;
+use petgraph::algo::{tarjan_scc, toposort};
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -239,10 +239,30 @@ impl MigrationGraph {
     fn add_function_edges(&mut self, ns: &NodeSets) {
         self.edges_all_to_all(&ns.sequences, &ns.tables);
 
+        // Pre-compute each table's direct FK dependencies, used to expand the skip set
+        // through transitive FK closure. If a function depends on table T (via SETOF or
+        // %ROWTYPE) and T has a FK to U, then the function transitively depends on U:
+        // U must be created before T, and T before the function — so the function cannot
+        // precede U either, or the graph cycles through U → T → function.
+        let mut table_fk_deps: HashMap<String, HashSet<String>> = HashMap::new();
+        for &table_idx in &ns.tables {
+            if let MigrationOp::CreateTable(t) = &self.graph[table_idx] {
+                let qn = qualified_name(&t.schema, &t.name);
+                let deps: HashSet<String> = t
+                    .foreign_keys
+                    .iter()
+                    .map(|fk| qualified_name(&fk.referenced_schema, &fk.referenced_table))
+                    .filter(|ref_qn| *ref_qn != qn)
+                    .collect();
+                table_fk_deps.insert(qn, deps);
+            }
+        }
+
         // Functions before tables (used in defaults/checks),
         // except functions with RETURNS SETOF <table> or %ROWTYPE references which depend on
-        // the table existing first. Per-table granularity: only skip the func→table edge for
-        // the specific tables the function depends on, not all tables.
+        // the table existing first. Per-table granularity: skip the func→table edge for
+        // the specific tables the function depends on AND any table they transitively
+        // depend on via FK, to avoid cycles through the FK graph.
         // AlterFunction carries no body, so %ROWTYPE/SETOF detection is not needed for it.
         for &func_idx in &ns.functions {
             if let MigrationOp::CreateFunction(f) = &self.graph[func_idx] {
@@ -256,6 +276,21 @@ impl MigrationGraph {
                         .map(|r| qualified_name(&r.schema, &r.name))
                         .collect();
 
+                let mut skip_tables: HashSet<String> = rowtype_tables;
+                if let Some(t) = setof_table {
+                    skip_tables.insert(t);
+                }
+                let mut stack: Vec<String> = skip_tables.iter().cloned().collect();
+                while let Some(table) = stack.pop() {
+                    if let Some(deps) = table_fk_deps.get(&table) {
+                        for dep in deps {
+                            if skip_tables.insert(dep.clone()) {
+                                stack.push(dep.clone());
+                            }
+                        }
+                    }
+                }
+
                 for &table_idx in &ns.tables {
                     if func_idx == table_idx {
                         continue;
@@ -264,10 +299,7 @@ impl MigrationGraph {
                         MigrationOp::CreateTable(t) => qualified_name(&t.schema, &t.name),
                         _ => continue,
                     };
-                    let func_depends_on_this_table = setof_table.as_deref()
-                        == Some(table_qualified.as_str())
-                        || rowtype_tables.contains(&table_qualified);
-                    if !func_depends_on_this_table {
+                    if !skip_tables.contains(&table_qualified) {
                         self.graph.add_edge(func_idx, table_idx, ());
                     }
                 }
@@ -955,6 +987,7 @@ fn drop_targets_table(other: &OpKey, table: &QualifiedName) -> bool {
 
 pub fn plan_migration_checked(ops: Vec<MigrationOp>) -> Result<Vec<MigrationOp>, PlanError> {
     let processed_ops = split_sequence_owned_by_ops(ops);
+    let processed_ops = split_cyclic_foreign_keys(processed_ops);
 
     let mut graph = MigrationGraph::new();
     for op in processed_ops {
@@ -964,6 +997,90 @@ pub fn plan_migration_checked(ops: Vec<MigrationOp>) -> Result<Vec<MigrationOp>,
     graph.add_content_aware_edges();
 
     graph.topological_sort()
+}
+
+/// Detects cycles in the inline foreign-key graph among `CreateTable` ops and breaks
+/// them by extracting the cycle-forming FKs into separate `AddForeignKey` ops. Mutual
+/// references (A → B and B → A) and longer FK rings would otherwise produce unplannable
+/// `CreateTable → CreateTable` cycles; splitting to `AddForeignKey` lets both tables be
+/// created first and constrained afterwards — the same shape PostgreSQL's pg_dump emits.
+fn split_cyclic_foreign_keys(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
+    let mut graph = DiGraph::<String, ()>::new();
+    let mut node_map: HashMap<String, NodeIndex> = HashMap::new();
+
+    for op in &ops {
+        if let MigrationOp::CreateTable(t) = op {
+            let qn = qualified_name(&t.schema, &t.name);
+            let node = graph.add_node(qn.clone());
+            node_map.insert(qn, node);
+        }
+    }
+
+    for op in &ops {
+        if let MigrationOp::CreateTable(t) = op {
+            let qn = qualified_name(&t.schema, &t.name);
+            let Some(&src) = node_map.get(&qn) else {
+                continue;
+            };
+            for fk in &t.foreign_keys {
+                let ref_qn = qualified_name(&fk.referenced_schema, &fk.referenced_table);
+                if ref_qn == qn {
+                    continue;
+                }
+                if let Some(&dst) = node_map.get(&ref_qn) {
+                    graph.add_edge(src, dst, ());
+                }
+            }
+        }
+    }
+
+    let mut cyclic_members: HashMap<String, HashSet<String>> = HashMap::new();
+    for scc in tarjan_scc(&graph) {
+        if scc.len() > 1 {
+            let members: HashSet<String> = scc.iter().map(|&n| graph[n].clone()).collect();
+            for member in &members {
+                cyclic_members.insert(member.clone(), members.clone());
+            }
+        }
+    }
+
+    if cyclic_members.is_empty() {
+        return ops;
+    }
+
+    let mut result = Vec::with_capacity(ops.len());
+    for op in ops {
+        match op {
+            MigrationOp::CreateTable(mut table) => {
+                let qn = qualified_name(&table.schema, &table.name);
+                if let Some(members) = cyclic_members.get(&qn) {
+                    let table_key = QualifiedName::new(&table.schema, &table.name);
+                    let mut kept = Vec::with_capacity(table.foreign_keys.len());
+                    let mut split = Vec::new();
+                    for fk in table.foreign_keys.drain(..) {
+                        let ref_qn = qualified_name(&fk.referenced_schema, &fk.referenced_table);
+                        if ref_qn != qn && members.contains(&ref_qn) {
+                            split.push(fk);
+                        } else {
+                            kept.push(fk);
+                        }
+                    }
+                    table.foreign_keys = kept;
+                    result.push(MigrationOp::CreateTable(table));
+                    for fk in split {
+                        result.push(MigrationOp::AddForeignKey {
+                            table: table_key.clone(),
+                            foreign_key: fk,
+                        });
+                    }
+                } else {
+                    result.push(MigrationOp::CreateTable(table));
+                }
+            }
+            other => result.push(other),
+        }
+    }
+    result
 }
 
 fn split_sequence_owned_by_ops(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
@@ -5414,5 +5531,110 @@ mod tests {
             create_table_pos < alter_policy_pos,
             "CreateTable(enterprise_suppliers) at {create_table_pos} must come before AlterPolicy at {alter_policy_pos}"
         );
+    }
+
+    #[test]
+    fn mutual_inline_foreign_keys_split_into_add_foreign_key_ops() {
+        let staff = simple_table_with_fks("staff", vec![make_fk("store")]);
+        let store = simple_table_with_fks("store", vec![make_fk("staff")]);
+
+        let ops = vec![
+            MigrationOp::CreateTable(staff),
+            MigrationOp::CreateTable(store),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let create_tables: Vec<&str> = planned
+            .iter()
+            .filter_map(|op| match op {
+                MigrationOp::CreateTable(t) => Some(t.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(create_tables.len(), 2);
+        for op in &planned {
+            if let MigrationOp::CreateTable(t) = op {
+                assert!(
+                    t.foreign_keys.is_empty(),
+                    "{} should have its cyclic FK extracted into a separate AddForeignKey op, got {:?}",
+                    t.name,
+                    t.foreign_keys
+                );
+            }
+        }
+
+        let add_fks: Vec<&str> = planned
+            .iter()
+            .filter_map(|op| match op {
+                MigrationOp::AddForeignKey { foreign_key, .. } => Some(foreign_key.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            add_fks.len(),
+            2,
+            "expected two AddForeignKey ops for the mutual pair, got {add_fks:?}"
+        );
+
+        let last_create_pos = planned
+            .iter()
+            .rposition(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .unwrap();
+        let first_add_fk_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddForeignKey { .. }))
+            .unwrap();
+        assert!(
+            last_create_pos < first_add_fk_pos,
+            "all CreateTable ops must precede AddForeignKey ops — last CreateTable at {last_create_pos}, first AddForeignKey at {first_add_fk_pos}"
+        );
+    }
+
+    #[test]
+    fn returns_setof_table_skips_transitive_fk_closure() {
+        let address = simple_table_with_fks("address", vec![]);
+        let customer =
+            simple_table_with_fks("customer", vec![make_fk("address"), make_fk("store")]);
+        let store = simple_table_with_fks("store", vec![make_fk("address")]);
+
+        let rewards = Function {
+            name: "rewards_report".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "SETOF public.customer".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN RETURN; END;".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+            comment: None,
+        };
+
+        let ops = vec![
+            MigrationOp::CreateFunction(rewards),
+            MigrationOp::CreateTable(address),
+            MigrationOp::CreateTable(customer),
+            MigrationOp::CreateTable(store),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let pos = |name: &str| -> usize {
+            planned
+                .iter()
+                .position(|op| match op {
+                    MigrationOp::CreateTable(t) => t.name == name,
+                    MigrationOp::CreateFunction(f) => f.name == name,
+                    _ => false,
+                })
+                .unwrap_or_else(|| panic!("{name} not found in plan: {planned:?}"))
+        };
+
+        assert!(pos("address") < pos("customer"));
+        assert!(pos("store") < pos("customer"));
+        assert!(pos("customer") < pos("rewards_report"));
     }
 }
