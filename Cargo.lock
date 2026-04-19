@@ -1613,7 +1613,7 @@ dependencies = [
 [[package]]
 name = "pgmold-sqlparser"
 version = "0.60.11"
-source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs.git?branch=fix%2Fmatview-with-no-data#3452bc0465d42808efbb5a995121f47fb6c9070c"
+source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs.git?branch=fix%2Fmatview-with-no-data#d60ebd78422fc45c330fd0f14b4520e3c824a18e"
 dependencies = [
  "log",
  "recursive",
@@ -2398,7 +2398,7 @@ dependencies = [
 [[package]]
 name = "sqlparser_derive"
 version = "0.5.0"
-source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs.git?branch=fix%2Fmatview-with-no-data#3452bc0465d42808efbb5a995121f47fb6c9070c"
+source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs.git?branch=fix%2Fmatview-with-no-data#d60ebd78422fc45c330fd0f14b4520e3c824a18e"
 dependencies = [
  "proc-macro2",
  "quote",
