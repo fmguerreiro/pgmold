@@ -261,11 +261,26 @@ impl MigrationGraph {
         }
 
         // Functions before tables (used in defaults/checks),
-        // except functions with RETURNS SETOF <table> or %ROWTYPE references which depend on
-        // the table existing first. Per-table granularity: skip the func→table edge for
-        // the specific tables the function depends on AND any table they transitively
-        // depend on via FK, to avoid cycles through the FK graph.
+        // except functions with a concrete table dependency — RETURNS SETOF <table>,
+        // %ROWTYPE references, or LANGUAGE sql body table refs. Any function with a
+        // concrete table dep is pinned AFTER that table (and, transitively, after every
+        // table it FK-depends on). In that case the blanket "function → table" tier
+        // edge must be dropped entirely: it would otherwise close cycles of the form
+        // `func_A → table_T → func_B (body-dep on T) → other_table → func_A` through
+        // the FK graph. Content-aware edges (column defaults, check constraints, etc.)
+        // still pin functions ahead of the specific tables that actually use them.
         // AlterFunction carries no body, so %ROWTYPE/SETOF detection is not needed for it.
+        let table_names: HashSet<String> = ns
+            .tables
+            .iter()
+            .filter_map(|&idx| {
+                if let MigrationOp::CreateTable(t) = &self.graph[idx] {
+                    Some(qualified_name(&t.schema, &t.name))
+                } else {
+                    None
+                }
+            })
+            .collect();
         for &func_idx in &ns.functions {
             if let MigrationOp::CreateFunction(f) = &self.graph[func_idx] {
                 let setof_table = extract_setof_type_ref(&f.return_type).map(|type_ref| {
@@ -300,6 +315,11 @@ impl MigrationGraph {
                             }
                         }
                     }
+                }
+
+                let has_concrete_table_dep = skip_tables.iter().any(|t| table_names.contains(t));
+                if has_concrete_table_dep {
+                    continue;
                 }
 
                 for &table_idx in &ns.tables {
@@ -619,14 +639,10 @@ impl MigrationGraph {
                         // (plpgsql resolves references lazily at call time.)
                         if func.language.eq_ignore_ascii_case("sql") {
                             for ref_obj in extract_table_references(&func.body, &func.schema) {
-                                let ref_qualified =
-                                    qualified_name(&ref_obj.schema, &ref_obj.name);
-                                edges_to_add.push((
-                                    OpKey::CreateTable(ref_qualified.clone()),
-                                    key.clone(),
-                                ));
+                                let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
                                 edges_to_add
-                                    .push((OpKey::CreateView(ref_qualified), key.clone()));
+                                    .push((OpKey::CreateTable(ref_qualified.clone()), key.clone()));
+                                edges_to_add.push((OpKey::CreateView(ref_qualified), key.clone()));
                             }
                         }
                     }
@@ -5704,5 +5720,72 @@ mod tests {
             table_pos < func_pos,
             "LANGUAGE sql function must come after tables referenced in its body (body parses at CREATE time). table at {table_pos}, func at {func_pos}"
         );
+    }
+
+    #[test]
+    fn setof_function_and_sql_body_function_do_not_cycle_through_fk_graph() {
+        // Pagila-minimal repro: `rewards_report` (plpgsql, SETOF customer) pinned
+        // after customer; `film_in_stock` (sql, body refs inventory) pinned after
+        // inventory. Before the tier-blanket suppression, the planner would add
+        // tier edges `rewards_report → inventory` and `film_in_stock → customer`,
+        // closing the cycle:
+        //   rewards_report → inventory → film_in_stock → customer → rewards_report.
+        let address = simple_table_with_fks("address", vec![]);
+        let customer = simple_table_with_fks("customer", vec![make_fk("address")]);
+        let inventory = simple_table_with_fks("inventory", vec![]);
+
+        let rewards = Function {
+            name: "rewards_report".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "SETOF public.customer".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN RETURN; END;".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+            comment: None,
+        };
+        let film_in_stock = Function {
+            name: "film_in_stock".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "SETOF integer".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT inventory_id FROM inventory WHERE film_id = $1".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+            comment: None,
+        };
+
+        let ops = vec![
+            MigrationOp::CreateFunction(rewards),
+            MigrationOp::CreateFunction(film_in_stock),
+            MigrationOp::CreateTable(address),
+            MigrationOp::CreateTable(customer),
+            MigrationOp::CreateTable(inventory),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let pos = |name: &str| -> usize {
+            planned
+                .iter()
+                .position(|op| match op {
+                    MigrationOp::CreateTable(t) => t.name == name,
+                    MigrationOp::CreateFunction(f) => f.name == name,
+                    _ => false,
+                })
+                .unwrap_or_else(|| panic!("{name} not found: {planned:?}"))
+        };
+
+        assert!(pos("address") < pos("customer"));
+        assert!(pos("customer") < pos("rewards_report"));
+        assert!(pos("inventory") < pos("film_in_stock"));
     }
 }
