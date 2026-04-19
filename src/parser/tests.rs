@@ -3105,7 +3105,11 @@ CREATE INDEX film_fulltext_idx ON public.film USING gist (fulltext);
     let col = table.columns.get("fulltext").unwrap();
     assert_eq!(col.data_type, PgType::BuiltinNamed("tsvector".to_string()));
     assert!(!col.nullable);
-    let idx = table.indexes.iter().find(|i| i.name == "film_fulltext_idx").unwrap();
+    let idx = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "film_fulltext_idx")
+        .unwrap();
     assert_eq!(idx.index_type, IndexType::Gist);
     assert_eq!(idx.columns, vec!["fulltext"]);
 }
