@@ -1027,8 +1027,11 @@ pub fn rich_schema_sql_strategy(schema_name: String) -> BoxedStrategy<String> {
     proptest::collection::vec(enum_type_strategy(schema_name.clone()), 0..3)
         .prop_flat_map(move |enum_defs| {
             let schema_name = schema_name.clone();
-            let (enum_ddls, enum_infos): (Vec<String>, Vec<EnumInfo>) =
-                enum_defs.into_iter().unzip();
+            let mut seen_enum_names = std::collections::HashSet::new();
+            let (enum_ddls, enum_infos): (Vec<String>, Vec<EnumInfo>) = enum_defs
+                .into_iter()
+                .filter(|(_, info)| seen_enum_names.insert(info.qualified_name.clone()))
+                .unzip();
 
             (
                 proptest::collection::vec(
@@ -1042,8 +1045,11 @@ pub fn rich_schema_sql_strategy(schema_name: String) -> BoxedStrategy<String> {
                     let enum_ddls = enum_ddls.clone();
                     let enum_infos = enum_infos.clone();
 
-                    let (table_ddls, table_infos): (Vec<String>, Vec<TableInfo>) =
-                        table_results.into_iter().unzip();
+                    let mut seen_table_names = std::collections::HashSet::new();
+                    let (table_ddls, table_infos): (Vec<String>, Vec<TableInfo>) = table_results
+                        .into_iter()
+                        .filter(|(_, info)| seen_table_names.insert(info.name.clone()))
+                        .unzip();
 
                     let trigger_fn_name = format!("{trigger_fn_base}_fn");
                     let trigger_fn_qualified = format!("{schema_name}.{trigger_fn_name}");
