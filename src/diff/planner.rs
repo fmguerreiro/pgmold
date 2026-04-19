@@ -273,29 +273,7 @@ impl MigrationGraph {
         // AlterFunction carries no body, so %ROWTYPE/SETOF detection is not needed for it.
         for &func_idx in &ns.functions {
             if let MigrationOp::CreateFunction(f) = &self.graph[func_idx] {
-                let setof_table = extract_setof_type_ref(&f.return_type).map(|type_ref| {
-                    let (s, n) = parse_type_ref(type_ref, &f.schema);
-                    qualified_name(&s, &n)
-                });
-                let rowtype_tables: HashSet<String> =
-                    extract_rowtype_references(&f.body, &f.schema)
-                        .iter()
-                        .map(|r| qualified_name(&r.schema, &r.name))
-                        .collect();
-
-                let mut skip_tables: HashSet<String> = rowtype_tables;
-                if let Some(t) = setof_table {
-                    skip_tables.insert(t);
-                }
-                // LANGUAGE sql function bodies are early-bound: PostgreSQL parses and
-                // validates the SQL at CREATE time, so any table referenced in the body
-                // must already exist. Treat body table refs the same as SETOF/ROWTYPE
-                // deps. plpgsql bodies are late-bound, so this isn't needed for them.
-                if f.language.eq_ignore_ascii_case("sql") {
-                    for r in extract_table_references(&f.body, &f.schema) {
-                        skip_tables.insert(qualified_name(&r.schema, &r.name));
-                    }
-                }
+                let mut skip_tables = hard_body_table_deps(f);
                 let mut stack: Vec<String> = skip_tables.iter().cloned().collect();
                 while let Some(table) = stack.pop() {
                     if let Some(deps) = table_fk_deps.get(&table) {
@@ -308,13 +286,10 @@ impl MigrationGraph {
                 }
 
                 // `table_fk_deps` keys are exactly the qualified names of CreateTable
-                // nodes in this migration batch. A skip entry that matches one of them
-                // means the function has a concrete dep on a table being created in
-                // this plan, so the tier blanket must be dropped to avoid cycling
-                // through the FK graph (see comment above).
-                let concrete_dep_in_migration =
-                    skip_tables.iter().any(|t| table_fk_deps.contains_key(t));
-                if concrete_dep_in_migration {
+                // nodes in this batch — so a skip entry that matches one means the
+                // function concretely depends on a table in this plan, and the tier
+                // blanket must be dropped (see rationale comment above).
+                if skip_tables.iter().any(|t| table_fk_deps.contains_key(t)) {
                     continue;
                 }
 
@@ -540,9 +515,7 @@ impl MigrationGraph {
                         for fk in &table.foreign_keys {
                             let ref_qualified =
                                 qualified_name(&fk.referenced_schema, &fk.referenced_table);
-                            // Skip self-referencing FKs - PostgreSQL handles these correctly
-                            // when the FK is defined inline with CREATE TABLE. No dependency
-                            // edge is needed because the table doesn't depend on itself.
+                            // Self-referencing FKs are resolved inline by PostgreSQL.
                             if ref_qualified != *table_name {
                                 edges_to_add.push((OpKey::CreateTable(ref_qualified), key.clone()));
                             }
@@ -628,7 +601,11 @@ impl MigrationGraph {
                     }
                 }
 
-                // CreateFunction depends on other functions it calls in its body
+                // CreateFunction depends on other functions it calls in its body, and
+                // on every relation the function resolves at CREATE time (SETOF target,
+                // %ROWTYPE refs, and — for LANGUAGE sql — body relation refs). The
+                // tier-skip set in `add_function_edges` is seeded from the same helper,
+                // so the two sites stay in lockstep.
                 OpKey::CreateFunction {
                     name: func_name, ..
                 } => {
@@ -640,28 +617,10 @@ impl MigrationGraph {
                             }
                         }
 
-                        // Functions with RETURNS SETOF <table> depend on the referenced table
-                        if let Some(type_ref) = extract_setof_type_ref(&func.return_type) {
-                            let (ref_schema, ref_name) = parse_type_ref(type_ref, &func.schema);
-                            let ref_qualified = qualified_name(&ref_schema, &ref_name);
-                            edges_to_add.push((OpKey::CreateTable(ref_qualified), key.clone()));
-                        }
-
-                        for ref_obj in extract_rowtype_references(&func.body, &func.schema) {
-                            let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                            edges_to_add.push((OpKey::CreateTable(ref_qualified), key.clone()));
-                        }
-
-                        // LANGUAGE sql bodies are parsed and validated at CREATE time,
-                        // so every table/view referenced in the body must exist first.
-                        // (plpgsql resolves references lazily at call time.)
-                        if func.language.eq_ignore_ascii_case("sql") {
-                            for ref_obj in extract_table_references(&func.body, &func.schema) {
-                                let ref_qualified = qualified_name(&ref_obj.schema, &ref_obj.name);
-                                edges_to_add
-                                    .push((OpKey::CreateTable(ref_qualified.clone()), key.clone()));
-                                edges_to_add.push((OpKey::CreateView(ref_qualified), key.clone()));
-                            }
+                        for ref_qualified in hard_body_table_deps(func) {
+                            edges_to_add
+                                .push((OpKey::CreateTable(ref_qualified.clone()), key.clone()));
+                            edges_to_add.push((OpKey::CreateView(ref_qualified), key.clone()));
                         }
                     }
                 }
@@ -713,14 +672,25 @@ impl MigrationGraph {
                     }
                 }
 
-                // AddColumn depends on table and functions in defaults
+                // AddColumn depends on table and on functions referenced in the column's
+                // default or generated expression. Must stay in lockstep with the
+                // CreateTable arm, which walks both expressions too.
                 OpKey::AddColumn { table, .. } => {
                     edges_to_add.push((OpKey::CreateTable(table.to_string()), key.clone()));
 
                     if let Some(MigrationOp::AddColumn { table, column }) = self.get_op(key) {
+                        let schema = &table.schema;
                         if let Some(default) = &column.default {
-                            let schema = &table.schema;
                             push_function_ref_edges(&mut edges_to_add, &keys, default, schema, key);
+                        }
+                        if let Some(generated) = &column.generated {
+                            push_function_ref_edges(
+                                &mut edges_to_add,
+                                &keys,
+                                generated,
+                                schema,
+                                key,
+                            );
                         }
                     }
                 }
@@ -1032,6 +1002,37 @@ fn push_expression_ref_edges(
 ) {
     push_relation_ref_edges(edges, expression, consumer_key);
     push_function_ref_edges(edges, keys, expression, default_schema, consumer_key);
+}
+
+/// Qualified names of relations a function concretely depends on AT CREATE TIME —
+/// i.e. targets PostgreSQL resolves when the function is created, not when it runs.
+/// Two call sites share this: `add_function_edges` seeds its tier-skip set from it,
+/// and `add_content_aware_edges`'s `CreateFunction` arm emits `relation → func` edges
+/// from the same set. Keeping them aligned is load-bearing — if the sites drift
+/// (e.g. one adds a new kind of body dep, the other doesn't), FK-graph cycles can
+/// silently return.
+///
+/// Includes:
+/// - `RETURNS SETOF <relation>` (early-bound in the function signature);
+/// - `%ROWTYPE` references in the body;
+/// - For `LANGUAGE sql` only, every relation referenced in the body — PostgreSQL
+///   parses and validates the SQL at CREATE time. `LANGUAGE plpgsql` resolves
+///   references lazily at call time, so its body is intentionally not walked.
+fn hard_body_table_deps(func: &crate::model::Function) -> HashSet<String> {
+    let mut deps: HashSet<String> = HashSet::new();
+    if let Some(type_ref) = extract_setof_type_ref(&func.return_type) {
+        let (schema, name) = parse_type_ref(type_ref, &func.schema);
+        deps.insert(qualified_name(&schema, &name));
+    }
+    for r in extract_rowtype_references(&func.body, &func.schema) {
+        deps.insert(qualified_name(&r.schema, &r.name));
+    }
+    if func.language.eq_ignore_ascii_case("sql") {
+        for r in extract_table_references(&func.body, &func.schema) {
+            deps.insert(qualified_name(&r.schema, &r.name));
+        }
+    }
+    deps
 }
 
 fn drop_targets_table(other: &OpKey, table: &QualifiedName) -> bool {
@@ -5700,43 +5701,52 @@ mod tests {
     }
 
     #[test]
-    fn sql_language_function_ordered_after_body_table_refs() {
-        let inventory = simple_table_with_fks("inventory", vec![]);
-
-        let film_in_stock = Function {
-            name: "film_in_stock".to_string(),
-            schema: "public".to_string(),
-            arguments: vec![],
-            return_type: "SETOF integer".to_string(),
-            language: "sql".to_string(),
-            body: "SELECT inventory_id FROM inventory WHERE film_id = $1".to_string(),
-            volatility: Volatility::Stable,
-            security: SecurityType::Invoker,
-            config_params: vec![],
-            owner: None,
-            grants: Vec::new(),
-            comment: None,
-        };
+    fn three_table_foreign_key_ring_split_into_add_foreign_key_ops() {
+        // A → B → C → A: tarjan_scc collapses the whole ring into one SCC, and every
+        // FK between ring members must be extracted. Locks in the n-ary (not just
+        // mutual 2-cycle) behavior of split_cyclic_foreign_keys.
+        let a = simple_table_with_fks("a", vec![make_fk("b")]);
+        let b = simple_table_with_fks("b", vec![make_fk("c")]);
+        let c = simple_table_with_fks("c", vec![make_fk("a")]);
 
         let ops = vec![
-            MigrationOp::CreateFunction(film_in_stock),
-            MigrationOp::CreateTable(inventory),
+            MigrationOp::CreateTable(a),
+            MigrationOp::CreateTable(b),
+            MigrationOp::CreateTable(c),
         ];
 
         let planned = plan_migration(ops);
 
-        let table_pos = planned
+        let creates: Vec<&str> = planned
             .iter()
-            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
-            .unwrap();
-        let func_pos = planned
-            .iter()
-            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
-            .unwrap();
+            .filter_map(|op| match op {
+                MigrationOp::CreateTable(t) => Some(t.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(creates.len(), 3);
+        for op in &planned {
+            if let MigrationOp::CreateTable(t) = op {
+                assert!(
+                    t.foreign_keys.is_empty(),
+                    "{} should have its cyclic FK extracted; got {:?}",
+                    t.name,
+                    t.foreign_keys
+                );
+            }
+        }
 
-        assert!(
-            table_pos < func_pos,
-            "LANGUAGE sql function must come after tables referenced in its body (body parses at CREATE time). table at {table_pos}, func at {func_pos}"
+        let add_fks: Vec<&str> = planned
+            .iter()
+            .filter_map(|op| match op {
+                MigrationOp::AddForeignKey { foreign_key, .. } => Some(foreign_key.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            add_fks.len(),
+            3,
+            "expected three AddForeignKey ops for the 3-table ring, got {add_fks:?}"
         );
     }
 
@@ -5865,5 +5875,59 @@ mod tests {
 
         assert!(pos("items") < pos("validate_amount"));
         assert!(pos("validate_amount") < pos("widgets"));
+    }
+
+    #[test]
+    fn add_check_constraint_with_setof_function_ordered_after_function() {
+        // Parallel to the inline-CHECK test above but for separate
+        // `AddCheckConstraint` ops. The function has a SETOF table dep, so its tier
+        // blanket is suppressed; the `AddCheckConstraint` content-aware walk of the
+        // expression is the only thing ordering it.
+        let items = simple_table_with_fks("items", vec![]);
+        let widgets = simple_table_with_fks("widgets", vec![]);
+
+        let validate = Function {
+            name: "validate_amount".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "SETOF public.items".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN RETURN; END;".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+            comment: None,
+        };
+
+        let ops = vec![
+            MigrationOp::AddCheckConstraint {
+                table: QualifiedName::new("public", "widgets"),
+                check_constraint: CheckConstraint {
+                    name: "widgets_amount_check".to_string(),
+                    expression: "validate_amount(1) IS NOT NULL".to_string(),
+                },
+            },
+            MigrationOp::CreateTable(widgets),
+            MigrationOp::CreateFunction(validate),
+            MigrationOp::CreateTable(items),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .unwrap();
+        let check_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddCheckConstraint { .. }))
+            .unwrap();
+
+        assert!(
+            func_pos < check_pos,
+            "CreateFunction must precede AddCheckConstraint that references it, even when the tier blanket is suppressed. func at {func_pos}, check at {check_pos}"
+        );
     }
 }
