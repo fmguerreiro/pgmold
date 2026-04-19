@@ -1633,7 +1633,7 @@ async fn introspect_functions(
             name: name.clone(),
             schema: schema.clone(),
             arguments,
-            return_type: crate::model::normalize_pg_type(&return_type),
+            return_type: crate::model::normalize_pg_type(&return_type).into_owned(),
             language,
             body: body.trim().to_string(),
             volatility,
@@ -1733,14 +1733,14 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
             if parts.len() == 2 {
                 FunctionArg {
                     name: Some(strip_ident_quotes(parts[0])),
-                    data_type: crate::model::normalize_pg_type(parts[1]),
+                    data_type: crate::model::normalize_pg_type(parts[1]).into_owned(),
                     mode,
                     default,
                 }
             } else {
                 FunctionArg {
                     name: None,
-                    data_type: crate::model::normalize_pg_type(arg_rest.trim()),
+                    data_type: crate::model::normalize_pg_type(arg_rest.trim()).into_owned(),
                     mode,
                     default,
                 }

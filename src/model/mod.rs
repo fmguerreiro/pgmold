@@ -1,5 +1,6 @@
 use crate::util::{expressions_semantically_equal, views_semantically_equal};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -1316,7 +1317,19 @@ impl Function {
 ///
 /// For `TABLE(...)` return types, quoted column names are preserved verbatim
 /// (they are case-sensitive in PostgreSQL), while type keywords are normalized.
-pub fn normalize_pg_type(type_name: &str) -> String {
+///
+/// Returns `Cow::Borrowed` in two cases: an ASCII-lowercase non-alias input
+/// borrows the input slice, and any alias (upper- or lower-case) borrows the
+/// `'static` canonical target. Uppercase alias inputs still allocate transiently
+/// for case folding, but the returned `Cow` does not own that buffer. Uppercase
+/// non-alias and `TABLE(...)` expansion return `Cow::Owned`.
+///
+/// The main perf win is at comparison sites (`Function::semantically_equals`,
+/// `FunctionArg::semantically_equals`), which compare two `Cow`s via `PartialEq`
+/// without ever owning: canonical-on-both-sides comparisons allocate zero times
+/// vs. two times previously. Sites that immediately `.into_owned()` (struct field
+/// assignments in `pg/introspect.rs`, `parser/functions.rs`) see no net change.
+pub fn normalize_pg_type(type_name: &str) -> Cow<'_, str> {
     let trimmed = type_name.trim();
 
     if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("table(") && trimmed.ends_with(')') {
@@ -1328,32 +1341,42 @@ pub fn normalize_pg_type(type_name: &str) -> String {
                     .expect("BUG: unclosed quote in TABLE column definition")
             })
             .collect();
-        return format!("table({})", normalized_cols.join(", "));
+        return Cow::Owned(format!("table({})", normalized_cols.join(", ")));
     }
 
     // Strip public. schema prefix — PostgreSQL qualifies user-defined types
     // in function signatures but SQL declarations typically omit it
     let trimmed = trimmed.strip_prefix("public.").unwrap_or(trimmed);
 
-    let lower: std::borrow::Cow<str> = if trimmed.bytes().any(|b| b.is_ascii_uppercase()) {
-        std::borrow::Cow::Owned(trimmed.to_lowercase())
-    } else {
-        std::borrow::Cow::Borrowed(trimmed)
-    };
-    match lower.as_ref() {
-        "int" | "int4" => "integer".to_string(),
-        "int8" => "bigint".to_string(),
-        "int2" => "smallint".to_string(),
-        "float4" => "real".to_string(),
-        "float8" => "double precision".to_string(),
-        "bool" => "boolean".to_string(),
-        "varchar" => "character varying".to_string(),
-        "timestamp" => "timestamp without time zone".to_string(),
-        "timestamptz" => "timestamp with time zone".to_string(),
-        "time" => "time without time zone".to_string(),
-        "timetz" => "time with time zone".to_string(),
-        _ => lower.into_owned(),
+    if !trimmed.bytes().any(|b| b.is_ascii_uppercase()) {
+        return match canonical_alias(trimmed) {
+            Some(canon) => Cow::Borrowed(canon),
+            None => Cow::Borrowed(trimmed),
+        };
     }
+
+    let lower = trimmed.to_lowercase();
+    match canonical_alias(&lower) {
+        Some(canon) => Cow::Borrowed(canon),
+        None => Cow::Owned(lower),
+    }
+}
+
+fn canonical_alias(lowercase: &str) -> Option<&'static str> {
+    Some(match lowercase {
+        "int" | "int4" => "integer",
+        "int8" => "bigint",
+        "int2" => "smallint",
+        "float4" => "real",
+        "float8" => "double precision",
+        "bool" => "boolean",
+        "varchar" => "character varying",
+        "timestamp" => "timestamp without time zone",
+        "timestamptz" => "timestamp with time zone",
+        "time" => "time without time zone",
+        "timetz" => "time with time zone",
+        _ => return None,
+    })
 }
 
 /// Normalizes a single column definition within a `TABLE(...)` return type.
@@ -2011,6 +2034,40 @@ mod tests {
             normalize_pg_type("time(3) with time zone"),
             "time(3) with time zone"
         );
+    }
+
+    #[test]
+    fn normalize_pg_type_zero_alloc_path_for_lowercase_input() {
+        // Inputs that are already ASCII-lowercase take the zero-allocation fast path
+        // (no transient to_lowercase), and return Borrowed — either into the input
+        // slice (non-alias) or into a 'static canonical target (alias).
+        assert!(matches!(normalize_pg_type("integer"), Cow::Borrowed(_)));
+        assert!(matches!(normalize_pg_type("text"), Cow::Borrowed(_)));
+        assert!(matches!(normalize_pg_type("uuid"), Cow::Borrowed(_)));
+        assert!(matches!(
+            normalize_pg_type("timestamp with time zone"),
+            Cow::Borrowed(_)
+        ));
+        assert!(matches!(normalize_pg_type("int"), Cow::Borrowed(_)));
+        assert!(matches!(normalize_pg_type("float8"), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn normalize_pg_type_borrows_static_for_uppercase_alias() {
+        // Uppercase alias input still allocates for to_lowercase(), but the returned
+        // Cow borrows the 'static canonical target rather than owning a copy.
+        assert!(matches!(normalize_pg_type("INT4"), Cow::Borrowed(_)));
+        assert_eq!(normalize_pg_type("INT4"), "integer");
+        assert!(matches!(normalize_pg_type("FLOAT8"), Cow::Borrowed(_)));
+        assert_eq!(normalize_pg_type("FLOAT8"), "double precision");
+    }
+
+    #[test]
+    fn normalize_pg_type_owned_when_no_borrow_possible() {
+        // Uppercase non-alias must own the lowercased result; TABLE(...) must own
+        // the re-materialized expansion.
+        assert!(matches!(normalize_pg_type("Integer"), Cow::Owned(_)));
+        assert!(matches!(normalize_pg_type("TABLE(a int)"), Cow::Owned(_)));
     }
 
     #[test]
@@ -3084,13 +3141,13 @@ fn function_timestamp_param_no_perpetual_diff() {
         arguments: vec![
             FunctionArg {
                 name: Some("event_time".to_string()),
-                data_type: normalize_pg_type("timestamp"),
+                data_type: normalize_pg_type("timestamp").into_owned(),
                 mode: ArgMode::In,
                 default: None,
             },
             FunctionArg {
                 name: Some("log_time".to_string()),
-                data_type: normalize_pg_type("time"),
+                data_type: normalize_pg_type("time").into_owned(),
                 mode: ArgMode::In,
                 default: None,
             },

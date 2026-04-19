@@ -856,7 +856,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                             args.iter()
                                 .map(|a| {
                                     let type_str = a.data_type.to_string();
-                                    normalize_pg_type(&type_str)
+                                    normalize_pg_type(&type_str).into_owned()
                                 })
                                 .collect::<Vec<_>>()
                                 .join(", ")
