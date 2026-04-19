@@ -4036,6 +4036,36 @@ CREATE MATERIALIZED VIEW public.rental_by_category AS
 }
 
 #[test]
+fn alter_table_add_constraint_primary_key_recorded_on_model() {
+    let sql = r#"
+CREATE TABLE public.language (
+    language_id INTEGER NOT NULL,
+    name TEXT
+);
+
+ALTER TABLE ONLY public.language ADD CONSTRAINT language_pkey PRIMARY KEY (language_id);
+"#;
+    let schema = parse_sql_string(sql)
+        .expect("Should parse ALTER TABLE ADD CONSTRAINT ... PRIMARY KEY");
+
+    let table = schema
+        .tables
+        .get("public.language")
+        .expect("language table should exist");
+    assert_eq!(
+        table.primary_key,
+        Some(PrimaryKey {
+            columns: vec!["language_id".to_string()],
+        }),
+        "ALTER TABLE ADD CONSTRAINT PRIMARY KEY must populate table.primary_key"
+    );
+    assert!(
+        !table.columns["language_id"].nullable,
+        "PK columns must be NOT NULL"
+    );
+}
+
+#[test]
 fn attach_partition_range_via_alter_table() {
     let sql = r#"
 CREATE TABLE public.payment (

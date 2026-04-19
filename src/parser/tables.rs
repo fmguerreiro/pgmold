@@ -9,7 +9,7 @@ use crate::model::*;
 use crate::util::Result;
 use sqlparser::ast::{
     ColumnDef, ColumnOption, DataType, Expr, FunctionArg as SqlFunctionArg, FunctionArgExpr,
-    FunctionArguments, GeneratedAs, GeneratedExpressionMode,
+    FunctionArguments, GeneratedAs, GeneratedExpressionMode, PrimaryKeyConstraint,
     ReferentialAction as SqlReferentialAction, TableConstraint, Value,
 };
 use std::collections::BTreeMap;
@@ -162,21 +162,7 @@ pub(super) fn parse_create_table(
 
     for constraint in constraints {
         match constraint {
-            TableConstraint::PrimaryKey(pk) => {
-                let pk_columns: Vec<String> = pk
-                    .columns
-                    .iter()
-                    .map(|c| unquote_ident(&c.to_string()).to_string())
-                    .collect();
-                table.primary_key = Some(PrimaryKey {
-                    columns: pk_columns.clone(),
-                });
-                for pk_col in &pk_columns {
-                    if let Some(col) = table.columns.get_mut(pk_col) {
-                        col.nullable = false;
-                    }
-                }
-            }
+            TableConstraint::PrimaryKey(pk) => apply_primary_key(&mut table, pk),
             TableConstraint::ForeignKey(fk) => {
                 let fk_columns: Vec<String> = fk
                     .columns
@@ -477,6 +463,25 @@ pub(super) fn detect_serial_type(dt: &DataType) -> Option<SequenceDataType> {
     } else {
         None
     }
+}
+
+/// Apply a `PRIMARY KEY` constraint — from inline `CREATE TABLE` or a standalone
+/// `ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY (...)` — to the given table,
+/// populating `table.primary_key` and flipping the referenced columns to NOT NULL.
+pub(super) fn apply_primary_key(table: &mut Table, pk: &PrimaryKeyConstraint) {
+    let pk_columns: Vec<String> = pk
+        .columns
+        .iter()
+        .map(|c| unquote_ident(&c.to_string()).to_string())
+        .collect();
+    for pk_col in &pk_columns {
+        if let Some(col) = table.columns.get_mut(pk_col) {
+            col.nullable = false;
+        }
+    }
+    table.primary_key = Some(PrimaryKey {
+        columns: pk_columns,
+    });
 }
 
 pub(super) fn parse_referential_action(action: &Option<SqlReferentialAction>) -> ReferentialAction {

@@ -46,7 +46,9 @@ use grants::{parse_alter_default_privileges, parse_grant_statements, parse_revok
 use ownership::parse_owner_statements;
 use preprocess::preprocess_sql;
 use sequences::parse_create_sequence;
-use tables::{parse_column_with_serial, parse_create_table, parse_referential_action};
+use tables::{
+    apply_primary_key, parse_column_with_serial, parse_create_table, parse_referential_action,
+};
 use util::{
     extract_qualified_name, normalize_expr, parse_data_type, parse_for_values,
     parse_for_values_required, parse_policy_command, truncate_identifier, unquote_ident,
@@ -241,19 +243,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         AlterTableOperation::AddConstraint { constraint, .. } => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 if let TableConstraint::PrimaryKey(pk) = constraint {
-                                    let pk_columns: Vec<String> = pk
-                                        .columns
-                                        .iter()
-                                        .map(|c| unquote_ident(&c.to_string()).to_string())
-                                        .collect();
-                                    for pk_col in &pk_columns {
-                                        if let Some(col) = table.columns.get_mut(pk_col) {
-                                            col.nullable = false;
-                                        }
-                                    }
-                                    table.primary_key = Some(PrimaryKey {
-                                        columns: pk_columns,
-                                    });
+                                    apply_primary_key(table, &pk);
                                 } else if let TableConstraint::ForeignKey(fk) = constraint {
                                     let fk_name = fk
                                         .name
