@@ -2045,10 +2045,7 @@ mod tests {
     fn normalize_pg_type_allocates_only_when_case_folding_needed() {
         assert!(matches!(normalize_pg_type("Integer"), Cow::Owned(_)));
         assert!(matches!(normalize_pg_type("INT4"), Cow::Borrowed(_)));
-        assert!(matches!(
-            normalize_pg_type("TABLE(a int)"),
-            Cow::Owned(_)
-        ));
+        assert!(matches!(normalize_pg_type("TABLE(a int)"), Cow::Owned(_)));
     }
 
     #[test]
