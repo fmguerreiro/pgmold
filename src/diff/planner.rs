@@ -267,20 +267,10 @@ impl MigrationGraph {
         // table it FK-depends on). In that case the blanket "function → table" tier
         // edge must be dropped entirely: it would otherwise close cycles of the form
         // `func_A → table_T → func_B (body-dep on T) → other_table → func_A` through
-        // the FK graph. Content-aware edges (column defaults, check constraints, etc.)
-        // still pin functions ahead of the specific tables that actually use them.
+        // the FK graph. Content-aware edges (column defaults, generated expressions,
+        // inline CHECK constraints, etc.) still pin functions ahead of the specific
+        // tables that actually use them.
         // AlterFunction carries no body, so %ROWTYPE/SETOF detection is not needed for it.
-        let table_names: HashSet<String> = ns
-            .tables
-            .iter()
-            .filter_map(|&idx| {
-                if let MigrationOp::CreateTable(t) = &self.graph[idx] {
-                    Some(qualified_name(&t.schema, &t.name))
-                } else {
-                    None
-                }
-            })
-            .collect();
         for &func_idx in &ns.functions {
             if let MigrationOp::CreateFunction(f) = &self.graph[func_idx] {
                 let setof_table = extract_setof_type_ref(&f.return_type).map(|type_ref| {
@@ -317,8 +307,14 @@ impl MigrationGraph {
                     }
                 }
 
-                let has_concrete_table_dep = skip_tables.iter().any(|t| table_names.contains(t));
-                if has_concrete_table_dep {
+                // `table_fk_deps` keys are exactly the qualified names of CreateTable
+                // nodes in this migration batch. A skip entry that matches one of them
+                // means the function has a concrete dep on a table being created in
+                // this plan, so the tier blanket must be dropped to avoid cycling
+                // through the FK graph (see comment above).
+                let concrete_dep_in_migration =
+                    skip_tables.iter().any(|t| table_fk_deps.contains_key(t));
+                if concrete_dep_in_migration {
                     continue;
                 }
 
@@ -534,8 +530,11 @@ impl MigrationGraph {
 
         for key in &keys {
             match key {
-                // CreateTable with FKs depends on referenced tables existing,
-                // and column defaults may reference functions
+                // CreateTable with FKs depends on referenced tables existing, and
+                // column defaults / generated expressions / inline CHECK constraints
+                // may reference functions that must be created first. These edges are
+                // required even when the tier-level function→table blanket is dropped
+                // (see `add_function_edges`).
                 OpKey::CreateTable(table_name) => {
                     if let Some(MigrationOp::CreateTable(table)) = self.get_op(key) {
                         for fk in &table.foreign_keys {
@@ -559,6 +558,25 @@ impl MigrationGraph {
                                     key,
                                 );
                             }
+                            if let Some(generated) = &column.generated {
+                                push_function_ref_edges(
+                                    &mut edges_to_add,
+                                    &keys,
+                                    generated,
+                                    &table.schema,
+                                    key,
+                                );
+                            }
+                        }
+
+                        for check in &table.check_constraints {
+                            push_function_ref_edges(
+                                &mut edges_to_add,
+                                &keys,
+                                &check.expression,
+                                &table.schema,
+                                key,
+                            );
                         }
                     }
                 }
@@ -5784,8 +5802,68 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} not found: {planned:?}"))
         };
 
+        // plan_migration panics on cycle detection; if this test stops panicking
+        // but the assertions regress, the three-way cycle from pagila is back.
         assert!(pos("address") < pos("customer"));
         assert!(pos("customer") < pos("rewards_report"));
+        assert!(
+            pos("address") < pos("rewards_report"),
+            "rewards_report transitively depends on address via customer.FK"
+        );
         assert!(pos("inventory") < pos("film_in_stock"));
+    }
+
+    #[test]
+    fn inline_check_constraint_function_ref_edges_func_before_table() {
+        // When a function has a concrete table dep (tier blanket dropped), the
+        // *only* thing ordering it ahead of an unrelated table that references it
+        // inline in a CHECK is the CreateTable content-aware walk of
+        // `check_constraints`. Ensure that walk actually runs.
+        let items = simple_table_with_fks("items", vec![]);
+
+        let validate = Function {
+            name: "validate_amount".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "SETOF public.items".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN RETURN; END;".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+            comment: None,
+        };
+
+        let widgets = Table {
+            check_constraints: vec![CheckConstraint {
+                name: "widgets_check".to_string(),
+                expression: "validate_amount(1) IS NOT NULL".to_string(),
+            }],
+            ..simple_table_with_fks("widgets", vec![])
+        };
+
+        let ops = vec![
+            MigrationOp::CreateTable(widgets),
+            MigrationOp::CreateFunction(validate),
+            MigrationOp::CreateTable(items),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let pos = |name: &str| -> usize {
+            planned
+                .iter()
+                .position(|op| match op {
+                    MigrationOp::CreateTable(t) => t.name == name,
+                    MigrationOp::CreateFunction(f) => f.name == name,
+                    _ => false,
+                })
+                .unwrap_or_else(|| panic!("{name} not found: {planned:?}"))
+        };
+
+        assert!(pos("items") < pos("validate_amount"));
+        assert!(pos("validate_amount") < pos("widgets"));
     }
 }
