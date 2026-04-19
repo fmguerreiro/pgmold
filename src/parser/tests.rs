@@ -3092,6 +3092,25 @@ fn parse_jsonb_array_column() {
 }
 
 #[test]
+fn parse_fulltext_tsvector_column() {
+    let sql = r#"
+CREATE TABLE public.film (
+    film_id INTEGER NOT NULL,
+    fulltext tsvector NOT NULL
+);
+CREATE INDEX film_fulltext_idx ON public.film USING gist (fulltext);
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.film").unwrap();
+    let col = table.columns.get("fulltext").unwrap();
+    assert_eq!(col.data_type, PgType::BuiltinNamed("tsvector".to_string()));
+    assert!(!col.nullable);
+    let idx = table.indexes.iter().find(|i| i.name == "film_fulltext_idx").unwrap();
+    assert_eq!(idx.index_type, IndexType::Gist);
+    assert_eq!(idx.columns, vec!["fulltext"]);
+}
+
+#[test]
 fn parse_timestamptz_array_column() {
     let sql = "CREATE TABLE data (id BIGINT PRIMARY KEY, timestamps TIMESTAMP WITH TIME ZONE[]);";
     let schema = parse_sql_string(sql).unwrap();

@@ -141,6 +141,8 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
         DataType::Uuid => Ok(PgType::Uuid),
         DataType::JSON => Ok(PgType::Json),
         DataType::JSONB => Ok(PgType::Jsonb),
+        DataType::TsVector => Ok(PgType::BuiltinNamed("tsvector".to_string())),
+        DataType::TsQuery => Ok(PgType::BuiltinNamed("tsquery".to_string())),
         DataType::Custom(name, modifiers) => {
             let parts: Vec<String> = name
                 .0
