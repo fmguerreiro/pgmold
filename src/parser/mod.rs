@@ -240,7 +240,21 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         }
                         AlterTableOperation::AddConstraint { constraint, .. } => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
-                                if let TableConstraint::ForeignKey(fk) = constraint {
+                                if let TableConstraint::PrimaryKey(pk) = constraint {
+                                    let pk_columns: Vec<String> = pk
+                                        .columns
+                                        .iter()
+                                        .map(|c| unquote_ident(&c.to_string()).to_string())
+                                        .collect();
+                                    for pk_col in &pk_columns {
+                                        if let Some(col) = table.columns.get_mut(pk_col) {
+                                            col.nullable = false;
+                                        }
+                                    }
+                                    table.primary_key = Some(PrimaryKey {
+                                        columns: pk_columns,
+                                    });
+                                } else if let TableConstraint::ForeignKey(fk) = constraint {
                                     let fk_name = fk
                                         .name
                                         .as_ref()
