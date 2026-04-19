@@ -4092,7 +4092,9 @@ ALTER TABLE public.measurement DETACH PARTITION public.measurement_y2021m01;
     let schema = parse_sql_string(sql).expect("Should parse DETACH PARTITION");
 
     assert!(
-        !schema.partitions.contains_key("public.measurement_y2021m01"),
+        !schema
+            .partitions
+            .contains_key("public.measurement_y2021m01"),
         "Detached partition should not appear in schema"
     );
 }
@@ -4112,7 +4114,9 @@ ALTER TABLE public.measurement DETACH PARTITION public.measurement_y2021m01 CONC
     let schema = parse_sql_string(sql).expect("Should parse DETACH PARTITION CONCURRENTLY");
 
     assert!(
-        !schema.partitions.contains_key("public.measurement_y2021m01"),
+        !schema
+            .partitions
+            .contains_key("public.measurement_y2021m01"),
         "Concurrently detached partition should not appear in schema"
     );
 }
