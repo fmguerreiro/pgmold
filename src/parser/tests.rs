@@ -590,6 +590,35 @@ EXECUTE FUNCTION insert_active_user_fn();
 }
 
 #[test]
+fn parses_trigger_with_string_literal_args() {
+    // Reproduces the pagila film_fulltext_trigger pattern where EXECUTE FUNCTION
+    // receives string literal arguments, not bare identifiers.
+    let sql = r#"
+CREATE TRIGGER film_fulltext_trigger
+BEFORE INSERT OR UPDATE ON public.film
+FOR EACH ROW
+EXECUTE FUNCTION tsvector_update_trigger('fulltext', 'pg_catalog.english', 'title', 'description');
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let trigger = schema
+        .triggers
+        .get("public.film.film_fulltext_trigger")
+        .unwrap();
+
+    assert_eq!(trigger.name, "film_fulltext_trigger");
+    assert_eq!(trigger.function_name, "tsvector_update_trigger");
+    assert_eq!(
+        trigger.function_args,
+        vec![
+            "'fulltext'",
+            "'pg_catalog.english'",
+            "'title'",
+            "'description'"
+        ]
+    );
+}
+
+#[test]
 fn instead_of_trigger_rejects_for_each_statement() {
     let sql = r#"
 CREATE VIEW active_users AS SELECT * FROM users WHERE active = true;
