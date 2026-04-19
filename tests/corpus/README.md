@@ -14,7 +14,8 @@ of the file:
 ```
 
 The test runner will skip the file and print the reason. Remove the line once the
-bug is fixed.
+bug is fixed. When combined with the four-line provenance header below, the
+IGNORE line goes above it (the runner only inspects the file's first line).
 
 ## Adding a new entry
 
