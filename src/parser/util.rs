@@ -55,24 +55,30 @@ pub(super) fn parse_policy_command(cmd: &Option<CreatePolicyCommand>) -> PolicyC
 
 pub(super) fn parse_for_values(for_values: &Option<ForValues>) -> Result<PartitionBound> {
     match for_values {
-        Some(ForValues::In(values)) => Ok(PartitionBound::List {
+        Some(bound) => parse_for_values_required(bound),
+        None => Err(SchemaError::ParseError(
+            "PARTITION OF requires FOR VALUES clause".into(),
+        )),
+    }
+}
+
+pub(super) fn parse_for_values_required(for_values: &ForValues) -> Result<PartitionBound> {
+    match for_values {
+        ForValues::In(values) => Ok(PartitionBound::List {
             values: values
                 .iter()
                 .map(|e| normalize_expr(&e.to_string()))
                 .collect(),
         }),
-        Some(ForValues::From { from, to }) => Ok(PartitionBound::Range {
+        ForValues::From { from, to } => Ok(PartitionBound::Range {
             from: from.iter().map(partition_bound_value_to_string).collect(),
             to: to.iter().map(partition_bound_value_to_string).collect(),
         }),
-        Some(ForValues::With { modulus, remainder }) => Ok(PartitionBound::Hash {
+        ForValues::With { modulus, remainder } => Ok(PartitionBound::Hash {
             modulus: *modulus as u32,
             remainder: *remainder as u32,
         }),
-        Some(ForValues::Default) => Ok(PartitionBound::Default),
-        None => Err(SchemaError::ParseError(
-            "PARTITION OF requires FOR VALUES clause".into(),
-        )),
+        ForValues::Default => Ok(PartitionBound::Default),
     }
 }
 
