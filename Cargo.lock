@@ -1612,9 +1612,8 @@ dependencies = [
 
 [[package]]
 name = "pgmold-sqlparser"
-version = "0.60.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffbaaa8bdbd3c68e3470f6c6d2a1c3ecf227ff2c4770a69eb9052dd89a72c3dd"
+version = "0.60.14"
+source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs.git?branch=fix%2Ftrigger-exec-body-call-args#748d1d92ab271b508c4675b780556d2fcf63bb7d"
 dependencies = [
  "log",
  "recursive",
@@ -2399,8 +2398,7 @@ dependencies = [
 [[package]]
 name = "sqlparser_derive"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6dd45d8fc1c79299bfbb7190e42ccbbdf6a5f52e4a6ad98d92357ea965bd289"
+source = "git+https://github.com/fmguerreiro/datafusion-sqlparser-rs.git?branch=fix%2Ftrigger-exec-body-call-args#748d1d92ab271b508c4675b780556d2fcf63bb7d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2613,7 +2611,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.52.0",
  "windows-sys 0.59.0",
 ]
 

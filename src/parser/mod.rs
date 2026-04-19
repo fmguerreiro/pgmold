@@ -689,7 +689,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         "Trigger '{trigger_name}' missing EXECUTE clause"
                     ))
                 })?;
-                let (func_schema, func_name) = extract_qualified_name(&exec.func_desc.name);
+                let (func_schema, func_name) = extract_qualified_name(&exec.func_name);
 
                 let timing = match period {
                     Some(TriggerPeriod::Before) => TriggerTiming::Before,
@@ -781,7 +781,6 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 }
 
                 let function_args = exec
-                    .func_desc
                     .args
                     .as_ref()
                     .map(|args| args.iter().map(|a| a.to_string()).collect())
