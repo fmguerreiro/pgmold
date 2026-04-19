@@ -609,7 +609,12 @@ EXECUTE FUNCTION tsvector_update_trigger('fulltext', 'pg_catalog.english', 'titl
     assert_eq!(trigger.function_name, "tsvector_update_trigger");
     assert_eq!(
         trigger.function_args,
-        vec!["'fulltext'", "'pg_catalog.english'", "'title'", "'description'"]
+        vec![
+            "'fulltext'",
+            "'pg_catalog.english'",
+            "'title'",
+            "'description'"
+        ]
     );
 }
 
