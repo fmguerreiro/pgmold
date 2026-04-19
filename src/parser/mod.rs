@@ -49,7 +49,7 @@ use sequences::parse_create_sequence;
 use tables::{parse_column_with_serial, parse_create_table, parse_referential_action};
 use util::{
     extract_qualified_name, normalize_expr, parse_data_type, parse_for_values,
-    parse_policy_command, truncate_identifier, unquote_ident,
+    parse_for_values_required, parse_policy_command, truncate_identifier, unquote_ident,
 };
 
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
@@ -388,6 +388,36 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                     }
                                 }
                             }
+                        }
+                        AlterTableOperation::AttachPartitionOf {
+                            partition_name,
+                            partition_bound,
+                        } => {
+                            let (child_schema, child_name) =
+                                extract_qualified_name(&partition_name);
+                            let child_key = qualified_name(&child_schema, &child_name);
+                            let bound = parse_for_values_required(&partition_bound)?;
+                            let partition = Partition {
+                                schema: child_schema,
+                                name: child_name,
+                                parent_schema: tbl_schema.clone(),
+                                parent_name: tbl_name.clone(),
+                                bound,
+                                indexes: Vec::new(),
+                                check_constraints: Vec::new(),
+                                owner: None,
+                            };
+                            schema.partitions.insert(child_key, partition);
+                        }
+                        AlterTableOperation::DetachPartitionOf {
+                            partition_name,
+                            concurrently: _,
+                            finalize: _,
+                        } => {
+                            let (child_schema, child_name) =
+                                extract_qualified_name(&partition_name);
+                            let child_key = qualified_name(&child_schema, &child_name);
+                            schema.partitions.remove(&child_key);
                         }
                         // PostgreSQL `ALTER TABLE` variants pgmold does not yet
                         // consume. Tracked as future work; listed explicitly

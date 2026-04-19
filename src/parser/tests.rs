@@ -3982,3 +3982,137 @@ CREATE MATERIALIZED VIEW public.rental_by_category AS
     assert_eq!(view.name, "rental_by_category");
     assert!(view.materialized);
 }
+
+#[test]
+fn attach_partition_range_via_alter_table() {
+    let sql = r#"
+CREATE TABLE public.payment (
+    payment_id BIGINT NOT NULL
+) PARTITION BY RANGE (payment_id);
+
+ALTER TABLE ONLY public.payment ATTACH PARTITION public.payment_p2022_01 FOR VALUES FROM ('2022-01-01 00:00:00+00') TO ('2022-02-01 00:00:00+00');
+"#;
+    let schema = parse_sql_string(sql).expect("Should parse ATTACH PARTITION");
+
+    let partition = schema
+        .partitions
+        .get("public.payment_p2022_01")
+        .expect("partition should exist");
+    assert_eq!(partition.parent_schema, "public");
+    assert_eq!(partition.parent_name, "payment");
+    assert_eq!(partition.schema, "public");
+    assert_eq!(partition.name, "payment_p2022_01");
+    match &partition.bound {
+        PartitionBound::Range { from, to } => {
+            assert_eq!(from, &vec!["'2022-01-01 00:00:00+00'".to_string()]);
+            assert_eq!(to, &vec!["'2022-02-01 00:00:00+00'".to_string()]);
+        }
+        _ => panic!("Expected Range bound"),
+    }
+}
+
+#[test]
+fn attach_partition_list_via_alter_table() {
+    let sql = r#"
+CREATE TABLE public.cities (
+    city_name TEXT NOT NULL
+) PARTITION BY LIST (city_name);
+
+ALTER TABLE public.cities ATTACH PARTITION public.cities_ab FOR VALUES IN ('a', 'b');
+"#;
+    let schema = parse_sql_string(sql).expect("Should parse ATTACH PARTITION list");
+
+    let partition = schema
+        .partitions
+        .get("public.cities_ab")
+        .expect("partition should exist");
+    assert_eq!(partition.parent_name, "cities");
+    match &partition.bound {
+        PartitionBound::List { values } => {
+            assert_eq!(values, &vec!["'a'".to_string(), "'b'".to_string()]);
+        }
+        _ => panic!("Expected List bound"),
+    }
+}
+
+#[test]
+fn attach_partition_hash_via_alter_table() {
+    let sql = r#"
+CREATE TABLE public.orders (
+    id INT NOT NULL
+) PARTITION BY HASH (id);
+
+ALTER TABLE public.orders ATTACH PARTITION public.orders_p1 FOR VALUES WITH (MODULUS 4, REMAINDER 0);
+"#;
+    let schema = parse_sql_string(sql).expect("Should parse ATTACH PARTITION hash");
+
+    let partition = schema
+        .partitions
+        .get("public.orders_p1")
+        .expect("partition should exist");
+    match &partition.bound {
+        PartitionBound::Hash { modulus, remainder } => {
+            assert_eq!(*modulus, 4);
+            assert_eq!(*remainder, 0);
+        }
+        _ => panic!("Expected Hash bound"),
+    }
+}
+
+#[test]
+fn attach_partition_default_via_alter_table() {
+    let sql = r#"
+CREATE TABLE public.logs (
+    level TEXT NOT NULL
+) PARTITION BY LIST (level);
+
+ALTER TABLE public.logs ATTACH PARTITION public.logs_other DEFAULT;
+"#;
+    let schema = parse_sql_string(sql).expect("Should parse ATTACH PARTITION default");
+
+    let partition = schema
+        .partitions
+        .get("public.logs_other")
+        .expect("partition should exist");
+    assert_eq!(partition.bound, PartitionBound::Default);
+}
+
+#[test]
+fn detach_partition_via_alter_table() {
+    let sql = r#"
+CREATE TABLE public.measurement (
+    logdate DATE NOT NULL
+) PARTITION BY RANGE (logdate);
+
+CREATE TABLE public.measurement_y2021m01 PARTITION OF public.measurement
+FOR VALUES FROM ('2021-01-01') TO ('2021-02-01');
+
+ALTER TABLE public.measurement DETACH PARTITION public.measurement_y2021m01;
+"#;
+    let schema = parse_sql_string(sql).expect("Should parse DETACH PARTITION");
+
+    assert!(
+        !schema.partitions.contains_key("public.measurement_y2021m01"),
+        "Detached partition should not appear in schema"
+    );
+}
+
+#[test]
+fn detach_partition_concurrently_via_alter_table() {
+    let sql = r#"
+CREATE TABLE public.measurement (
+    logdate DATE NOT NULL
+) PARTITION BY RANGE (logdate);
+
+CREATE TABLE public.measurement_y2021m01 PARTITION OF public.measurement
+FOR VALUES FROM ('2021-01-01') TO ('2021-02-01');
+
+ALTER TABLE public.measurement DETACH PARTITION public.measurement_y2021m01 CONCURRENTLY;
+"#;
+    let schema = parse_sql_string(sql).expect("Should parse DETACH PARTITION CONCURRENTLY");
+
+    assert!(
+        !schema.partitions.contains_key("public.measurement_y2021m01"),
+        "Concurrently detached partition should not appear in schema"
+    );
+}
