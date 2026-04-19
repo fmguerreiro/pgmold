@@ -1318,9 +1318,18 @@ impl Function {
 /// For `TABLE(...)` return types, quoted column names are preserved verbatim
 /// (they are case-sensitive in PostgreSQL), while type keywords are normalized.
 ///
-/// Returns `Cow::Borrowed` when the input is already canonical (no `public.` prefix,
-/// no uppercase, and either already a canonical alias target or a non-alias identifier),
-/// which lets hot comparison paths skip an allocation.
+/// The return value is `Cow::Borrowed` on two paths:
+///   - Input is already ASCII-lowercase and not an alias → borrow the input slice.
+///   - Input (lower- or upper-case) resolves to a known alias → borrow the `'static`
+///     canonical target. Uppercase inputs still allocate transiently to lowercase,
+///     but the returned `Cow` does not own that buffer.
+/// Otherwise (uppercase non-alias, or `TABLE(...)` expansion) the return is `Cow::Owned`.
+///
+/// The main perf win is at comparison sites (`Function::semantically_equals`,
+/// `FunctionArg::semantically_equals`), which compare two `Cow`s via `PartialEq`
+/// without ever owning: canonical-on-both-sides comparisons now allocate zero times
+/// vs. two times previously. Sites that immediately `.into_owned()` (struct field
+/// assignments in `pg/introspect.rs`, `parser/functions.rs`) see no net change.
 pub fn normalize_pg_type(type_name: &str) -> Cow<'_, str> {
     let trimmed = type_name.trim();
 
@@ -2029,7 +2038,10 @@ mod tests {
     }
 
     #[test]
-    fn normalize_pg_type_borrows_for_already_canonical_input() {
+    fn normalize_pg_type_zero_alloc_path_for_lowercase_input() {
+        // Inputs that are already ASCII-lowercase take the zero-allocation fast path
+        // (no transient to_lowercase), and return Borrowed — either into the input
+        // slice (non-alias) or into a 'static canonical target (alias).
         assert!(matches!(normalize_pg_type("integer"), Cow::Borrowed(_)));
         assert!(matches!(normalize_pg_type("text"), Cow::Borrowed(_)));
         assert!(matches!(normalize_pg_type("uuid"), Cow::Borrowed(_)));
@@ -2042,9 +2054,20 @@ mod tests {
     }
 
     #[test]
-    fn normalize_pg_type_allocates_only_when_case_folding_needed() {
-        assert!(matches!(normalize_pg_type("Integer"), Cow::Owned(_)));
+    fn normalize_pg_type_borrows_static_for_uppercase_alias() {
+        // Uppercase alias input still allocates for to_lowercase(), but the returned
+        // Cow borrows the 'static canonical target rather than owning a copy.
         assert!(matches!(normalize_pg_type("INT4"), Cow::Borrowed(_)));
+        assert_eq!(normalize_pg_type("INT4"), "integer");
+        assert!(matches!(normalize_pg_type("FLOAT8"), Cow::Borrowed(_)));
+        assert_eq!(normalize_pg_type("FLOAT8"), "double precision");
+    }
+
+    #[test]
+    fn normalize_pg_type_owned_when_no_borrow_possible() {
+        // Uppercase non-alias must own the lowercased result; TABLE(...) must own
+        // the re-materialized expansion.
+        assert!(matches!(normalize_pg_type("Integer"), Cow::Owned(_)));
         assert!(matches!(normalize_pg_type("TABLE(a int)"), Cow::Owned(_)));
     }
 
