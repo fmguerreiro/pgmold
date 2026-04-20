@@ -107,16 +107,53 @@ pub fn extract_table_references(body: &str, default_schema: &str) -> HashSet<Obj
     let sql_as_where = format!("SELECT 1 WHERE {body}");
     let sql_as_subquery = format!("SELECT * FROM ({body}) AS subq");
 
-    let statements = Parser::parse_sql(&dialect, &sql_as_where)
+    let statements = match Parser::parse_sql(&dialect, &sql_as_where)
         .or_else(|_| Parser::parse_sql(&dialect, &sql_as_subquery))
         .or_else(|_| Parser::parse_sql(&dialect, body))
-        .unwrap_or_default();
+    {
+        Ok(stmts) => stmts,
+        Err(err) => {
+            // Degrade gracefully so legitimate non-SQL (empty, comments-only,
+            // pg-specific syntax) returns empty. Warn to stderr so the planner's
+            // body-relation-deps path has a greppable trail in CI.
+            if let Some(message) =
+                format_extract_table_references_failure(body, default_schema, &err.to_string())
+            {
+                eprintln!("{message}");
+            }
+            return refs;
+        }
+    };
 
     for statement in &statements {
         extract_tables_from_statement(statement, default_schema, &mut refs);
     }
 
     refs
+}
+
+/// Build the warning message for a total parse failure in
+/// `extract_table_references`. Returns `None` for trivially empty bodies
+/// (nothing worth logging). Broken out so the formatting is unit-testable
+/// without having to capture stderr.
+fn format_extract_table_references_failure(
+    body: &str,
+    default_schema: &str,
+    last_error: &str,
+) -> Option<String> {
+    if body.trim().is_empty() {
+        return None;
+    }
+    // Collect the first 120 chars and then ask the iterator if anything is
+    // left — a char-aware truncation check. A byte-based comparison would
+    // mis-classify multibyte bodies whose byte-length happens to match the
+    // snippet's byte-length despite having more codepoints.
+    let mut chars = body.chars();
+    let snippet: String = chars.by_ref().take(120).collect();
+    let truncated = if chars.next().is_some() { "..." } else { "" };
+    Some(format!(
+        "[pgmold:parser] extract_table_references: all parse strategies failed (schema={default_schema}, last_error={last_error}, body={snippet:?}{truncated})"
+    ))
 }
 
 fn extract_functions_from_statement(
@@ -842,5 +879,86 @@ mod tests {
             refs.contains(&ObjectRef::new("public", "enterprise_suppliers")),
             "expected enterprise_suppliers in refs, got: {refs:?}"
         );
+    }
+
+    #[test]
+    fn format_parse_failure_names_schema_error_and_body() {
+        let message = format_extract_table_references_failure(
+            "this is not sql >>> nonsense",
+            "my_schema",
+            "unexpected token at line 1",
+        )
+        .expect("non-empty body must produce a warning message");
+
+        assert!(
+            message.contains("extract_table_references"),
+            "message must name the function: {message}"
+        );
+        assert!(
+            message.contains("schema=my_schema"),
+            "message must name the default schema: {message}"
+        );
+        assert!(
+            message.contains("unexpected token at line 1"),
+            "message must include the parse error: {message}"
+        );
+        assert!(
+            message.contains("this is not sql"),
+            "message must include a body snippet: {message}"
+        );
+    }
+
+    #[test]
+    fn format_parse_failure_truncates_long_bodies() {
+        let long_body = "x".repeat(300);
+        let message = format_extract_table_references_failure(&long_body, "public", "err")
+            .expect("non-empty body must produce a warning message");
+
+        assert!(
+            message.contains("\"xxxxxxxxxxxxxxxxxxxx"),
+            "long bodies must appear as a snippet: {message}"
+        );
+        assert!(
+            message.contains("..."),
+            "long bodies must be marked as truncated: {message}"
+        );
+    }
+
+    #[test]
+    fn format_parse_failure_truncates_multibyte_body_by_chars_not_bytes() {
+        // A byte-based truncation check would mis-classify multibyte bodies.
+        // 200 copies of a 3-byte char (Japanese 'あ') — 200 codepoints total,
+        // well past the 120-char snippet limit, so the message must be marked
+        // truncated.
+        let multibyte_body = "あ".repeat(200);
+        let message = format_extract_table_references_failure(&multibyte_body, "public", "err")
+            .expect("non-empty body must produce a warning message");
+
+        assert!(
+            message.contains("..."),
+            "multibyte bodies exceeding the char limit must be marked truncated: {message}"
+        );
+    }
+
+    #[test]
+    fn format_parse_failure_skips_empty_bodies() {
+        assert!(
+            format_extract_table_references_failure("", "public", "err").is_none(),
+            "empty bodies must not produce a warning"
+        );
+        assert!(
+            format_extract_table_references_failure("   \n\t ", "public", "err").is_none(),
+            "whitespace-only bodies must not produce a warning"
+        );
+    }
+
+    #[test]
+    fn extract_table_references_returns_empty_on_unparseable_body() {
+        // Paired with the `format_*` tests: the unparseable-body path must
+        // still return an empty HashSet (degrade gracefully) while the
+        // warning above keeps the failure diagnosable.
+        let refs =
+            extract_table_references("this is not sql at all >>> complete nonsense", "public");
+        assert!(refs.is_empty(), "unparseable bodies must degrade to empty");
     }
 }

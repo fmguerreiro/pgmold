@@ -4066,6 +4066,33 @@ ALTER TABLE ONLY public.language ADD CONSTRAINT language_pkey PRIMARY KEY (langu
 }
 
 #[test]
+fn alter_table_add_constraint_primary_key_using_index_errors_loudly() {
+    // PostgreSQL emits this form when a standalone unique index is promoted
+    // to a PRIMARY KEY. The model does not yet carry the source-index name,
+    // so silently dropping it would produce a CREATE TABLE with no PK and
+    // later FK failures. Fail with a clear error instead.
+    let sql = r#"
+CREATE TABLE public.users (
+    id INTEGER NOT NULL,
+    email TEXT
+);
+
+ALTER TABLE ONLY public.users ADD CONSTRAINT users_pkey PRIMARY KEY USING INDEX users_pkey_idx;
+"#;
+    let error = parse_sql_string(sql)
+        .expect_err("PRIMARY KEY USING INDEX must fail rather than silently drop");
+    let message = error.to_string();
+    assert!(
+        message.contains("PRIMARY KEY USING INDEX"),
+        "error should name the unsupported DDL shape, got: {message}"
+    );
+    assert!(
+        message.contains("public.users"),
+        "error should name the target table, got: {message}"
+    );
+}
+
+#[test]
 fn attach_partition_range_via_alter_table() {
     let sql = r#"
 CREATE TABLE public.payment (
