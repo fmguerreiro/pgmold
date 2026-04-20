@@ -630,10 +630,7 @@ FOR EACH ROW
 EXECUTE FUNCTION suppress_redundant_updates_trigger();
 "#;
     let schema = parse_sql_string(sql).unwrap();
-    let trigger = schema
-        .triggers
-        .get("public.docs.redundant_guard")
-        .unwrap();
+    let trigger = schema.triggers.get("public.docs.redundant_guard").unwrap();
     assert_eq!(trigger.function_schema, "pg_catalog");
     assert_eq!(trigger.function_name, "suppress_redundant_updates_trigger");
 }
