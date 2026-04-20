@@ -1,4 +1,3 @@
--- IGNORE: pgmold-267 introspection drops trigger function args (tgargs) so film_fulltext_trigger fails to converge after apply
 -- Source: https://github.com/devrimgunduz/pagila/blob/master/pagila-schema.sql
 -- Commit: 5ba5a57aeb159f75f02aca2432d3c262186d13d3
 -- License: MIT

@@ -1982,6 +1982,8 @@ async fn introspect_triggers(
             pns.nspname AS function_schema,
             p.proname AS function_name,
             pg_get_triggerdef(t.oid) AS trigger_def,
+            t.tgnargs AS function_nargs,
+            t.tgargs AS function_args_raw,
             (
                 SELECT array_agg(a.attname ORDER BY a.attnum)
                 FROM unnest(t.tgattr) AS attr_num
@@ -2020,9 +2022,13 @@ async fn introspect_triggers(
         let function_schema: String = row.get("function_schema");
         let function_name: String = row.get("function_name");
         let trigger_def: String = row.get("trigger_def");
+        let function_nargs: i16 = row.get("function_nargs");
+        let function_args_raw: Vec<u8> = row.get("function_args_raw");
         let update_columns: Option<Vec<String>> = row.get("update_columns");
         let old_table_name: Option<String> = row.get("old_table_name");
         let new_table_name: Option<String> = row.get("new_table_name");
+
+        let function_args = decode_trigger_args(&function_args_raw, function_nargs)?;
 
         let timing = if tgtype & TRIGGER_TYPE_INSTEAD != 0 {
             TriggerTiming::InsteadOf
@@ -2073,7 +2079,7 @@ async fn introspect_triggers(
             when_clause,
             function_schema,
             function_name,
-            function_args: vec![],
+            function_args,
             enabled,
             old_table_name,
             new_table_name,
@@ -2086,6 +2092,34 @@ async fn introspect_triggers(
     }
 
     Ok(triggers)
+}
+
+/// Decode `pg_trigger.tgargs` into the SQL-literal form used by the parser.
+///
+/// PostgreSQL stores trigger args as a bytea of NUL-terminated C strings
+/// concatenated together, with `tgnargs` giving the count. The parser stores
+/// `function_args` as the DDL call-site expressions (e.g. `'fulltext'`), so we
+/// wrap each raw value in single quotes with `''` escaping to match.
+fn decode_trigger_args(raw: &[u8], nargs: i16) -> Result<Vec<String>> {
+    if nargs <= 0 {
+        return Ok(Vec::new());
+    }
+    let nargs = nargs as usize;
+    let mut args = Vec::with_capacity(nargs);
+    for chunk in raw.split(|b| *b == 0).take(nargs) {
+        let value = std::str::from_utf8(chunk).map_err(|e| {
+            SchemaError::DatabaseError(format!("Invalid UTF-8 in pg_trigger.tgargs: {e}"))
+        })?;
+        args.push(format!("'{}'", value.replace('\'', "''")));
+    }
+    if args.len() != nargs {
+        return Err(SchemaError::DatabaseError(format!(
+            "pg_trigger.tgargs decoded {} arg(s), expected {} (tgnargs mismatch)",
+            args.len(),
+            nargs
+        )));
+    }
+    Ok(args)
 }
 
 fn extract_when_clause(trigger_def: &str) -> Option<String> {
@@ -2724,5 +2758,46 @@ mod tests {
     fn map_pg_type_builtin_text_stays_builtin() {
         let result = map_pg_type("text", None, "pg_catalog", "text", -1).unwrap();
         assert_eq!(result, PgType::Text);
+    }
+
+    #[test]
+    fn decode_trigger_args_zero_nargs_returns_empty() {
+        assert_eq!(decode_trigger_args(&[], 0).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn decode_trigger_args_wraps_nul_separated_strings_as_sql_literals() {
+        // Matches pagila's film_fulltext_trigger:
+        //   EXECUTE FUNCTION tsvector_update_trigger(
+        //     'fulltext', 'pg_catalog.english', 'title', 'description'
+        //   )
+        let raw = b"fulltext\0pg_catalog.english\0title\0description\0";
+        let args = decode_trigger_args(raw, 4).unwrap();
+        assert_eq!(
+            args,
+            vec![
+                "'fulltext'".to_string(),
+                "'pg_catalog.english'".to_string(),
+                "'title'".to_string(),
+                "'description'".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn decode_trigger_args_escapes_embedded_single_quotes() {
+        let raw = b"it's\0";
+        let args = decode_trigger_args(raw, 1).unwrap();
+        assert_eq!(args, vec!["'it''s'".to_string()]);
+    }
+
+    #[test]
+    fn decode_trigger_args_rejects_fewer_chunks_than_nargs() {
+        let raw = b"only_one\0";
+        let err = decode_trigger_args(raw, 3).unwrap_err();
+        assert!(
+            matches!(err, SchemaError::DatabaseError(ref msg) if msg.contains("tgnargs mismatch")),
+            "expected tgnargs mismatch error, got {err:?}"
+        );
     }
 }
