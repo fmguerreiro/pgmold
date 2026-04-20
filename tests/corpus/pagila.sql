@@ -1,3 +1,4 @@
+-- IGNORE: pgmold-268 planner emits partition table 'payment_p2022_01' twice; pgmold-267 (trigger args) confirmed fixed — only the partition dup remains
 -- Source: https://github.com/devrimgunduz/pagila/blob/master/pagila-schema.sql
 -- Commit: 5ba5a57aeb159f75f02aca2432d3c262186d13d3
 -- License: MIT

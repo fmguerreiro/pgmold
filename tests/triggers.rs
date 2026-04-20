@@ -232,9 +232,11 @@ async fn inherited_partition_trigger_no_phantom_drop() {
 
 #[tokio::test]
 async fn trigger_with_string_literal_args_round_trips() {
-    // Regression guard for pgmold-267: EXECUTE FUNCTION args (pagila's
-    // film_fulltext_trigger uses tsvector_update_trigger('fulltext', ...))
-    // must survive the apply -> introspect loop without phantom diffs.
+    // Regression guard for pgmold-267: EXECUTE FUNCTION args (modelled on
+    // pagila's film_fulltext_trigger with tsvector_update_trigger('fulltext', ...))
+    // must survive the apply -> introspect loop without phantom diffs. We use a
+    // user-defined trigger function instead of pg_catalog.tsvector_update_trigger
+    // so the test doesn't depend on tsvector column introspection.
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
@@ -243,13 +245,20 @@ async fn trigger_with_string_literal_args_round_trips() {
             film_id INTEGER PRIMARY KEY,
             title TEXT NOT NULL,
             description TEXT,
-            fulltext TSVECTOR NOT NULL
+            fulltext TEXT
         );
+
+        CREATE FUNCTION public.log_trigger_args() RETURNS TRIGGER
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            RETURN NEW;
+        END;
+        $$;
 
         CREATE TRIGGER film_fulltext_trigger
             BEFORE INSERT OR UPDATE ON public.film
             FOR EACH ROW
-            EXECUTE FUNCTION tsvector_update_trigger('fulltext', 'pg_catalog.english', 'title', 'description');
+            EXECUTE FUNCTION public.log_trigger_args('fulltext', 'pg_catalog.english', 'title', 'description');
     "#;
 
     let parsed_schema = parse_sql_string(schema_sql).unwrap();
