@@ -242,74 +242,119 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         }
                         AlterTableOperation::AddConstraint { constraint, .. } => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
-                                if let TableConstraint::PrimaryKey(pk) = constraint {
-                                    apply_primary_key(table, &pk);
-                                } else if let TableConstraint::ForeignKey(fk) = constraint {
-                                    let fk_name = fk
-                                        .name
-                                        .as_ref()
-                                        .map(|n| unquote_ident(&n.to_string()).to_string())
-                                        .unwrap_or_else(|| {
-                                            format!(
-                                                "{}_{}_fkey",
-                                                tbl_name,
-                                                unquote_ident(&fk.columns[0].to_string())
-                                            )
+                                match constraint {
+                                    TableConstraint::PrimaryKey(pk) => {
+                                        apply_primary_key(table, &pk);
+                                    }
+                                    TableConstraint::ForeignKey(fk) => {
+                                        let fk_name = fk
+                                            .name
+                                            .as_ref()
+                                            .map(|n| unquote_ident(&n.to_string()).to_string())
+                                            .unwrap_or_else(|| {
+                                                format!(
+                                                    "{}_{}_fkey",
+                                                    tbl_name,
+                                                    unquote_ident(&fk.columns[0].to_string())
+                                                )
+                                            });
+                                        let (ref_schema, ref_table) =
+                                            extract_qualified_name(&fk.foreign_table);
+                                        table.foreign_keys.push(ForeignKey {
+                                            name: truncate_identifier(&fk_name),
+                                            columns: fk
+                                                .columns
+                                                .iter()
+                                                .map(|c| unquote_ident(&c.to_string()).to_string())
+                                                .collect(),
+                                            referenced_schema: ref_schema,
+                                            referenced_table: ref_table,
+                                            referenced_columns: fk
+                                                .referred_columns
+                                                .iter()
+                                                .map(|c| unquote_ident(&c.to_string()).to_string())
+                                                .collect(),
+                                            on_delete: parse_referential_action(&fk.on_delete),
+                                            on_update: parse_referential_action(&fk.on_update),
                                         });
-                                    let (ref_schema, ref_table) =
-                                        extract_qualified_name(&fk.foreign_table);
-                                    table.foreign_keys.push(ForeignKey {
-                                        name: truncate_identifier(&fk_name),
-                                        columns: fk
-                                            .columns
-                                            .iter()
-                                            .map(|c| unquote_ident(&c.to_string()).to_string())
-                                            .collect(),
-                                        referenced_schema: ref_schema,
-                                        referenced_table: ref_table,
-                                        referenced_columns: fk
-                                            .referred_columns
-                                            .iter()
-                                            .map(|c| unquote_ident(&c.to_string()).to_string())
-                                            .collect(),
-                                        on_delete: parse_referential_action(&fk.on_delete),
-                                        on_update: parse_referential_action(&fk.on_update),
-                                    });
-                                } else if let TableConstraint::Check(chk) = constraint {
-                                    let constraint_name = chk
-                                        .name
-                                        .as_ref()
-                                        .map(|n| unquote_ident(&n.to_string()).to_string())
-                                        .unwrap_or_else(|| format!("{tbl_name}_check"));
+                                    }
+                                    TableConstraint::Check(chk) => {
+                                        let constraint_name = chk
+                                            .name
+                                            .as_ref()
+                                            .map(|n| unquote_ident(&n.to_string()).to_string())
+                                            .unwrap_or_else(|| format!("{tbl_name}_check"));
 
-                                    table.check_constraints.push(CheckConstraint {
-                                        name: constraint_name,
-                                        expression: normalize_expr(&chk.expr.to_string()),
-                                    });
-                                    table.check_constraints.sort();
-                                } else if let TableConstraint::Unique(uniq) = constraint {
-                                    let constraint_name = uniq
-                                        .name
-                                        .as_ref()
-                                        .map(|n| unquote_ident(&n.to_string()).to_string())
-                                        .unwrap_or_else(|| format!("{tbl_name}_unique"));
+                                        table.check_constraints.push(CheckConstraint {
+                                            name: constraint_name,
+                                            expression: normalize_expr(&chk.expr.to_string()),
+                                        });
+                                        table.check_constraints.sort();
+                                    }
+                                    TableConstraint::Unique(uniq) => {
+                                        let constraint_name = uniq
+                                            .name
+                                            .as_ref()
+                                            .map(|n| unquote_ident(&n.to_string()).to_string())
+                                            .unwrap_or_else(|| format!("{tbl_name}_unique"));
 
-                                    table.indexes.push(Index {
-                                        name: constraint_name,
-                                        columns: uniq
-                                            .columns
-                                            .iter()
-                                            .map(|c| {
-                                                unquote_ident(&c.column.expr.to_string())
-                                                    .to_string()
-                                            })
-                                            .collect(),
-                                        unique: true,
-                                        index_type: IndexType::BTree,
-                                        predicate: None,
-                                        is_constraint: true,
-                                    });
-                                    table.indexes.sort();
+                                        table.indexes.push(Index {
+                                            name: constraint_name,
+                                            columns: uniq
+                                                .columns
+                                                .iter()
+                                                .map(|c| {
+                                                    unquote_ident(&c.column.expr.to_string())
+                                                        .to_string()
+                                                })
+                                                .collect(),
+                                            unique: true,
+                                            index_type: IndexType::BTree,
+                                            predicate: None,
+                                            is_constraint: true,
+                                        });
+                                        table.indexes.sort();
+                                    }
+                                    // PostgreSQL emits `PRIMARY KEY USING INDEX <idx>` /
+                                    // `UNIQUE USING INDEX <idx>` when a standalone unique index
+                                    // is being promoted to a constraint. Recording the promotion
+                                    // would require `Table.primary_key` (and the index model) to
+                                    // carry the source index name. Until that model change lands,
+                                    // fail loudly rather than silently dropping the constraint —
+                                    // a silent drop would cause sqlgen to emit a CREATE TABLE
+                                    // without the PK/UNIQUE, and downstream FKs targeting those
+                                    // columns would fail to apply.
+                                    TableConstraint::PrimaryKeyUsingIndex(pk) => {
+                                        let name = pk
+                                            .name
+                                            .as_ref()
+                                            .map(|n| unquote_ident(&n.to_string()).to_string())
+                                            .unwrap_or_else(|| format!("{tbl_name}_pkey"));
+                                        return Err(SchemaError::ParseError(format!(
+                                            "ALTER TABLE {tbl_key} ADD CONSTRAINT {name} PRIMARY KEY USING INDEX is not yet supported"
+                                        )));
+                                    }
+                                    TableConstraint::UniqueUsingIndex(uniq) => {
+                                        let name = uniq
+                                            .name
+                                            .as_ref()
+                                            .map(|n| unquote_ident(&n.to_string()).to_string())
+                                            .unwrap_or_else(|| format!("{tbl_name}_unique"));
+                                        return Err(SchemaError::ParseError(format!(
+                                            "ALTER TABLE {tbl_key} ADD CONSTRAINT {name} UNIQUE USING INDEX is not yet supported"
+                                        )));
+                                    }
+                                    // ALTER TABLE ADD CONSTRAINT does not accept EXCLUDE in
+                                    // PostgreSQL in the same shape as inline EXCLUDE in CREATE
+                                    // TABLE — sqlparser still surfaces the variant, so we listed
+                                    // it explicitly to force an upstream review if this changes.
+                                    TableConstraint::Exclusion(_)
+                                    // MySQL-specific: no PostgreSQL equivalent in ALTER TABLE
+                                    // ADD CONSTRAINT. Listed explicitly so adding a new
+                                    // TableConstraint variant upstream forces a compile-time
+                                    // review here instead of silent fallthrough.
+                                    | TableConstraint::Index(_)
+                                    | TableConstraint::FulltextOrSpatial(_) => {}
                                 }
                             }
                         }
