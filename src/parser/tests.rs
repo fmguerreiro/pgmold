@@ -4174,6 +4174,39 @@ ALTER TABLE ONLY public.payment ATTACH PARTITION public.payment_p2022_01 FOR VAL
 }
 
 #[test]
+fn standalone_create_table_then_attach_partition_moves_to_partitions() {
+    let sql = r#"
+CREATE TABLE public.payment (
+    payment_id BIGINT NOT NULL
+) PARTITION BY RANGE (payment_id);
+
+CREATE TABLE public.payment_p2022_01 (
+    payment_id BIGINT NOT NULL
+);
+
+ALTER TABLE ONLY public.payment ATTACH PARTITION public.payment_p2022_01 FOR VALUES FROM ('2022-01-01 00:00:00+00') TO ('2022-02-01 00:00:00+00');
+
+ALTER TABLE public.payment_p2022_01 OWNER TO postgres;
+"#;
+    let schema = parse_sql_string(sql).expect("SQL should parse");
+
+    assert!(
+        !schema.tables.contains_key("public.payment_p2022_01"),
+        "Attached partition must not remain in tables (would emit duplicate CREATE TABLE)"
+    );
+    assert_eq!(
+        schema.tables.len(),
+        1,
+        "Only the parent `payment` table should remain"
+    );
+    let partition = schema
+        .partitions
+        .get("public.payment_p2022_01")
+        .expect("partition entry must exist");
+    assert_eq!(partition.owner.as_deref(), Some("postgres"));
+}
+
+#[test]
 fn attach_partition_list_via_alter_table() {
     let sql = r#"
 CREATE TABLE public.cities (

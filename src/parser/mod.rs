@@ -447,6 +447,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 extract_qualified_name(&partition_name);
                             let child_key = qualified_name(&child_schema, &child_name);
                             let bound = parse_for_values_required(&partition_bound)?;
+                            let owner = schema.tables.remove(&child_key).and_then(|t| t.owner);
                             let partition = Partition {
                                 schema: child_schema,
                                 name: child_name,
@@ -455,7 +456,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 bound,
                                 indexes: Vec::new(),
                                 check_constraints: Vec::new(),
-                                owner: None,
+                                owner,
                             };
                             schema.partitions.insert(child_key, partition);
                         }
@@ -467,6 +468,8 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                             let (child_schema, child_name) =
                                 extract_qualified_name(&partition_name);
                             let child_key = qualified_name(&child_schema, &child_name);
+                            // TODO: PostgreSQL promotes a detached partition to a standalone
+                            // table; re-insert into schema.tables to model that.
                             schema.partitions.remove(&child_key);
                         }
                         // PostgreSQL `ALTER TABLE` variants pgmold does not yet
