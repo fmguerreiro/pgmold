@@ -5737,7 +5737,7 @@ mod tests {
             }
         }
 
-        let add_fk_targets: Vec<&str> = planned
+        let mut add_fk_targets: Vec<&str> = planned
             .iter()
             .filter_map(|op| match op {
                 MigrationOp::AddForeignKey { foreign_key, .. } => {
@@ -5746,12 +5746,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        let mut sorted_targets = add_fk_targets.clone();
-        sorted_targets.sort();
+        add_fk_targets.sort();
         assert_eq!(
-            sorted_targets,
+            add_fk_targets,
             vec!["a", "b", "c"],
-            "each ring edge must be extracted exactly once, got {add_fk_targets:?}"
+            "each ring edge must be extracted exactly once"
         );
 
         let last_create_pos = planned
@@ -5965,8 +5964,13 @@ mod tests {
     fn add_column_with_generated_expression_ordered_after_function() {
         // Symmetric with the CreateTable arm: a column added later whose GENERATED
         // expression references a function must be ordered after that function.
-        // Regression guard for the AddColumn.column.generated walk that was
-        // previously missing from the content-aware pass.
+        //
+        // Two edges keep this invariant today: the `functions → add_columns` tier
+        // blanket (unconditional, line ~317) and the content-aware walk of
+        // `column.generated` added alongside the existing `column.default` walk.
+        // The blanket alone would be enough for this ordering; the specific walk
+        // exists for symmetry with `CreateTable.column.generated` so future
+        // suppressions of the blanket won't silently regress.
         let f = make_simple_function("compute_derived", "public");
         let column = Column {
             name: "derived".to_string(),
