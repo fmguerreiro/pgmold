@@ -4202,3 +4202,47 @@ ALTER TABLE public.measurement DETACH PARTITION public.measurement_y2021m01 CONC
         "Concurrently detached partition should not appear in schema"
     );
 }
+
+#[test]
+fn create_aggregate_minimal_sfunc_stype() {
+    let sql = r#"
+CREATE AGGREGATE public.group_concat(text) (
+    SFUNC = public._group_concat,
+    STYPE = text
+);
+"#;
+    let schema = parse_sql_string(sql).expect("Should parse CREATE AGGREGATE");
+    let agg = schema
+        .aggregates
+        .get("public.group_concat(text)")
+        .expect("Aggregate should be stored under signature key");
+
+    assert_eq!(agg.schema, "public");
+    assert_eq!(agg.name, "group_concat");
+    assert_eq!(agg.args, vec!["text".to_string()]);
+    assert_eq!(agg.sfunc_schema, "public");
+    assert_eq!(agg.sfunc_name, "_group_concat");
+    assert_eq!(agg.stype, "text");
+    assert!(agg.finalfunc_name.is_none());
+    assert!(agg.initcond.is_none());
+    assert!(agg.parallel.is_none());
+}
+
+#[test]
+fn alter_aggregate_owner_records_pending_owner() {
+    let sql = r#"
+CREATE AGGREGATE public.group_concat(text) (
+    SFUNC = public._group_concat,
+    STYPE = text
+);
+
+ALTER AGGREGATE public.group_concat(text) OWNER TO postgres;
+"#;
+    let schema = parse_sql_string(sql).expect("Should parse");
+    let agg = schema
+        .aggregates
+        .get("public.group_concat(text)")
+        .expect("Aggregate should exist");
+
+    assert_eq!(agg.owner.as_deref(), Some("postgres"));
+}

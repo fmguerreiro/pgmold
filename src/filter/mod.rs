@@ -236,6 +236,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
     let strip_grants = !filter.should_include_type(ObjectType::Grants);
 
     let mut functions = filter_field(&schema.functions, filter, ObjectType::Functions);
+    let mut aggregates = filter_field(&schema.aggregates, filter, ObjectType::Functions);
     let mut views = filter_field(&schema.views, filter, ObjectType::Views);
     let mut sequences = filter_field(&schema.sequences, filter, ObjectType::Sequences);
     let mut enums = filter_field(&schema.enums, filter, ObjectType::Enums);
@@ -244,6 +245,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
 
     if strip_grants {
         strip_grants_from_values(&mut functions);
+        strip_grants_from_values(&mut aggregates);
         strip_grants_from_values(&mut views);
         strip_grants_from_values(&mut sequences);
         strip_grants_from_values(&mut enums);
@@ -268,6 +270,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         enums,
         domains,
         functions,
+        aggregates,
         views,
         triggers: filter_field(&schema.triggers, filter, ObjectType::Triggers),
         sequences,
@@ -341,6 +344,7 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
         enums: retain_by_schema(&schema.enums, &allowed, |e| &e.schema),
         domains: retain_by_schema(&schema.domains, &allowed, |d| &d.schema),
         functions: retain_by_schema(&schema.functions, &allowed, |f| &f.schema),
+        aggregates: retain_by_schema(&schema.aggregates, &allowed, |a| &a.schema),
         views: retain_by_schema(&schema.views, &allowed, |v| &v.schema),
         triggers: retain_by_schema(&schema.triggers, &allowed, |t| &t.target_schema),
         sequences: retain_by_schema(&schema.sequences, &allowed, |s| &s.schema),
@@ -383,6 +387,12 @@ impl HasName for crate::model::Table {
 }
 
 impl HasName for crate::model::Function {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl HasName for crate::model::Aggregate {
     fn name(&self) -> &str {
         &self.name
     }
@@ -452,6 +462,7 @@ macro_rules! impl_has_grants {
 
 impl_has_grants!(
     crate::model::Function,
+    crate::model::Aggregate,
     crate::model::View,
     crate::model::Sequence,
     crate::model::EnumType,

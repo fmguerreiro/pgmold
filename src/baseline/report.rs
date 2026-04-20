@@ -9,6 +9,8 @@ pub struct ObjectCounts {
     pub enums: usize,
     pub tables: usize,
     pub functions: usize,
+    #[serde(default)]
+    pub aggregates: usize,
     pub views: usize,
     pub triggers: usize,
     pub sequences: usize,
@@ -21,6 +23,7 @@ impl ObjectCounts {
             enums: schema.enums.len(),
             tables: schema.tables.len(),
             functions: schema.functions.len(),
+            aggregates: schema.aggregates.len(),
             views: schema.views.len(),
             triggers: schema.triggers.len(),
             sequences: schema.sequences.len(),
@@ -32,6 +35,7 @@ impl ObjectCounts {
             + self.enums
             + self.tables
             + self.functions
+            + self.aggregates
             + self.views
             + self.triggers
             + self.sequences
@@ -78,6 +82,7 @@ pub fn generate_text_report(report: &BaselineReport) -> String {
         ("Enums:", report.object_counts.enums),
         ("Tables:", report.object_counts.tables),
         ("Functions:", report.object_counts.functions),
+        ("Aggregates:", report.object_counts.aggregates),
         ("Views:", report.object_counts.views),
         ("Triggers:", report.object_counts.triggers),
         ("Sequences:", report.object_counts.sequences),
@@ -160,6 +165,7 @@ mod tests {
                 enums: 1,
                 tables: 5,
                 functions: 3,
+                aggregates: 0,
                 views: 1,
                 triggers: 2,
                 sequences: 4,
@@ -186,6 +192,7 @@ mod tests {
             enums: 2,
             tables: 3,
             functions: 4,
+            aggregates: 0,
             views: 5,
             triggers: 6,
             sequences: 7,

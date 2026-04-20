@@ -72,6 +72,7 @@ pub enum PendingOwnerObjectType {
     View,
     Sequence,
     Function,
+    Aggregate,
     Enum,
     Domain,
 }
@@ -81,6 +82,7 @@ pub enum PendingCommentObjectType {
     Table,
     Column,
     Function,
+    Aggregate,
     View,
     MaterializedView,
     Type,
@@ -114,6 +116,7 @@ pub enum PendingGrantObjectType {
     View,
     Sequence,
     Function,
+    Aggregate,
     Schema,
     Enum,
     Domain,
@@ -139,6 +142,8 @@ pub struct Schema {
     pub enums: BTreeMap<String, EnumType>,
     pub domains: BTreeMap<String, Domain>,
     pub functions: BTreeMap<String, Function>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub aggregates: BTreeMap<String, Aggregate>,
     pub views: BTreeMap<String, View>,
     pub triggers: BTreeMap<String, Trigger>,
     pub sequences: BTreeMap<String, Sequence>,
@@ -645,6 +650,72 @@ pub enum SecurityType {
     Definer,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AggregateParallel {
+    Safe,
+    Restricted,
+    Unsafe,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Aggregate {
+    pub schema: String,
+    pub name: String,
+    pub args: Vec<String>,
+    pub sfunc_schema: String,
+    pub sfunc_name: String,
+    pub stype: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finalfunc_schema: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finalfunc_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initcond: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel: Option<AggregateParallel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<Grant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
+impl Aggregate {
+    /// Returns the comma-separated list of argument types, normalized for PG canonical forms.
+    pub fn args_string(&self) -> String {
+        self.args
+            .iter()
+            .map(|a| normalize_pg_type(a).into_owned())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Returns "name(args)" used as the BTreeMap key suffix, matching Function::signature.
+    pub fn signature(&self) -> String {
+        format!("{}({})", self.name, self.args_string())
+    }
+
+    /// Compares two aggregates semantically, ignoring ownership.
+    pub fn semantically_equals(&self, other: &Aggregate) -> bool {
+        self.schema == other.schema
+            && self.name == other.name
+            && self.args.len() == other.args.len()
+            && self
+                .args
+                .iter()
+                .zip(other.args.iter())
+                .all(|(a, b)| normalize_pg_type(a) == normalize_pg_type(b))
+            && self.sfunc_schema == other.sfunc_schema
+            && self.sfunc_name == other.sfunc_name
+            && normalize_pg_type(&self.stype) == normalize_pg_type(&other.stype)
+            && self.finalfunc_schema == other.finalfunc_schema
+            && self.finalfunc_name == other.finalfunc_name
+            && self.initcond == other.initcond
+            && self.parallel == other.parallel
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct View {
     pub name: String,
@@ -884,6 +955,7 @@ impl Schema {
             enums: BTreeMap::new(),
             domains: BTreeMap::new(),
             functions: BTreeMap::new(),
+            aggregates: BTreeMap::new(),
             views: BTreeMap::new(),
             triggers: BTreeMap::new(),
             sequences: BTreeMap::new(),
@@ -1012,6 +1084,14 @@ impl Schema {
                     false
                 }
             }
+            PendingOwnerObjectType::Aggregate => {
+                if let Some(agg) = self.aggregates.get_mut(&po.object_key) {
+                    agg.owner = Some(po.owner.clone());
+                    true
+                } else {
+                    false
+                }
+            }
             PendingOwnerObjectType::Enum => {
                 if let Some(enum_type) = self.enums.get_mut(&po.object_key) {
                     enum_type.owner = Some(po.owner.clone());
@@ -1069,7 +1149,12 @@ impl Schema {
                 .map(|v| &mut v.grants)
                 .or_else(|| self.tables.get_mut(key).map(|t| &mut t.grants)),
             PendingGrantObjectType::Sequence => self.sequences.get_mut(key).map(|s| &mut s.grants),
-            PendingGrantObjectType::Function => self.functions.get_mut(key).map(|f| &mut f.grants),
+            PendingGrantObjectType::Function => self
+                .functions
+                .get_mut(key)
+                .map(|f| &mut f.grants)
+                .or_else(|| self.aggregates.get_mut(key).map(|a| &mut a.grants)),
+            PendingGrantObjectType::Aggregate => self.aggregates.get_mut(key).map(|a| &mut a.grants),
             PendingGrantObjectType::Schema => self.schemas.get_mut(key).map(|s| &mut s.grants),
             PendingGrantObjectType::Enum => self
                 .enums
@@ -1169,6 +1254,14 @@ impl Schema {
                     false
                 }
             }
+            PendingCommentObjectType::Aggregate => {
+                if let Some(agg) = self.aggregates.get_mut(&pc.object_key) {
+                    agg.comment = pc.comment.clone();
+                    true
+                } else {
+                    false
+                }
+            }
             PendingCommentObjectType::View | PendingCommentObjectType::MaterializedView => {
                 if let Some(view) = self.views.get_mut(&pc.object_key) {
                     view.comment = pc.comment.clone();
@@ -1232,6 +1325,9 @@ impl Schema {
         }
         for function in self.functions.values_mut() {
             merge_grants_by_grantee(&mut function.grants);
+        }
+        for aggregate in self.aggregates.values_mut() {
+            merge_grants_by_grantee(&mut aggregate.grants);
         }
         for schema in self.schemas.values_mut() {
             merge_grants_by_grantee(&mut schema.grants);

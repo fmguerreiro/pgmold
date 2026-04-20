@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
 use crate::model::{
-    CheckConstraint, Column, Domain, EnumType, ExclusionConstraint, Extension, ForeignKey,
-    Function, Index, Partition, PgSchema, PgType, Policy, PrimaryKey, Privilege, QualifiedName,
-    Sequence, SequenceDataType, SequenceOwner, Server, Table, Trigger, TriggerEnabled, VersionView,
-    View,
+    Aggregate, CheckConstraint, Column, Domain, EnumType, ExclusionConstraint, Extension,
+    ForeignKey, Function, Index, Partition, PgSchema, PgType, Policy, PrimaryKey, Privilege,
+    QualifiedName, Sequence, SequenceDataType, SequenceOwner, Server, Table, Trigger,
+    TriggerEnabled, VersionView, View,
 };
 
 pub struct DiffOptions<'a> {
@@ -20,6 +20,7 @@ pub enum CommentObjectType {
     View,
     MaterializedView,
     Function,
+    Aggregate,
     Type,
     Domain,
     Schema,
@@ -35,6 +36,7 @@ pub enum OwnerObjectKind {
     MaterializedView,
     Sequence,
     Function,
+    Aggregate,
     Type,
     Domain,
 }
@@ -45,6 +47,7 @@ pub enum GrantObjectKind {
     View,
     Sequence,
     Function,
+    Aggregate,
     Schema,
     Type,
     Domain,
@@ -166,6 +169,11 @@ pub enum MigrationOp {
         name: String,
         args: String,
         new_function: Function,
+    },
+    CreateAggregate(Aggregate),
+    DropAggregate {
+        name: String,
+        args: String,
     },
     CreateView(View),
     DropView {

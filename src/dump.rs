@@ -331,6 +331,34 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
         );
     }
 
+    for aggregate in schema.aggregates.values() {
+        ops.push(MigrationOp::CreateAggregate(aggregate.clone()));
+        let agg_args = aggregate.args_string();
+        push_owner_and_grant_ops(
+            &mut ops,
+            DumpObjectInfo {
+                owner: &aggregate.owner,
+                owner_kind: OwnerObjectKind::Aggregate,
+                grants: &aggregate.grants,
+                grant_kind: GrantObjectKind::Aggregate,
+                schema: &aggregate.schema,
+                name: &aggregate.name,
+                args: Some(agg_args.clone()),
+            },
+        );
+        if let Some(text) = &aggregate.comment {
+            ops.push(MigrationOp::SetComment {
+                object_type: CommentObjectType::Aggregate,
+                schema: aggregate.schema.clone(),
+                name: aggregate.name.clone(),
+                arguments: Some(agg_args.clone()),
+                column: None,
+                target: None,
+                comment: Some(text.clone()),
+            });
+        }
+    }
+
     for view in schema.views.values() {
         ops.push(MigrationOp::CreateView(view.clone()));
         push_owner_and_grant_ops(

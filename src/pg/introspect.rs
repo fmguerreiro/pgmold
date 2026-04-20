@@ -21,6 +21,7 @@ pub async fn introspect_schema(
         domains,
         tables,
         functions,
+        aggregates,
         views,
         triggers,
         sequences,
@@ -49,6 +50,7 @@ pub async fn introspect_schema(
         introspect_domains(connection, target_schemas, include_extension_objects),
         introspect_tables(connection, target_schemas, include_extension_objects),
         introspect_functions(connection, target_schemas, include_extension_objects),
+        introspect_aggregates(connection, target_schemas, include_extension_objects),
         introspect_views(connection, target_schemas, include_extension_objects),
         introspect_triggers(connection, target_schemas, include_extension_objects),
         introspect_sequences(connection, target_schemas, include_extension_objects),
@@ -79,6 +81,7 @@ pub async fn introspect_schema(
     schema.domains = domains;
     schema.tables = tables;
     schema.functions = functions;
+    schema.aggregates = aggregates;
     schema.views = views;
     schema.triggers = triggers;
     schema.sequences = sequences;
@@ -102,6 +105,8 @@ pub async fn introspect_schema(
     for (qualified_name, grants) in function_grants {
         if let Some(function) = schema.functions.get_mut(&qualified_name) {
             function.grants = grants;
+        } else if let Some(aggregate) = schema.aggregates.get_mut(&qualified_name) {
+            aggregate.grants = grants;
         }
     }
 
@@ -1650,6 +1655,110 @@ async fn introspect_functions(
     }
 
     Ok(functions)
+}
+
+async fn introspect_aggregates(
+    connection: &PgConnection,
+    target_schemas: &[String],
+    include_extension_objects: bool,
+) -> Result<BTreeMap<String, Aggregate>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            p.proname AS name,
+            n.nspname AS schema,
+            pg_get_function_identity_arguments(p.oid) AS arguments,
+            r.rolname AS owner,
+            sfunc_n.nspname AS sfunc_schema,
+            sfunc.proname AS sfunc_name,
+            pg_catalog.format_type(a.aggtranstype, NULL) AS stype,
+            finalfunc_n.nspname AS finalfunc_schema,
+            finalfunc.proname AS finalfunc_name,
+            a.agginitval AS initcond,
+            p.proparallel AS parallel,
+            a.aggkind AS aggkind
+        FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        JOIN pg_aggregate a ON a.aggfnoid = p.oid
+        JOIN pg_roles r ON p.proowner = r.oid
+        LEFT JOIN pg_proc sfunc ON a.aggtransfn = sfunc.oid
+        LEFT JOIN pg_namespace sfunc_n ON sfunc.pronamespace = sfunc_n.oid
+        LEFT JOIN pg_proc finalfunc ON a.aggfinalfn = finalfunc.oid AND a.aggfinalfn <> 0
+        LEFT JOIN pg_namespace finalfunc_n ON finalfunc.pronamespace = finalfunc_n.oid
+        WHERE n.nspname = ANY($1::text[])
+          AND p.prokind = 'a'
+          AND ($2::boolean OR NOT EXISTS (
+              SELECT 1 FROM pg_depend d
+              WHERE d.objid = p.oid
+              AND d.deptype = 'e'
+          ))
+        "#,
+    )
+    .bind(target_schemas)
+    .bind(include_extension_objects)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch aggregates: {e}")))?;
+
+    let mut aggregates = BTreeMap::new();
+    for row in rows {
+        let name: String = row.get("name");
+        let schema: String = row.get("schema");
+        let aggkind: i8 = row.get("aggkind");
+        // Only materialize normal aggregates for now — ordered-set ('o') and
+        // hypothetical ('h') aggregates have different signatures and are out
+        // of scope for pgmold-262.
+        if pg_char(aggkind) != 'n' {
+            continue;
+        }
+
+        let arguments_str: String = row.get("arguments");
+        let args: Vec<String> = if arguments_str.trim().is_empty() {
+            Vec::new()
+        } else {
+            parse_function_arguments(&arguments_str)
+                .into_iter()
+                .map(|arg| crate::model::normalize_pg_type(&arg.data_type).into_owned())
+                .collect()
+        };
+
+        let owner: String = row.get("owner");
+        let sfunc_schema: String = row.get("sfunc_schema");
+        let sfunc_name: String = row.get("sfunc_name");
+        let stype_raw: String = row.get("stype");
+        let stype = crate::model::normalize_pg_type(&stype_raw).into_owned();
+        let finalfunc_schema: Option<String> = row.get("finalfunc_schema");
+        let finalfunc_name: Option<String> = row.get("finalfunc_name");
+        let initcond: Option<String> = row.get("initcond");
+        let parallel_char: i8 = row.get("parallel");
+        let parallel = match pg_char(parallel_char) {
+            's' => Some(AggregateParallel::Safe),
+            'r' => Some(AggregateParallel::Restricted),
+            // 'u' (unsafe) is the PostgreSQL default; do not store it so parse and introspect converge
+            _ => None,
+        };
+
+        let aggregate = Aggregate {
+            schema: schema.clone(),
+            name: name.clone(),
+            args,
+            sfunc_schema,
+            sfunc_name,
+            stype,
+            finalfunc_schema,
+            finalfunc_name,
+            initcond,
+            parallel,
+            owner: Some(owner),
+            grants: Vec::new(),
+            comment: None,
+        };
+
+        let key = qualified_name(&schema, &aggregate.signature());
+        aggregates.insert(key, aggregate);
+    }
+
+    Ok(aggregates)
 }
 
 /// Splits a function argument list on commas, skipping commas inside

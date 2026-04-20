@@ -137,6 +137,14 @@ pub(crate) enum OpKey {
         name: String,
         args: String,
     },
+    CreateAggregate {
+        name: String,
+        args: String,
+    },
+    DropAggregate {
+        name: String,
+        args: String,
+    },
     CreateView(String),
     DropView(String),
     AlterView(String),
@@ -346,6 +354,14 @@ impl OpKey {
                 name: name.clone(),
                 args: args.clone(),
             },
+            MigrationOp::CreateAggregate(a) => OpKey::CreateAggregate {
+                name: qualified_name(&a.schema, &a.name),
+                args: a.args_string(),
+            },
+            MigrationOp::DropAggregate { name, args } => OpKey::DropAggregate {
+                name: name.clone(),
+                args: args.clone(),
+            },
             MigrationOp::CreateView(v) => OpKey::CreateView(qualified_name(&v.schema, &v.name)),
             MigrationOp::DropView { name, .. } => OpKey::DropView(name.clone()),
             MigrationOp::AlterView { name, .. } => OpKey::AlterView(name.clone()),
@@ -483,6 +499,17 @@ pub(crate) fn add_privilege_dependency_edge(
             if let Some(args) = args {
                 edges.push((
                     OpKey::CreateFunction {
+                        name: qualified,
+                        args: args.clone(),
+                    },
+                    key.clone(),
+                ));
+            }
+        }
+        GrantObjectKind::Aggregate => {
+            if let Some(args) = args {
+                edges.push((
+                    OpKey::CreateAggregate {
                         name: qualified,
                         args: args.clone(),
                     },

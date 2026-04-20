@@ -430,6 +430,44 @@ fn view_owner_kind(materialized: bool) -> OwnerObjectKind {
     }
 }
 
+pub(super) fn diff_aggregates(
+    from: &Schema,
+    to: &Schema,
+    options: &DiffOptions,
+) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+    diff_objects(
+        &mut ops,
+        options,
+        &from.aggregates,
+        &to.aggregates,
+        |_key, agg| MigrationOp::CreateAggregate(agg.clone()),
+        |ops, _key, from_agg, to_agg| {
+            if !from_agg.semantically_equals(to_agg) {
+                ops.push(MigrationOp::DropAggregate {
+                    name: qualified_name(&from_agg.schema, &from_agg.name),
+                    args: from_agg.args_string(),
+                });
+                ops.push(MigrationOp::CreateAggregate(to_agg.clone()));
+            }
+        },
+        |_key, agg| MigrationOp::DropAggregate {
+            name: qualified_name(&agg.schema, &agg.name),
+            args: agg.args_string(),
+        },
+        |_key, agg| ObjectCoords {
+            schema: agg.schema.clone(),
+            name: agg.name.clone(),
+            args: Some(agg.args_string()),
+        },
+        Some(GrantObjectKind::Aggregate),
+        |_val| Some(OwnerObjectKind::Aggregate),
+        |val| &val.owner,
+        |val| &val.grants,
+    );
+    ops
+}
+
 pub(super) fn diff_views(from: &Schema, to: &Schema, options: &DiffOptions) -> Vec<MigrationOp> {
     let mut ops = Vec::new();
     diff_objects(

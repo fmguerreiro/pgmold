@@ -80,6 +80,7 @@ fn merge_schemas(schemas: Vec<Schema>) -> Result<Schema> {
         merge_collection(&mut merged.tables, schema.tables, "table")?;
         merge_collection(&mut merged.enums, schema.enums, "enum")?;
         merge_collection(&mut merged.functions, schema.functions, "function")?;
+        merge_collection(&mut merged.aggregates, schema.aggregates, "aggregate")?;
         merge_collection(&mut merged.views, schema.views, "view")?;
         merge_collection(&mut merged.triggers, schema.triggers, "trigger")?;
         merge_collection(&mut merged.sequences, schema.sequences, "sequence")?;
