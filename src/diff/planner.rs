@@ -1926,6 +1926,9 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
 
@@ -2095,6 +2098,9 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
 
@@ -3416,6 +3422,9 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         }
     }

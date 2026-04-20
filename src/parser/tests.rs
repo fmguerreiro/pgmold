@@ -1155,6 +1155,87 @@ EXECUTE FUNCTION audit_fn();
 }
 
 #[test]
+fn parses_constraint_trigger_deferrable_initially_deferred() {
+    let sql = r#"
+CREATE FUNCTION check_junction() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
+CREATE CONSTRAINT TRIGGER "on_farmer_insert_require_junction"
+AFTER INSERT ON "public"."farmers"
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW
+EXECUTE FUNCTION "public"."check_junction"();
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let trigger = schema
+        .triggers
+        .get("public.farmers.on_farmer_insert_require_junction")
+        .unwrap();
+    assert!(trigger.is_constraint);
+    assert!(trigger.deferrable);
+    assert!(trigger.initially_deferred);
+    assert_eq!(trigger.timing, TriggerTiming::After);
+    assert!(trigger.for_each_row);
+}
+
+#[test]
+fn parses_constraint_trigger_initially_immediate() {
+    let sql = r#"
+CREATE FUNCTION check_junction() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
+CREATE CONSTRAINT TRIGGER my_trig
+AFTER INSERT ON users
+DEFERRABLE INITIALLY IMMEDIATE
+FOR EACH ROW
+EXECUTE FUNCTION check_junction();
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let trigger = schema.triggers.get("public.users.my_trig").unwrap();
+    assert!(trigger.is_constraint);
+    assert!(trigger.deferrable);
+    assert!(!trigger.initially_deferred);
+}
+
+#[test]
+fn parses_non_constraint_trigger_defaults() {
+    let sql = r#"
+CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER audit_trigger
+AFTER INSERT ON users
+FOR EACH ROW
+EXECUTE FUNCTION audit_fn();
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let trigger = schema.triggers.get("public.users.audit_trigger").unwrap();
+    assert!(!trigger.is_constraint);
+    assert!(!trigger.deferrable);
+    assert!(!trigger.initially_deferred);
+}
+
+#[test]
+fn rejects_constraint_trigger_before() {
+    let sql = r#"
+CREATE FUNCTION f() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE CONSTRAINT TRIGGER bad
+BEFORE INSERT ON users
+FOR EACH ROW
+EXECUTE FUNCTION f();
+"#;
+    let err = parse_sql_string(sql).unwrap_err().to_string();
+    assert!(err.contains("CONSTRAINT trigger") && err.contains("AFTER"));
+}
+
+#[test]
+fn rejects_constraint_trigger_for_each_statement() {
+    let sql = r#"
+CREATE FUNCTION f() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE CONSTRAINT TRIGGER bad
+AFTER INSERT ON users
+FOR EACH STATEMENT
+EXECUTE FUNCTION f();
+"#;
+    let err = parse_sql_string(sql).unwrap_err().to_string();
+    assert!(err.contains("CONSTRAINT trigger") && err.contains("FOR EACH ROW"));
+}
+
+#[test]
 fn rejects_new_table_on_delete_only_trigger() {
     let sql = r#"
 CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN OLD; END; $$;

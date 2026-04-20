@@ -1634,13 +1634,27 @@ fn trigger_execute_clause(trigger: &Trigger) -> String {
 }
 
 fn generate_create_trigger(trigger: &Trigger) -> String {
-    let mut sql = format!("CREATE TRIGGER {}", quote_ident(&trigger.name));
+    let mut sql = if trigger.is_constraint {
+        format!("CREATE CONSTRAINT TRIGGER {}", quote_ident(&trigger.name))
+    } else {
+        format!("CREATE TRIGGER {}", quote_ident(&trigger.name))
+    };
 
     sql.push_str(&format!(
         " {} ON {}",
         trigger_timing_and_events(trigger),
         quote_qualified(&trigger.target_schema, &trigger.target_name)
     ));
+
+    if trigger.deferrable {
+        if trigger.initially_deferred {
+            sql.push_str(" DEFERRABLE INITIALLY DEFERRED");
+        } else {
+            sql.push_str(" DEFERRABLE INITIALLY IMMEDIATE");
+        }
+    } else if trigger.is_constraint {
+        sql.push_str(" NOT DEFERRABLE");
+    }
 
     if trigger.for_each_row {
         sql.push_str(" FOR EACH ROW");
@@ -2273,6 +2287,9 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
 
@@ -2312,6 +2329,9 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
 
@@ -2341,6 +2361,9 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
 
@@ -2375,6 +2398,9 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
 
@@ -2403,6 +2429,9 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
 
@@ -2426,6 +2455,104 @@ mod tests {
             sql[0],
             r#"DROP TRIGGER "audit_trigger" ON "public"."users";"#
         );
+    }
+
+    #[test]
+    fn create_constraint_trigger_deferrable_initially_deferred() {
+        use crate::model::{Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
+
+        let trigger = Trigger {
+            name: "on_farmer_insert_require_junction".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "farmers".to_string(),
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Insert],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "check_farmer_junction_link".to_string(),
+            function_args: vec![],
+            enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
+            is_constraint: true,
+            deferrable: true,
+            initially_deferred: true,
+            comment: None,
+        };
+
+        let ops = vec![MigrationOp::CreateTrigger(trigger)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            r#"CREATE CONSTRAINT TRIGGER "on_farmer_insert_require_junction" AFTER INSERT ON "public"."farmers" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION "public"."check_farmer_junction_link"();"#
+        );
+    }
+
+    #[test]
+    fn create_constraint_trigger_initially_immediate() {
+        use crate::model::{Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
+
+        let trigger = Trigger {
+            name: "c".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "t".to_string(),
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Insert],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "f".to_string(),
+            function_args: vec![],
+            enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
+            is_constraint: true,
+            deferrable: true,
+            initially_deferred: false,
+            comment: None,
+        };
+
+        let ops = vec![MigrationOp::CreateTrigger(trigger)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("CREATE CONSTRAINT TRIGGER"));
+        assert!(sql[0].contains("DEFERRABLE INITIALLY IMMEDIATE"));
+    }
+
+    #[test]
+    fn create_constraint_trigger_not_deferrable() {
+        use crate::model::{Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
+
+        let trigger = Trigger {
+            name: "c".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "t".to_string(),
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Insert],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "public".to_string(),
+            function_name: "f".to_string(),
+            function_args: vec![],
+            enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
+            is_constraint: true,
+            deferrable: false,
+            initially_deferred: false,
+            comment: None,
+        };
+
+        let ops = vec![MigrationOp::CreateTrigger(trigger)];
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains("CREATE CONSTRAINT TRIGGER"));
+        assert!(sql[0].contains("NOT DEFERRABLE"));
     }
 
     #[test]
@@ -2523,6 +2650,9 @@ mod tests {
             enabled: TriggerEnabled::Disabled,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
 
@@ -2713,6 +2843,9 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: Some("deleted_rows".to_string()),
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
 
@@ -2742,6 +2875,9 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: Some("inserted_rows".to_string()),
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
 
@@ -2771,6 +2907,9 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: Some("old_rows".to_string()),
             new_table_name: Some("new_rows".to_string()),
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
 

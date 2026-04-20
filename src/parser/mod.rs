@@ -32,10 +32,10 @@ use sqlparser::ast::{
     AlterFunction, AlterFunctionKind, AlterFunctionOperation, AlterIndexOperation, AlterTable,
     AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
     AlterTypeOperation, CreateAggregate, CreateAggregateOption, CreateDomain, CreateExtension,
-    CreateFunction, CreateServerStatement, CreateTrigger, CreateView, DropDomain, DropExtension,
-    DropFunction, DropTrigger, FunctionParallel, ObjectType, Owner, RenameTableNameKind,
-    SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent, TriggerPeriod,
-    TriggerReferencingType, UserDefinedTypeRepresentation,
+    CreateFunction, CreateServerStatement, CreateTrigger, CreateView, DeferrableInitial,
+    DropDomain, DropExtension, DropFunction, DropTrigger, FunctionParallel, ObjectType, Owner,
+    RenameTableNameKind, SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent,
+    TriggerPeriod, TriggerReferencingType, UserDefinedTypeRepresentation,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -733,6 +733,8 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                 referencing,
                 condition,
                 exec_body,
+                is_constraint,
+                characteristics,
                 ..
             }) => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
@@ -846,6 +848,38 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     .map(|args| args.iter().map(|a| a.to_string()).collect())
                     .unwrap_or_default();
 
+                let (deferrable, initially_deferred) = match characteristics {
+                    Some(c) => {
+                        let deferrable = c.deferrable.unwrap_or(false);
+                        let initially_deferred = matches!(c.initially, Some(DeferrableInitial::Deferred));
+                        if !is_constraint && (c.deferrable.is_some() || c.initially.is_some()) {
+                            return Err(SchemaError::ParseError(format!(
+                                "Trigger '{trigger_name}' has DEFERRABLE/INITIALLY clause but is not a CONSTRAINT trigger"
+                            )));
+                        }
+                        if initially_deferred && !deferrable {
+                            return Err(SchemaError::ParseError(format!(
+                                "Trigger '{trigger_name}' has INITIALLY DEFERRED but is NOT DEFERRABLE"
+                            )));
+                        }
+                        (deferrable, initially_deferred)
+                    }
+                    None => (false, false),
+                };
+
+                if is_constraint {
+                    if timing != TriggerTiming::After {
+                        return Err(SchemaError::ParseError(format!(
+                            "CONSTRAINT trigger '{trigger_name}' must be AFTER"
+                        )));
+                    }
+                    if !for_each_row {
+                        return Err(SchemaError::ParseError(format!(
+                            "CONSTRAINT trigger '{trigger_name}' must be FOR EACH ROW"
+                        )));
+                    }
+                }
+
                 let trigger = Trigger {
                     name: trigger_name.clone(),
                     target_schema: tbl_schema.clone(),
@@ -865,6 +899,9 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                     enabled: TriggerEnabled::Origin,
                     old_table_name,
                     new_table_name,
+                    is_constraint,
+                    deferrable,
+                    initially_deferred,
                     comment: None,
                 };
 

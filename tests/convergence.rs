@@ -310,6 +310,33 @@ async fn trigger() {
 }
 
 #[tokio::test]
+async fn constraint_trigger_deferrable_initially_deferred() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.farmers (
+            id BIGSERIAL PRIMARY KEY
+        );
+
+        CREATE FUNCTION public.check_farmer_junction_link()
+        RETURNS TRIGGER
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RETURN NULL;
+        END;
+        $$;
+
+        CREATE CONSTRAINT TRIGGER on_farmer_insert_require_junction
+        AFTER INSERT ON public.farmers
+        DEFERRABLE INITIALLY DEFERRED
+        FOR EACH ROW
+        EXECUTE FUNCTION public.check_farmer_junction_link();
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn sequence() {
     assert_convergence_public(
         r#"
