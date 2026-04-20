@@ -3,11 +3,11 @@ use crate::diff::{
     MigrationOp, OwnerObjectKind, PolicyChanges, SequenceChanges,
 };
 use crate::model::{
-    parse_qualified_name, versioned_schema_name, ArgMode, CheckConstraint, Column, Domain,
-    ExclusionConstraint, ForeignKey, Function, Index, IndexType, Partition, PartitionBound,
-    PartitionStrategy, PgType, Policy, PolicyCommand, Privilege, QualifiedName, ReferentialAction,
-    SecurityType, Sequence, SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent,
-    TriggerTiming, VersionView, View, Volatility,
+    parse_qualified_name, versioned_schema_name, Aggregate, AggregateParallel, ArgMode,
+    CheckConstraint, Column, Domain, ExclusionConstraint, ForeignKey, Function, Index, IndexType,
+    Partition, PartitionBound, PartitionStrategy, PgType, Policy, PolicyCommand, Privilege,
+    QualifiedName, ReferentialAction, SecurityType, Sequence, SequenceDataType, Table, Trigger,
+    TriggerEnabled, TriggerEvent, TriggerTiming, VersionView, View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -318,6 +318,17 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             vec![generate_function_ddl(new_function, true)]
         }
 
+        MigrationOp::CreateAggregate(agg) => vec![generate_aggregate_ddl(agg)],
+
+        MigrationOp::DropAggregate { name, args } => {
+            let (schema, agg_name) = parse_qualified_name(name);
+            vec![format!(
+                "DROP AGGREGATE {}({});",
+                quote_qualified(&schema, &agg_name),
+                args
+            )]
+        }
+
         MigrationOp::CreateView(view) => generate_view_ddl(view, false),
 
         MigrationOp::DropView { name, materialized } => {
@@ -560,6 +571,10 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                 CommentObjectType::Function => {
                     let args = arguments.as_deref().unwrap_or("");
                     format!("FUNCTION {}({})", quote_qualified(schema, name), args)
+                }
+                CommentObjectType::Aggregate => {
+                    let args = arguments.as_deref().unwrap_or("");
+                    format!("AGGREGATE {}({})", quote_qualified(schema, name), args)
                 }
                 CommentObjectType::View => {
                     format!("VIEW {}", quote_qualified(schema, name))
@@ -1233,6 +1248,48 @@ fn generate_function_ddl(func: &Function, replace: bool) -> String {
     parts.join(" ")
 }
 
+fn generate_aggregate_ddl(agg: &Aggregate) -> String {
+    let args = if agg.args.is_empty() {
+        "*".to_string()
+    } else {
+        agg.args
+            .iter()
+            .map(|a| a.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let mut options = vec![format!(
+        "SFUNC = {}",
+        quote_qualified(&agg.sfunc_schema, &agg.sfunc_name)
+    )];
+    options.push(format!("STYPE = {}", agg.stype));
+
+    if let (Some(sch), Some(n)) = (&agg.finalfunc_schema, &agg.finalfunc_name) {
+        options.push(format!("FINALFUNC = {}", quote_qualified(sch, n)));
+    }
+
+    if let Some(cond) = &agg.initcond {
+        options.push(format!("INITCOND = '{}'", escape_string(cond)));
+    }
+
+    if let Some(parallel) = &agg.parallel {
+        let label = match parallel {
+            AggregateParallel::Safe => "SAFE",
+            AggregateParallel::Restricted => "RESTRICTED",
+            AggregateParallel::Unsafe => "UNSAFE",
+        };
+        options.push(format!("PARALLEL = {label}"));
+    }
+
+    format!(
+        "CREATE AGGREGATE {}({}) ({});",
+        quote_qualified(&agg.schema, &agg.name),
+        args,
+        options.join(", ")
+    )
+}
+
 fn generate_view_ddl(view: &View, replace: bool) -> Vec<String> {
     let qualified_name = quote_qualified(&view.schema, &view.name);
     if view.materialized {
@@ -1425,6 +1482,7 @@ fn generate_alter_owner(
         OwnerObjectKind::MaterializedView => "MATERIALIZED VIEW",
         OwnerObjectKind::Sequence => "SEQUENCE",
         OwnerObjectKind::Function => "FUNCTION",
+        OwnerObjectKind::Aggregate => "AGGREGATE",
         OwnerObjectKind::Type => "TYPE",
         OwnerObjectKind::Domain => "DOMAIN",
     };
@@ -1641,6 +1699,8 @@ fn grant_object_kind_to_sql(kind: &GrantObjectKind) -> &'static str {
         GrantObjectKind::View => "TABLE",
         GrantObjectKind::Sequence => "SEQUENCE",
         GrantObjectKind::Function => "FUNCTION",
+        // Aggregates share GRANT namespace with functions in PostgreSQL
+        GrantObjectKind::Aggregate => "FUNCTION",
         GrantObjectKind::Schema => "SCHEMA",
         GrantObjectKind::Type => "TYPE",
         GrantObjectKind::Domain => "DOMAIN",

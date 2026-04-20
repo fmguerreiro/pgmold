@@ -34,6 +34,8 @@ struct NodeSets {
     sequences: Vec<NodeIndex>,
     functions: Vec<NodeIndex>,
     alter_functions: Vec<NodeIndex>,
+    aggregates: Vec<NodeIndex>,
+    drop_aggregates: Vec<NodeIndex>,
     tables: Vec<NodeIndex>,
     partitions: Vec<NodeIndex>,
     add_columns: Vec<NodeIndex>,
@@ -87,6 +89,8 @@ impl NodeSets {
             sequences: graph.nodes_matching(|k| matches!(k, OpKey::CreateSequence(_))),
             functions: graph.nodes_matching(|k| matches!(k, OpKey::CreateFunction { .. })),
             alter_functions: graph.nodes_matching(|k| matches!(k, OpKey::AlterFunction { .. })),
+            aggregates: graph.nodes_matching(|k| matches!(k, OpKey::CreateAggregate { .. })),
+            drop_aggregates: graph.nodes_matching(|k| matches!(k, OpKey::DropAggregate { .. })),
             tables: graph.nodes_matching(|k| matches!(k, OpKey::CreateTable(_))),
             partitions: graph.nodes_matching(|k| matches!(k, OpKey::CreatePartition(_))),
             add_columns: graph.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. })),
@@ -208,6 +212,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.schemas, &ns.domains);
         self.edges_all_to_all(&ns.schemas, &ns.sequences);
         self.edges_all_to_all(&ns.schemas, &ns.functions);
+        self.edges_all_to_all(&ns.schemas, &ns.aggregates);
         self.edges_all_to_all(&ns.schemas, &ns.views);
         self.edges_all_to_all(&ns.version_schemas, &ns.version_views);
 
@@ -233,6 +238,9 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.enums, &ns.alter_functions);
         self.edges_all_to_all(&ns.domains, &ns.alter_functions);
         self.edges_all_to_all(&ns.add_enum_values, &ns.alter_functions);
+        self.edges_all_to_all(&ns.enums, &ns.aggregates);
+        self.edges_all_to_all(&ns.domains, &ns.aggregates);
+        self.edges_all_to_all(&ns.add_enum_values, &ns.aggregates);
     }
 
     /// Tier 3: Sequences and functions before tables.
@@ -317,6 +325,14 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.functions, &ns.add_columns);
         self.edges_all_to_all(&ns.functions, &ns.triggers);
         self.edges_all_to_all(&ns.functions, &ns.policies);
+
+        // Aggregate ordering is handled entirely by content-aware edges:
+        //   - aggregate → view / policy / trigger when those bodies call the aggregate
+        //     (via `push_function_edges`, which now matches `CreateAggregate` too)
+        //   - SFUNC/FINALFUNC function → aggregate in the `CreateAggregate` arm of
+        //     `add_content_aware_edges`
+        // Blanket tier edges would create spurious cycles when an aggregate's SFUNC
+        // body indirectly references a view / policy / trigger that uses the aggregate.
     }
 
     /// Tier 4: Tables before partitions, and tables before all table-level objects.
@@ -371,6 +387,11 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.drop_partitions, &ns.drop_tables);
 
         self.edges_all_to_all(&ns.drop_views, &ns.drop_tables);
+
+        // Aggregates depend on their SFUNC function, so drop aggregates before dropping functions.
+        self.edges_all_to_all(&ns.drop_aggregates, &ns.drop_functions);
+        // Views can reference aggregates; drop views before aggregates they consumed.
+        self.edges_all_to_all(&ns.drop_views, &ns.drop_aggregates);
 
         self.edges_all_to_all(&ns.drop_version_views, &ns.drop_version_schemas);
 
@@ -621,6 +642,39 @@ impl MigrationGraph {
                             edges_to_add
                                 .push((OpKey::CreateTable(ref_qualified.clone()), key.clone()));
                             edges_to_add.push((OpKey::CreateView(ref_qualified), key.clone()));
+                        }
+                    }
+                }
+
+                // CreateAggregate depends on its SFUNC and FINALFUNC functions.
+                // The aggregate's own OpKey::CreateAggregate is the consumer; the
+                // referenced function's CreateFunction op (if any matches by qualified name)
+                // is the producer.
+                OpKey::CreateAggregate { .. } => {
+                    if let Some(MigrationOp::CreateAggregate(agg)) = self.get_op(key) {
+                        let sfunc = qualified_name(&agg.sfunc_schema, &agg.sfunc_name);
+                        for other_key in &keys {
+                            if let OpKey::CreateFunction {
+                                name: other_name, ..
+                            } = other_key
+                            {
+                                if *other_name == sfunc {
+                                    edges_to_add.push((other_key.clone(), key.clone()));
+                                }
+                            }
+                        }
+                        if let (Some(sch), Some(n)) = (&agg.finalfunc_schema, &agg.finalfunc_name) {
+                            let finalfunc = qualified_name(sch, n);
+                            for other_key in &keys {
+                                if let OpKey::CreateFunction {
+                                    name: other_name, ..
+                                } = other_key
+                                {
+                                    if *other_name == finalfunc {
+                                        edges_to_add.push((other_key.clone(), key.clone()));
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -923,6 +977,20 @@ impl MigrationGraph {
                                 ));
                             }
                         }
+                        OwnerObjectKind::Aggregate => {
+                            if let Some(MigrationOp::AlterOwner {
+                                args: Some(args), ..
+                            }) = self.get_op(key)
+                            {
+                                edges_to_add.push((
+                                    OpKey::CreateAggregate {
+                                        name: qualified,
+                                        args: args.clone(),
+                                    },
+                                    key.clone(),
+                                ));
+                            }
+                        }
                     }
                 }
 
@@ -993,13 +1061,16 @@ fn push_function_edges(
     consumer_key: &OpKey,
 ) {
     for other_key in keys {
-        if let OpKey::CreateFunction {
-            name: other_name, ..
-        } = other_key
-        {
-            if *other_name == ref_qualified {
+        match other_key {
+            OpKey::CreateFunction {
+                name: other_name, ..
+            }
+            | OpKey::CreateAggregate {
+                name: other_name, ..
+            } if *other_name == ref_qualified => {
                 edges.push((other_key.clone(), consumer_key.clone()));
             }
+            _ => {}
         }
     }
 }

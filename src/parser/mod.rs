@@ -29,12 +29,13 @@ use crate::model::*;
 use crate::pg::sqlgen::strip_ident_quotes;
 use crate::util::{normalize_sql_whitespace, Result, SchemaError};
 use sqlparser::ast::{
-    AlterIndexOperation, AlterTable, AlterTableOperation, AlterType, AlterTypeAddValue,
-    AlterTypeAddValuePosition, AlterTypeOperation, CreateDomain, CreateExtension, CreateFunction,
-    CreateServerStatement, CreateTrigger, CreateView, DropDomain, DropExtension, DropFunction,
-    DropTrigger, ObjectType, RenameTableNameKind, SchemaName, Statement, TableConstraint,
-    TriggerEvent as SqlTriggerEvent, TriggerPeriod, TriggerReferencingType,
-    UserDefinedTypeRepresentation,
+    AlterFunction, AlterFunctionKind, AlterFunctionOperation, AlterIndexOperation, AlterTable,
+    AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
+    AlterTypeOperation, CreateAggregate, CreateAggregateOption, CreateDomain, CreateExtension,
+    CreateFunction, CreateServerStatement, CreateTrigger, CreateView, DropDomain, DropExtension,
+    DropFunction, DropTrigger, FunctionParallel, ObjectType, Owner, RenameTableNameKind,
+    SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent, TriggerPeriod,
+    TriggerReferencingType, UserDefinedTypeRepresentation,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -1078,7 +1079,6 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             | Statement::DropOperator(_)
             | Statement::DropOperatorClass(_)
             | Statement::DropOperatorFamily(_)
-            | Statement::CreateAggregate(_)
             | Statement::CreateTextSearchConfiguration(_)
             | Statement::CreateTextSearchDictionary(_)
             | Statement::CreateTextSearchParser(_)
@@ -1188,7 +1188,6 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             // separately; the previously wildcarded behaviour is preserved
             // here.
             | Statement::CreateType { .. }
-            | Statement::AlterFunction(_)
             | Statement::AlterCollation(_)
             | Statement::AlterOperatorFamily(_)
             | Statement::AlterOperatorClass(_)
@@ -1200,6 +1199,12 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
             | Statement::WaitFor(_) => {}
             Statement::CreateServer(stmt) => {
                 parse_create_server(stmt, &mut schema);
+            }
+            Statement::CreateAggregate(stmt) => {
+                parse_create_aggregate(stmt, &mut schema)?;
+            }
+            Statement::AlterFunction(alter) => {
+                parse_alter_aggregate_owner(alter, &mut schema);
             }
         }
     }
@@ -1213,6 +1218,135 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
     schema.pending_policies = schema.finalize_partial();
 
     Ok(schema)
+}
+
+fn parse_create_aggregate(stmt: CreateAggregate, schema: &mut Schema) -> Result<()> {
+    let (agg_schema, agg_name) = extract_qualified_name(&stmt.name);
+    let args: Vec<String> = stmt
+        .args
+        .iter()
+        .map(|dt| crate::model::normalize_pg_type(&dt.to_string()).into_owned())
+        .collect();
+
+    let mut sfunc_schema: Option<String> = None;
+    let mut sfunc_name: Option<String> = None;
+    let mut stype: Option<String> = None;
+    let mut finalfunc_schema: Option<String> = None;
+    let mut finalfunc_name: Option<String> = None;
+    let mut initcond: Option<String> = None;
+    let mut parallel: Option<AggregateParallel> = None;
+
+    for option in stmt.options {
+        match option {
+            CreateAggregateOption::Sfunc(name) => {
+                let (s, n) = extract_qualified_name(&name);
+                sfunc_schema = Some(s);
+                sfunc_name = Some(n);
+            }
+            CreateAggregateOption::Stype(data_type) => {
+                stype = Some(crate::model::normalize_pg_type(&data_type.to_string()).into_owned());
+            }
+            CreateAggregateOption::Finalfunc(name) => {
+                let (s, n) = extract_qualified_name(&name);
+                finalfunc_schema = Some(s);
+                finalfunc_name = Some(n);
+            }
+            CreateAggregateOption::Initcond(value) => {
+                initcond = Some(value.to_string().trim_matches('\'').to_string());
+            }
+            CreateAggregateOption::Parallel(p) => {
+                parallel = match p {
+                    FunctionParallel::Safe => Some(AggregateParallel::Safe),
+                    FunctionParallel::Restricted => Some(AggregateParallel::Restricted),
+                    // PARALLEL = UNSAFE is the PostgreSQL default; drop to keep parse and introspect aligned.
+                    FunctionParallel::Unsafe => None,
+                };
+            }
+            CreateAggregateOption::Sspace(_)
+            | CreateAggregateOption::FinalfuncExtra
+            | CreateAggregateOption::FinalfuncModify(_)
+            | CreateAggregateOption::Combinefunc(_)
+            | CreateAggregateOption::Serialfunc(_)
+            | CreateAggregateOption::Deserialfunc(_)
+            | CreateAggregateOption::Msfunc(_)
+            | CreateAggregateOption::Minvfunc(_)
+            | CreateAggregateOption::Mstype(_)
+            | CreateAggregateOption::Msspace(_)
+            | CreateAggregateOption::Mfinalfunc(_)
+            | CreateAggregateOption::MfinalfuncExtra
+            | CreateAggregateOption::MfinalfuncModify(_)
+            | CreateAggregateOption::Minitcond(_)
+            | CreateAggregateOption::Sortop(_)
+            | CreateAggregateOption::Hypothetical => {}
+        }
+    }
+
+    let sfunc_schema = sfunc_schema.ok_or_else(|| {
+        SchemaError::ParseError(format!(
+            "CREATE AGGREGATE {agg_schema}.{agg_name} missing required SFUNC"
+        ))
+    })?;
+    let sfunc_name = sfunc_name.unwrap();
+    let stype = stype.ok_or_else(|| {
+        SchemaError::ParseError(format!(
+            "CREATE AGGREGATE {agg_schema}.{agg_name} missing required STYPE"
+        ))
+    })?;
+
+    let aggregate = Aggregate {
+        schema: agg_schema.clone(),
+        name: agg_name.clone(),
+        args,
+        sfunc_schema,
+        sfunc_name,
+        stype,
+        finalfunc_schema,
+        finalfunc_name,
+        initcond,
+        parallel,
+        owner: None,
+        grants: Vec::new(),
+        comment: None,
+    };
+
+    let key = qualified_name(&agg_schema, &aggregate.signature());
+    schema.aggregates.insert(key, aggregate);
+    Ok(())
+}
+
+fn parse_alter_aggregate_owner(alter: AlterFunction, schema: &mut Schema) {
+    if !matches!(alter.kind, AlterFunctionKind::Aggregate) {
+        return;
+    }
+    let AlterFunctionOperation::OwnerTo(owner) = alter.operation else {
+        return;
+    };
+    let owner_name = match owner {
+        Owner::Ident(ident) => ident.value,
+        Owner::CurrentRole | Owner::CurrentUser | Owner::SessionUser => return,
+    };
+
+    let (agg_schema, agg_name) = extract_qualified_name(&alter.function.name);
+    let args_sig = if alter.aggregate_star {
+        String::new()
+    } else {
+        alter
+            .function
+            .args
+            .unwrap_or_default()
+            .iter()
+            .map(|a| crate::model::normalize_pg_type(&a.data_type.to_string()).into_owned())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let signature = format!("{agg_name}({args_sig})");
+    let object_key = qualified_name(&agg_schema, &signature);
+
+    schema.pending_owners.push(PendingOwner {
+        object_type: PendingOwnerObjectType::Aggregate,
+        object_key,
+        owner: owner_name,
+    });
 }
 
 fn parse_create_server(stmt: CreateServerStatement, schema: &mut Schema) {

@@ -1256,3 +1256,47 @@ async fn inline_check_constraint_converges() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn aggregate_with_sfunc_and_stype_converges() {
+    assert_convergence_public(
+        r#"
+        CREATE FUNCTION public._group_concat(text, text) RETURNS text
+            LANGUAGE sql IMMUTABLE AS $_$
+        SELECT CASE WHEN $2 IS NULL THEN $1 WHEN $1 IS NULL THEN $2 ELSE $1 || ', ' || $2 END
+        $_$;
+
+        CREATE AGGREGATE public.group_concat(text) (
+            SFUNC = public._group_concat,
+            STYPE = text
+        );
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn aggregate_referenced_by_view_converges() {
+    assert_convergence_public(
+        r#"
+        CREATE FUNCTION public._group_concat(text, text) RETURNS text
+            LANGUAGE sql IMMUTABLE AS $_$
+        SELECT CASE WHEN $2 IS NULL THEN $1 WHEN $1 IS NULL THEN $2 ELSE $1 || ', ' || $2 END
+        $_$;
+
+        CREATE AGGREGATE public.group_concat(text) (
+            SFUNC = public._group_concat,
+            STYPE = text
+        );
+
+        CREATE TABLE public.actors (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL
+        );
+
+        CREATE VIEW public.all_actors AS
+            SELECT public.group_concat(name) AS names FROM public.actors;
+        "#,
+    )
+    .await;
+}

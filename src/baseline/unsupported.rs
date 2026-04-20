@@ -61,7 +61,6 @@ pub async fn detect_unsupported_objects(
     let mut unsupported = Vec::new();
 
     unsupported.extend(detect_composite_types(connection, target_schemas).await?);
-    unsupported.extend(detect_aggregates(connection, target_schemas).await?);
     unsupported.extend(detect_rules(connection, target_schemas).await?);
     unsupported.extend(detect_inherited_tables(connection, target_schemas).await?);
     unsupported.extend(detect_foreign_tables(connection, target_schemas).await?);
@@ -96,32 +95,6 @@ async fn detect_composite_types(
         .map(|row| UnsupportedObject::CompositeType {
             schema: row.get("nspname"),
             name: row.get("typname"),
-        })
-        .collect())
-}
-
-async fn detect_aggregates(
-    connection: &PgConnection,
-    target_schemas: &[String],
-) -> Result<Vec<UnsupportedObject>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT n.nspname, p.proname
-        FROM pg_proc p
-        JOIN pg_namespace n ON p.pronamespace = n.oid
-        WHERE p.prokind = 'a' AND n.nspname = ANY($1)
-        "#,
-    )
-    .bind(target_schemas)
-    .fetch_all(connection.pool())
-    .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to detect aggregates: {e}")))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| UnsupportedObject::Aggregate {
-            schema: row.get("nspname"),
-            name: row.get("proname"),
         })
         .collect())
 }
