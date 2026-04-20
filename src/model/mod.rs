@@ -1154,7 +1154,9 @@ impl Schema {
                 .get_mut(key)
                 .map(|f| &mut f.grants)
                 .or_else(|| self.aggregates.get_mut(key).map(|a| &mut a.grants)),
-            PendingGrantObjectType::Aggregate => self.aggregates.get_mut(key).map(|a| &mut a.grants),
+            PendingGrantObjectType::Aggregate => {
+                self.aggregates.get_mut(key).map(|a| &mut a.grants)
+            }
             PendingGrantObjectType::Schema => self.schemas.get_mut(key).map(|s| &mut s.grants),
             PendingGrantObjectType::Enum => self
                 .enums

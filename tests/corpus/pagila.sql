@@ -1,3 +1,4 @@
+-- IGNORE: pgmold-266 trigger sqlgen qualifies built-in tsvector_update_trigger with "public", PG resolves it via pg_catalog
 -- Source: https://github.com/devrimgunduz/pagila/blob/master/pagila-schema.sql
 -- Commit: 5ba5a57aeb159f75f02aca2432d3c262186d13d3
 -- License: MIT

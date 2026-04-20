@@ -663,9 +663,7 @@ impl MigrationGraph {
                                 }
                             }
                         }
-                        if let (Some(sch), Some(n)) =
-                            (&agg.finalfunc_schema, &agg.finalfunc_name)
-                        {
+                        if let (Some(sch), Some(n)) = (&agg.finalfunc_schema, &agg.finalfunc_name) {
                             let finalfunc = qualified_name(sch, n);
                             for other_key in &keys {
                                 if let OpKey::CreateFunction {
