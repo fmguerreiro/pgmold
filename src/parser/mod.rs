@@ -739,7 +739,14 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                         "Trigger '{trigger_name}' missing EXECUTE clause"
                     ))
                 })?;
+                let func_unqualified = exec.func_name.0.len() == 1;
                 let (func_schema, func_name) = extract_qualified_name(&exec.func_name);
+                let func_schema = if func_unqualified && is_pg_catalog_trigger_function(&func_name)
+                {
+                    "pg_catalog".to_string()
+                } else {
+                    func_schema
+                };
 
                 let timing = match period {
                     Some(TriggerPeriod::Before) => TriggerTiming::Before,
@@ -1218,6 +1225,20 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
     schema.pending_policies = schema.finalize_partial();
 
     Ok(schema)
+}
+
+/// Returns `true` when `name` refers to a built-in `pg_catalog` trigger
+/// helper. PostgreSQL resolves unqualified trigger function names via
+/// `search_path`, which always includes `pg_catalog`; emitting these under
+/// `public` produces invalid DDL (the function does not live there), so the
+/// parser records them under their actual schema.
+fn is_pg_catalog_trigger_function(name: &str) -> bool {
+    matches!(
+        name,
+        "tsvector_update_trigger"
+            | "tsvector_update_trigger_column"
+            | "suppress_redundant_updates_trigger"
+    )
 }
 
 fn parse_create_aggregate(stmt: CreateAggregate, schema: &mut Schema) -> Result<()> {
