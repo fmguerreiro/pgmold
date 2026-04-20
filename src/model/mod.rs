@@ -874,6 +874,12 @@ pub struct Trigger {
     pub enabled: TriggerEnabled,
     pub old_table_name: Option<String>,
     pub new_table_name: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_constraint: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deferrable: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub initially_deferred: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
 }
@@ -1838,6 +1844,9 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
 
@@ -1867,6 +1876,9 @@ mod tests {
             enabled: TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
         schema

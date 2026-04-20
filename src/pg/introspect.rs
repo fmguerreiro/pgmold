@@ -2008,7 +2008,10 @@ async fn introspect_triggers(
                 JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = attr_num
             ) AS update_columns,
             t.tgoldtable AS old_table_name,
-            t.tgnewtable AS new_table_name
+            t.tgnewtable AS new_table_name,
+            t.tgconstraint <> 0 AS is_constraint,
+            t.tgdeferrable AS is_deferrable,
+            t.tginitdeferred AS is_initially_deferred
         FROM pg_trigger t
         JOIN pg_class c ON t.tgrelid = c.oid
         JOIN pg_namespace ns ON c.relnamespace = ns.oid
@@ -2045,6 +2048,9 @@ async fn introspect_triggers(
         let update_columns: Option<Vec<String>> = row.get("update_columns");
         let old_table_name: Option<String> = row.get("old_table_name");
         let new_table_name: Option<String> = row.get("new_table_name");
+        let is_constraint: bool = row.get("is_constraint");
+        let deferrable: bool = row.get("is_deferrable");
+        let initially_deferred: bool = row.get("is_initially_deferred");
 
         let function_args = decode_trigger_args(&function_args_raw, function_nargs)?;
 
@@ -2101,6 +2107,9 @@ async fn introspect_triggers(
             enabled,
             old_table_name,
             new_table_name,
+            is_constraint,
+            deferrable,
+            initially_deferred,
             // TODO: read trigger comment from pg_description
             comment: None,
         };

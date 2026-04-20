@@ -1607,6 +1607,9 @@ mod tests {
             enabled: crate::model::TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         }
     }
@@ -1702,6 +1705,9 @@ mod tests {
             enabled: crate::model::TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
         to.triggers.insert(
@@ -2397,6 +2403,9 @@ mod tests {
                 enabled: crate::model::TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                is_constraint: false,
+                deferrable: false,
+                initially_deferred: false,
                 comment: None,
             },
         );
@@ -2419,6 +2428,9 @@ mod tests {
                 enabled: crate::model::TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                is_constraint: false,
+                deferrable: false,
+                initially_deferred: false,
                 comment: None,
             },
         );
@@ -2469,6 +2481,9 @@ CREATE TRIGGER "on_auth_user_created" AFTER INSERT ON "auth"."users" FOR EACH RO
             enabled: crate::model::TriggerEnabled::Origin,
             old_table_name: None,
             new_table_name: None,
+            is_constraint: false,
+            deferrable: false,
+            initially_deferred: false,
             comment: None,
         };
 
@@ -2571,6 +2586,9 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 enabled: crate::model::TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                is_constraint: false,
+                deferrable: false,
+                initially_deferred: false,
                 comment: None,
             },
         );
@@ -2592,6 +2610,9 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 enabled: crate::model::TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                is_constraint: false,
+                deferrable: false,
+                initially_deferred: false,
                 comment: None,
             },
         );
@@ -2621,6 +2642,9 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 enabled: crate::model::TriggerEnabled::Origin,
                 old_table_name: None,
                 new_table_name: None,
+                is_constraint: false,
+                deferrable: false,
+                initially_deferred: false,
                 comment: None,
             },
         );

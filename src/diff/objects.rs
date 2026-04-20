@@ -553,6 +553,9 @@ fn triggers_equal_except_enabled(from: &Trigger, to: &Trigger) -> bool {
         && from.function_args == to.function_args
         && from.old_table_name == to.old_table_name
         && from.new_table_name == to.new_table_name
+        && from.is_constraint == to.is_constraint
+        && from.deferrable == to.deferrable
+        && from.initially_deferred == to.initially_deferred
 }
 
 pub(super) fn triggers_semantically_equal(from: &Trigger, to: &Trigger) -> bool {
