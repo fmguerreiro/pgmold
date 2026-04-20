@@ -944,6 +944,7 @@ fn map_pg_type(
         "int4range" | "int8range" | "numrange" | "tsrange" | "tstzrange" | "daterange"
         | "int4multirange" | "int8multirange" | "nummultirange" | "tsmultirange"
         | "tstzmultirange" | "datemultirange" => Ok(PgType::BuiltinNamed(data_type.to_string())),
+        "tsvector" | "tsquery" => Ok(PgType::BuiltinNamed(data_type.to_string())),
         "USER-DEFINED" => {
             if udt_name == "vector" {
                 // pgvector stores dimension directly in atttypmod
