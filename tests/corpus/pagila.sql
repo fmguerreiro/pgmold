@@ -1,4 +1,4 @@
--- IGNORE: pgmold-261 planner raises circular dependency on full pagila graph
+-- IGNORE: pgmold-262 CREATE AGGREGATE is parse-through only; nicer_but_slower_film_list view references public.group_concat and fails at apply
 -- Source: https://github.com/devrimgunduz/pagila/blob/master/pagila-schema.sql
 -- Commit: 5ba5a57aeb159f75f02aca2432d3c262186d13d3
 -- License: MIT
