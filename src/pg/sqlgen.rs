@@ -2289,6 +2289,40 @@ mod tests {
     }
 
     #[test]
+    fn create_trigger_qualifies_pg_catalog_function() {
+        use crate::model::{Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
+
+        let trigger = Trigger {
+            name: "film_fulltext_trigger".to_string(),
+            target_schema: "public".to_string(),
+            target_name: "film".to_string(),
+            timing: TriggerTiming::Before,
+            events: vec![TriggerEvent::Insert, TriggerEvent::Update],
+            update_columns: vec![],
+            for_each_row: true,
+            when_clause: None,
+            function_schema: "pg_catalog".to_string(),
+            function_name: "tsvector_update_trigger".to_string(),
+            function_args: vec![
+                "'fulltext'".to_string(),
+                "'pg_catalog.english'".to_string(),
+                "'title'".to_string(),
+                "'description'".to_string(),
+            ],
+            enabled: TriggerEnabled::Origin,
+            old_table_name: None,
+            new_table_name: None,
+            comment: None,
+        };
+
+        let sql = generate_sql(&[MigrationOp::CreateTrigger(trigger)]);
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains(
+            "EXECUTE FUNCTION \"pg_catalog\".\"tsvector_update_trigger\"('fulltext', 'pg_catalog.english', 'title', 'description');"
+        ));
+    }
+
+    #[test]
     fn create_trigger_with_update_of_columns() {
         use crate::model::{Trigger, TriggerEnabled, TriggerEvent, TriggerTiming};
 

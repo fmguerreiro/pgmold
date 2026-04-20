@@ -606,6 +606,7 @@ EXECUTE FUNCTION tsvector_update_trigger('fulltext', 'pg_catalog.english', 'titl
         .unwrap();
 
     assert_eq!(trigger.name, "film_fulltext_trigger");
+    assert_eq!(trigger.function_schema, "pg_catalog");
     assert_eq!(trigger.function_name, "tsvector_update_trigger");
     assert_eq!(
         trigger.function_args,
@@ -616,6 +617,61 @@ EXECUTE FUNCTION tsvector_update_trigger('fulltext', 'pg_catalog.english', 'titl
             "'description'"
         ]
     );
+}
+
+#[test]
+fn unqualified_builtin_trigger_function_resolves_to_pg_catalog() {
+    let sql = r#"
+CREATE TABLE public.docs (id serial PRIMARY KEY, body text);
+
+CREATE TRIGGER redundant_guard
+BEFORE UPDATE ON public.docs
+FOR EACH ROW
+EXECUTE FUNCTION suppress_redundant_updates_trigger();
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let trigger = schema
+        .triggers
+        .get("public.docs.redundant_guard")
+        .unwrap();
+    assert_eq!(trigger.function_schema, "pg_catalog");
+    assert_eq!(trigger.function_name, "suppress_redundant_updates_trigger");
+}
+
+#[test]
+fn qualified_trigger_function_schema_is_preserved() {
+    let sql = r#"
+CREATE TABLE public.t (id int);
+
+CREATE FUNCTION public.last_updated() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+
+CREATE TRIGGER last_updated
+BEFORE UPDATE ON public.t
+FOR EACH ROW
+EXECUTE FUNCTION public.last_updated();
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let trigger = schema.triggers.get("public.t.last_updated").unwrap();
+    assert_eq!(trigger.function_schema, "public");
+    assert_eq!(trigger.function_name, "last_updated");
+}
+
+#[test]
+fn unqualified_non_builtin_trigger_function_defaults_to_public() {
+    let sql = r#"
+CREATE TABLE public.t (id int);
+
+CREATE FUNCTION public.my_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+
+CREATE TRIGGER my_trigger
+BEFORE UPDATE ON public.t
+FOR EACH ROW
+EXECUTE FUNCTION my_fn();
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+    let trigger = schema.triggers.get("public.t.my_trigger").unwrap();
+    assert_eq!(trigger.function_schema, "public");
+    assert_eq!(trigger.function_name, "my_fn");
 }
 
 #[test]
