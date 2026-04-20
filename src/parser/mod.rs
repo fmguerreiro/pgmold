@@ -447,6 +447,12 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 extract_qualified_name(&partition_name);
                             let child_key = qualified_name(&child_schema, &child_name);
                             let bound = parse_for_values_required(&partition_bound)?;
+                            // pg_dump emits partitions as a standalone CREATE TABLE followed by
+                            // ATTACH PARTITION. The standalone entry must be removed — introspect
+                            // never reports partitions in `tables` (relispartition = true is
+                            // filtered out), so leaving both causes the diff to emit CreateTable
+                            // and CreatePartition for the same relation, colliding at apply time.
+                            let existing = schema.tables.remove(&child_key);
                             let partition = Partition {
                                 schema: child_schema,
                                 name: child_name,
@@ -455,7 +461,7 @@ pub fn parse_sql_string(sql: &str) -> Result<Schema> {
                                 bound,
                                 indexes: Vec::new(),
                                 check_constraints: Vec::new(),
-                                owner: None,
+                                owner: existing.and_then(|t| t.owner),
                             };
                             schema.partitions.insert(child_key, partition);
                         }
