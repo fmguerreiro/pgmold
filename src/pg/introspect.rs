@@ -1809,6 +1809,20 @@ fn find_default_keyword(arg: &str) -> Option<usize> {
     None
 }
 
+/// Returns true when the first token of an argument string is a PostgreSQL
+/// type keyword that starts a multi-word type name (e.g. `timestamp with time zone`).
+/// `pg_get_function_arguments` emits unnamed args as just the type, so without this
+/// check the splitter would wrongly treat `timestamp` as an argument name.
+fn is_unnamed_multiword_type(first_token: &str) -> bool {
+    if first_token.starts_with('"') {
+        return false;
+    }
+    matches!(
+        first_token.to_ascii_lowercase().as_str(),
+        "timestamp" | "time" | "double" | "character" | "bit" | "interval"
+    )
+}
+
 fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
     if args_str.is_empty() {
         return Vec::new();
@@ -1838,8 +1852,10 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
                 (ArgMode::In, arg_without_default)
             };
 
-            let parts: Vec<&str> = arg_rest.trim().splitn(2, ' ').collect();
-            if parts.len() == 2 {
+            let arg_rest = arg_rest.trim();
+            let parts: Vec<&str> = arg_rest.splitn(2, ' ').collect();
+            let has_name = parts.len() == 2 && !is_unnamed_multiword_type(parts[0]);
+            if has_name {
                 FunctionArg {
                     name: Some(strip_ident_quotes(parts[0])),
                     data_type: crate::model::normalize_pg_type(parts[1]).into_owned(),
@@ -1849,7 +1865,7 @@ fn parse_function_arguments(args_str: &str) -> Vec<FunctionArg> {
             } else {
                 FunctionArg {
                     name: None,
-                    data_type: crate::model::normalize_pg_type(arg_rest.trim()).into_owned(),
+                    data_type: crate::model::normalize_pg_type(arg_rest).into_owned(),
                     mode,
                     default,
                 }
@@ -2678,6 +2694,48 @@ mod tests {
         let args = parse_function_arguments("p_role text DEFAULT 'ADMIN'::text");
         assert_eq!(args.len(), 1);
         assert_eq!(args[0].default.as_deref(), Some("'ADMIN'::text"));
+    }
+
+    #[test]
+    fn parse_function_arguments_unnamed_timestamp_with_time_zone() {
+        let args = parse_function_arguments("timestamp with time zone");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].name, None);
+        assert_eq!(args[0].data_type, "timestamp with time zone");
+    }
+
+    #[test]
+    fn parse_function_arguments_unnamed_double_precision() {
+        let args = parse_function_arguments("double precision, integer");
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0].name, None);
+        assert_eq!(args[0].data_type, "double precision");
+        assert_eq!(args[1].name, None);
+        assert_eq!(args[1].data_type, "integer");
+    }
+
+    #[test]
+    fn parse_function_arguments_unnamed_character_varying() {
+        let args = parse_function_arguments("character varying");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].name, None);
+        assert_eq!(args[0].data_type, "character varying");
+    }
+
+    #[test]
+    fn parse_function_arguments_named_with_timestamp_type() {
+        let args = parse_function_arguments("p_effective_date timestamp with time zone");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].name, Some("p_effective_date".to_string()));
+        assert_eq!(args[0].data_type, "timestamp with time zone");
+    }
+
+    #[test]
+    fn parse_function_arguments_quoted_timestamp_name_still_named() {
+        let args = parse_function_arguments("\"timestamp\" timestamp with time zone");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].name, Some("timestamp".to_string()));
+        assert_eq!(args[0].data_type, "timestamp with time zone");
     }
 
     #[test]
