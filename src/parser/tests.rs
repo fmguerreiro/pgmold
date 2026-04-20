@@ -4188,11 +4188,16 @@ ALTER TABLE ONLY public.payment ATTACH PARTITION public.payment_p2022_01 FOR VAL
 
 ALTER TABLE public.payment_p2022_01 OWNER TO postgres;
 "#;
-    let schema = parse_sql_string(sql).expect("pagila-shape dump should parse");
+    let schema = parse_sql_string(sql).expect("SQL should parse");
 
     assert!(
         !schema.tables.contains_key("public.payment_p2022_01"),
         "Attached partition must not remain in tables (would emit duplicate CREATE TABLE)"
+    );
+    assert_eq!(
+        schema.tables.len(),
+        1,
+        "Only the parent `payment` table should remain"
     );
     let partition = schema
         .partitions
