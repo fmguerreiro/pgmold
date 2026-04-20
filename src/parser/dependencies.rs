@@ -113,15 +113,9 @@ pub fn extract_table_references(body: &str, default_schema: &str) -> HashSet<Obj
     {
         Ok(stmts) => stmts,
         Err(err) => {
-            // A load-bearing caller — the planner — uses this to compute hard
-            // body-relation deps for LANGUAGE sql functions. A silent empty
-            // result there produces a wrong migration order that only surfaces
-            // later as `relation does not exist` at apply time.
-            //
-            // Some non-SQL bodies (empty, comments-only, pg-specific syntax
-            // sqlparser doesn't grok) legitimately fail all three strategies,
-            // so we degrade gracefully rather than erroring — but leave a
-            // greppable trail in CI so corpus regressions are diagnosable.
+            // Degrade gracefully so legitimate non-SQL (empty, comments-only,
+            // pg-specific syntax) returns empty. Warn to stderr so the planner's
+            // body-relation-deps path has a greppable trail in CI.
             if let Some(message) =
                 format_extract_table_references_failure(body, default_schema, &err.to_string())
             {
@@ -150,8 +144,13 @@ fn format_extract_table_references_failure(
     if body.trim().is_empty() {
         return None;
     }
-    let snippet: String = body.chars().take(120).collect();
-    let truncated = if body.len() > snippet.len() { "..." } else { "" };
+    // Collect the first 120 chars and then ask the iterator if anything is
+    // left — a char-aware truncation check. A byte-based comparison would
+    // mis-classify multibyte bodies whose byte-length happens to match the
+    // snippet's byte-length despite having more codepoints.
+    let mut chars = body.chars();
+    let snippet: String = chars.by_ref().take(120).collect();
+    let truncated = if chars.next().is_some() { "..." } else { "" };
     Some(format!(
         "[pgmold:parser] extract_table_references: all parse strategies failed (schema={default_schema}, last_error={last_error}, body={snippet:?}{truncated})"
     ))
@@ -922,6 +921,22 @@ mod tests {
         assert!(
             message.contains("..."),
             "long bodies must be marked as truncated: {message}"
+        );
+    }
+
+    #[test]
+    fn format_parse_failure_truncates_multibyte_body_by_chars_not_bytes() {
+        // A byte-based truncation check would mis-classify multibyte bodies.
+        // 200 copies of a 3-byte char (Japanese 'あ') — 200 codepoints total,
+        // well past the 120-char snippet limit, so the message must be marked
+        // truncated.
+        let multibyte_body = "あ".repeat(200);
+        let message = format_extract_table_references_failure(&multibyte_body, "public", "err")
+            .expect("non-empty body must produce a warning message");
+
+        assert!(
+            message.contains("..."),
+            "multibyte bodies exceeding the char limit must be marked truncated: {message}"
         );
     }
 
