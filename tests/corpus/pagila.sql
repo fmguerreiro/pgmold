@@ -1,4 +1,3 @@
--- IGNORE: pgmold-269 — apply succeeds after pgmold-268; 4 ops remain on second diff: function-arg introspection drops 'timestamp' prefix from timestamptz and rewards_report body/|| normalization differs
 -- Source: https://github.com/devrimgunduz/pagila/blob/master/pagila-schema.sql
 -- Commit: 5ba5a57aeb159f75f02aca2432d3c262186d13d3
 -- License: MIT

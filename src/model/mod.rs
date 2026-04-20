@@ -1442,6 +1442,14 @@ pub fn normalize_pg_type(type_name: &str) -> Cow<'_, str> {
         return Cow::Owned(format!("table({})", normalized_cols.join(", ")));
     }
 
+    // Recurse into SETOF <type> so inner type normalization (public. stripping,
+    // alias canonicalization) applies uniformly between parsed and introspected
+    // return types (e.g. `SETOF public.customer` vs `SETOF customer`).
+    if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("setof ") {
+        let inner = normalize_pg_type(trimmed[6..].trim());
+        return Cow::Owned(format!("setof {inner}"));
+    }
+
     // Strip public. schema prefix — PostgreSQL qualifies user-defined types
     // in function signatures but SQL declarations typically omit it
     let trimmed = trimmed.strip_prefix("public.").unwrap_or(trimmed);
@@ -3341,6 +3349,20 @@ fn normalize_pg_type_strips_public_schema_prefix() {
     assert_eq!(normalize_pg_type("public.my_enum"), "my_enum");
     // Non-public schemas should be preserved
     assert_eq!(normalize_pg_type("auth.role_type"), "auth.role_type");
+}
+
+#[test]
+fn normalize_pg_type_setof_strips_public_prefix_and_aliases() {
+    assert_eq!(normalize_pg_type("SETOF public.customer"), "setof customer");
+    assert_eq!(normalize_pg_type("setof customer"), "setof customer");
+    assert_eq!(normalize_pg_type("SETOF public.CUSTOMER"), "setof customer");
+    // Cross-schema SETOF preserves qualification
+    assert_eq!(
+        normalize_pg_type("SETOF auth.session"),
+        "setof auth.session"
+    );
+    // Inner alias is canonicalized
+    assert_eq!(normalize_pg_type("SETOF int4"), "setof integer");
 }
 
 #[test]
