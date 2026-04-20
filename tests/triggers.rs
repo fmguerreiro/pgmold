@@ -229,3 +229,82 @@ async fn inherited_partition_trigger_no_phantom_drop() {
         "Inherited partition triggers should not cause phantom diffs. Got: {trigger_ops:?}"
     );
 }
+
+#[tokio::test]
+async fn trigger_with_string_literal_args_round_trips() {
+    // Regression guard for pgmold-267: EXECUTE FUNCTION args (modelled on
+    // pagila's film_fulltext_trigger with tsvector_update_trigger('fulltext', ...))
+    // must survive the apply -> introspect loop without phantom diffs. We use a
+    // user-defined trigger function instead of pg_catalog.tsvector_update_trigger
+    // so the test doesn't depend on tsvector column introspection.
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let schema_sql = r#"
+        CREATE TABLE public.film (
+            film_id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT,
+            fulltext TEXT
+        );
+
+        CREATE FUNCTION public.log_trigger_args() RETURNS TRIGGER
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            RETURN NEW;
+        END;
+        $$;
+
+        CREATE TRIGGER film_fulltext_trigger
+            BEFORE INSERT OR UPDATE ON public.film
+            FOR EACH ROW
+            EXECUTE FUNCTION public.log_trigger_args('fulltext', 'pg_catalog.english', 'title', 'description');
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Failed to execute: {stmt}\nError: {e}"));
+    }
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let db_trigger = db_schema
+        .triggers
+        .get("public.film.film_fulltext_trigger")
+        .expect("film_fulltext_trigger should be introspected");
+    assert_eq!(
+        db_trigger.function_args,
+        vec![
+            "'fulltext'".to_string(),
+            "'pg_catalog.english'".to_string(),
+            "'title'".to_string(),
+            "'description'".to_string(),
+        ],
+        "introspection should decode pg_trigger.tgargs into SQL literal form"
+    );
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let trigger_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateTrigger(_) | MigrationOp::DropTrigger { .. }
+            )
+        })
+        .collect();
+
+    assert!(
+        trigger_ops.is_empty(),
+        "Trigger with function args should round-trip without diff. Got: {trigger_ops:?}"
+    );
+}
