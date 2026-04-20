@@ -3,7 +3,7 @@ use super::op_key::{
     parse_type_ref, OpKey,
 };
 use super::{MigrationOp, OwnerObjectKind};
-use crate::model::{parse_qualified_name, qualified_name, QualifiedName};
+use crate::model::{parse_qualified_name, qualified_name, Function, QualifiedName};
 use crate::parser::{
     extract_function_references, extract_rowtype_references, extract_table_references,
 };
@@ -273,7 +273,7 @@ impl MigrationGraph {
         // AlterFunction carries no body, so %ROWTYPE/SETOF detection is not needed for it.
         for &func_idx in &ns.functions {
             if let MigrationOp::CreateFunction(f) = &self.graph[func_idx] {
-                let mut skip_tables = hard_body_table_deps(f);
+                let mut skip_tables = hard_body_relation_deps(f);
                 let mut stack: Vec<String> = skip_tables.iter().cloned().collect();
                 while let Some(table) = stack.pop() {
                     if let Some(deps) = table_fk_deps.get(&table) {
@@ -617,7 +617,7 @@ impl MigrationGraph {
                             }
                         }
 
-                        for ref_qualified in hard_body_table_deps(func) {
+                        for ref_qualified in hard_body_relation_deps(func) {
                             edges_to_add
                                 .push((OpKey::CreateTable(ref_qualified.clone()), key.clone()));
                             edges_to_add.push((OpKey::CreateView(ref_qualified), key.clone()));
@@ -1005,12 +1005,13 @@ fn push_expression_ref_edges(
 }
 
 /// Qualified names of relations a function concretely depends on AT CREATE TIME —
-/// i.e. targets PostgreSQL resolves when the function is created, not when it runs.
-/// Two call sites share this: `add_function_edges` seeds its tier-skip set from it,
-/// and `add_content_aware_edges`'s `CreateFunction` arm emits `relation → func` edges
-/// from the same set. Keeping them aligned is load-bearing — if the sites drift
-/// (e.g. one adds a new kind of body dep, the other doesn't), FK-graph cycles can
-/// silently return.
+/// tables and views PostgreSQL resolves when the function is created, not when it
+/// runs. Two call sites share this: `add_function_edges` seeds its tier-skip set,
+/// and `add_content_aware_edges`'s `CreateFunction` arm emits `relation → func`
+/// edges (as both `CreateTable` and `CreateView` keys — whichever exists in the
+/// graph takes the edge). Keeping the sites aligned is load-bearing — if they
+/// drift (e.g. one adds a new kind of body dep, the other doesn't), FK-graph
+/// cycles silently return.
 ///
 /// Includes:
 /// - `RETURNS SETOF <relation>` (early-bound in the function signature);
@@ -1018,7 +1019,7 @@ fn push_expression_ref_edges(
 /// - For `LANGUAGE sql` only, every relation referenced in the body — PostgreSQL
 ///   parses and validates the SQL at CREATE time. `LANGUAGE plpgsql` resolves
 ///   references lazily at call time, so its body is intentionally not walked.
-fn hard_body_table_deps(func: &crate::model::Function) -> HashSet<String> {
+fn hard_body_relation_deps(func: &Function) -> HashSet<String> {
     let mut deps: HashSet<String> = HashSet::new();
     if let Some(type_ref) = extract_setof_type_ref(&func.return_type) {
         let (schema, name) = parse_type_ref(type_ref, &func.schema);
@@ -5736,17 +5737,34 @@ mod tests {
             }
         }
 
-        let add_fks: Vec<&str> = planned
+        let add_fk_targets: Vec<&str> = planned
             .iter()
             .filter_map(|op| match op {
-                MigrationOp::AddForeignKey { foreign_key, .. } => Some(foreign_key.name.as_str()),
+                MigrationOp::AddForeignKey { foreign_key, .. } => {
+                    Some(foreign_key.referenced_table.as_str())
+                }
                 _ => None,
             })
             .collect();
+        let mut sorted_targets = add_fk_targets.clone();
+        sorted_targets.sort();
         assert_eq!(
-            add_fks.len(),
-            3,
-            "expected three AddForeignKey ops for the 3-table ring, got {add_fks:?}"
+            sorted_targets,
+            vec!["a", "b", "c"],
+            "each ring edge must be extracted exactly once, got {add_fk_targets:?}"
+        );
+
+        let last_create_pos = planned
+            .iter()
+            .rposition(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .unwrap();
+        let first_add_fk_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddForeignKey { .. }))
+            .unwrap();
+        assert!(
+            last_create_pos < first_add_fk_pos,
+            "every CreateTable must precede every AddForeignKey (last CreateTable at {last_create_pos}, first AddForeignKey at {first_add_fk_pos})"
         );
     }
 
@@ -5916,18 +5934,71 @@ mod tests {
 
         let planned = plan_migration(ops);
 
-        let func_pos = planned
+        let pos_items = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "items"))
+            .unwrap();
+        let pos_func = planned
             .iter()
             .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
             .unwrap();
-        let check_pos = planned
+        let pos_check = planned
             .iter()
             .position(|op| matches!(op, MigrationOp::AddCheckConstraint { .. }))
             .unwrap();
 
+        // items → func is the SETOF-induced content-aware edge. It is the precondition
+        // that makes `concrete_dep_in_migration` true and triggers tier-blanket
+        // suppression; asserting it ensures this test actually exercises the
+        // suppression path rather than passing trivially on blanket ordering.
         assert!(
-            func_pos < check_pos,
-            "CreateFunction must precede AddCheckConstraint that references it, even when the tier blanket is suppressed. func at {func_pos}, check at {check_pos}"
+            pos_items < pos_func,
+            "CreateTable(items) must precede CreateFunction via the SETOF content-aware edge (items at {pos_items}, func at {pos_func})"
+        );
+        assert!(
+            pos_func < pos_check,
+            "CreateFunction must precede AddCheckConstraint that references it (func at {pos_func}, check at {pos_check})"
+        );
+    }
+
+    #[test]
+    fn add_column_with_generated_expression_ordered_after_function() {
+        // Symmetric with the CreateTable arm: a column added later whose GENERATED
+        // expression references a function must be ordered after that function.
+        // Regression guard for the AddColumn.column.generated walk that was
+        // previously missing from the content-aware pass.
+        let f = make_simple_function("compute_derived", "public");
+        let column = Column {
+            name: "derived".to_string(),
+            data_type: PgType::Integer,
+            nullable: true,
+            default: None,
+            comment: None,
+            generated: Some("compute_derived()".to_string()),
+        };
+
+        let ops = vec![
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "widgets"),
+                column,
+            },
+            MigrationOp::CreateFunction(f),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let func_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .unwrap();
+        let col_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddColumn { .. }))
+            .unwrap();
+
+        assert!(
+            func_pos < col_pos,
+            "CreateFunction must precede AddColumn whose GENERATED expression references it. func at {func_pos}, col at {col_pos}"
         );
     }
 }
