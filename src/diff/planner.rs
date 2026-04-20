@@ -715,6 +715,41 @@ impl MigrationGraph {
                     }
                 }
 
+                // AddExclusionConstraint depends on table and functions in element
+                // expressions / WHERE clause. Mirrors AddCheckConstraint — if the
+                // referenced function has a concrete table dep, its tier blanket
+                // (function→table) is suppressed, so this walk is the only edge
+                // ordering the function ahead of the constraint.
+                OpKey::AddExclusionConstraint { table, .. } => {
+                    edges_to_add.push((OpKey::CreateTable(table.to_string()), key.clone()));
+
+                    if let Some(MigrationOp::AddExclusionConstraint {
+                        table,
+                        exclusion_constraint,
+                    }) = self.get_op(key)
+                    {
+                        let schema = &table.schema;
+                        for element in &exclusion_constraint.elements {
+                            push_function_ref_edges(
+                                &mut edges_to_add,
+                                &keys,
+                                &element.column_or_expression,
+                                schema,
+                                key,
+                            );
+                        }
+                        if let Some(where_clause) = &exclusion_constraint.where_clause {
+                            push_function_ref_edges(
+                                &mut edges_to_add,
+                                &keys,
+                                where_clause,
+                                schema,
+                                key,
+                            );
+                        }
+                    }
+                }
+
                 // NOTE: CreateDomain can reference functions in CHECK constraints and
                 // defaults, but adding function→domain edges would conflict with the
                 // phase-level domain→function ordering (domains are types used in function
@@ -5957,6 +5992,79 @@ mod tests {
         assert!(
             pos_func < pos_check,
             "CreateFunction must precede AddCheckConstraint that references it (func at {pos_func}, check at {pos_check})"
+        );
+    }
+
+    #[test]
+    fn add_exclusion_constraint_with_setof_function_ordered_after_function() {
+        // Mirror of add_check_constraint_with_setof_function_ordered_after_function
+        // for exclusion constraints. The function has a SETOF table dep, so the
+        // function→table tier blanket is suppressed. The AddExclusionConstraint
+        // content-aware walk of element expressions and the WHERE clause is the
+        // only thing ordering the function ahead of the constraint.
+        let items = simple_table_with_fks("items", vec![]);
+        let widgets = simple_table_with_fks("widgets", vec![]);
+
+        let validate = Function {
+            name: "validate_amount".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "SETOF public.items".to_string(),
+            language: "plpgsql".to_string(),
+            body: "BEGIN RETURN; END;".to_string(),
+            volatility: Volatility::Stable,
+            security: SecurityType::Invoker,
+            config_params: vec![],
+            owner: None,
+            grants: Vec::new(),
+            comment: None,
+        };
+
+        let ops = vec![
+            MigrationOp::AddExclusionConstraint {
+                table: QualifiedName::new("public", "widgets"),
+                exclusion_constraint: ExclusionConstraint {
+                    name: "widgets_no_overlap".to_string(),
+                    index_method: "gist".to_string(),
+                    // Function reference in both the element expression and the
+                    // WHERE clause exercises the element-walk and where_clause
+                    // branches in the new content-aware arm.
+                    elements: vec![ExclusionElement {
+                        column_or_expression: "validate_amount(1)".to_string(),
+                        operator: "=".to_string(),
+                    }],
+                    where_clause: Some("validate_amount(1) IS NOT NULL".to_string()),
+                    deferrable: false,
+                    initially_deferred: false,
+                },
+            },
+            MigrationOp::CreateTable(widgets),
+            MigrationOp::CreateFunction(validate),
+            MigrationOp::CreateTable(items),
+        ];
+
+        let planned = plan_migration(ops);
+
+        let pos_items = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(t) if t.name == "items"))
+            .unwrap();
+        let pos_func = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateFunction(_)))
+            .unwrap();
+        let pos_exclusion = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddExclusionConstraint { .. }))
+            .unwrap();
+
+        assert!(
+            pos_items < pos_func,
+            "CreateTable(items) must precede CreateFunction via the SETOF content-aware edge (items at {pos_items}, func at {pos_func})"
+        );
+        assert!(
+            pos_func < pos_exclusion,
+            "CreateFunction must precede AddExclusionConstraint that references it (func at {pos_func}, exclusion at {pos_exclusion})"
         );
     }
 
