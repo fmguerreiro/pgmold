@@ -3353,15 +3353,9 @@ fn normalize_pg_type_strips_public_schema_prefix() {
 
 #[test]
 fn normalize_pg_type_setof_strips_public_prefix_and_aliases() {
-    assert_eq!(
-        normalize_pg_type("SETOF public.customer"),
-        "setof customer"
-    );
+    assert_eq!(normalize_pg_type("SETOF public.customer"), "setof customer");
     assert_eq!(normalize_pg_type("setof customer"), "setof customer");
-    assert_eq!(
-        normalize_pg_type("SETOF public.CUSTOMER"),
-        "setof customer"
-    );
+    assert_eq!(normalize_pg_type("SETOF public.CUSTOMER"), "setof customer");
     // Cross-schema SETOF preserves qualification
     assert_eq!(
         normalize_pg_type("SETOF auth.session"),
