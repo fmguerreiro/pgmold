@@ -323,17 +323,21 @@ runs:
         set +f
 
         echo "Running drift detection..."
+        DRIFT_STDERR="$RUNNER_TEMP/pgmold-drift-stderr.log"
         set +e
         OUTPUT=$(pgmold drift "${SCHEMA_ARGS[@]}" \
           --database "$INPUT_DATABASE" \
           --target-schemas "$INPUT_TARGET_SCHEMAS" \
-          --json 2>&1)
+          --json 2>"$DRIFT_STDERR")
         DRIFT_EXIT=$?
         set -e
 
         if ! echo "$OUTPUT" | jq empty 2>/dev/null; then
           echo "::error::pgmold drift produced non-JSON output (exit $DRIFT_EXIT):"
+          echo "--- stdout ---"
           echo "$OUTPUT"
+          echo "--- stderr ---"
+          cat "$DRIFT_STDERR"
           exit 1
         fi
 
