@@ -254,7 +254,7 @@ async fn introspect_servers(connection: &PgConnection) -> Result<BTreeMap<String
             s.srvoptions AS options
         FROM pg_foreign_server s
         JOIN pg_foreign_data_wrapper fdw ON fdw.oid = s.srvfdw
-        LEFT JOIN pg_authid u ON u.oid = s.srvowner
+        LEFT JOIN pg_roles u ON u.oid = s.srvowner
         "#,
     )
     .fetch_all(connection.pool())
