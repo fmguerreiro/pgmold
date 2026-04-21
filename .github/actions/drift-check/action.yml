@@ -323,16 +323,22 @@ runs:
         set +f
 
         echo "Running drift detection..."
-        set +e
+        # Keep stderr on the runner console for debugging (parser warnings, etc.)
+        # but keep stdout clean so jq can parse the JSON report unambiguously.
+        STDERR_LOG="$RUNNER_TEMP/pgmold-drift-stderr.log"
+        DRIFT_EXIT=0
         OUTPUT=$(pgmold drift "${SCHEMA_ARGS[@]}" \
           --database "$INPUT_DATABASE" \
           --target-schemas "$INPUT_TARGET_SCHEMAS" \
-          --json 2>&1)
-        DRIFT_EXIT=$?
-        set -e
+          --json 2>"$STDERR_LOG") || DRIFT_EXIT=$?
+        if [[ -s "$STDERR_LOG" ]]; then
+          echo "::group::pgmold drift stderr"
+          cat "$STDERR_LOG"
+          echo "::endgroup::"
+        fi
 
         if ! echo "$OUTPUT" | jq empty 2>/dev/null; then
-          echo "::error::pgmold drift produced non-JSON output (exit $DRIFT_EXIT):"
+          echo "::error::pgmold drift produced non-JSON output (exit $DRIFT_EXIT); see 'pgmold drift stderr' group above"
           echo "$OUTPUT"
           exit 1
         fi
