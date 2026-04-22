@@ -2344,6 +2344,88 @@ fn comment_on_schema_stripped_during_parse() {
 }
 
 #[test]
+fn comment_on_function_captures_text() {
+    let sql = r#"
+        CREATE FUNCTION add(a integer, b integer) RETURNS integer LANGUAGE sql AS $$ SELECT a + b $$;
+        COMMENT ON FUNCTION add(integer, integer) IS 'Adds two numbers';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema
+        .functions
+        .get("public.add(integer, integer)")
+        .expect("function should be parsed");
+    assert_eq!(func.comment.as_deref(), Some("Adds two numbers"));
+}
+
+#[test]
+fn comment_on_function_accepts_e_string_literal() {
+    let sql = r#"
+        CREATE FUNCTION mrv.submit_plan(a integer) RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
+        COMMENT ON FUNCTION mrv.submit_plan(integer) IS E'@name submitPlan\n@omit create,update';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema
+        .functions
+        .get("mrv.submit_plan(integer)")
+        .expect("function should be parsed");
+    assert_eq!(
+        func.comment.as_deref(),
+        Some("@name submitPlan\n@omit create,update")
+    );
+}
+
+#[test]
+fn comment_on_column_accepts_e_string_literal() {
+    let sql = r#"
+        CREATE TABLE mrv.orders (id integer PRIMARY KEY, total numeric);
+        COMMENT ON COLUMN mrv.orders.total IS E'@deprecated use\ttotals.amount';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("mrv.orders").expect("table should parse");
+    let column = table.columns.get("total").expect("column should exist");
+    assert_eq!(
+        column.comment.as_deref(),
+        Some("@deprecated use\ttotals.amount")
+    );
+}
+
+#[test]
+fn comment_on_table_accepts_dollar_quoted_literal() {
+    let sql = r#"
+        CREATE TABLE t (id integer PRIMARY KEY);
+        COMMENT ON TABLE t IS $$holds ' and " chars literally$$;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+    assert_eq!(
+        table.comment.as_deref(),
+        Some(r#"holds ' and " chars literally"#)
+    );
+}
+
+#[test]
+fn comment_on_function_null_clears_comment() {
+    let sql = r#"
+        CREATE FUNCTION foo() RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
+        COMMENT ON FUNCTION foo() IS NULL;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema.functions.get("public.foo()").unwrap();
+    assert!(func.comment.is_none());
+}
+
+#[test]
+fn comment_on_table_doubled_quote_unescaped() {
+    let sql = r#"
+        CREATE TABLE t (id integer PRIMARY KEY);
+        COMMENT ON TABLE t IS 'it''s a table';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+    assert_eq!(table.comment.as_deref(), Some("it's a table"));
+}
+
+#[test]
 fn parses_grant_on_enum_type() {
     let sql = r#"
         CREATE TYPE user_role AS ENUM ('admin', 'user');

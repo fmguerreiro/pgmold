@@ -308,7 +308,7 @@ pub(super) fn preprocess_sql(sql: &str) -> String {
         r"(?i)ALTER\s+TYPE\s+[^;]+\s+(?:ADD|DROP|ALTER)\s+ATTRIBUTE\s+[^;]+;",
         r"(?i)ALTER\s+DOMAIN\s+[^;]+;",
         r"(?i)ALTER\s+DEFAULT\s+PRIVILEGES\s+[^;]+;",
-        r"(?i)COMMENT\s+ON\s+\w+(?:\s+\w+)*\s+.+?\s+IS\s+(?:'(?:[^']|'')*'|NULL)\s*;",
+        r"(?i)COMMENT\s+ON\s+\w+(?:\s+\w+)*\s+.+?\s+IS\s+(?:(?i:E)'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'|\$\$[\s\S]*?\$\$|NULL)\s*;",
         r"(?i)REVOKE\s+[^;]+;",
         r"(?i)GRANT\s+[^;]+;",
     ];
