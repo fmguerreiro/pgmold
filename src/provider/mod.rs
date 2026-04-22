@@ -93,6 +93,7 @@ fn merge_schemas(schemas: Vec<Schema>) -> Result<Schema> {
         merged.pending_owners.extend(schema.pending_owners);
         merged.pending_grants.extend(schema.pending_grants);
         merged.pending_revokes.extend(schema.pending_revokes);
+        merged.pending_comments.extend(schema.pending_comments);
     }
 
     merged.finalize().map_err(SchemaError::ParseError)?;

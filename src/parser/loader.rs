@@ -133,6 +133,7 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
         merged.pending_owners.extend(schema.pending_owners);
         merged.pending_grants.extend(schema.pending_grants);
         merged.pending_revokes.extend(schema.pending_revokes);
+        merged.pending_comments.extend(schema.pending_comments);
     }
 
     merged.pending_policies = merged.finalize_partial();
@@ -284,6 +285,28 @@ mod tests {
         let pattern = format!("{}/*.sql", dir.path().display());
         let result = resolve_source(&pattern).unwrap();
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn comment_on_in_separate_file_applies_to_function() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("0_func.sql"),
+            "CREATE FUNCTION foo() RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("1_tags.sql"),
+            "COMMENT ON FUNCTION foo() IS E'@name fooTag';",
+        )
+        .unwrap();
+
+        let result = load_schema_sources(&[dir.path().to_string_lossy().into_owned()]).unwrap();
+        let func = result
+            .functions
+            .get("public.foo()")
+            .expect("function should merge");
+        assert_eq!(func.comment.as_deref(), Some("@name fooTag"));
     }
 
     #[test]
