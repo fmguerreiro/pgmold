@@ -5,6 +5,28 @@ use regex::Regex;
 
 use super::util::unquote_ident;
 
+/// Normalizes the argument list captured by `FUNCTION_RE` / `AGGREGATE_RE` so the
+/// pending-comment object_key matches the canonical form used as the BTreeMap key
+/// for `Schema::functions` / `Schema::aggregates`. Without this, a SQL author who
+/// writes `COMMENT ON FUNCTION foo(int)` against `CREATE FUNCTION foo(a int)` would
+/// produce a pending key of `public.foo(int)` while the function is stored under
+/// `public.foo(integer)`, and `apply_single_comment` would silently drop the comment.
+///
+/// Only top-level commas need handling: the upstream regexes match the args with
+/// `[^)]*`, which forbids inner parentheses (e.g. `numeric(10,2)`), so a plain
+/// split on `','` is sufficient here.
+fn normalize_callable_args(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    trimmed
+        .split(',')
+        .map(|arg| normalize_pg_type(arg.trim()).into_owned())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub(super) fn parse_comment_statements(sql: &str, schema: &mut Schema) {
     parse_table_comments(sql, schema);
     parse_column_comments(sql, schema);
@@ -184,7 +206,7 @@ fn parse_function_comments(sql: &str, schema: &mut Schema) {
     for capture in FUNCTION_RE.captures_iter(sql) {
         let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
         let function_name = unquote_ident(capture.get(2).unwrap().as_str());
-        let arguments = capture.get(3).unwrap().as_str();
+        let arguments = normalize_callable_args(capture.get(3).unwrap().as_str());
         let comment = extract_comment_text(capture.get(4).unwrap().as_str());
 
         let function_schema = schema_part.unwrap_or("public");
@@ -201,7 +223,7 @@ fn parse_aggregate_comments(sql: &str, schema: &mut Schema) {
     for capture in AGGREGATE_RE.captures_iter(sql) {
         let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
         let aggregate_name = unquote_ident(capture.get(2).unwrap().as_str());
-        let arguments = capture.get(3).unwrap().as_str();
+        let arguments = normalize_callable_args(capture.get(3).unwrap().as_str());
         let comment = extract_comment_text(capture.get(4).unwrap().as_str());
 
         let aggregate_schema = schema_part.unwrap_or("public");
@@ -387,5 +409,40 @@ mod tests {
     fn extract_null_maps_to_none() {
         assert_eq!(extract_comment_text("NULL"), None);
         assert_eq!(extract_comment_text("null"), None);
+    }
+
+    #[test]
+    fn normalize_callable_args_empty_input() {
+        assert_eq!(normalize_callable_args(""), "");
+        assert_eq!(normalize_callable_args("   "), "");
+    }
+
+    #[test]
+    fn normalize_callable_args_aliases_int_to_integer() {
+        assert_eq!(normalize_callable_args("int"), "integer");
+        assert_eq!(normalize_callable_args("INT"), "integer");
+    }
+
+    #[test]
+    fn normalize_callable_args_aliases_bool_to_boolean() {
+        assert_eq!(normalize_callable_args("bool"), "boolean");
+    }
+
+    #[test]
+    fn normalize_callable_args_strips_public_schema_prefix() {
+        assert_eq!(normalize_callable_args("public.mytype"), "mytype");
+    }
+
+    #[test]
+    fn normalize_callable_args_preserves_non_public_schema_prefix() {
+        assert_eq!(normalize_callable_args("mrv.mytype"), "mrv.mytype");
+    }
+
+    #[test]
+    fn normalize_callable_args_handles_multiple_args_with_spacing() {
+        assert_eq!(
+            normalize_callable_args("int,  bool , public.mytype"),
+            "integer, boolean, mytype"
+        );
     }
 }
