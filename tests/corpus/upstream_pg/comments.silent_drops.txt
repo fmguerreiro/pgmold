@@ -1,0 +1,7 @@
+# Silent-drop snapshot for comments.sql
+# One line per unrecognized-statement shape surfaced by pgmold's
+# parser against this vendored fixture. Empty snapshot = zero silent
+# drops, the terminal goal.
+#
+# Regenerate via:  PGMOLD_UPDATE_SILENT_DROPS=1 cargo test --test corpus_upstream_pg
+

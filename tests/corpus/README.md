@@ -42,3 +42,13 @@ cargo test --test corpus -- --ignored
 # Single entry (by partial name)
 cargo test --test corpus -- --ignored inline_constraints
 ```
+
+## Upstream PostgreSQL regression corpus
+
+`upstream_pg/` vendors a curated subset of `src/test/regress/sql/*.sql`
+from PostgreSQL itself. Those files aren't convergence fixtures (they
+contain psql meta-commands, intentional errors, and teardown queries);
+they drive a separate, non-Docker test — `tests/corpus_upstream_pg.rs`
+— that asserts pgmold's parser doesn't silently drop recognized
+top-level DDL. See `upstream_pg/README.md` for provenance and
+refresh instructions.
