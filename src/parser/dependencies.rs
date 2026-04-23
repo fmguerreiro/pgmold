@@ -63,6 +63,14 @@ impl ObjectRef {
 /// Returns qualified names (schema.name) of referenced functions.
 pub fn extract_function_references(body: &str, default_schema: &str) -> HashSet<ObjectRef> {
     let mut refs = HashSet::new();
+    // gh#259: PL/pgSQL bodies cannot parse as raw SQL in any of the three
+    // strategies below — short-circuit so we don't waste cycles on guaranteed
+    // failures, and so that any future warning added here stays quiet for
+    // expected-empty cases (mirrors the gate in
+    // `format_extract_table_references_failure`).
+    if is_plpgsql_body(body) {
+        return refs;
+    }
     let dialect = PostgreSqlDialect {};
 
     // Try to parse as a query first (most function bodies are SELECT statements)
@@ -98,6 +106,15 @@ pub fn extract_function_references(body: &str, default_schema: &str) -> HashSet<
 /// Returns qualified names (schema.name) of referenced relations.
 pub fn extract_table_references(body: &str, default_schema: &str) -> HashSet<ObjectRef> {
     let mut refs = HashSet::new();
+    // gh#259: PL/pgSQL bodies (DECLARE variables, bare BEGIN/END blocks,
+    // RETURN QUERY) cannot parse as raw SQL in any of the three strategies
+    // below, and their relation dependencies are resolved lazily by
+    // PostgreSQL at call time — not at CREATE FUNCTION time. Skipping them
+    // here both avoids wasted parse attempts and silences the
+    // `[pgmold:parser] …` warning pgmold-265 added at the failure path.
+    if is_plpgsql_body(body) {
+        return refs;
+    }
     let dialect = PostgreSqlDialect {};
 
     // Try parsing strategies in order:
@@ -134,14 +151,24 @@ pub fn extract_table_references(body: &str, default_schema: &str) -> HashSet<Obj
 
 /// Build the warning message for a total parse failure in
 /// `extract_table_references`. Returns `None` for trivially empty bodies
-/// (nothing worth logging). Broken out so the formatting is unit-testable
-/// without having to capture stderr.
+/// and for PL/pgSQL function bodies — neither is expected to parse as
+/// standalone SQL. Broken out so the formatting is unit-testable without
+/// having to capture stderr.
 fn format_extract_table_references_failure(
     body: &str,
     default_schema: &str,
     last_error: &str,
 ) -> Option<String> {
-    if body.trim().is_empty() {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // gh#259: PL/pgSQL bodies (DECLARE blocks with non-cursor variables,
+    // bare BEGIN/END blocks, RETURN QUERY, …) cannot parse as raw SQL.
+    // The planner already gates body relation walks on LANGUAGE sql
+    // (planner.rs:1137), so plpgsql bodies reaching this helper are
+    // expected-empty, not diagnostic-worthy.
+    if is_plpgsql_body(trimmed) {
         return None;
     }
     // Collect the first 120 chars and then ask the iterator if anything is
@@ -154,6 +181,28 @@ fn format_extract_table_references_failure(
     Some(format!(
         "[pgmold:parser] extract_table_references: all parse strategies failed (schema={default_schema}, last_error={last_error}, body={snippet:?}{truncated})"
     ))
+}
+
+/// Heuristic detector for PL/pgSQL function bodies.
+///
+/// A plpgsql body starts with either a `DECLARE` block (variable
+/// declarations) or a bare `BEGIN` block (statements). The keyword must
+/// be standalone — terminated by whitespace or punctuation — so that
+/// identifiers like `beginner_id` or `declared_level` do not match.
+///
+/// Used to suppress warnings in `extract_table_references` for bodies that
+/// sqlparser cannot and should not parse as raw SQL.
+fn is_plpgsql_body(body: &str) -> bool {
+    let trimmed = body.trim_start();
+    ["DECLARE", "BEGIN"].iter().any(|keyword| {
+        trimmed
+            .get(..keyword.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(keyword))
+            && trimmed[keyword.len()..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_')
+    })
 }
 
 fn extract_functions_from_statement(
@@ -960,5 +1009,134 @@ mod tests {
         let refs =
             extract_table_references("this is not sql at all >>> complete nonsense", "public");
         assert!(refs.is_empty(), "unparseable bodies must degrade to empty");
+    }
+
+    #[test]
+    fn is_plpgsql_body_detects_declare_with_variables() {
+        // gh#259: plpgsql DECLARE blocks with non-cursor variables must be
+        // recognised as plpgsql so extract_table_references can suppress the
+        // sqlparser 'Expected CURSOR' warning that otherwise floods stderr.
+        assert!(is_plpgsql_body(
+            "DECLARE\n  role_id UUID;\n  has_permission BOOLEAN;\nBEGIN\n  RETURN role_id;\nEND;"
+        ));
+    }
+
+    #[test]
+    fn is_plpgsql_body_detects_begin_block() {
+        // Plpgsql function bodies also commonly start with BEGIN (no DECLARE
+        // block). sqlparser treats bare BEGIN as START TRANSACTION and then
+        // fails on the next non-SQL keyword (e.g. RETURN QUERY).
+        assert!(is_plpgsql_body(
+            "BEGIN\n  RETURN QUERY\n    SELECT es.supplier_id FROM public.enterprise_suppliers es;\nEND;"
+        ));
+    }
+
+    #[test]
+    fn is_plpgsql_body_ignores_leading_whitespace_and_case() {
+        assert!(is_plpgsql_body("   \n\tdeclare foo text; begin end;"));
+        assert!(is_plpgsql_body("\n  Begin\n  null;\nend;"));
+    }
+
+    #[test]
+    fn is_plpgsql_body_rejects_sql_bodies() {
+        // Regular SQL-language function bodies must not be misclassified.
+        assert!(!is_plpgsql_body("SELECT * FROM users"));
+        assert!(!is_plpgsql_body("INSERT INTO t VALUES (1)"));
+        assert!(!is_plpgsql_body("  SELECT 1  "));
+        assert!(!is_plpgsql_body(""));
+        assert!(!is_plpgsql_body("   \n\t  "));
+    }
+
+    #[test]
+    fn is_plpgsql_body_rejects_word_prefix_starting_with_begin() {
+        // 'BEGIN' must be a standalone keyword, not a prefix of an identifier
+        // like 'begins_with' or 'beginner'.
+        assert!(!is_plpgsql_body("SELECT beginner_id FROM users"));
+        assert!(!is_plpgsql_body("declared_level > 5"));
+    }
+
+    #[test]
+    fn format_parse_failure_skips_plpgsql_declare_bodies() {
+        // gh#259: a DECLARE body that sqlparser fails on must not produce a
+        // warning — plpgsql is intentionally not parsed as raw SQL anywhere
+        // in pgmold (planner.rs:1138 already gates body walks on LANGUAGE sql).
+        let body = "DECLARE\n  role_id UUID;\n  role_level TEXT;\nBEGIN\n  RETURN role_id;\nEND;";
+        assert!(
+            format_extract_table_references_failure(
+                body,
+                "public",
+                "sql parser error: Expected: CURSOR, found: UUID at Line: 2, Column: 11",
+            )
+            .is_none(),
+            "plpgsql DECLARE bodies must not produce a stderr warning"
+        );
+    }
+
+    #[test]
+    fn format_parse_failure_skips_plpgsql_begin_bodies() {
+        let body =
+            "BEGIN\n  RETURN QUERY\n    SELECT es.supplier_id FROM public.enterprise_suppliers es;\nEND;";
+        assert!(
+            format_extract_table_references_failure(
+                body,
+                "public",
+                "sql parser error: Expected: end of statement, found: RETURN at Line: 2, Column: 3",
+            )
+            .is_none(),
+            "plpgsql BEGIN bodies must not produce a stderr warning"
+        );
+    }
+
+    #[test]
+    fn format_parse_failure_still_warns_on_non_plpgsql_garbage() {
+        // The warning must still fire on genuinely unparseable bodies that
+        // do not look like plpgsql — that is the diagnostic path pgmold-265
+        // was designed to preserve.
+        let message = format_extract_table_references_failure(
+            "this is not sql >>> complete nonsense",
+            "public",
+            "unexpected token at line 1",
+        );
+        assert!(
+            message.is_some(),
+            "non-plpgsql unparseable bodies must still produce a warning"
+        );
+    }
+
+    #[test]
+    fn extract_table_references_plpgsql_body_returns_empty() {
+        // End-to-end: the plpgsql DECLARE body from gh#259 must degrade to
+        // an empty ref set without hitting the warning path.
+        let body = "DECLARE\n  role_id UUID;\n  has_permission BOOLEAN;\nBEGIN\n  SELECT 1;\nEND;";
+        let refs = extract_table_references(body, "public");
+        assert!(
+            refs.is_empty(),
+            "plpgsql bodies must degrade to empty refs, got: {refs:?}"
+        );
+    }
+
+    #[test]
+    fn extract_function_references_plpgsql_body_returns_empty() {
+        // Mirror of the extract_table_references test — plpgsql function
+        // bodies cannot be parsed as raw SQL and must degrade to empty refs
+        // without attempting the three parse strategies.
+        let body = "DECLARE\n  v_total INTEGER;\nBEGIN\n  v_total := public.some_fn();\n  RETURN v_total;\nEND;";
+        let refs = extract_function_references(body, "public");
+        assert!(
+            refs.is_empty(),
+            "plpgsql bodies must degrade to empty function refs, got: {refs:?}"
+        );
+    }
+
+    #[test]
+    fn extract_table_references_still_walks_sql_language_body() {
+        // Regression guard: SQL-language function bodies and view queries
+        // must still produce relation refs — the plpgsql short-circuit must
+        // not swallow legitimate SQL.
+        let refs = extract_table_references("SELECT * FROM public.users u", "public");
+        assert!(
+            refs.iter().any(|r| r.name == "users"),
+            "sql bodies must still produce refs, got: {refs:?}"
+        );
     }
 }
