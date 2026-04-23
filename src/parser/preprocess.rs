@@ -305,7 +305,7 @@ pub(super) fn preprocess_sql(sql: &str) -> String {
         r"(?i)ALTER\s+SEQUENCE\s+[^;]+;",
         r"(?i)ALTER\s+TYPE\s+[^;]+\s+OWNER\s+TO\s+[^;]+;",
         r"(?i)ALTER\s+TYPE\s+[^;]+\s+SET\s+SCHEMA\s+[^;]+;",
-        r"(?i)ALTER\s+TYPE\s+[^;]+\s+(?:ADD|DROP|ALTER)\s+ATTRIBUTE\s+[^;]+;",
+        r"(?i)ALTER\s+TYPE\s+[^;]+\s+(?:ADD|DROP|ALTER|RENAME)\s+ATTRIBUTE\s+[^;]+;",
         r"(?i)ALTER\s+DOMAIN\s+[^;]+;",
         r"(?i)ALTER\s+DEFAULT\s+PRIVILEGES\s+[^;]+;",
         r"(?i)COMMENT\s+ON\s+\w+(?:\s+\w+)*\s+.+?\s+IS\s+(?:(?i:E)'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'|\$\$[\s\S]*?\$\$|NULL)\s*;",
@@ -632,6 +632,20 @@ $$;"
     #[test]
     fn preprocess_keyword_in_dollar_quoted_body_preserved() {
         let sql = "CREATE FUNCTION f() RETURNS void AS $$\nGRANT SELECT ON t TO r;\n$$;";
+        let result = preprocess_sql(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_strips_alter_type_rename_attribute() {
+        let sql = "ALTER TYPE composite_t RENAME ATTRIBUTE a TO aa;\nSELECT 1;";
+        let result = preprocess_sql(sql);
+        assert_eq!(result, "\nSELECT 1;");
+    }
+
+    #[test]
+    fn preprocess_preserves_alter_type_rename_to() {
+        let sql = "ALTER TYPE old_name RENAME TO new_name;";
         let result = preprocess_sql(sql);
         assert_eq!(result, sql);
     }
