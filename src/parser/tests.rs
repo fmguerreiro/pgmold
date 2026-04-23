@@ -2512,10 +2512,10 @@ fn comment_on_function_attaches_when_args_have_names() {
 }
 
 #[test]
-fn comment_on_function_attaches_when_args_have_in_out_modes() {
+fn comment_on_function_attaches_when_args_have_in_modes() {
     let sql = r#"
-        CREATE FUNCTION upsert(IN id int, OUT result text) LANGUAGE sql AS $$ SELECT 'ok' $$;
-        COMMENT ON FUNCTION upsert(IN id int, OUT result text) IS 'Upsert by id';
+        CREATE FUNCTION upsert(IN id int, IN name text) RETURNS int LANGUAGE sql AS $$ SELECT id $$;
+        COMMENT ON FUNCTION upsert(IN id int, IN name text) IS 'Upsert by id';
     "#;
     let schema = parse_sql_string(sql).unwrap();
     let func = schema
