@@ -994,26 +994,20 @@ impl MigrationGraph {
                     }
                 }
 
-                // Grant/RevokePrivileges depend on the object existing
                 OpKey::GrantPrivileges {
                     object_kind,
                     schema,
                     name,
+                    args,
                     ..
                 }
                 | OpKey::RevokePrivileges {
                     object_kind,
                     schema,
                     name,
+                    args,
                     ..
                 } => {
-                    let args = match self.get_op(key) {
-                        Some(MigrationOp::GrantPrivileges { args: Some(a), .. })
-                        | Some(MigrationOp::RevokePrivileges { args: Some(a), .. }) => {
-                            Some(a.clone())
-                        }
-                        _ => None,
-                    };
                     add_privilege_dependency_edge(
                         &mut edges_to_add,
                         object_kind,
@@ -1024,11 +1018,9 @@ impl MigrationGraph {
                     );
                 }
 
-                // SetComment must follow the Create op for its target. Without this
-                // edge the topological sort is free to place COMMENT ON before the
-                // CREATE it targets (sagri-tokyo/mrv#3947: `COMMENT ON FUNCTION
-                // "mrv"."vcs_project_create"(...)` ran before `CREATE SCHEMA "mrv"`
-                // and aborted apply with `schema "mrv" does not exist`).
+                // SetComment has no tier edges; without content-aware edges
+                // topological sort may place COMMENT ON before the CREATE it
+                // targets. Each variant maps to the producer op for its target.
                 OpKey::SetComment {
                     object_type,
                     schema,
@@ -1038,6 +1030,13 @@ impl MigrationGraph {
                     target,
                 } => {
                     use crate::diff::CommentObjectType;
+                    let require = |opt: &Option<String>, kind: &str, field: &str| -> String {
+                        opt.clone().unwrap_or_else(|| {
+                            panic!(
+                                "invariant violated: SetComment for {kind} {schema}.{name} has {field}=None"
+                            )
+                        })
+                    };
                     let qualified = qualified_name(schema, name);
                     match object_type {
                         CommentObjectType::Schema => {
@@ -1068,18 +1067,7 @@ impl MigrationGraph {
                             edges_to_add.push((OpKey::CreateView(qualified), key.clone()));
                         }
                         CommentObjectType::Function => {
-                            // Overload-sensitive: must match the concrete signature.
-                            // SetComment's OpKey carries `arguments` for this reason
-                            // (gh#249/#250). Fail loud if the invariant breaks —
-                            // every producer in diff/mod.rs and dump.rs emits
-                            // `arguments: Some(args_string)` for Function comments;
-                            // silently dropping the edge would reintroduce the
-                            // COMMENT-before-CREATE bug this fix exists to close.
-                            let args = arguments.clone().unwrap_or_else(|| {
-                                panic!(
-                                    "invariant violated: SetComment for Function {schema}.{name} has arguments=None; producer must set args_string()"
-                                )
-                            });
+                            let args = require(arguments, "Function", "arguments");
                             edges_to_add.push((
                                 OpKey::CreateFunction {
                                     name: qualified,
@@ -1089,11 +1077,7 @@ impl MigrationGraph {
                             ));
                         }
                         CommentObjectType::Aggregate => {
-                            let args = arguments.clone().unwrap_or_else(|| {
-                                panic!(
-                                    "invariant violated: SetComment for Aggregate {schema}.{name} has arguments=None; producer must set args_string()"
-                                )
-                            });
+                            let args = require(arguments, "Aggregate", "arguments");
                             edges_to_add.push((
                                 OpKey::CreateAggregate {
                                     name: qualified,
@@ -1103,9 +1087,8 @@ impl MigrationGraph {
                             ));
                         }
                         // pgmold currently models every user-defined type under
-                        // `OpKey::CreateEnum` (see diff/op_key.rs). Range/composite/
-                        // base types are not in the model yet; if they arrive, add
-                        // a matching op-kind here.
+                        // `OpKey::CreateEnum`. Range/composite/base types are not
+                        // in the model yet; if they arrive, add a matching op kind.
                         CommentObjectType::Type => {
                             edges_to_add.push((OpKey::CreateEnum(qualified), key.clone()));
                         }
@@ -1116,14 +1099,7 @@ impl MigrationGraph {
                             edges_to_add.push((OpKey::CreateSequence(qualified), key.clone()));
                         }
                         CommentObjectType::Trigger => {
-                            // Triggers are uniquely identified by (schema, target, name).
-                            // Same invariant as Function/Aggregate: producers always
-                            // set `target` for trigger comments (see diff/mod.rs:312).
-                            let target_name = target.clone().unwrap_or_else(|| {
-                                panic!(
-                                    "invariant violated: SetComment for Trigger {schema}.{name} has target=None; producer must set trigger's target table"
-                                )
-                            });
+                            let target_name = require(target, "Trigger", "target");
                             edges_to_add.push((
                                 OpKey::CreateTrigger {
                                     target: QualifiedName::new(schema, &target_name),
@@ -6396,12 +6372,13 @@ mod tests {
         assert_comments_all_distinct(vec![trigger_comment("users"), trigger_comment("orders")]);
     }
 
-    /// Asserts the CreateXxx op precedes every SetComment op in `planned`.
+    /// Asserts the creator op precedes the SetComment op in `planned`.
     ///
-    /// `position` returns the first match — which is the minimum SetComment index —
-    /// so `creator_pos < first_setcomment_pos` is equivalent to "every SetComment
-    /// comes after the creator". Any SetComment placed before the creator pulls the
-    /// minimum below `creator_pos` and the assertion fails.
+    /// Precondition: `planned` contains exactly one SetComment. The helper
+    /// reads the first SetComment's index; if callers pass a plan with more
+    /// than one SetComment (e.g. comments for unrelated objects), the helper
+    /// does not disambiguate and the assertion may pass spuriously — add a
+    /// predicate-matching variant if that case arises.
     fn assert_creator_precedes_comment(
         planned: &[MigrationOp],
         creator: impl Fn(&MigrationOp) -> bool,
@@ -6411,13 +6388,21 @@ mod tests {
             .iter()
             .position(&creator)
             .unwrap_or_else(|| panic!("{creator_label} not found in plan"));
-        let first_comment_pos = planned
+        let comment_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::SetComment { .. }))
+            .count();
+        assert_eq!(
+            comment_count, 1,
+            "precondition: exactly one SetComment per call, got {comment_count}"
+        );
+        let comment_pos = planned
             .iter()
             .position(|op| matches!(op, MigrationOp::SetComment { .. }))
             .expect("SetComment not found in plan");
         assert!(
-            creator_pos < first_comment_pos,
-            "{creator_label} must come before every SetComment. {creator_label} at {creator_pos}, earliest SetComment at {first_comment_pos}"
+            creator_pos < comment_pos,
+            "{creator_label} must come before SetComment. {creator_label} at {creator_pos}, SetComment at {comment_pos}"
         );
     }
 
@@ -6447,9 +6432,8 @@ mod tests {
 
     #[test]
     fn function_comment_ordered_after_create_function_overload_aware() {
-        // gh#3947 repro: COMMENT ON FUNCTION "mrv"."vcs_project_create"(uuid, text, ...)
-        // IS '@deprecated …'; was planned before CREATE FUNCTION.
-        // Must hold per-signature: the COMMENT is keyed to the concrete overload.
+        // The SetComment edge must match the concrete signature, not just the
+        // qualified function name — otherwise two overloads collide on OpKey.
         let function = make_function_with_body(
             "vcs_project_create",
             "mrv",
@@ -6484,13 +6468,6 @@ mod tests {
                 )
             },
             "CreateFunction(mrv.vcs_project_create)",
-        );
-        // And CreateSchema before CreateFunction is already tier-enforced; re-assert
-        // the end-to-end CreateSchema → SetComment invariant holds transitively.
-        assert_creator_precedes_comment(
-            &planned,
-            |op| matches!(op, MigrationOp::CreateSchema(s) if s.name == "mrv"),
-            "CreateSchema(mrv)",
         );
     }
 
