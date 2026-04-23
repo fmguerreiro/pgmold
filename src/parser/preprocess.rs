@@ -1,6 +1,6 @@
 use regex::Regex;
 
-fn strip_comments(sql: &str) -> String {
+pub(super) fn strip_comments(sql: &str) -> String {
     let bytes = sql.as_bytes();
     let length = bytes.len();
     let mut result = String::with_capacity(length);
@@ -194,7 +194,7 @@ fn reorder_sequence_options(sql: &str) -> String {
 /// Replaces quoted content (single-quoted strings, double-quoted identifiers,
 /// dollar-quoted blocks) with safe placeholders so that regex-based strip
 /// patterns cannot match keywords inside quoted text.
-fn protect_quoted_content(sql: &str) -> (String, Vec<(String, String)>) {
+pub(super) fn protect_quoted_content(sql: &str) -> (String, Vec<(String, String)>) {
     let bytes = sql.as_bytes();
     let length = bytes.len();
     let mut result = String::with_capacity(length);

@@ -212,6 +212,13 @@ impl GrantArgs {
 #[command(version)]
 #[command(about = "PostgreSQL schema-as-code management", long_about = None)]
 struct Cli {
+    /// Promote parser warnings (unrecognized COMMENT ON / GRANT / REVOKE /
+    /// ALTER ... OWNER TO / ALTER DEFAULT PRIVILEGES) to errors. Intended
+    /// for CI pipelines that want to fail fast on silently-dropped
+    /// statements.
+    #[arg(long, global = true)]
+    strict: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -473,6 +480,13 @@ async fn run_validation(
 
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
+
+    if cli.strict {
+        // Propagate to library-level parser via env var. This is a
+        // process-wide setting; safe because CLI invocations are
+        // single-shot.
+        std::env::set_var("PGMOLD_STRICT", "1");
+    }
 
     match cli.command {
         Commands::Diff {
