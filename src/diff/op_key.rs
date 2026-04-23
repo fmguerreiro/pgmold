@@ -1,4 +1,4 @@
-use super::{GrantObjectKind, MigrationOp, OwnerObjectKind};
+use super::{CommentObjectType, GrantObjectKind, MigrationOp, OwnerObjectKind};
 use crate::model::{qualified_name, QualifiedName};
 use crate::parser::extract_table_references;
 use std::collections::HashSet;
@@ -211,8 +211,12 @@ pub(crate) enum OpKey {
         name: String,
     },
     SetComment {
+        object_type: CommentObjectType,
         schema: String,
         name: String,
+        arguments: Option<String>,
+        column: Option<String>,
+        target: Option<String>,
     },
 }
 
@@ -470,9 +474,21 @@ impl OpKey {
                 version_schema: version_schema.clone(),
                 name: name.clone(),
             },
-            MigrationOp::SetComment { schema, name, .. } => OpKey::SetComment {
+            MigrationOp::SetComment {
+                object_type,
+                schema,
+                name,
+                arguments,
+                column,
+                target,
+                ..
+            } => OpKey::SetComment {
+                object_type: *object_type,
                 schema: schema.clone(),
                 name: name.clone(),
+                arguments: arguments.clone(),
+                column: column.clone(),
+                target: target.clone(),
             },
         }
     }

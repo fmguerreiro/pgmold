@@ -6193,4 +6193,95 @@ mod tests {
             "CreateFunction must precede AddColumn whose GENERATED expression references it. func at {func_pos}, col at {col_pos}"
         );
     }
+
+    /// Asserts every `SetComment` op survives the planner with no duplicate-key panic.
+    fn assert_comments_all_distinct(ops: Vec<MigrationOp>) {
+        assert!(
+            ops.iter()
+                .all(|op| matches!(op, MigrationOp::SetComment { .. })),
+            "assert_comments_all_distinct requires every op to be SetComment"
+        );
+        let expected = ops.len();
+        let planned = plan_migration(ops);
+        let got = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::SetComment { .. }))
+            .count();
+        assert_eq!(
+            got, expected,
+            "expected {expected} SetComment ops to survive the planner, got {got}"
+        );
+    }
+
+    fn column_comment(schema: &str, table: &str, column: &str) -> MigrationOp {
+        MigrationOp::SetComment {
+            object_type: crate::diff::CommentObjectType::Column,
+            schema: schema.to_string(),
+            name: table.to_string(),
+            arguments: None,
+            column: Some(column.to_string()),
+            target: None,
+            comment: Some("@omit create,update".to_string()),
+        }
+    }
+
+    #[test]
+    fn multiple_column_comments_on_same_table_do_not_collide() {
+        // gh#249: OpKey for SetComment was keyed by (schema, name), so multiple
+        // COMMENT ON COLUMN statements against the same table collided.
+        assert_comments_all_distinct(vec![
+            column_comment("mrv", "foo", "status"),
+            column_comment("mrv", "foo", "created_at"),
+            column_comment("mrv", "foo", "updated_at"),
+        ]);
+    }
+
+    #[test]
+    fn table_and_column_comments_on_same_name_do_not_collide() {
+        assert_comments_all_distinct(vec![
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Table,
+                schema: "public".to_string(),
+                name: "widgets".to_string(),
+                arguments: None,
+                column: None,
+                target: None,
+                comment: Some("widget table".to_string()),
+            },
+            column_comment("public", "widgets", "id"),
+        ]);
+    }
+
+    #[test]
+    fn function_overload_comments_do_not_collide() {
+        let overload = |args: &str, body: &str| MigrationOp::SetComment {
+            object_type: crate::diff::CommentObjectType::Function,
+            schema: "public".to_string(),
+            name: "calc".to_string(),
+            arguments: Some(args.to_string()),
+            column: None,
+            target: None,
+            comment: Some(body.to_string()),
+        };
+        assert_comments_all_distinct(vec![
+            overload("integer", "int overload"),
+            overload("text", "text overload"),
+        ]);
+    }
+
+    #[test]
+    fn same_trigger_name_on_different_tables_do_not_collide() {
+        // Two triggers named `audit` on different target tables differ only by
+        // the `target` field. Without it they'd collide on (schema, name).
+        let trigger_comment = |target: &str| MigrationOp::SetComment {
+            object_type: crate::diff::CommentObjectType::Trigger,
+            schema: "public".to_string(),
+            name: "audit".to_string(),
+            arguments: None,
+            column: None,
+            target: Some(target.to_string()),
+            comment: Some(format!("audit trigger on {target}")),
+        };
+        assert_comments_all_distinct(vec![trigger_comment("users"), trigger_comment("orders")]);
+    }
 }
