@@ -180,12 +180,17 @@ pub(crate) enum OpKey {
         object_kind: GrantObjectKind,
         schema: String,
         name: String,
+        // For Function and Aggregate, `args` carries the normalized signature so
+        // overloads do not collide on (kind, schema, name, grantee). None for
+        // non-overloadable kinds (Table, View, Sequence, Schema, Type, Domain).
+        args: Option<String>,
         grantee: String,
     },
     RevokePrivileges {
         object_kind: GrantObjectKind,
         schema: String,
         name: String,
+        args: Option<String>,
         grantee: String,
     },
     AlterDefaultPrivileges {
@@ -417,24 +422,28 @@ impl OpKey {
                 object_kind,
                 schema,
                 name,
+                args,
                 grantee,
                 ..
             } => OpKey::GrantPrivileges {
                 object_kind: *object_kind,
                 schema: schema.clone(),
                 name: name.clone(),
+                args: args.clone(),
                 grantee: grantee.clone(),
             },
             MigrationOp::RevokePrivileges {
                 object_kind,
                 schema,
                 name,
+                args,
                 grantee,
                 ..
             } => OpKey::RevokePrivileges {
                 object_kind: *object_kind,
                 schema: schema.clone(),
                 name: name.clone(),
+                args: args.clone(),
                 grantee: grantee.clone(),
             },
             MigrationOp::AlterDefaultPrivileges {
