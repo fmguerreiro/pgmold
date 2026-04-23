@@ -6194,56 +6194,46 @@ mod tests {
         );
     }
 
-    #[test]
-    fn multiple_column_comments_on_same_table_do_not_collide() {
-        // gh#249: OpKey for SetComment was keyed by (schema, name), so multiple
-        // COMMENT ON COLUMN statements against the same table collided.
-        let ops = vec![
-            MigrationOp::SetComment {
-                object_type: crate::diff::CommentObjectType::Column,
-                schema: "mrv".to_string(),
-                name: "foo".to_string(),
-                arguments: None,
-                column: Some("status".to_string()),
-                target: None,
-                comment: Some("@omit create,update".to_string()),
-            },
-            MigrationOp::SetComment {
-                object_type: crate::diff::CommentObjectType::Column,
-                schema: "mrv".to_string(),
-                name: "foo".to_string(),
-                arguments: None,
-                column: Some("created_at".to_string()),
-                target: None,
-                comment: Some("@omit create,update".to_string()),
-            },
-            MigrationOp::SetComment {
-                object_type: crate::diff::CommentObjectType::Column,
-                schema: "mrv".to_string(),
-                name: "foo".to_string(),
-                arguments: None,
-                column: Some("updated_at".to_string()),
-                target: None,
-                comment: Some("@omit create,update".to_string()),
-            },
-        ];
-
+    /// Asserts every `SetComment` op survives the planner with no duplicate-key panic.
+    fn assert_comments_all_distinct(ops: Vec<MigrationOp>) {
+        let expected = ops.len();
         let planned = plan_migration(ops);
-        let comment_count = planned
+        let got = planned
             .iter()
             .filter(|op| matches!(op, MigrationOp::SetComment { .. }))
             .count();
         assert_eq!(
-            comment_count, 3,
-            "expected three SetComment ops to survive the planner, got {comment_count}"
+            got, expected,
+            "expected {expected} SetComment ops to survive the planner, got {got}"
         );
+    }
+
+    fn column_comment(schema: &str, table: &str, column: &str) -> MigrationOp {
+        MigrationOp::SetComment {
+            object_type: crate::diff::CommentObjectType::Column,
+            schema: schema.to_string(),
+            name: table.to_string(),
+            arguments: None,
+            column: Some(column.to_string()),
+            target: None,
+            comment: Some("@omit create,update".to_string()),
+        }
+    }
+
+    #[test]
+    fn multiple_column_comments_on_same_table_do_not_collide() {
+        // gh#249: OpKey for SetComment was keyed by (schema, name), so multiple
+        // COMMENT ON COLUMN statements against the same table collided.
+        assert_comments_all_distinct(vec![
+            column_comment("mrv", "foo", "status"),
+            column_comment("mrv", "foo", "created_at"),
+            column_comment("mrv", "foo", "updated_at"),
+        ]);
     }
 
     #[test]
     fn table_and_column_comments_on_same_name_do_not_collide() {
-        // Table comment and column comment on the same (schema, name) must be
-        // distinct OpKeys.
-        let ops = vec![
+        assert_comments_all_distinct(vec![
             MigrationOp::SetComment {
                 object_type: crate::diff::CommentObjectType::Table,
                 schema: "public".to_string(),
@@ -6253,58 +6243,40 @@ mod tests {
                 target: None,
                 comment: Some("widget table".to_string()),
             },
-            MigrationOp::SetComment {
-                object_type: crate::diff::CommentObjectType::Column,
-                schema: "public".to_string(),
-                name: "widgets".to_string(),
-                arguments: None,
-                column: Some("id".to_string()),
-                target: None,
-                comment: Some("widget id".to_string()),
-            },
-        ];
-
-        let planned = plan_migration(ops);
-        assert_eq!(
-            planned
-                .iter()
-                .filter(|op| matches!(op, MigrationOp::SetComment { .. }))
-                .count(),
-            2
-        );
+            column_comment("public", "widgets", "id"),
+        ]);
     }
 
     #[test]
     fn function_overload_comments_do_not_collide() {
-        // Two overloads of the same function name must have distinct OpKeys.
-        let ops = vec![
-            MigrationOp::SetComment {
-                object_type: crate::diff::CommentObjectType::Function,
-                schema: "public".to_string(),
-                name: "calc".to_string(),
-                arguments: Some("integer".to_string()),
-                column: None,
-                target: None,
-                comment: Some("int overload".to_string()),
-            },
-            MigrationOp::SetComment {
-                object_type: crate::diff::CommentObjectType::Function,
-                schema: "public".to_string(),
-                name: "calc".to_string(),
-                arguments: Some("text".to_string()),
-                column: None,
-                target: None,
-                comment: Some("text overload".to_string()),
-            },
-        ];
+        let overload = |args: &str, body: &str| MigrationOp::SetComment {
+            object_type: crate::diff::CommentObjectType::Function,
+            schema: "public".to_string(),
+            name: "calc".to_string(),
+            arguments: Some(args.to_string()),
+            column: None,
+            target: None,
+            comment: Some(body.to_string()),
+        };
+        assert_comments_all_distinct(vec![
+            overload("integer", "int overload"),
+            overload("text", "text overload"),
+        ]);
+    }
 
-        let planned = plan_migration(ops);
-        assert_eq!(
-            planned
-                .iter()
-                .filter(|op| matches!(op, MigrationOp::SetComment { .. }))
-                .count(),
-            2
-        );
+    #[test]
+    fn same_trigger_name_on_different_tables_do_not_collide() {
+        // Two triggers named `audit` on different target tables differ only by
+        // the `target` field. Without it they'd collide on (schema, name).
+        let trigger_comment = |target: &str| MigrationOp::SetComment {
+            object_type: crate::diff::CommentObjectType::Trigger,
+            schema: "public".to_string(),
+            name: "audit".to_string(),
+            arguments: None,
+            column: None,
+            target: Some(target.to_string()),
+            comment: Some(format!("audit trigger on {target}")),
+        };
+        assert_comments_all_distinct(vec![trigger_comment("users"), trigger_comment("orders")]);
     }
 }
