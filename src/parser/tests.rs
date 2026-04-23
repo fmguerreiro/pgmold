@@ -2526,6 +2526,20 @@ fn comment_on_function_attaches_when_args_have_in_modes() {
 }
 
 #[test]
+fn comment_on_function_attaches_when_args_mix_in_and_out_modes() {
+    let sql = r#"
+        CREATE FUNCTION upsert_out(IN id int, OUT result text) RETURNS void LANGUAGE sql AS $$ SELECT '' $$;
+        COMMENT ON FUNCTION upsert_out(IN id int, OUT result text) IS 'Upsert with OUT';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema
+        .functions
+        .get("public.upsert_out(integer, text)")
+        .expect("function should be stored under canonical signature");
+    assert_eq!(func.comment.as_deref(), Some("Upsert with OUT"));
+}
+
+#[test]
 fn comment_on_function_attaches_when_arg_uses_variadic() {
     let sql = r#"
         CREATE FUNCTION concat_all(VARIADIC arr text[]) RETURNS text LANGUAGE sql AS $$ SELECT '' $$;
