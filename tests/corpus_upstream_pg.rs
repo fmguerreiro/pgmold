@@ -103,7 +103,7 @@ fn shape_key(finding: &UnrecognizedStatement) -> String {
                 "TYPES",
                 "SCHEMAS",
             ];
-            let target = TARGETS.into_iter().find(|t| contains(*t)).unwrap_or("?");
+            let target = TARGETS.into_iter().find(|t| contains(t)).unwrap_or("?");
             format!("ALTER DEFAULT PRIVILEGES {verb} ON {target}")
         }
         other => other.to_string(),
