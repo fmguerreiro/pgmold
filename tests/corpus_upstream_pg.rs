@@ -60,24 +60,11 @@ fn shape_key(finding: &UnrecognizedStatement) -> String {
     let contains = |needle: &str| tokens.iter().any(|t| t == needle);
 
     match finding.kind {
-        "COMMENT ON" => {
-            let kind_tok = match (at(2), at(3)) {
-                ("MATERIALIZED", "VIEW") => "MATERIALIZED VIEW",
-                ("TEXT", "SEARCH") => "TEXT SEARCH",
-                ("FOREIGN", "TABLE") => "FOREIGN TABLE",
-                ("FOREIGN", "DATA") => "FOREIGN DATA WRAPPER",
-                ("EVENT", "TRIGGER") => "EVENT TRIGGER",
-                ("ACCESS", "METHOD") => "ACCESS METHOD",
-                ("USER", "MAPPING") => "USER MAPPING",
-                ("LARGE", "OBJECT") => "LARGE OBJECT",
-                (third, _) if !third.is_empty() => third,
-                _ => "?",
-            };
-            format!("COMMENT ON {kind_tok}")
+        "COMMENT ON" => format!("COMMENT ON {}", comment_on_object_kind(&tokens)),
+        kind @ ("GRANT" | "REVOKE") if contains("ON") => {
+            format!("{kind} ... ON {}", grant_target_kind(&tokens))
         }
-        "GRANT" if contains("ON") => "GRANT ... ON ...".to_string(),
         "GRANT" => "GRANT <role> TO ...".to_string(),
-        "REVOKE" if contains("ON") => "REVOKE ... ON ...".to_string(),
         "REVOKE" => "REVOKE <role> FROM ...".to_string(),
         "ALTER ... OWNER TO" => {
             let kind_tok = if at(1) == "MATERIALIZED" && at(2) == "VIEW" {
@@ -107,6 +94,70 @@ fn shape_key(finding: &UnrecognizedStatement) -> String {
             format!("ALTER DEFAULT PRIVILEGES {verb} ON {target}")
         }
         other => other.to_string(),
+    }
+}
+
+/// `COMMENT ON <kind> ...` — extract the object kind, folding multi-word
+/// kinds (MATERIALIZED VIEW, TEXT SEARCH DICTIONARY, FOREIGN DATA WRAPPER,
+/// etc.) so each PG object class gets its own snapshot row.
+fn comment_on_object_kind(tokens: &[String]) -> String {
+    let at = |i: usize| tokens.get(i).map(String::as_str).unwrap_or("");
+    match (at(2), at(3), at(4)) {
+        ("MATERIALIZED", "VIEW", _) => "MATERIALIZED VIEW".to_string(),
+        ("FOREIGN", "TABLE", _) => "FOREIGN TABLE".to_string(),
+        ("FOREIGN", "DATA", _) => "FOREIGN DATA WRAPPER".to_string(),
+        ("EVENT", "TRIGGER", _) => "EVENT TRIGGER".to_string(),
+        ("ACCESS", "METHOD", _) => "ACCESS METHOD".to_string(),
+        ("USER", "MAPPING", _) => "USER MAPPING".to_string(),
+        ("LARGE", "OBJECT", _) => "LARGE OBJECT".to_string(),
+        ("TEXT", "SEARCH", sub) if !sub.is_empty() => format!("TEXT SEARCH {sub}"),
+        ("TEXT", "SEARCH", _) => "TEXT SEARCH".to_string(),
+        (third, _, _) if !third.is_empty() => third.to_string(),
+        _ => "?".to_string(),
+    }
+}
+
+/// `GRANT/REVOKE ... ON <kind> ...` — extract the object class keyword
+/// after `ON`. Returns a normalized name when the keyword names a
+/// PostgreSQL object kind, `<implicit>` when the GRANT omits the kind
+/// (e.g. `GRANT SELECT ON tbl TO ...`), `?` otherwise.
+fn grant_target_kind(tokens: &[String]) -> String {
+    let on_idx = match tokens.iter().position(|t| t == "ON") {
+        Some(i) => i,
+        None => return "?".to_string(),
+    };
+    let next = tokens.get(on_idx + 1).map(String::as_str).unwrap_or("");
+    let after = tokens.get(on_idx + 2).map(String::as_str).unwrap_or("");
+    match (next, after) {
+        ("FOREIGN", "DATA") => "FOREIGN DATA WRAPPER".to_string(),
+        ("FOREIGN", "SERVER") => "FOREIGN SERVER".to_string(),
+        ("FOREIGN", "TABLE") => "FOREIGN TABLE".to_string(),
+        ("LARGE", "OBJECT") => "LARGE OBJECT".to_string(),
+        ("ALL", "TABLES") => "ALL TABLES IN SCHEMA".to_string(),
+        ("ALL", "SEQUENCES") => "ALL SEQUENCES IN SCHEMA".to_string(),
+        ("ALL", "FUNCTIONS") => "ALL FUNCTIONS IN SCHEMA".to_string(),
+        ("ALL", "PROCEDURES") => "ALL PROCEDURES IN SCHEMA".to_string(),
+        ("ALL", "ROUTINES") => "ALL ROUTINES IN SCHEMA".to_string(),
+        (kind, _)
+            if matches!(
+                kind,
+                "TABLE"
+                    | "SEQUENCE"
+                    | "FUNCTION"
+                    | "PROCEDURE"
+                    | "ROUTINE"
+                    | "SCHEMA"
+                    | "DATABASE"
+                    | "TYPE"
+                    | "DOMAIN"
+                    | "LANGUAGE"
+                    | "TABLESPACE"
+                    | "PARAMETER"
+            ) =>
+        {
+            kind.to_string()
+        }
+        _ => "<implicit>".to_string(),
     }
 }
 
@@ -165,12 +216,7 @@ fn format_diff(
             msg.push_str(&format!("    + {shape}\n"));
             // Surface up to three concrete examples so the failure is
             // actionable without rerunning.
-            let examples: Vec<&UnrecognizedStatement> = findings
-                .iter()
-                .filter(|f| &shape_key(f) == *shape)
-                .take(3)
-                .collect();
-            for ex in examples {
+            for ex in findings.iter().filter(|f| &shape_key(f) == *shape).take(3) {
                 msg.push_str(&format!("        line {}: {}\n", ex.line, ex.snippet));
             }
         }
@@ -260,7 +306,16 @@ fn shape_key_for_comment_on_materialized_view() {
 #[test]
 fn shape_key_for_comment_on_text_search_dictionary() {
     let s = stmt("COMMENT ON", "COMMENT ON TEXT SEARCH DICTIONARY d IS 'x';");
-    assert_eq!(shape_key(&s), "COMMENT ON TEXT SEARCH");
+    assert_eq!(shape_key(&s), "COMMENT ON TEXT SEARCH DICTIONARY");
+}
+
+#[test]
+fn shape_key_for_comment_on_text_search_configuration() {
+    let s = stmt(
+        "COMMENT ON",
+        "COMMENT ON TEXT SEARCH CONFIGURATION c IS 'x';",
+    );
+    assert_eq!(shape_key(&s), "COMMENT ON TEXT SEARCH CONFIGURATION");
 }
 
 #[test]
@@ -270,9 +325,42 @@ fn shape_key_for_grant_role_membership() {
 }
 
 #[test]
+fn shape_key_for_grant_on_explicit_table() {
+    let s = stmt("GRANT", "GRANT SELECT ON TABLE public.users TO alice;");
+    assert_eq!(shape_key(&s), "GRANT ... ON TABLE");
+}
+
+#[test]
+fn shape_key_for_grant_on_implicit_table() {
+    let s = stmt("GRANT", "GRANT SELECT ON public.users TO alice;");
+    assert_eq!(shape_key(&s), "GRANT ... ON <implicit>");
+}
+
+#[test]
+fn shape_key_for_grant_on_all_tables_in_schema() {
+    let s = stmt(
+        "GRANT",
+        "GRANT SELECT ON ALL TABLES IN SCHEMA public TO alice;",
+    );
+    assert_eq!(shape_key(&s), "GRANT ... ON ALL TABLES IN SCHEMA");
+}
+
+#[test]
+fn shape_key_for_grant_on_large_object() {
+    let s = stmt("GRANT", "GRANT SELECT ON LARGE OBJECT 1234 TO alice;");
+    assert_eq!(shape_key(&s), "GRANT ... ON LARGE OBJECT");
+}
+
+#[test]
 fn shape_key_for_revoke_role_membership() {
     let s = stmt("REVOKE", "REVOKE pg_read_all_data FROM alice;");
     assert_eq!(shape_key(&s), "REVOKE <role> FROM ...");
+}
+
+#[test]
+fn shape_key_for_revoke_on_explicit_table() {
+    let s = stmt("REVOKE", "REVOKE SELECT ON TABLE public.users FROM alice;");
+    assert_eq!(shape_key(&s), "REVOKE ... ON TABLE");
 }
 
 #[test]
