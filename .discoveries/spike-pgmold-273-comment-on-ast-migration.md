@@ -71,6 +71,12 @@ Statement::Comment {
 MaterializedView | Procedure | Role | Schema | Sequence | Table | Type | User |
 View`.
 
+Note the asymmetry: sqlparser supports `Procedure` and `Index`, but pgmold's
+`PendingCommentObjectType` has neither. `COMMENT ON INDEX …` and
+`COMMENT ON PROCEDURE …` are silently dropped today (regex has no arm) and
+would fail to apply if the AST migration happened without adding the
+corresponding pgmold model fields first.
+
 `Parser::parse_comment` (parser/mod.rs:899-973) calls
 `parse_object_name(false)` — which recurses on `ident (. ident)*` and **exits
 on any non-period token** (parser/mod.rs:13705). Then it calls
@@ -126,13 +132,15 @@ The three `no` rows are the blockers.
 | `COMMENT ON EXTENSION e IS 'x';` | **miss** | ok |
 | `... IS NULL;` | ok (returns `None`) | ok (`comment: None`) |
 | `... IS 'it''s escaped';` | ok (collapses `''` → `'`) | ok |
-| `... IS E'line\n';` | **miss** (regex doesn't match E-prefix) | ok — literal decoded |
+| `... IS E'line\n';` | ok (added for gh#246 / PR #247) | ok — literal decoded |
 | `... IS U&'\00e9';` | **miss** | ok — Unicode literal decoded |
-| `... IS $$body$$;` | **miss** | **parse error** — `parse_literal_string` rejects dollar-quoted |
+| `... IS $$body$$;` (untagged) | ok (added for gh#246 / PR #247) | **parse error** — `parse_literal_string` rejects `DollarQuotedString` |
+| `... IS $tag$body$tag$;` (tagged) | **miss** — `IS_LITERAL_PATTERN` only matches `$$…$$` (see `comments.rs:25-26`; `regex` crate has no backreferences) | **parse error** — same as above |
 
-Net: the AST covers more string-literal encodings, but falls over on three
-object kinds pgmold already relies on (TRIGGER today; FUNCTION with args
-every day) and on dollar-quoted bodies.
+Net: the AST covers Unicode literals (`U&'…'`); the regex covers dollar-quoted
+bodies sqlparser currently refuses. Net coverage between the two is roughly
+even on literal forms. The real blockers remain the three object-kind rows
+above (TRIGGER, FUNCTION with args, AGGREGATE / POLICY).
 
 ## Architectural implication for the wider migration (GRANT / REVOKE / OWNER TO)
 
@@ -140,12 +148,16 @@ The same pattern recurs for the siblings the task enumerates:
 
 - `GrantObjects` (ast/mod.rs:7639-7751) has no variant for `TYPE` or `DOMAIN`,
   yet pgmold's tests include `GRANT USAGE ON TYPE user_role TO app_user;`
-  (parser/tests.rs:2266). AST migration would regress enum-type grant support
+  (parser/tests.rs:2432). AST migration would regress enum-type grant support
   unless the fork is extended.
 - `AlterTypeOperation` (ast/ddl.rs:1141) only has `Rename | AddValue |
   RenameValue`. The preprocess strip patterns we'd like to retire include
   `ALTER TYPE … OWNER TO …`, `ALTER TYPE … SET SCHEMA …`, and
   `ALTER TYPE … ADD|DROP|ALTER ATTRIBUTE …` — none of which exist in the AST.
+  Note that `OwnerTo` and `SetSchema` already exist on sibling operations
+  (`AlterRoleOperation`, `AlterSequenceOperation`), so the upstream additions
+  to `AlterTypeOperation` are mechanical — this is a narrowly scoped task,
+  not pioneering new territory.
 - `ALTER DEFAULT PRIVILEGES` has no sqlparser variant at all.
 - `ALTER TABLE … OWNER TO` **is** modelled via `AlterTableOperation::OwnerTo`
   (already listed as ignored in parser/mod.rs:484). This one would migrate
@@ -261,9 +273,10 @@ against the current fork:
   `GrantObjects::{Types, Domains}` so GRANT ON TYPE/DOMAIN can migrate to AST.
 - **pgmold-278** (bug, P2) — `COMMENT ON AGGREGATE …(…) IS …;` is silently
   dropped today (no regex in `comments.rs`).
-- **pgmold-280** (bug, P2) — Single-quote string regex in `comments.rs` does
-  not accept `E'…'`, `U&'…'`, or `$$…$$` literal bodies; such comments are
-  silently dropped.
+- **pgmold-280** (bug, P3) — `IS_LITERAL_PATTERN` in `comments.rs:27` handles
+  `'…'`, `E'…'`, and untagged `$$…$$` (added in PR #247) but still rejects
+  tagged dollar-quoting `$tag$…$tag$` and Unicode string literals
+  `U&'…'`. Both are silently dropped today.
 - **pgmold-281** (bug, P3) — `ALTER TYPE … (ADD|DROP|ALTER) ATTRIBUTE …`
   strip in preprocess.rs hard-codes three sub-commands. Newer PG
   sub-commands fall through to sqlparser and break parsing.
