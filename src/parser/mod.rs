@@ -14,6 +14,7 @@ mod ownership;
 mod preprocess;
 mod sequences;
 mod tables;
+mod unrecognized;
 mod util;
 
 #[cfg(test)]
@@ -24,6 +25,7 @@ pub use dependencies::{
     topological_sort, ObjectRef,
 };
 pub use loader::load_schema_sources;
+pub use unrecognized::{find_unrecognized_statements, UnrecognizedStatement};
 
 use crate::model::*;
 use crate::pg::sqlgen::strip_ident_quotes;
@@ -61,7 +63,42 @@ pub fn parse_sql_file(path: &str) -> Result<Schema> {
     parse_sql_string(&content)
 }
 
+/// Returns `true` when the parser should treat unrecognized top-level
+/// statements as errors instead of warnings. Controlled via the
+/// `PGMOLD_STRICT` environment variable; set to `1` by the CLI's
+/// `--strict` flag.
+fn strict_mode_from_env() -> bool {
+    matches!(std::env::var("PGMOLD_STRICT").as_deref(), Ok("1"))
+}
+
 pub fn parse_sql_string(sql: &str) -> Result<Schema> {
+    parse_sql_string_with_strict(sql, strict_mode_from_env())
+}
+
+/// Parses SQL with an explicit strict flag. Callers that need deterministic
+/// strict behavior (tests, library consumers that do not want to mutate
+/// process-wide env vars) should prefer this over `parse_sql_string`.
+pub fn parse_sql_string_with_strict(sql: &str, strict: bool) -> Result<Schema> {
+    let schema = parse_sql_string_inner(sql)?;
+    let unrecognized = find_unrecognized_statements(sql);
+    for finding in &unrecognized {
+        eprintln!("{}", finding.warning_message());
+    }
+    if strict && !unrecognized.is_empty() {
+        let summary = unrecognized
+            .iter()
+            .map(|f| format!("  line {}: {}", f.line, f.snippet))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(SchemaError::ParseError(format!(
+            "{} unrecognized top-level statement(s) under --strict:\n{summary}",
+            unrecognized.len()
+        )));
+    }
+    Ok(schema)
+}
+
+fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
     let preprocessed_sql = preprocess_sql(sql);
     let dialect = PostgreSqlDialect {};
     let statements = Parser::parse_sql(&dialect, &preprocessed_sql)

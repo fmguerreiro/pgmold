@@ -4563,6 +4563,43 @@ CREATE AGGREGATE public.group_concat(text) (
 }
 
 #[test]
+fn parse_sql_string_with_strict_errors_on_unrecognized() {
+    let sql = "\
+CREATE TABLE public.users (id serial);
+CREATE POLICY p ON public.users USING (true);
+COMMENT ON POLICY p ON public.users IS 'policy comment';
+";
+    let result = parse_sql_string_with_strict(sql, true);
+    let err = result.expect_err("strict mode should reject unrecognized statements");
+    let message = err.to_string();
+    assert!(
+        message.contains("COMMENT ON POLICY"),
+        "error should mention the offending statement: {message}"
+    );
+    assert!(
+        message.contains("unrecognized"),
+        "error should say 'unrecognized': {message}"
+    );
+}
+
+#[test]
+fn parse_sql_string_with_strict_passes_when_clean() {
+    let sql = "CREATE TABLE public.users (id serial);";
+    parse_sql_string_with_strict(sql, true).expect("clean SQL should parse under strict");
+}
+
+#[test]
+fn parse_sql_string_does_not_error_on_unrecognized_without_strict() {
+    // Regression guard: non-strict parsing keeps warning-only semantics so
+    // existing callers are not broken.
+    let sql = "\
+CREATE TABLE public.users (id serial);
+COMMENT ON POLICY p ON public.users IS 'x';
+";
+    parse_sql_string_with_strict(sql, false).expect("non-strict mode should still parse");
+}
+
+#[test]
 fn alter_aggregate_owner_records_pending_owner() {
     let sql = r#"
 CREATE AGGREGATE public.group_concat(text) (
