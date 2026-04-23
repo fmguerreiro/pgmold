@@ -9,6 +9,7 @@ pub(super) fn parse_comment_statements(sql: &str, schema: &mut Schema) {
     parse_table_comments(sql, schema);
     parse_column_comments(sql, schema);
     parse_function_comments(sql, schema);
+    parse_aggregate_comments(sql, schema);
     parse_view_comments(sql, schema);
     parse_materialized_view_comments(sql, schema);
     parse_type_comments(sql, schema);
@@ -109,6 +110,12 @@ static FUNCTION_RE: LazyLock<Regex> = LazyLock::new(|| {
     )
 });
 
+static AGGREGATE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    compile(
+        r#"COMMENT\s+ON\s+AGGREGATE\s+(?:["']?([^"'\s(]+)["']?\.)?["']?([^"'\s(]+)["']?\s*\(([^)]*)\)"#,
+    )
+});
+
 static VIEW_RE: LazyLock<Regex> = LazyLock::new(|| {
     compile(r#"COMMENT\s+ON\s+VIEW\s+(?:["']?([^"'\s.]+)["']?\.)?["']?([^"'\s;]+)["']?"#)
 });
@@ -184,6 +191,23 @@ fn parse_function_comments(sql: &str, schema: &mut Schema) {
         let object_key = format!("{}.{}({})", function_schema, function_name, arguments);
         schema.pending_comments.push(PendingComment {
             object_type: PendingCommentObjectType::Function,
+            object_key,
+            comment,
+        });
+    }
+}
+
+fn parse_aggregate_comments(sql: &str, schema: &mut Schema) {
+    for capture in AGGREGATE_RE.captures_iter(sql) {
+        let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
+        let aggregate_name = unquote_ident(capture.get(2).unwrap().as_str());
+        let arguments = capture.get(3).unwrap().as_str();
+        let comment = extract_comment_text(capture.get(4).unwrap().as_str());
+
+        let aggregate_schema = schema_part.unwrap_or("public");
+        let object_key = format!("{}.{}({})", aggregate_schema, aggregate_name, arguments);
+        schema.pending_comments.push(PendingComment {
+            object_type: PendingCommentObjectType::Aggregate,
             object_key,
             comment,
         });
