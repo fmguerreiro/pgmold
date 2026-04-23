@@ -994,26 +994,20 @@ impl MigrationGraph {
                     }
                 }
 
-                // Grant/RevokePrivileges depend on the object existing
                 OpKey::GrantPrivileges {
                     object_kind,
                     schema,
                     name,
+                    args,
                     ..
                 }
                 | OpKey::RevokePrivileges {
                     object_kind,
                     schema,
                     name,
+                    args,
                     ..
                 } => {
-                    let args = match self.get_op(key) {
-                        Some(MigrationOp::GrantPrivileges { args: Some(a), .. })
-                        | Some(MigrationOp::RevokePrivileges { args: Some(a), .. }) => {
-                            Some(a.clone())
-                        }
-                        _ => None,
-                    };
                     add_privilege_dependency_edge(
                         &mut edges_to_add,
                         object_kind,
@@ -1022,6 +1016,99 @@ impl MigrationGraph {
                         args.as_ref(),
                         key,
                     );
+                }
+
+                // SetComment has no tier edges; without content-aware edges
+                // topological sort may place COMMENT ON before the CREATE it
+                // targets. Each variant maps to the producer op for its target.
+                OpKey::SetComment {
+                    object_type,
+                    schema,
+                    name,
+                    arguments,
+                    column,
+                    target,
+                } => {
+                    use crate::diff::CommentObjectType;
+                    let require = |opt: &Option<String>, kind: &str, field: &str| -> String {
+                        opt.clone().unwrap_or_else(|| {
+                            panic!(
+                                "invariant violated: SetComment for {kind} {schema}.{name} has {field}=None"
+                            )
+                        })
+                    };
+                    let qualified = qualified_name(schema, name);
+                    match object_type {
+                        CommentObjectType::Schema => {
+                            // Schema comments carry `schema: ""` and `name: <schema>`.
+                            edges_to_add.push((OpKey::CreateSchema(name.clone()), key.clone()));
+                        }
+                        CommentObjectType::Table => {
+                            edges_to_add.push((OpKey::CreateTable(qualified), key.clone()));
+                        }
+                        CommentObjectType::Column => {
+                            // Column comments target a column on a table. The
+                            // parent table may be freshly created (columns inline)
+                            // or already exist (column added via AddColumn). Emit
+                            // both edges; only the one matching an op actually in
+                            // the graph takes effect (`add_edge` skips unknown keys).
+                            edges_to_add.push((OpKey::CreateTable(qualified.clone()), key.clone()));
+                            if let Some(column_name) = column {
+                                edges_to_add.push((
+                                    OpKey::AddColumn {
+                                        table: QualifiedName::new(schema, name),
+                                        column: column_name.clone(),
+                                    },
+                                    key.clone(),
+                                ));
+                            }
+                        }
+                        CommentObjectType::View | CommentObjectType::MaterializedView => {
+                            edges_to_add.push((OpKey::CreateView(qualified), key.clone()));
+                        }
+                        CommentObjectType::Function => {
+                            let args = require(arguments, "Function", "arguments");
+                            edges_to_add.push((
+                                OpKey::CreateFunction {
+                                    name: qualified,
+                                    args,
+                                },
+                                key.clone(),
+                            ));
+                        }
+                        CommentObjectType::Aggregate => {
+                            let args = require(arguments, "Aggregate", "arguments");
+                            edges_to_add.push((
+                                OpKey::CreateAggregate {
+                                    name: qualified,
+                                    args,
+                                },
+                                key.clone(),
+                            ));
+                        }
+                        // pgmold currently models every user-defined type under
+                        // `OpKey::CreateEnum`. Range/composite/base types are not
+                        // in the model yet; if they arrive, add a matching op kind.
+                        CommentObjectType::Type => {
+                            edges_to_add.push((OpKey::CreateEnum(qualified), key.clone()));
+                        }
+                        CommentObjectType::Domain => {
+                            edges_to_add.push((OpKey::CreateDomain(qualified), key.clone()));
+                        }
+                        CommentObjectType::Sequence => {
+                            edges_to_add.push((OpKey::CreateSequence(qualified), key.clone()));
+                        }
+                        CommentObjectType::Trigger => {
+                            let target_name = require(target, "Trigger", "target");
+                            edges_to_add.push((
+                                OpKey::CreateTrigger {
+                                    target: QualifiedName::new(schema, &target_name),
+                                    name: name.clone(),
+                                },
+                                key.clone(),
+                            ));
+                        }
+                    }
                 }
 
                 _ => {}
@@ -6283,5 +6370,226 @@ mod tests {
             comment: Some(format!("audit trigger on {target}")),
         };
         assert_comments_all_distinct(vec![trigger_comment("users"), trigger_comment("orders")]);
+    }
+
+    /// Asserts the creator op precedes the SetComment op in `planned`.
+    ///
+    /// Precondition: `planned` contains exactly one SetComment. The helper
+    /// reads the first SetComment's index; if callers pass a plan with more
+    /// than one SetComment (e.g. comments for unrelated objects), the helper
+    /// does not disambiguate and the assertion may pass spuriously — add a
+    /// predicate-matching variant if that case arises.
+    fn assert_creator_precedes_comment(
+        planned: &[MigrationOp],
+        creator: impl Fn(&MigrationOp) -> bool,
+        creator_label: &str,
+    ) {
+        let creator_pos = planned
+            .iter()
+            .position(&creator)
+            .unwrap_or_else(|| panic!("{creator_label} not found in plan"));
+        let comment_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::SetComment { .. }))
+            .count();
+        assert_eq!(
+            comment_count, 1,
+            "precondition: exactly one SetComment per call, got {comment_count}"
+        );
+        let comment_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::SetComment { .. }))
+            .expect("SetComment not found in plan");
+        assert!(
+            creator_pos < comment_pos,
+            "{creator_label} must come before SetComment. {creator_label} at {creator_pos}, SetComment at {comment_pos}"
+        );
+    }
+
+    #[test]
+    fn schema_comment_ordered_after_create_schema() {
+        // Root cause of sagri-tokyo/mrv#3947: COMMENT ON SCHEMA "mrv" IS '…';
+        // planned before CREATE SCHEMA "mrv", so apply hit `schema "mrv" does not exist`.
+        let ops = vec![
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Schema,
+                schema: String::new(),
+                name: "mrv".to_string(),
+                arguments: None,
+                column: None,
+                target: None,
+                comment: Some("managed reporting & verification".to_string()),
+            },
+            MigrationOp::CreateSchema(make_schema("mrv")),
+        ];
+        let planned = plan_migration(ops);
+        assert_creator_precedes_comment(
+            &planned,
+            |op| matches!(op, MigrationOp::CreateSchema(s) if s.name == "mrv"),
+            "CreateSchema(mrv)",
+        );
+    }
+
+    #[test]
+    fn function_comment_ordered_after_create_function_overload_aware() {
+        // The SetComment edge must match the concrete signature, not just the
+        // qualified function name — otherwise two overloads collide on OpKey.
+        let function = make_function_with_body(
+            "vcs_project_create",
+            "mrv",
+            "BEGIN RETURN gen_random_uuid(); END;",
+            "uuid",
+        );
+        let args_string = function.args_string();
+        let ops = vec![
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Function,
+                schema: "mrv".to_string(),
+                name: "vcs_project_create".to_string(),
+                arguments: Some(args_string.clone()),
+                column: None,
+                target: None,
+                comment: Some("@deprecated".to_string()),
+            },
+            MigrationOp::CreateSchema(make_schema("mrv")),
+            MigrationOp::CreateFunction(function),
+        ];
+        let planned = plan_migration(ops);
+        let expected_args = args_string;
+        assert_creator_precedes_comment(
+            &planned,
+            move |op| {
+                matches!(
+                    op,
+                    MigrationOp::CreateFunction(f)
+                        if f.schema == "mrv"
+                            && f.name == "vcs_project_create"
+                            && f.args_string() == expected_args
+                )
+            },
+            "CreateFunction(mrv.vcs_project_create)",
+        );
+    }
+
+    #[test]
+    fn table_comment_ordered_after_create_table() {
+        let ops = vec![
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Table,
+                schema: "public".to_string(),
+                name: "widgets".to_string(),
+                arguments: None,
+                column: None,
+                target: None,
+                comment: Some("widget table".to_string()),
+            },
+            MigrationOp::CreateTable(simple_table_with_fks("widgets", vec![])),
+        ];
+        let planned = plan_migration(ops);
+        assert_creator_precedes_comment(
+            &planned,
+            |op| matches!(op, MigrationOp::CreateTable(t) if t.schema == "public" && t.name == "widgets"),
+            "CreateTable(public.widgets)",
+        );
+    }
+
+    #[test]
+    fn column_comment_ordered_after_create_table() {
+        // Column-level COMMENT ON COLUMN "public"."widgets"."status" must wait for
+        // CREATE TABLE "public"."widgets" (which includes the column inline).
+        let ops = vec![
+            column_comment("public", "widgets", "status"),
+            MigrationOp::CreateTable(simple_table_with_fks("widgets", vec![])),
+        ];
+        let planned = plan_migration(ops);
+        assert_creator_precedes_comment(
+            &planned,
+            |op| matches!(op, MigrationOp::CreateTable(t) if t.schema == "public" && t.name == "widgets"),
+            "CreateTable(public.widgets)",
+        );
+    }
+
+    #[test]
+    fn trigger_comment_ordered_after_create_trigger() {
+        let ops = vec![
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Trigger,
+                schema: "public".to_string(),
+                name: "audit_trg".to_string(),
+                arguments: None,
+                column: None,
+                target: Some("users".to_string()),
+                comment: Some("audit trigger".to_string()),
+            },
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
+            MigrationOp::CreateFunction(make_simple_function("audit_fn", "public")),
+            MigrationOp::CreateTrigger(make_trigger("audit_trg", "public", "users", "audit_fn")),
+        ];
+        let planned = plan_migration(ops);
+        assert_creator_precedes_comment(
+            &planned,
+            |op| matches!(op, MigrationOp::CreateTrigger(t) if t.name == "audit_trg" && t.target_name == "users"),
+            "CreateTrigger(public.users.audit_trg)",
+        );
+    }
+
+    #[test]
+    fn view_comment_ordered_after_create_view() {
+        let ops = vec![
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::View,
+                schema: "public".to_string(),
+                name: "active_users".to_string(),
+                arguments: None,
+                column: None,
+                target: None,
+                comment: Some("active users view".to_string()),
+            },
+            MigrationOp::CreateView(make_view(
+                "active_users",
+                "public",
+                "SELECT * FROM users WHERE active",
+            )),
+        ];
+        let planned = plan_migration(ops);
+        assert_creator_precedes_comment(
+            &planned,
+            |op| matches!(op, MigrationOp::CreateView(v) if v.schema == "public" && v.name == "active_users"),
+            "CreateView(public.active_users)",
+        );
+    }
+
+    #[test]
+    fn overloaded_function_grants_do_not_collide_on_opkey() {
+        use crate::diff::GrantObjectKind;
+        use crate::model::Privilege;
+        // Latent companion of gh#249/#250: OpKey::GrantPrivileges was keyed by
+        // (kind, schema, name, grantee) without args, so a grant on two overloads
+        // of the same qualified function name panicked with `duplicate OpKey` in
+        // `MigrationGraph::add_vertex`. Surfaced while reproducing mrv#3947:
+        // `pgmold plan` against sagri's schema panicked on
+        // `mrv.vcs_project_create(authenticated)` being declared for two overloads.
+        let grant = |args: &str| MigrationOp::GrantPrivileges {
+            object_kind: GrantObjectKind::Function,
+            schema: "mrv".to_string(),
+            name: "vcs_project_create".to_string(),
+            args: Some(args.to_string()),
+            grantee: "authenticated".to_string(),
+            privileges: vec![Privilege::Execute],
+            with_grant_option: false,
+        };
+        let ops = vec![
+            grant("uuid, text"),
+            grant("uuid, text, text, date, date, uuid[]"),
+        ];
+        let planned = plan_migration(ops);
+        assert_eq!(
+            planned
+                .iter()
+                .filter(|op| matches!(op, MigrationOp::GrantPrivileges { .. }))
+                .count(),
+            2,
+            "both function-overload grants must survive the planner with distinct OpKeys"
+        );
     }
 }
