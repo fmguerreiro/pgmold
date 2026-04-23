@@ -1034,8 +1034,8 @@ impl MigrationGraph {
                     schema,
                     name,
                     arguments,
+                    column,
                     target,
-                    ..
                 } => {
                     use crate::diff::CommentObjectType;
                     let qualified = qualified_name(schema, name);
