@@ -2426,6 +2426,64 @@ fn comment_on_table_doubled_quote_unescaped() {
 }
 
 #[test]
+fn comment_on_aggregate_captures_text() {
+    let sql = r#"
+        CREATE AGGREGATE public.group_concat(text) (
+            SFUNC = public._group_concat,
+            STYPE = text
+        );
+        COMMENT ON AGGREGATE public.group_concat(text) IS 'Concatenates text values';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let aggregate = schema
+        .aggregates
+        .get("public.group_concat(text)")
+        .expect("aggregate should be parsed");
+    assert_eq!(
+        aggregate.comment.as_deref(),
+        Some("Concatenates text values")
+    );
+}
+
+#[test]
+fn comment_on_aggregate_roundtrips_through_dump() {
+    use crate::dump::generate_dump;
+    let sql = r#"
+        CREATE AGGREGATE mrv.group_concat(text) (
+            SFUNC = mrv._group_concat,
+            STYPE = text
+        );
+        COMMENT ON AGGREGATE mrv.group_concat(text) IS 'Concatenates text values';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let dump = generate_dump(&schema, None);
+    let reparsed = parse_sql_string(&dump).unwrap();
+    let aggregate = reparsed
+        .aggregates
+        .get("mrv.group_concat(text)")
+        .expect("aggregate should survive roundtrip");
+    assert_eq!(
+        aggregate.comment.as_deref(),
+        Some("Concatenates text values"),
+        "aggregate comment should be preserved after roundtrip"
+    );
+}
+
+#[test]
+fn comment_on_aggregate_null_clears_comment() {
+    let sql = r#"
+        CREATE AGGREGATE public.group_concat(text) (
+            SFUNC = public._group_concat,
+            STYPE = text
+        );
+        COMMENT ON AGGREGATE public.group_concat(text) IS NULL;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let aggregate = schema.aggregates.get("public.group_concat(text)").unwrap();
+    assert!(aggregate.comment.is_none());
+}
+
+#[test]
 fn parses_grant_on_enum_type() {
     let sql = r#"
         CREATE TYPE user_role AS ENUM ('admin', 'user');
