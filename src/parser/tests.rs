@@ -2498,6 +2498,48 @@ fn comment_on_function_attaches_when_args_use_int_alias() {
 }
 
 #[test]
+fn comment_on_function_attaches_when_args_have_names() {
+    let sql = r#"
+        CREATE FUNCTION add(a int, b int) RETURNS int LANGUAGE sql AS $$ SELECT a + b $$;
+        COMMENT ON FUNCTION add(a int, b int) IS 'Adds two ints';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema
+        .functions
+        .get("public.add(integer, integer)")
+        .expect("function should be stored under canonical signature");
+    assert_eq!(func.comment.as_deref(), Some("Adds two ints"));
+}
+
+#[test]
+fn comment_on_function_attaches_when_args_have_in_out_modes() {
+    let sql = r#"
+        CREATE FUNCTION upsert(IN id int, OUT result text) LANGUAGE sql AS $$ SELECT 'ok' $$;
+        COMMENT ON FUNCTION upsert(IN id int, OUT result text) IS 'Upsert by id';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema
+        .functions
+        .get("public.upsert(integer, text)")
+        .expect("function should be stored under canonical signature");
+    assert_eq!(func.comment.as_deref(), Some("Upsert by id"));
+}
+
+#[test]
+fn comment_on_function_attaches_when_arg_uses_variadic() {
+    let sql = r#"
+        CREATE FUNCTION concat_all(VARIADIC arr text[]) RETURNS text LANGUAGE sql AS $$ SELECT '' $$;
+        COMMENT ON FUNCTION concat_all(VARIADIC arr text[]) IS 'Join variadic';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema
+        .functions
+        .get("public.concat_all(text[])")
+        .expect("function should be stored under canonical signature");
+    assert_eq!(func.comment.as_deref(), Some("Join variadic"));
+}
+
+#[test]
 fn comment_on_aggregate_attaches_when_arg_uses_int_alias() {
     let sql = r#"
         CREATE AGGREGATE public.sum_squares(int) (

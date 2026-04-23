@@ -9,6 +9,11 @@ use super::util::unquote_ident;
 /// `object_key` matches the canonical key used by `Function::signature()` and
 /// `Aggregate::args_string()`. The upstream regexes capture args with `[^)]*`,
 /// which forbids inner parens, so plain `split(',')` is sufficient.
+///
+/// Each arg may include an optional argmode (`IN`/`OUT`/`INOUT`/`VARIADIC`) and
+/// an optional argname before the type. PostgreSQL ignores both when resolving
+/// function identity, so we strip them before normalizing the type so the
+/// resulting `object_key` matches the canonical type-only signature.
 fn normalize_callable_args(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -16,9 +21,92 @@ fn normalize_callable_args(raw: &str) -> String {
     }
     trimmed
         .split(',')
-        .map(|arg| normalize_pg_type(arg.trim()).into_owned())
+        .map(|arg| normalize_pg_type(strip_argmode_and_argname(arg.trim())).into_owned())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Strips optional leading argmode and argname, leaving just the type portion
+/// of a single function/aggregate argument.
+fn strip_argmode_and_argname(arg: &str) -> &str {
+    strip_leading_argname(strip_leading_mode(arg.trim_start()))
+}
+
+/// Strips a leading argmode keyword if present. Longest modes are checked
+/// first so `INOUT` doesn't match as `IN` + stray `OUT`.
+fn strip_leading_mode(s: &str) -> &str {
+    const MODES: &[&str] = &["INOUT", "VARIADIC", "IN", "OUT"];
+    for mode in MODES {
+        if s.len() > mode.len()
+            && s.as_bytes()[mode.len()].is_ascii_whitespace()
+            && s[..mode.len()].eq_ignore_ascii_case(mode)
+        {
+            return s[mode.len()..].trim_start();
+        }
+    }
+    s
+}
+
+/// Strips a leading argname if present. An argname exists when there are at
+/// least two whitespace-separated tokens AND the first token is not a known
+/// multi-word type starter. Quoted identifiers (`"…"`) count as a single
+/// token.
+fn strip_leading_argname(s: &str) -> &str {
+    let Some((first, rest)) = split_first_token(s) else {
+        return s;
+    };
+    if rest.is_empty() || is_multi_word_type_starter(first) {
+        return s;
+    }
+    rest
+}
+
+fn split_first_token(s: &str) -> Option<(&str, &str)> {
+    let s = s.trim_start();
+    if s.is_empty() {
+        return None;
+    }
+    if s.starts_with('"') {
+        let bytes = s.as_bytes();
+        let mut i = 1;
+        while i < bytes.len() {
+            if bytes[i] == b'"' {
+                // `""` inside a quoted identifier escapes a literal quote.
+                if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                    i += 2;
+                    continue;
+                }
+                let end = i + 1;
+                return Some((&s[..end], s[end..].trim_start()));
+            }
+            i += 1;
+        }
+        return Some((s, ""));
+    }
+    match s.find(char::is_whitespace) {
+        Some(ws) => Some((&s[..ws], s[ws..].trim_start())),
+        None => Some((s, "")),
+    }
+}
+
+/// First-word tokens of PostgreSQL multi-word built-in types. When the leading
+/// token of a stripped argument matches one of these, it is the start of the
+/// type (`double precision`, `character varying`, …), not an argname.
+fn is_multi_word_type_starter(token: &str) -> bool {
+    const STARTERS: &[&str] = &[
+        "double",    // double precision
+        "character", // character / character varying
+        "bit",       // bit / bit varying
+        "time",      // time / time with/without time zone
+        "timestamp", // timestamp / timestamp with/without time zone
+        "national",  // national character / national character varying
+    ];
+    // Strip any parenthesized precision modifier (e.g. `timestamp(3)` → `timestamp`)
+    // so the check still succeeds when the token carries a type precision.
+    let base = token.split('(').next().unwrap_or(token);
+    STARTERS
+        .iter()
+        .any(|starter| base.eq_ignore_ascii_case(starter))
 }
 
 pub(super) fn parse_comment_statements(sql: &str, schema: &mut Schema) {
@@ -441,6 +529,83 @@ mod tests {
         assert_eq!(
             normalize_callable_args("int,  bool , public.mytype"),
             "integer, boolean, mytype"
+        );
+    }
+
+    #[test]
+    fn normalize_callable_args_strips_argname() {
+        assert_eq!(normalize_callable_args("a int"), "integer");
+    }
+
+    #[test]
+    fn normalize_callable_args_strips_in_mode() {
+        assert_eq!(normalize_callable_args("IN int"), "integer");
+    }
+
+    #[test]
+    fn normalize_callable_args_strips_out_mode() {
+        assert_eq!(normalize_callable_args("OUT text"), "text");
+    }
+
+    #[test]
+    fn normalize_callable_args_strips_inout_mode_and_argname() {
+        assert_eq!(normalize_callable_args("INOUT flag boolean"), "boolean");
+    }
+
+    #[test]
+    fn normalize_callable_args_strips_variadic_mode_and_argname() {
+        assert_eq!(normalize_callable_args("VARIADIC arr text[]"), "text[]");
+    }
+
+    #[test]
+    fn normalize_callable_args_strips_mode_and_argname() {
+        assert_eq!(normalize_callable_args("IN id int"), "integer");
+    }
+
+    #[test]
+    fn normalize_callable_args_mode_case_insensitive() {
+        assert_eq!(normalize_callable_args("in int"), "integer");
+        assert_eq!(normalize_callable_args("Variadic arr text"), "text");
+    }
+
+    #[test]
+    fn normalize_callable_args_preserves_multi_word_type_with_no_argname() {
+        assert_eq!(
+            normalize_callable_args("double precision"),
+            "double precision"
+        );
+    }
+
+    #[test]
+    fn normalize_callable_args_preserves_multi_word_type_with_argname() {
+        assert_eq!(
+            normalize_callable_args("n double precision"),
+            "double precision"
+        );
+    }
+
+    #[test]
+    fn normalize_callable_args_handles_mixed_modes_and_names_across_multiple_args() {
+        assert_eq!(
+            normalize_callable_args("a int, IN b text, OUT c bool"),
+            "integer, text, boolean"
+        );
+    }
+
+    #[test]
+    fn normalize_callable_args_strips_quoted_argname() {
+        assert_eq!(normalize_callable_args(r#""MyArg" int"#), "integer");
+    }
+
+    #[test]
+    fn normalize_callable_args_preserves_parenthesized_multi_word_type() {
+        assert_eq!(
+            normalize_callable_args("timestamp(3) with time zone"),
+            "timestamp(3) with time zone"
+        );
+        assert_eq!(
+            normalize_callable_args("ts timestamp(3) with time zone"),
+            "timestamp(3) with time zone"
         );
     }
 }
