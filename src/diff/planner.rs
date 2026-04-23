@@ -6196,6 +6196,11 @@ mod tests {
 
     /// Asserts every `SetComment` op survives the planner with no duplicate-key panic.
     fn assert_comments_all_distinct(ops: Vec<MigrationOp>) {
+        assert!(
+            ops.iter()
+                .all(|op| matches!(op, MigrationOp::SetComment { .. })),
+            "assert_comments_all_distinct requires every op to be SetComment"
+        );
         let expected = ops.len();
         let planned = plan_migration(ops);
         let got = planned
