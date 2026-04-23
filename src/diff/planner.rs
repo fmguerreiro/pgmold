@@ -6193,4 +6193,118 @@ mod tests {
             "CreateFunction must precede AddColumn whose GENERATED expression references it. func at {func_pos}, col at {col_pos}"
         );
     }
+
+    #[test]
+    fn multiple_column_comments_on_same_table_do_not_collide() {
+        // gh#249: OpKey for SetComment was keyed by (schema, name), so multiple
+        // COMMENT ON COLUMN statements against the same table collided.
+        let ops = vec![
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Column,
+                schema: "mrv".to_string(),
+                name: "foo".to_string(),
+                arguments: None,
+                column: Some("status".to_string()),
+                target: None,
+                comment: Some("@omit create,update".to_string()),
+            },
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Column,
+                schema: "mrv".to_string(),
+                name: "foo".to_string(),
+                arguments: None,
+                column: Some("created_at".to_string()),
+                target: None,
+                comment: Some("@omit create,update".to_string()),
+            },
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Column,
+                schema: "mrv".to_string(),
+                name: "foo".to_string(),
+                arguments: None,
+                column: Some("updated_at".to_string()),
+                target: None,
+                comment: Some("@omit create,update".to_string()),
+            },
+        ];
+
+        let planned = plan_migration(ops);
+        let comment_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::SetComment { .. }))
+            .count();
+        assert_eq!(
+            comment_count, 3,
+            "expected three SetComment ops to survive the planner, got {comment_count}"
+        );
+    }
+
+    #[test]
+    fn table_and_column_comments_on_same_name_do_not_collide() {
+        // Table comment and column comment on the same (schema, name) must be
+        // distinct OpKeys.
+        let ops = vec![
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Table,
+                schema: "public".to_string(),
+                name: "widgets".to_string(),
+                arguments: None,
+                column: None,
+                target: None,
+                comment: Some("widget table".to_string()),
+            },
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Column,
+                schema: "public".to_string(),
+                name: "widgets".to_string(),
+                arguments: None,
+                column: Some("id".to_string()),
+                target: None,
+                comment: Some("widget id".to_string()),
+            },
+        ];
+
+        let planned = plan_migration(ops);
+        assert_eq!(
+            planned
+                .iter()
+                .filter(|op| matches!(op, MigrationOp::SetComment { .. }))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn function_overload_comments_do_not_collide() {
+        // Two overloads of the same function name must have distinct OpKeys.
+        let ops = vec![
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Function,
+                schema: "public".to_string(),
+                name: "calc".to_string(),
+                arguments: Some("integer".to_string()),
+                column: None,
+                target: None,
+                comment: Some("int overload".to_string()),
+            },
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Function,
+                schema: "public".to_string(),
+                name: "calc".to_string(),
+                arguments: Some("text".to_string()),
+                column: None,
+                target: None,
+                comment: Some("text overload".to_string()),
+            },
+        ];
+
+        let planned = plan_migration(ops);
+        assert_eq!(
+            planned
+                .iter()
+                .filter(|op| matches!(op, MigrationOp::SetComment { .. }))
+                .count(),
+            2
+        );
+    }
 }
