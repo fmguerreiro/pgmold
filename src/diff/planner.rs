@@ -1070,28 +1070,42 @@ impl MigrationGraph {
                         CommentObjectType::Function => {
                             // Overload-sensitive: must match the concrete signature.
                             // SetComment's OpKey carries `arguments` for this reason
-                            // (gh#249/#250).
-                            if let Some(args) = arguments {
-                                edges_to_add.push((
-                                    OpKey::CreateFunction {
-                                        name: qualified,
-                                        args: args.clone(),
-                                    },
-                                    key.clone(),
-                                ));
-                            }
+                            // (gh#249/#250). Fail loud if the invariant breaks —
+                            // every producer in diff/mod.rs and dump.rs emits
+                            // `arguments: Some(args_string)` for Function comments;
+                            // silently dropping the edge would reintroduce the
+                            // COMMENT-before-CREATE bug this fix exists to close.
+                            let args = arguments.clone().unwrap_or_else(|| {
+                                panic!(
+                                    "invariant violated: SetComment for Function {schema}.{name} has arguments=None; producer must set args_string()"
+                                )
+                            });
+                            edges_to_add.push((
+                                OpKey::CreateFunction {
+                                    name: qualified,
+                                    args,
+                                },
+                                key.clone(),
+                            ));
                         }
                         CommentObjectType::Aggregate => {
-                            if let Some(args) = arguments {
-                                edges_to_add.push((
-                                    OpKey::CreateAggregate {
-                                        name: qualified,
-                                        args: args.clone(),
-                                    },
-                                    key.clone(),
-                                ));
-                            }
+                            let args = arguments.clone().unwrap_or_else(|| {
+                                panic!(
+                                    "invariant violated: SetComment for Aggregate {schema}.{name} has arguments=None; producer must set args_string()"
+                                )
+                            });
+                            edges_to_add.push((
+                                OpKey::CreateAggregate {
+                                    name: qualified,
+                                    args,
+                                },
+                                key.clone(),
+                            ));
                         }
+                        // pgmold currently models every user-defined type under
+                        // `OpKey::CreateEnum` (see diff/op_key.rs). Range/composite/
+                        // base types are not in the model yet; if they arrive, add
+                        // a matching op-kind here.
                         CommentObjectType::Type => {
                             edges_to_add.push((OpKey::CreateEnum(qualified), key.clone()));
                         }
@@ -1103,16 +1117,20 @@ impl MigrationGraph {
                         }
                         CommentObjectType::Trigger => {
                             // Triggers are uniquely identified by (schema, target, name).
-                            // SetComment's `target` field carries the trigger's target table.
-                            if let Some(target_name) = target {
-                                edges_to_add.push((
-                                    OpKey::CreateTrigger {
-                                        target: QualifiedName::new(schema, target_name),
-                                        name: name.clone(),
-                                    },
-                                    key.clone(),
-                                ));
-                            }
+                            // Same invariant as Function/Aggregate: producers always
+                            // set `target` for trigger comments (see diff/mod.rs:312).
+                            let target_name = target.clone().unwrap_or_else(|| {
+                                panic!(
+                                    "invariant violated: SetComment for Trigger {schema}.{name} has target=None; producer must set trigger's target table"
+                                )
+                            });
+                            edges_to_add.push((
+                                OpKey::CreateTrigger {
+                                    target: QualifiedName::new(schema, &target_name),
+                                    name: name.clone(),
+                                },
+                                key.clone(),
+                            ));
                         }
                     }
                 }
@@ -6378,8 +6396,12 @@ mod tests {
         assert_comments_all_distinct(vec![trigger_comment("users"), trigger_comment("orders")]);
     }
 
-    /// Finds positions of the CreateXxx and SetComment ops in a planned migration
-    /// and asserts the Create comes strictly before the SetComment.
+    /// Asserts the CreateXxx op precedes every SetComment op in `planned`.
+    ///
+    /// `position` returns the first match — which is the minimum SetComment index —
+    /// so `creator_pos < first_setcomment_pos` is equivalent to "every SetComment
+    /// comes after the creator". Any SetComment placed before the creator pulls the
+    /// minimum below `creator_pos` and the assertion fails.
     fn assert_creator_precedes_comment(
         planned: &[MigrationOp],
         creator: impl Fn(&MigrationOp) -> bool,
@@ -6389,13 +6411,13 @@ mod tests {
             .iter()
             .position(&creator)
             .unwrap_or_else(|| panic!("{creator_label} not found in plan"));
-        let comment_pos = planned
+        let first_comment_pos = planned
             .iter()
             .position(|op| matches!(op, MigrationOp::SetComment { .. }))
             .expect("SetComment not found in plan");
         assert!(
-            creator_pos < comment_pos,
-            "{creator_label} must come before SetComment. {creator_label} at {creator_pos}, SetComment at {comment_pos}"
+            creator_pos < first_comment_pos,
+            "{creator_label} must come before every SetComment. {creator_label} at {creator_pos}, earliest SetComment at {first_comment_pos}"
         );
     }
 
