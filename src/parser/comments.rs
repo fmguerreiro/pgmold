@@ -5,16 +5,10 @@ use regex::Regex;
 
 use super::util::unquote_ident;
 
-/// Normalizes the argument list captured by `FUNCTION_RE` / `AGGREGATE_RE` so the
-/// pending-comment object_key matches the canonical form used as the BTreeMap key
-/// for `Schema::functions` / `Schema::aggregates`. Without this, a SQL author who
-/// writes `COMMENT ON FUNCTION foo(int)` against `CREATE FUNCTION foo(a int)` would
-/// produce a pending key of `public.foo(int)` while the function is stored under
-/// `public.foo(integer)`, and `apply_single_comment` would silently drop the comment.
-///
-/// Only top-level commas need handling: the upstream regexes match the args with
-/// `[^)]*`, which forbids inner parentheses (e.g. `numeric(10,2)`), so a plain
-/// split on `','` is sufficient here.
+/// Splits and normalizes a function/aggregate arg list so the pending-comment
+/// `object_key` matches the canonical key used by `Function::signature()` and
+/// `Aggregate::args_string()`. The upstream regexes capture args with `[^)]*`,
+/// which forbids inner parens, so plain `split(',')` is sufficient.
 fn normalize_callable_args(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -420,6 +414,10 @@ mod tests {
     #[test]
     fn normalize_callable_args_aliases_int_to_integer() {
         assert_eq!(normalize_callable_args("int"), "integer");
+    }
+
+    #[test]
+    fn normalize_callable_args_alias_lookup_is_case_insensitive() {
         assert_eq!(normalize_callable_args("INT"), "integer");
     }
 

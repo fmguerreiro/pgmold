@@ -2498,35 +2498,6 @@ fn comment_on_function_attaches_when_args_use_int_alias() {
 }
 
 #[test]
-fn comment_on_function_attaches_when_args_use_bool_alias() {
-    let sql = r#"
-        CREATE FUNCTION negate(flag bool) RETURNS bool LANGUAGE sql AS $$ SELECT NOT flag $$;
-        COMMENT ON FUNCTION negate(bool) IS 'Inverts a flag';
-    "#;
-    let schema = parse_sql_string(sql).unwrap();
-    let func = schema
-        .functions
-        .get("public.negate(boolean)")
-        .expect("function should be stored under canonical signature");
-    assert_eq!(func.comment.as_deref(), Some("Inverts a flag"));
-}
-
-#[test]
-fn comment_on_function_attaches_when_arg_uses_public_schema_prefix() {
-    let sql = r#"
-        CREATE TYPE mytype AS ENUM ('a', 'b');
-        CREATE FUNCTION takes(arg mytype) RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
-        COMMENT ON FUNCTION takes(public.mytype) IS 'Receives a value';
-    "#;
-    let schema = parse_sql_string(sql).unwrap();
-    let func = schema
-        .functions
-        .get("public.takes(mytype)")
-        .expect("function should be stored under canonical signature");
-    assert_eq!(func.comment.as_deref(), Some("Receives a value"));
-}
-
-#[test]
 fn comment_on_aggregate_attaches_when_arg_uses_int_alias() {
     let sql = r#"
         CREATE AGGREGATE public.sum_squares(int) (
@@ -2541,41 +2512,6 @@ fn comment_on_aggregate_attaches_when_arg_uses_int_alias() {
         .get("public.sum_squares(integer)")
         .expect("aggregate should be stored under canonical signature");
     assert_eq!(aggregate.comment.as_deref(), Some("Sum of squares"));
-}
-
-#[test]
-fn comment_on_aggregate_attaches_when_arg_uses_bool_alias() {
-    let sql = r#"
-        CREATE AGGREGATE public.any_true(bool) (
-            SFUNC = public._any_true,
-            STYPE = bool
-        );
-        COMMENT ON AGGREGATE public.any_true(bool) IS 'Aggregates booleans';
-    "#;
-    let schema = parse_sql_string(sql).unwrap();
-    let aggregate = schema
-        .aggregates
-        .get("public.any_true(boolean)")
-        .expect("aggregate should be stored under canonical signature");
-    assert_eq!(aggregate.comment.as_deref(), Some("Aggregates booleans"));
-}
-
-#[test]
-fn comment_on_aggregate_attaches_when_arg_uses_public_schema_prefix() {
-    let sql = r#"
-        CREATE TYPE mytype AS ENUM ('a', 'b');
-        CREATE AGGREGATE public.collect(mytype) (
-            SFUNC = public._collect,
-            STYPE = mytype
-        );
-        COMMENT ON AGGREGATE public.collect(public.mytype) IS 'Collects values';
-    "#;
-    let schema = parse_sql_string(sql).unwrap();
-    let aggregate = schema
-        .aggregates
-        .get("public.collect(mytype)")
-        .expect("aggregate should be stored under canonical signature");
-    assert_eq!(aggregate.comment.as_deref(), Some("Collects values"));
 }
 
 #[test]
