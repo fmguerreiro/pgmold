@@ -6522,7 +6522,7 @@ mod tests {
                 target: Some("users".to_string()),
                 comment: Some("audit trigger".to_string()),
             },
-            MigrationOp::CreateTable(simple_table_with_fks("users", &[])),
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
             MigrationOp::CreateFunction(make_simple_function("audit_fn", "public")),
             MigrationOp::CreateTrigger(make_trigger("audit_trg", "public", "users", "audit_fn")),
         ];
@@ -6562,6 +6562,7 @@ mod tests {
 
     #[test]
     fn overloaded_function_grants_do_not_collide_on_opkey() {
+        use crate::diff::GrantObjectKind;
         use crate::model::Privilege;
         // Latent companion of gh#249/#250: OpKey::GrantPrivileges was keyed by
         // (kind, schema, name, grantee) without args, so a grant on two overloads
