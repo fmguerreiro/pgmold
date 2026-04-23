@@ -5,6 +5,22 @@ use regex::Regex;
 
 use super::util::unquote_ident;
 
+/// Splits and normalizes a function/aggregate arg list so the pending-comment
+/// `object_key` matches the canonical key used by `Function::signature()` and
+/// `Aggregate::args_string()`. The upstream regexes capture args with `[^)]*`,
+/// which forbids inner parens, so plain `split(',')` is sufficient.
+fn normalize_callable_args(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    trimmed
+        .split(',')
+        .map(|arg| normalize_pg_type(arg.trim()).into_owned())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub(super) fn parse_comment_statements(sql: &str, schema: &mut Schema) {
     parse_table_comments(sql, schema);
     parse_column_comments(sql, schema);
@@ -184,7 +200,7 @@ fn parse_function_comments(sql: &str, schema: &mut Schema) {
     for capture in FUNCTION_RE.captures_iter(sql) {
         let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
         let function_name = unquote_ident(capture.get(2).unwrap().as_str());
-        let arguments = capture.get(3).unwrap().as_str();
+        let arguments = normalize_callable_args(capture.get(3).unwrap().as_str());
         let comment = extract_comment_text(capture.get(4).unwrap().as_str());
 
         let function_schema = schema_part.unwrap_or("public");
@@ -201,7 +217,7 @@ fn parse_aggregate_comments(sql: &str, schema: &mut Schema) {
     for capture in AGGREGATE_RE.captures_iter(sql) {
         let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
         let aggregate_name = unquote_ident(capture.get(2).unwrap().as_str());
-        let arguments = capture.get(3).unwrap().as_str();
+        let arguments = normalize_callable_args(capture.get(3).unwrap().as_str());
         let comment = extract_comment_text(capture.get(4).unwrap().as_str());
 
         let aggregate_schema = schema_part.unwrap_or("public");
@@ -387,5 +403,44 @@ mod tests {
     fn extract_null_maps_to_none() {
         assert_eq!(extract_comment_text("NULL"), None);
         assert_eq!(extract_comment_text("null"), None);
+    }
+
+    #[test]
+    fn normalize_callable_args_empty_input() {
+        assert_eq!(normalize_callable_args(""), "");
+        assert_eq!(normalize_callable_args("   "), "");
+    }
+
+    #[test]
+    fn normalize_callable_args_aliases_int_to_integer() {
+        assert_eq!(normalize_callable_args("int"), "integer");
+    }
+
+    #[test]
+    fn normalize_callable_args_alias_lookup_is_case_insensitive() {
+        assert_eq!(normalize_callable_args("INT"), "integer");
+    }
+
+    #[test]
+    fn normalize_callable_args_aliases_bool_to_boolean() {
+        assert_eq!(normalize_callable_args("bool"), "boolean");
+    }
+
+    #[test]
+    fn normalize_callable_args_strips_public_schema_prefix() {
+        assert_eq!(normalize_callable_args("public.mytype"), "mytype");
+    }
+
+    #[test]
+    fn normalize_callable_args_preserves_non_public_schema_prefix() {
+        assert_eq!(normalize_callable_args("mrv.mytype"), "mrv.mytype");
+    }
+
+    #[test]
+    fn normalize_callable_args_handles_multiple_args_with_spacing() {
+        assert_eq!(
+            normalize_callable_args("int,  bool , public.mytype"),
+            "integer, boolean, mytype"
+        );
     }
 }
