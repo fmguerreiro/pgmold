@@ -57,6 +57,9 @@ pub(super) fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<Migratio
 
     for (name, column) in &to_table.columns {
         if let Some(from_column) = from_table.columns.get(name) {
+            if is_unmanaged_generated_column(from_column, column) {
+                continue;
+            }
             if generated_expression_changed(from_column, column) {
                 ops.push(MigrationOp::DropColumn {
                     table: QualifiedName::new(&from_table.schema, &from_table.name),
@@ -98,6 +101,17 @@ pub(super) fn diff_columns(from_table: &Table, to_table: &Table) -> Vec<Migratio
 
 fn generated_expression_changed(from: &Column, to: &Column) -> bool {
     !optional_expressions_equal(&from.generated, &to.generated)
+}
+
+// Source-silent means the column's generation aspect is unmanaged: never emit
+// destructive DDL (DROP+ADD) or ALTER COLUMN ops against a DB-side generated
+// column just because the source doesn't repeat the GENERATED clause.
+// PostgreSQL rejects ALTER COLUMN TYPE/SET NOT NULL/SET DEFAULT on generated
+// columns anyway, so any emission here is unsafe.
+// TODO: if a user genuinely needs to convert a generated column back to plain,
+// they have no way to express that intent through the source schema today.
+fn is_unmanaged_generated_column(from: &Column, to: &Column) -> bool {
+    from.generated.is_some() && to.generated.is_none()
 }
 
 pub(super) fn compute_column_changes(from: &Column, to: &Column) -> ColumnChanges {
