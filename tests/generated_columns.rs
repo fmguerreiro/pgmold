@@ -144,6 +144,47 @@ fn diff_changing_generated_expression_produces_drop_then_add() {
     );
 }
 
+#[test]
+fn diff_source_silent_on_generated_does_not_drop_add_column() {
+    // Silence in the source about a column's GENERATED clause means the
+    // generation aspect is unmanaged, not "force the column back to plain".
+    let sql_from_db = r#"
+        CREATE TABLE public.products (
+            id          BIGSERIAL      NOT NULL,
+            price_cents INTEGER        NOT NULL,
+            price_usd   NUMERIC(10, 2) GENERATED ALWAYS AS (price_cents / 100.0) STORED,
+            PRIMARY KEY (id)
+        );
+    "#;
+    let sql_from_source = r#"
+        CREATE TABLE public.products (
+            id          BIGSERIAL      NOT NULL,
+            price_cents INTEGER        NOT NULL,
+            price_usd   NUMERIC(10, 2),
+            PRIMARY KEY (id)
+        );
+    "#;
+
+    let from = parse_sql_string(sql_from_db).unwrap();
+    let to = parse_sql_string(sql_from_source).unwrap();
+    let ops = compute_diff(&from, &to);
+
+    let drop_add_ops: Vec<&MigrationOp> = ops
+        .iter()
+        .filter(|op| {
+            matches!(op, MigrationOp::DropColumn { table, column }
+                if table == "public.products" && column == "price_usd")
+                || matches!(op, MigrationOp::AddColumn { table, column }
+                if table == "public.products" && column.name == "price_usd")
+        })
+        .collect();
+
+    assert!(
+        drop_add_ops.is_empty(),
+        "should not emit DROP+ADD when source is silent about GENERATED and DB has it; got: {drop_add_ops:?}",
+    );
+}
+
 #[tokio::test]
 async fn generated_column_convergence() {
     let (_container, url) = setup_postgres().await;
@@ -193,6 +234,53 @@ async fn generated_column_convergence() {
     assert!(
         non_seq_ops.is_empty(),
         "second plan should be empty (convergence). Got: {non_seq_ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn plan_does_not_emit_phantom_column_ops_against_db_with_generated_column() {
+    // Against a real DB that has a GENERATED column, a source schema declaring
+    // the same column as plain must not produce any column DDL for it.
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query(
+        "CREATE TABLE public.products (
+            id          BIGSERIAL NOT NULL PRIMARY KEY,
+            price_cents INTEGER NOT NULL,
+            price_usd   NUMERIC(10, 2) GENERATED ALWAYS AS (price_cents / 100.0) STORED
+        );",
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let source_sql = r#"
+        CREATE TABLE public.products (
+            id          BIGSERIAL      NOT NULL,
+            price_cents INTEGER        NOT NULL,
+            price_usd   NUMERIC(10, 2),
+            PRIMARY KEY (id)
+        );
+    "#;
+    let parsed = parse_sql_string(source_sql).unwrap();
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let ops = compute_diff(&db_schema, &parsed);
+    let add_drop: Vec<&MigrationOp> = ops
+        .iter()
+        .filter(|op| {
+            matches!(op, MigrationOp::AddColumn { table, column }
+                if table == "public.products" && column.name == "price_usd")
+                || matches!(op, MigrationOp::DropColumn { table, column }
+                if table == "public.products" && column == "price_usd")
+        })
+        .collect();
+    assert!(
+        add_drop.is_empty(),
+        "plan must not contain ADD+DROP for a column that exists in both source and DB; got: {add_drop:?}",
     );
 }
 
