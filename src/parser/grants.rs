@@ -397,174 +397,107 @@ pub(super) fn parse_revoke_statements(sql: &str, schema: &mut Schema) -> Result<
     Ok(())
 }
 
-pub(super) fn parse_alter_default_privileges(sql: &str, schema: &mut Schema) -> Result<()> {
-    let grant_re = Regex::new(
-        r"(?is)ALTER\s+DEFAULT\s+PRIVILEGES\s+(?:FOR\s+ROLE\s+(\w+)\s+)?(?:IN\s+SCHEMA\s+(\w+)\s+)?GRANT\s+(.+?)\s+ON\s+(TABLES|SEQUENCES|FUNCTIONS|ROUTINES|TYPES|SCHEMAS)\s+TO\s+(\w+|PUBLIC)\s*(WITH\s+GRANT\s+OPTION)?\s*;"
-    ).unwrap();
+/// Expands `ALTER DEFAULT PRIVILEGES ... GRANT ...` into per-(role,schema,grantee)
+/// records on `schema.default_privileges`. Called from the AST handler in
+/// `parser/mod.rs`.
+pub(super) fn apply_default_privileges_grant(
+    schema: &mut Schema,
+    target_roles: &[String],
+    schema_scopes: &[Option<String>],
+    object_type: DefaultPrivilegeObjectType,
+    grantees: &[String],
+    privileges: BTreeSet<Privilege>,
+    with_grant_option: bool,
+) {
+    if privileges.is_empty() || grantees.is_empty() {
+        return;
+    }
 
-    for cap in grant_re.captures_iter(sql) {
-        let target_role = cap
-            .get(1)
-            .map(|m| m.as_str().to_string())
-            .unwrap_or_else(|| "CURRENT_ROLE".to_string());
-        let schema_scope = cap.get(2).map(|m| m.as_str().to_string());
-        let privileges_str = cap.get(3).unwrap().as_str();
-        let object_type_str = cap.get(4).unwrap().as_str().to_uppercase();
-        let grantee = cap.get(5).unwrap().as_str().to_string();
-        let with_grant_option = cap.get(6).is_some();
-
-        let object_type = match DefaultPrivilegeObjectType::from_sql_str(&object_type_str) {
-            Some(ot) => ot,
-            None => continue,
-        };
-
-        let mut privileges = BTreeSet::new();
-        let priv_upper = privileges_str.to_uppercase();
-        if priv_upper.contains("ALL") {
-            match object_type {
-                DefaultPrivilegeObjectType::Tables => {
-                    privileges.insert(Privilege::Select);
-                    privileges.insert(Privilege::Insert);
-                    privileges.insert(Privilege::Update);
-                    privileges.insert(Privilege::Delete);
-                    privileges.insert(Privilege::Truncate);
-                    privileges.insert(Privilege::References);
-                    privileges.insert(Privilege::Trigger);
-                }
-                DefaultPrivilegeObjectType::Sequences => {
-                    privileges.insert(Privilege::Usage);
-                    privileges.insert(Privilege::Select);
-                    privileges.insert(Privilege::Update);
-                }
-                DefaultPrivilegeObjectType::Functions | DefaultPrivilegeObjectType::Routines => {
-                    privileges.insert(Privilege::Execute);
-                }
-                DefaultPrivilegeObjectType::Types => {
-                    privileges.insert(Privilege::Usage);
-                }
-                DefaultPrivilegeObjectType::Schemas => {
-                    privileges.insert(Privilege::Usage);
-                    privileges.insert(Privilege::Create);
-                }
-            }
-        } else {
-            for priv_str in privileges_str.split(',') {
-                let priv_trimmed = priv_str.trim().to_uppercase();
-                match priv_trimmed.as_str() {
-                    "SELECT" => privileges.insert(Privilege::Select),
-                    "INSERT" => privileges.insert(Privilege::Insert),
-                    "UPDATE" => privileges.insert(Privilege::Update),
-                    "DELETE" => privileges.insert(Privilege::Delete),
-                    "TRUNCATE" => privileges.insert(Privilege::Truncate),
-                    "REFERENCES" => privileges.insert(Privilege::References),
-                    "TRIGGER" => privileges.insert(Privilege::Trigger),
-                    "USAGE" => privileges.insert(Privilege::Usage),
-                    "EXECUTE" => privileges.insert(Privilege::Execute),
-                    "CREATE" => privileges.insert(Privilege::Create),
-                    _ => continue,
-                };
+    for target_role in target_roles {
+        for schema_scope in schema_scopes {
+            for grantee in grantees {
+                schema.default_privileges.push(DefaultPrivilege {
+                    target_role: target_role.clone(),
+                    schema: schema_scope.clone(),
+                    object_type: object_type.clone(),
+                    grantee: grantee.clone(),
+                    privileges: privileges.clone(),
+                    with_grant_option,
+                });
             }
         }
+    }
+}
 
-        if privileges.is_empty() {
+/// Removes `privs_to_revoke` from any matching default privilege record on
+/// `schema.default_privileges`, dropping records that end up empty. Called
+/// from the AST handler for `ALTER DEFAULT PRIVILEGES ... REVOKE`.
+pub(super) fn apply_default_privileges_revoke(
+    schema: &mut Schema,
+    target_roles: &[String],
+    schema_scopes: &[Option<String>],
+    object_type: DefaultPrivilegeObjectType,
+    grantees: &[String],
+    privs_to_revoke: BTreeSet<Privilege>,
+) {
+    if privs_to_revoke.is_empty() || grantees.is_empty() {
+        return;
+    }
+
+    for dp in &mut schema.default_privileges {
+        if !target_roles.contains(&dp.target_role) {
             continue;
         }
-
-        schema.default_privileges.push(DefaultPrivilege {
-            target_role,
-            schema: schema_scope,
-            object_type,
-            grantee,
-            privileges,
-            with_grant_option,
-        });
+        if !schema_scopes.contains(&dp.schema) {
+            continue;
+        }
+        if dp.object_type != object_type {
+            continue;
+        }
+        if !grantees.contains(&dp.grantee) {
+            continue;
+        }
+        for privilege in &privs_to_revoke {
+            dp.privileges.remove(privilege);
+        }
     }
 
-    let revoke_re = Regex::new(
-        r"(?is)ALTER\s+DEFAULT\s+PRIVILEGES\s+(?:FOR\s+ROLE\s+(\w+)\s+)?(?:IN\s+SCHEMA\s+(\w+)\s+)?REVOKE\s+(.+?)\s+ON\s+(TABLES|SEQUENCES|FUNCTIONS|ROUTINES|TYPES|SCHEMAS)\s+FROM\s+(\w+|PUBLIC)\s*;"
-    ).unwrap();
+    schema
+        .default_privileges
+        .retain(|dp| !dp.privileges.is_empty());
+}
 
-    for cap in revoke_re.captures_iter(sql) {
-        let target_role = cap
-            .get(1)
-            .map(|m| m.as_str().to_string())
-            .unwrap_or_else(|| "CURRENT_ROLE".to_string());
-        let schema_scope = cap.get(2).map(|m| m.as_str().to_string());
-        let privileges_str = cap.get(3).unwrap().as_str();
-        let object_type_str = cap.get(4).unwrap().as_str().to_uppercase();
-        let grantee = cap.get(5).unwrap().as_str().to_string();
-
-        let object_type = match DefaultPrivilegeObjectType::from_sql_str(&object_type_str) {
-            Some(ot) => ot,
-            None => continue,
-        };
-
-        let mut privs_to_revoke = BTreeSet::new();
-        let priv_upper = privileges_str.to_uppercase();
-        if priv_upper.contains("ALL") {
-            match object_type {
-                DefaultPrivilegeObjectType::Tables => {
-                    privs_to_revoke.insert(Privilege::Select);
-                    privs_to_revoke.insert(Privilege::Insert);
-                    privs_to_revoke.insert(Privilege::Update);
-                    privs_to_revoke.insert(Privilege::Delete);
-                    privs_to_revoke.insert(Privilege::Truncate);
-                    privs_to_revoke.insert(Privilege::References);
-                    privs_to_revoke.insert(Privilege::Trigger);
-                }
-                DefaultPrivilegeObjectType::Sequences => {
-                    privs_to_revoke.insert(Privilege::Usage);
-                    privs_to_revoke.insert(Privilege::Select);
-                    privs_to_revoke.insert(Privilege::Update);
-                }
-                DefaultPrivilegeObjectType::Functions | DefaultPrivilegeObjectType::Routines => {
-                    privs_to_revoke.insert(Privilege::Execute);
-                }
-                DefaultPrivilegeObjectType::Types => {
-                    privs_to_revoke.insert(Privilege::Usage);
-                }
-                DefaultPrivilegeObjectType::Schemas => {
-                    privs_to_revoke.insert(Privilege::Usage);
-                    privs_to_revoke.insert(Privilege::Create);
-                }
-            }
-        } else {
-            for priv_str in privileges_str.split(',') {
-                let priv_trimmed = priv_str.trim().to_uppercase();
-                match priv_trimmed.as_str() {
-                    "SELECT" => privs_to_revoke.insert(Privilege::Select),
-                    "INSERT" => privs_to_revoke.insert(Privilege::Insert),
-                    "UPDATE" => privs_to_revoke.insert(Privilege::Update),
-                    "DELETE" => privs_to_revoke.insert(Privilege::Delete),
-                    "TRUNCATE" => privs_to_revoke.insert(Privilege::Truncate),
-                    "REFERENCES" => privs_to_revoke.insert(Privilege::References),
-                    "TRIGGER" => privs_to_revoke.insert(Privilege::Trigger),
-                    "USAGE" => privs_to_revoke.insert(Privilege::Usage),
-                    "EXECUTE" => privs_to_revoke.insert(Privilege::Execute),
-                    "CREATE" => privs_to_revoke.insert(Privilege::Create),
-                    _ => continue,
-                };
-            }
+/// Returns the canonical `ALL` privilege set for `object_type`, matching
+/// PostgreSQL's expansion of `ALL` / `ALL PRIVILEGES`.
+pub(super) fn all_privileges_for(object_type: &DefaultPrivilegeObjectType) -> BTreeSet<Privilege> {
+    let mut privileges = BTreeSet::new();
+    match object_type {
+        DefaultPrivilegeObjectType::Tables => {
+            privileges.insert(Privilege::Select);
+            privileges.insert(Privilege::Insert);
+            privileges.insert(Privilege::Update);
+            privileges.insert(Privilege::Delete);
+            privileges.insert(Privilege::Truncate);
+            privileges.insert(Privilege::References);
+            privileges.insert(Privilege::Trigger);
         }
-
-        for dp in &mut schema.default_privileges {
-            if dp.target_role == target_role
-                && dp.schema == schema_scope
-                && dp.object_type == object_type
-                && dp.grantee == grantee
-            {
-                for privilege in &privs_to_revoke {
-                    dp.privileges.remove(privilege);
-                }
-            }
+        DefaultPrivilegeObjectType::Sequences => {
+            privileges.insert(Privilege::Usage);
+            privileges.insert(Privilege::Select);
+            privileges.insert(Privilege::Update);
         }
-
-        schema
-            .default_privileges
-            .retain(|dp| !dp.privileges.is_empty());
+        DefaultPrivilegeObjectType::Functions | DefaultPrivilegeObjectType::Routines => {
+            privileges.insert(Privilege::Execute);
+        }
+        DefaultPrivilegeObjectType::Types => {
+            privileges.insert(Privilege::Usage);
+        }
+        DefaultPrivilegeObjectType::Schemas => {
+            privileges.insert(Privilege::Usage);
+            privileges.insert(Privilege::Create);
+        }
     }
-
-    Ok(())
+    privileges
 }
 
 fn parse_object_name(name: &str) -> (String, String) {

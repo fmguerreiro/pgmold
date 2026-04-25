@@ -1,13 +1,17 @@
 //! Detection of top-level SQL statements that pgmold's regex-based parse
 //! passes silently drop.
 //!
-//! When a `COMMENT ON`, `GRANT`, `REVOKE`, `ALTER ... OWNER TO`, or
-//! `ALTER DEFAULT PRIVILEGES` is syntactically valid but does not match one
-//! of the specific pgmold regex variants, `preprocess_sql` still strips it
-//! out before sqlparser runs — so sqlparser never sees it and pgmold never
-//! records it. Silent drop. This module surfaces those drops as warnings
-//! (and, under strict mode, as errors) so downstream users do not discover
-//! them months later as schema drift.
+//! When a `COMMENT ON`, `GRANT`, `REVOKE`, or `ALTER ... OWNER TO` is
+//! syntactically valid but does not match one of the specific pgmold regex
+//! variants, `preprocess_sql` still strips it out before sqlparser runs —
+//! so sqlparser never sees it and pgmold never records it. Silent drop.
+//! This module surfaces those drops as warnings (and, under strict mode,
+//! as errors) so downstream users do not discover them months later as
+//! schema drift.
+//!
+//! `ALTER DEFAULT PRIVILEGES` is included in the safety net even though it
+//! flows through the AST since pgmold-289: the broad recognizer triggers
+//! whenever the statement does not match the AST handler's coverage.
 //!
 //! See pgmold-271 (and gh#246, which was only diagnosable after quiet
 //! failure masked it for months).
@@ -121,19 +125,12 @@ static ALTER_VIEW_OWNER_CLAIM: LazyLock<Regex> =
 static ALTER_SEQUENCE_OWNER_CLAIM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bALTER\s+SEQUENCE\s+.+?\s+OWNER\s+TO\s+").unwrap());
 
-static ALTER_DEFAULT_PRIVILEGES_GRANT_CLAIM: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?is)\bALTER\s+DEFAULT\s+PRIVILEGES\s+(?:FOR\s+ROLE\s+\w+\s+)?(?:IN\s+SCHEMA\s+\w+\s+)?GRANT\s+.+?\s+ON\s+(?:TABLES|SEQUENCES|FUNCTIONS|ROUTINES|TYPES|SCHEMAS)\s+TO\s+",
-    )
-    .unwrap()
-});
-
-static ALTER_DEFAULT_PRIVILEGES_REVOKE_CLAIM: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?is)\bALTER\s+DEFAULT\s+PRIVILEGES\s+(?:FOR\s+ROLE\s+\w+\s+)?(?:IN\s+SCHEMA\s+\w+\s+)?REVOKE\s+.+?\s+ON\s+(?:TABLES|SEQUENCES|FUNCTIONS|ROUTINES|TYPES|SCHEMAS)\s+FROM\s+",
-    )
-    .unwrap()
-});
+// AST-handled since pgmold-289: any well-formed statement is processed by
+// `apply_alter_default_privileges` regardless of role/schema/grantee count
+// or specific privilege list. Treat all `ALTER DEFAULT PRIVILEGES ...;` as
+// claimed; let sqlparser surface true syntactic errors elsewhere.
+static ALTER_DEFAULT_PRIVILEGES_CLAIM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)\bALTER\s+DEFAULT\s+PRIVILEGES\b").unwrap());
 
 struct BroadRecognizer {
     kind: &'static str,
@@ -185,10 +182,7 @@ static RECOGNIZERS: &[BroadRecognizer] = &[
     BroadRecognizer {
         kind: "ALTER DEFAULT PRIVILEGES",
         broad: &ALTER_DEFAULT_PRIVILEGES_BROAD,
-        claims: &[
-            &ALTER_DEFAULT_PRIVILEGES_GRANT_CLAIM,
-            &ALTER_DEFAULT_PRIVILEGES_REVOKE_CLAIM,
-        ],
+        claims: &[&ALTER_DEFAULT_PRIVILEGES_CLAIM],
     },
 ];
 

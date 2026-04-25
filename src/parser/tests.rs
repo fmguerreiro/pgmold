@@ -4,7 +4,7 @@
 #![allow(clippy::wildcard_enum_match_arm)]
 
 use super::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::tables::detect_serial_type;
 
@@ -3376,6 +3376,150 @@ fn parses_alter_default_privileges_revoke() {
 
     let schema = parse_sql_string(sql).unwrap();
     assert_eq!(schema.default_privileges.len(), 0);
+}
+
+#[test]
+fn parses_alter_type_owner_to_quoted_role() {
+    let sql = r#"
+        CREATE TYPE user_role AS ENUM ('admin', 'user');
+        ALTER TYPE user_role OWNER TO "Owner With Spaces";
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let enum_type = schema.enums.get("public.user_role").unwrap();
+    assert_eq!(enum_type.owner, Some("Owner With Spaces".to_string()));
+}
+
+#[test]
+fn ignores_alter_type_owner_to_current_role() {
+    let sql = r#"
+        CREATE TYPE user_role AS ENUM ('admin', 'user');
+        ALTER TYPE user_role OWNER TO CURRENT_ROLE;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let enum_type = schema.enums.get("public.user_role").unwrap();
+    assert_eq!(enum_type.owner, None);
+}
+
+#[test]
+fn ignores_alter_type_owner_to_current_user() {
+    let sql = r#"
+        CREATE TYPE user_role AS ENUM ('admin', 'user');
+        ALTER TYPE user_role OWNER TO CURRENT_USER;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let enum_type = schema.enums.get("public.user_role").unwrap();
+    assert_eq!(enum_type.owner, None);
+}
+
+#[test]
+fn ignores_alter_type_owner_to_session_user() {
+    let sql = r#"
+        CREATE TYPE user_role AS ENUM ('admin', 'user');
+        ALTER TYPE user_role OWNER TO SESSION_USER;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let enum_type = schema.enums.get("public.user_role").unwrap();
+    assert_eq!(enum_type.owner, None);
+}
+
+#[test]
+fn parses_alter_type_set_schema_no_model_effect() {
+    let sql = r#"
+        CREATE SCHEMA staging;
+        CREATE TYPE user_role AS ENUM ('admin', 'user');
+        ALTER TYPE user_role SET SCHEMA staging;
+    "#;
+    let schema = parse_sql_string(sql).expect("ALTER TYPE SET SCHEMA must parse without error");
+    assert!(schema.enums.contains_key("public.user_role"));
+}
+
+#[test]
+fn parses_alter_type_attribute_ops_no_model_effect() {
+    let sql = r#"
+        CREATE TYPE composite_t AS (a int);
+        ALTER TYPE composite_t ADD ATTRIBUTE b text;
+        ALTER TYPE composite_t ALTER ATTRIBUTE b SET DATA TYPE varchar(64);
+        ALTER TYPE composite_t RENAME ATTRIBUTE b TO bb;
+        ALTER TYPE composite_t DROP ATTRIBUTE bb;
+    "#;
+    parse_sql_string(sql).expect("ALTER TYPE attribute ops must parse without error");
+}
+
+#[test]
+fn parses_alter_default_privileges_multi_grantee() {
+    let sql = r#"
+        ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA public
+        GRANT SELECT ON TABLES TO app_user, reporting_user;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let grantees: BTreeSet<String> = schema
+        .default_privileges
+        .iter()
+        .map(|dp| dp.grantee.clone())
+        .collect();
+    assert_eq!(
+        grantees,
+        BTreeSet::from(["app_user".to_string(), "reporting_user".to_string()])
+    );
+    for dp in &schema.default_privileges {
+        assert_eq!(dp.target_role, "admin");
+        assert_eq!(dp.schema, Some("public".to_string()));
+        assert_eq!(dp.object_type, DefaultPrivilegeObjectType::Tables);
+        assert_eq!(dp.privileges, BTreeSet::from([Privilege::Select]));
+        assert!(!dp.with_grant_option);
+    }
+}
+
+#[test]
+fn parses_alter_default_privileges_multi_schema() {
+    let sql = r#"
+        ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA public, api
+        GRANT SELECT ON TABLES TO app_user;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let schemas: BTreeSet<Option<String>> = schema
+        .default_privileges
+        .iter()
+        .map(|dp| dp.schema.clone())
+        .collect();
+    assert_eq!(
+        schemas,
+        BTreeSet::from([Some("public".to_string()), Some("api".to_string())])
+    );
+}
+
+#[test]
+fn parses_alter_default_privileges_multi_role() {
+    let sql = r#"
+        ALTER DEFAULT PRIVILEGES FOR ROLE admin, deployer IN SCHEMA public
+        GRANT SELECT ON TABLES TO app_user;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let roles: BTreeSet<String> = schema
+        .default_privileges
+        .iter()
+        .map(|dp| dp.target_role.clone())
+        .collect();
+    assert_eq!(
+        roles,
+        BTreeSet::from(["admin".to_string(), "deployer".to_string()])
+    );
+}
+
+#[test]
+fn parses_alter_default_privileges_revoke_multi_grantee() {
+    let sql = r#"
+        ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA public
+        GRANT SELECT, INSERT ON TABLES TO app_user, reporting_user;
+
+        ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA public
+        REVOKE INSERT ON TABLES FROM app_user, reporting_user;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    assert_eq!(schema.default_privileges.len(), 2);
+    for dp in &schema.default_privileges {
+        assert_eq!(dp.privileges, BTreeSet::from([Privilege::Select]));
+    }
 }
 
 #[test]

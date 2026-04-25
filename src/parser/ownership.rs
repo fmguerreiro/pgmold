@@ -23,24 +23,6 @@ pub(super) fn parse_owner_statements(sql: &str, schema: &mut Schema) {
         });
     }
 
-    let alter_type_owner_re = Regex::new(
-        r#"(?i)ALTER\s+TYPE\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
-    ).unwrap();
-
-    for cap in alter_type_owner_re.captures_iter(sql) {
-        let schema_part = cap.get(1).map(|m| unquote_ident(m.as_str()));
-        let type_name = unquote_ident(cap.get(2).unwrap().as_str());
-        let owner = unquote_ident(cap.get(3).unwrap().as_str());
-
-        let type_schema = schema_part.unwrap_or("public");
-        let object_key = qualified_name(type_schema, type_name);
-        schema.pending_owners.push(PendingOwner {
-            object_type: PendingOwnerObjectType::Enum,
-            object_key,
-            owner: owner.to_string(),
-        });
-    }
-
     let alter_domain_owner_re = Regex::new(
         r#"(?i)ALTER\s+DOMAIN\s+(?:["']?([^"'\s]+)["']?\.)?["']?([^"'\s;]+)["']?\s+OWNER\s+TO\s+["']?([^"'\s;]+)["']?"#
     ).unwrap();

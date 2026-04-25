@@ -288,7 +288,7 @@ fn restore_quoted_content(mut sql: String, replacements: &[(String, String)]) ->
 
 /// Strips syntax not supported by sqlparser 0.52.
 /// Statements stripped here are parsed separately via regex
-/// (GRANT, REVOKE, ALTER DEFAULT PRIVILEGES, OWNER TO, COMMENT ON, DO blocks).
+/// (GRANT, REVOKE, OWNER TO, COMMENT ON, DO blocks).
 pub(super) fn preprocess_sql(sql: &str) -> String {
     let sql = strip_comments(sql);
     let sql = strip_do_blocks(&sql);
@@ -302,17 +302,13 @@ pub(super) fn preprocess_sql(sql: &str) -> String {
         r"(?i)ALTER\s+MATERIALIZED\s+VIEW\s+[^;]+;",
         r"(?i)ALTER\s+VIEW\s+[^;]+;",
         r"(?i)ALTER\s+SEQUENCE\s+[^;]+;",
-        // ALTER TYPE attribute / ownership / schema strips and the
-        // ALTER DEFAULT PRIVILEGES strip below could retire now that
-        // pgmold-sqlparser 0.61.0 exposes the corresponding AST variants.
-        // Tracked by pgmold-289.
-        r"(?i)ALTER\s+TYPE\s+[^;]+\s+OWNER\s+TO\s+[^;]+;",
-        r"(?i)ALTER\s+TYPE\s+[^;]+\s+SET\s+SCHEMA\s+[^;]+;",
-        r"(?i)ALTER\s+TYPE\s+[^;]+\s+(?:ADD|DROP|ALTER|RENAME)\s+ATTRIBUTE\s+[^;]+;",
         r"(?i)ALTER\s+DOMAIN\s+[^;]+;",
-        r"(?i)ALTER\s+DEFAULT\s+PRIVILEGES\s+[^;]+;",
         // COMMENT ON statements are now handled via the sqlparser AST; see
         // `comments::apply_comment_statement` (pgmold-273).
+        // ALTER TYPE OWNER TO / SET SCHEMA / *_ATTRIBUTE and ALTER DEFAULT
+        // PRIVILEGES are now handled via the sqlparser AST; see the
+        // `Statement::AlterType` and `Statement::AlterDefaultPrivileges`
+        // arms in parser/mod.rs (pgmold-289).
         r"(?i)REVOKE\s+[^;]+;",
         r"(?i)GRANT\s+[^;]+;",
     ];
@@ -641,10 +637,31 @@ $$;"
     }
 
     #[test]
-    fn preprocess_strips_alter_type_rename_attribute() {
+    fn preprocess_preserves_alter_type_rename_attribute() {
         let sql = "ALTER TYPE composite_t RENAME ATTRIBUTE a TO aa;\nSELECT 1;";
         let result = preprocess_sql(sql);
-        assert_eq!(result, "\nSELECT 1;");
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_preserves_alter_type_owner_to() {
+        let sql = "ALTER TYPE user_role OWNER TO admin;";
+        let result = preprocess_sql(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_preserves_alter_type_set_schema() {
+        let sql = "ALTER TYPE user_role SET SCHEMA staging;";
+        let result = preprocess_sql(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_preserves_alter_default_privileges() {
+        let sql = "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO readonly;";
+        let result = preprocess_sql(sql);
+        assert_eq!(result, sql);
     }
 
     #[test]
