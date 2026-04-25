@@ -511,11 +511,10 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                         }
                         AlterTableOperation::OwnerTo { new_owner } => {
                             if let Owner::Ident(ident) = new_owner {
-                                let owner = unquote_ident(&ident.value).to_string();
                                 schema.pending_owners.push(PendingOwner {
                                     object_type: PendingOwnerObjectType::Table,
                                     object_key: tbl_key.clone(),
-                                    owner,
+                                    owner: ident.value.clone(),
                                 });
                             }
                         }
