@@ -18,7 +18,7 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
-use super::preprocess::{protect_quoted_content, strip_comments};
+use super::preprocess::{protect_alter_default_privileges, protect_quoted_content, strip_comments};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnrecognizedStatement {
@@ -197,7 +197,13 @@ pub fn find_unrecognized_statements(sql: &str) -> Vec<UnrecognizedStatement> {
     // each literal with a placeholder. For multi-line literals the line
     // number may drift downward, which is acceptable for a warning.
     let stripped = strip_comments(sql);
-    let (sanitized, _replacements) = protect_quoted_content(&stripped);
+    let (sanitized, mut replacements) = protect_quoted_content(&stripped);
+    // Protect ALTER DEFAULT PRIVILEGES so the GRANT_BROAD / REVOKE_BROAD
+    // recognizers don't latch onto the inner body and report a position
+    // anchored on the wrong keyword. The replacements vec is consumed by
+    // the protect helper but not restored — sanitized SQL is used only
+    // for offset arithmetic and pattern matching, never handed to a parser.
+    let sanitized = protect_alter_default_privileges(sanitized, &mut replacements);
 
     let mut findings: Vec<UnrecognizedStatement> = Vec::new();
 

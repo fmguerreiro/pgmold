@@ -290,7 +290,7 @@ fn restore_quoted_content(mut sql: String, replacements: &[(String, String)]) ->
 /// identifier-style placeholders so the GRANT/REVOKE strip patterns below
 /// don't shred the inline GRANT/REVOKE body. Restored alongside quoted
 /// content via [`restore_quoted_content`].
-fn protect_alter_default_privileges(
+pub(super) fn protect_alter_default_privileges(
     sql: String,
     replacements: &mut Vec<(String, String)>,
 ) -> String {
@@ -688,6 +688,27 @@ $$;"
         let sql = "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO readonly;";
         let result = preprocess_sql(sql);
         assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_preserves_alter_default_privileges_revoke() {
+        let sql =
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES FROM readonly;";
+        let result = preprocess_sql(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_preserves_multiple_alter_default_privileges() {
+        let sql = "\
+ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT SELECT ON TABLES TO reporter;
+ALTER DEFAULT PRIVILEGES IN SCHEMA api REVOKE INSERT ON TABLES FROM reporter;
+GRANT SELECT ON public.users TO readonly;
+";
+        let result = preprocess_sql(sql);
+        assert!(result.contains("ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT SELECT"));
+        assert!(result.contains("ALTER DEFAULT PRIVILEGES IN SCHEMA api REVOKE INSERT"));
+        assert!(!result.contains("GRANT SELECT ON public.users"));
     }
 
     #[test]
