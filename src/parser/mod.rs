@@ -626,11 +626,16 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                         }
                     }
                     AlterTypeOperation::Rename(_)
-                    | AlterTypeOperation::RenameValue(_)
-                    // PostgreSQL ALTER TYPE shapes pgmold does not yet model. Listed
-                    // explicitly so an upstream addition forces a compile-time review
-                    // here instead of silent fallthrough.
-                    | AlterTypeOperation::OwnerTo { .. }
+                    | AlterTypeOperation::RenameValue(_) => {}
+                    // The variants below are unreachable today: `preprocess_sql`
+                    // strips `ALTER TYPE ... OWNER TO`, `... SET SCHEMA`, and
+                    // `... (ADD|DROP|ALTER|RENAME) ATTRIBUTE` before sqlparser
+                    // sees them. Listed explicitly to keep the match exhaustive
+                    // after the pgmold-sqlparser 0.61.0 bump and to surface any
+                    // future upstream additions at compile time. Tracked by
+                    // pgmold-289 (retire the preprocess strips and migrate to
+                    // AST-driven handling).
+                    AlterTypeOperation::OwnerTo { .. }
                     | AlterTypeOperation::SetSchema { .. }
                     | AlterTypeOperation::AddAttribute { .. }
                     | AlterTypeOperation::DropAttribute { .. }
@@ -1156,8 +1161,12 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             | Statement::Grant { .. }
             | Statement::Revoke { .. }
             | Statement::Deny(_)
-            // ALTER DEFAULT PRIVILEGES — handled via `parse_alter_default_privileges`
-            // on the raw SQL pass, same as Grant/Revoke. AST-level variant ignored.
+            // ALTER DEFAULT PRIVILEGES — currently unreachable: `preprocess_sql`
+            // strips the statement before sqlparser sees it. The actual handler
+            // is `parse_alter_default_privileges` on the raw SQL. Listed here to
+            // keep the match exhaustive after the pgmold-sqlparser 0.61.0 bump.
+            // Tracked by pgmold-289 (retire the preprocess strip and migrate to
+            // AST-driven handling).
             | Statement::AlterDefaultPrivileges(_)
             // Comments are processed by `parse_comment_statements` on the
             // raw SQL below; ignore the AST-level variant here.
