@@ -39,7 +39,10 @@ pub(super) struct CommentStatement<'a> {
 /// queue. Unsupported but well-formed object kinds emit a warning and are
 /// skipped. A truly malformed input (e.g. `COMMENT ON TRIGGER` without an
 /// `ON <table>` tail) returns a hard error rather than dropping silently.
-pub(super) fn apply_comment_statement(stmt: CommentStatement<'_>, schema: &mut Schema) -> Result<()> {
+pub(super) fn apply_comment_statement(
+    stmt: CommentStatement<'_>,
+    schema: &mut Schema,
+) -> Result<()> {
     let CommentStatement {
         object_type,
         object_name,
@@ -301,10 +304,9 @@ mod tests {
 
     #[test]
     fn canonical_args_preserves_text_array() {
-        let args = vec![DataType::Array(sqlparser::ast::ArrayElemTypeDef::SquareBracket(
-            Box::new(DataType::Text),
-            None,
-        ))];
+        let args = vec![DataType::Array(
+            sqlparser::ast::ArrayElemTypeDef::SquareBracket(Box::new(DataType::Text), None),
+        )];
         assert_eq!(canonical_args(Some(&args)), "text[]");
     }
 
