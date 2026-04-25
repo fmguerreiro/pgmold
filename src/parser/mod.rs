@@ -43,7 +43,7 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use std::fs;
 
-use comments::parse_comment_statements;
+use comments::{apply_comment_statement, CommentStatement};
 use functions::parse_create_function;
 use grants::{parse_alter_default_privileges, parse_grant_statements, parse_revoke_statements};
 use ownership::parse_owner_statements;
@@ -1169,9 +1169,6 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             // keep the match exhaustive. Tracked by pgmold-289 (retire the
             // preprocess strip and migrate to AST-driven handling).
             | Statement::AlterDefaultPrivileges(_)
-            // Comments are processed by `parse_comment_statements` on the
-            // raw SQL below; ignore the AST-level variant here.
-            | Statement::Comment { .. }
             // Cluster-level and role / user management — not part of the
             // schema model pgmold tracks.
             | Statement::CreateRole(_)
@@ -1321,6 +1318,25 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             Statement::AlterFunction(alter) => {
                 parse_alter_aggregate_owner(alter, &mut schema);
             }
+            Statement::Comment {
+                object_type,
+                object_name,
+                arguments,
+                relation,
+                comment,
+                if_exists: _,
+            } => {
+                apply_comment_statement(
+                    CommentStatement {
+                        object_type,
+                        object_name: &object_name,
+                        arguments: arguments.as_deref(),
+                        relation: relation.as_ref(),
+                        comment,
+                    },
+                    &mut schema,
+                )?;
+            }
         }
     }
 
@@ -1328,7 +1344,6 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
     parse_grant_statements(sql, &mut schema)?;
     parse_revoke_statements(sql, &mut schema)?;
     parse_alter_default_privileges(sql, &mut schema)?;
-    parse_comment_statements(sql, &mut schema);
 
     schema.pending_policies = schema.finalize_partial();
 
