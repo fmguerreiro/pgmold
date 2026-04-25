@@ -286,6 +286,31 @@ fn restore_quoted_content(mut sql: String, replacements: &[(String, String)]) ->
     sql
 }
 
+/// Replaces complete `ALTER DEFAULT PRIVILEGES ... ;` statements with
+/// identifier-style placeholders so the GRANT/REVOKE strip patterns below
+/// don't shred the inline GRANT/REVOKE body. Restored alongside quoted
+/// content via [`restore_quoted_content`].
+fn protect_alter_default_privileges(
+    sql: String,
+    replacements: &mut Vec<(String, String)>,
+) -> String {
+    use std::sync::LazyLock;
+    static ADP_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?is)\bALTER\s+DEFAULT\s+PRIVILEGES\s+[^;]+;").unwrap());
+
+    let mut result = String::with_capacity(sql.len());
+    let mut last_end = 0;
+    for matched in ADP_RE.find_iter(&sql) {
+        result.push_str(&sql[last_end..matched.start()]);
+        let placeholder = format!("__pgmold_adp_{}__", replacements.len());
+        replacements.push((placeholder.clone(), matched.as_str().to_string()));
+        result.push_str(&placeholder);
+        last_end = matched.end();
+    }
+    result.push_str(&sql[last_end..]);
+    result
+}
+
 /// Strips syntax not supported by sqlparser 0.52.
 /// Statements stripped here are parsed separately via regex
 /// (GRANT, REVOKE, OWNER TO, COMMENT ON, DO blocks).
@@ -294,7 +319,8 @@ pub(super) fn preprocess_sql(sql: &str) -> String {
     let sql = strip_do_blocks(&sql);
     let sql = reorder_sequence_options(&sql);
 
-    let (protected, replacements) = protect_quoted_content(&sql);
+    let (protected, mut replacements) = protect_quoted_content(&sql);
+    let protected = protect_alter_default_privileges(protected, &mut replacements);
 
     let strip_patterns = [
         r"(?i)\bSET\s+search_path\s+TO\s+'[^']*'(?:\s*,\s*'[^']*')*",
