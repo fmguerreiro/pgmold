@@ -625,7 +625,17 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             }
                         }
                     }
-                    AlterTypeOperation::Rename(_) | AlterTypeOperation::RenameValue(_) => {}
+                    AlterTypeOperation::Rename(_)
+                    | AlterTypeOperation::RenameValue(_)
+                    // PostgreSQL ALTER TYPE shapes pgmold does not yet model. Listed
+                    // explicitly so an upstream addition forces a compile-time review
+                    // here instead of silent fallthrough.
+                    | AlterTypeOperation::OwnerTo { .. }
+                    | AlterTypeOperation::SetSchema { .. }
+                    | AlterTypeOperation::AddAttribute { .. }
+                    | AlterTypeOperation::DropAttribute { .. }
+                    | AlterTypeOperation::AlterAttribute { .. }
+                    | AlterTypeOperation::RenameAttribute { .. } => {}
                 }
             }
             Statement::CreateFunction(CreateFunction {
@@ -1146,6 +1156,9 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             | Statement::Grant { .. }
             | Statement::Revoke { .. }
             | Statement::Deny(_)
+            // ALTER DEFAULT PRIVILEGES — handled via `parse_alter_default_privileges`
+            // on the raw SQL pass, same as Grant/Revoke. AST-level variant ignored.
+            | Statement::AlterDefaultPrivileges(_)
             // Comments are processed by `parse_comment_statements` on the
             // raw SQL below; ignore the AST-level variant here.
             | Statement::Comment { .. }
