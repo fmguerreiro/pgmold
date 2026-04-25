@@ -31,21 +31,27 @@ use crate::model::*;
 use crate::pg::sqlgen::strip_ident_quotes;
 use crate::util::{normalize_sql_whitespace, Result, SchemaError};
 use sqlparser::ast::{
+    Action, AlterDefaultPrivileges, AlterDefaultPrivilegesAction, AlterDefaultPrivilegesObjectType,
     AlterFunction, AlterFunctionKind, AlterFunctionOperation, AlterIndexOperation, AlterTable,
     AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
     AlterTypeOperation, CreateAggregate, CreateAggregateOption, CreateDomain, CreateExtension,
     CreateFunction, CreateServerStatement, CreateTrigger, CreateView, DeferrableInitial,
-    DropDomain, DropExtension, DropFunction, DropTrigger, FunctionParallel, ObjectType, Owner,
-    RenameTableNameKind, SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent,
-    TriggerPeriod, TriggerReferencingType, UserDefinedTypeRepresentation,
+    DropDomain, DropExtension, DropFunction, DropTrigger, FunctionParallel, Grantee, GranteeName,
+    GranteesType, ObjectType, Owner, Privileges, RenameTableNameKind, SchemaName, Statement,
+    TableConstraint, TriggerEvent as SqlTriggerEvent, TriggerPeriod, TriggerReferencingType,
+    UserDefinedTypeRepresentation,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
+use std::collections::BTreeSet;
 use std::fs;
 
 use comments::{apply_comment_statement, CommentStatement};
 use functions::parse_create_function;
-use grants::{parse_alter_default_privileges, parse_grant_statements, parse_revoke_statements};
+use grants::{
+    all_privileges_for, apply_default_privileges_grant, apply_default_privileges_revoke,
+    parse_grant_statements, parse_revoke_statements,
+};
 use ownership::parse_owner_statements;
 use preprocess::preprocess_sql;
 use sequences::parse_create_sequence;
@@ -625,25 +631,31 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             }
                         }
                     }
-                    // Type-level rename and the type renames-a-value form are not
-                    // modelled; the actual enum mutations land via the AddValue
-                    // arm above.
+                    AlterTypeOperation::OwnerTo { new_owner } => {
+                        if let Owner::Ident(ident) = new_owner {
+                            schema.pending_owners.push(PendingOwner {
+                                object_type: PendingOwnerObjectType::Enum,
+                                object_key: key.clone(),
+                                owner: ident.value.clone(),
+                            });
+                        }
+                    }
+                    // Type-level rename, renames-a-value, schema move, and
+                    // composite-type attribute mutations are accepted but not
+                    // modelled. enum AddValue is handled above; everything
+                    // else parses cleanly so users see no error, but the
+                    // resulting schema is unchanged.
                     AlterTypeOperation::Rename(_)
-                    | AlterTypeOperation::RenameValue(_) => {}
-                    // The variants below are unreachable today: `preprocess_sql`
-                    // strips `ALTER TYPE ... OWNER TO`, `... SET SCHEMA`, and
-                    // `... (ADD|DROP|ALTER|RENAME) ATTRIBUTE` before sqlparser
-                    // sees them. Listed explicitly to keep the match exhaustive
-                    // and to surface any future upstream additions at compile
-                    // time. Tracked by pgmold-289 (retire the preprocess strips
-                    // and migrate to AST-driven handling).
-                    AlterTypeOperation::OwnerTo { .. }
+                    | AlterTypeOperation::RenameValue(_)
                     | AlterTypeOperation::SetSchema { .. }
                     | AlterTypeOperation::AddAttribute { .. }
                     | AlterTypeOperation::DropAttribute { .. }
                     | AlterTypeOperation::AlterAttribute { .. }
                     | AlterTypeOperation::RenameAttribute { .. } => {}
                 }
+            }
+            Statement::AlterDefaultPrivileges(adp) => {
+                apply_alter_default_privileges(adp, &mut schema);
             }
             Statement::CreateFunction(CreateFunction {
                 name,
@@ -1163,12 +1175,6 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             | Statement::Grant { .. }
             | Statement::Revoke { .. }
             | Statement::Deny(_)
-            // ALTER DEFAULT PRIVILEGES — currently unreachable: `preprocess_sql`
-            // strips the statement before sqlparser sees it. The actual handler
-            // is `parse_alter_default_privileges` on the raw SQL. Listed here to
-            // keep the match exhaustive. Tracked by pgmold-289 (retire the
-            // preprocess strip and migrate to AST-driven handling).
-            | Statement::AlterDefaultPrivileges(_)
             // Cluster-level and role / user management — not part of the
             // schema model pgmold tracks.
             | Statement::CreateRole(_)
@@ -1343,7 +1349,6 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
     parse_owner_statements(sql, &mut schema);
     parse_grant_statements(sql, &mut schema)?;
     parse_revoke_statements(sql, &mut schema)?;
-    parse_alter_default_privileges(sql, &mut schema)?;
 
     schema.pending_policies = schema.finalize_partial();
 
@@ -1491,6 +1496,130 @@ fn parse_alter_aggregate_owner(alter: AlterFunction, schema: &mut Schema) {
         object_key,
         owner: owner_name,
     });
+}
+
+fn map_default_privileges_object_type(
+    object_type: &AlterDefaultPrivilegesObjectType,
+) -> DefaultPrivilegeObjectType {
+    match object_type {
+        AlterDefaultPrivilegesObjectType::Tables => DefaultPrivilegeObjectType::Tables,
+        AlterDefaultPrivilegesObjectType::Sequences => DefaultPrivilegeObjectType::Sequences,
+        AlterDefaultPrivilegesObjectType::Functions => DefaultPrivilegeObjectType::Functions,
+        AlterDefaultPrivilegesObjectType::Routines => DefaultPrivilegeObjectType::Routines,
+        AlterDefaultPrivilegesObjectType::Types => DefaultPrivilegeObjectType::Types,
+        AlterDefaultPrivilegesObjectType::Schemas => DefaultPrivilegeObjectType::Schemas,
+    }
+}
+
+/// Returns the model `Privilege` for a `GRANT`/`REVOKE` action variant, or
+/// `None` for actions that have no `model::Privilege` counterpart (DDL-only
+/// rights like `ALTER`, vendor extensions like `Apply`, etc.). Unmapped
+/// actions are silently skipped — the goal is fidelity with the prior regex
+/// behavior, which only understood the ten core privileges.
+//
+// `Action` is a genuinely huge upstream enum (Snowflake/Databricks/PG
+// dialects all add variants), so per ARCHITECTURE.md § "Match Arm
+// Discipline" we exempt this single match from the wildcard lint rather
+// than enumerating ~50 variants we explicitly want to ignore.
+#[allow(clippy::wildcard_enum_match_arm)]
+fn map_action_to_privilege(action: &Action) -> Option<Privilege> {
+    match action {
+        Action::Select { .. } => Some(Privilege::Select),
+        Action::Insert { .. } => Some(Privilege::Insert),
+        Action::Update { .. } => Some(Privilege::Update),
+        Action::Delete => Some(Privilege::Delete),
+        Action::Truncate => Some(Privilege::Truncate),
+        Action::References { .. } => Some(Privilege::References),
+        Action::Trigger => Some(Privilege::Trigger),
+        Action::Usage => Some(Privilege::Usage),
+        Action::Execute { .. } => Some(Privilege::Execute),
+        Action::Create { .. } => Some(Privilege::Create),
+        _ => None,
+    }
+}
+
+fn convert_privileges(
+    privileges: &Privileges,
+    object_type: &DefaultPrivilegeObjectType,
+) -> BTreeSet<Privilege> {
+    match privileges {
+        Privileges::All { .. } => all_privileges_for(object_type),
+        Privileges::Actions(actions) => {
+            actions.iter().filter_map(map_action_to_privilege).collect()
+        }
+    }
+}
+
+/// Returns the role names a `Grantee` resolves to. `PUBLIC` is stored as
+/// the literal string `"PUBLIC"` to stay consistent with `pg_default_acl`
+/// introspection, which always emits uppercase `PUBLIC`. Grantees with no
+/// name and host-qualified principals are skipped — they have no
+/// representation in the schema model today.
+fn grantee_to_role_name(grantee: &Grantee) -> Option<String> {
+    if matches!(grantee.grantee_type, GranteesType::Public) {
+        return Some("PUBLIC".to_string());
+    }
+    match grantee.name.as_ref()? {
+        GranteeName::ObjectName(object_name) => Some(strip_ident_quotes(&object_name.to_string())),
+        GranteeName::UserHost { .. } => None,
+    }
+}
+
+fn apply_alter_default_privileges(adp: AlterDefaultPrivileges, schema: &mut Schema) {
+    let target_roles: Vec<String> = if adp.for_roles.is_empty() {
+        vec!["CURRENT_ROLE".to_string()]
+    } else {
+        adp.for_roles.into_iter().map(|i| i.value).collect()
+    };
+
+    let schema_scopes: Vec<Option<String>> = if adp.in_schemas.is_empty() {
+        vec![None]
+    } else {
+        adp.in_schemas.into_iter().map(|i| Some(i.value)).collect()
+    };
+
+    match adp.action {
+        AlterDefaultPrivilegesAction::Grant {
+            privileges,
+            object_type,
+            grantees,
+            with_grant_option,
+        } => {
+            let model_object_type = map_default_privileges_object_type(&object_type);
+            let model_privileges = convert_privileges(&privileges, &model_object_type);
+            let grantee_names: Vec<String> =
+                grantees.iter().filter_map(grantee_to_role_name).collect();
+            apply_default_privileges_grant(
+                schema,
+                &target_roles,
+                &schema_scopes,
+                model_object_type,
+                &grantee_names,
+                model_privileges,
+                with_grant_option,
+            );
+        }
+        AlterDefaultPrivilegesAction::Revoke {
+            grant_option_for: _,
+            privileges,
+            object_type,
+            grantees,
+            cascade: _,
+        } => {
+            let model_object_type = map_default_privileges_object_type(&object_type);
+            let model_privileges = convert_privileges(&privileges, &model_object_type);
+            let grantee_names: Vec<String> =
+                grantees.iter().filter_map(grantee_to_role_name).collect();
+            apply_default_privileges_revoke(
+                schema,
+                &target_roles,
+                &schema_scopes,
+                model_object_type,
+                &grantee_names,
+                model_privileges,
+            );
+        }
+    }
 }
 
 fn parse_create_server(stmt: CreateServerStatement, schema: &mut Schema) {

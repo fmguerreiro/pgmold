@@ -286,15 +286,41 @@ fn restore_quoted_content(mut sql: String, replacements: &[(String, String)]) ->
     sql
 }
 
+/// Replaces complete `ALTER DEFAULT PRIVILEGES ... ;` statements with
+/// identifier-style placeholders so the GRANT/REVOKE strip patterns below
+/// don't shred the inline GRANT/REVOKE body. Restored alongside quoted
+/// content via [`restore_quoted_content`].
+pub(super) fn protect_alter_default_privileges(
+    sql: String,
+    replacements: &mut Vec<(String, String)>,
+) -> String {
+    use std::sync::LazyLock;
+    static ADP_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?is)\bALTER\s+DEFAULT\s+PRIVILEGES\s+[^;]+;").unwrap());
+
+    let mut result = String::with_capacity(sql.len());
+    let mut last_end = 0;
+    for matched in ADP_RE.find_iter(&sql) {
+        result.push_str(&sql[last_end..matched.start()]);
+        let placeholder = format!("__pgmold_adp_{}__", replacements.len());
+        replacements.push((placeholder.clone(), matched.as_str().to_string()));
+        result.push_str(&placeholder);
+        last_end = matched.end();
+    }
+    result.push_str(&sql[last_end..]);
+    result
+}
+
 /// Strips syntax not supported by sqlparser 0.52.
 /// Statements stripped here are parsed separately via regex
-/// (GRANT, REVOKE, ALTER DEFAULT PRIVILEGES, OWNER TO, COMMENT ON, DO blocks).
+/// (GRANT, REVOKE, OWNER TO, COMMENT ON, DO blocks).
 pub(super) fn preprocess_sql(sql: &str) -> String {
     let sql = strip_comments(sql);
     let sql = strip_do_blocks(&sql);
     let sql = reorder_sequence_options(&sql);
 
-    let (protected, replacements) = protect_quoted_content(&sql);
+    let (protected, mut replacements) = protect_quoted_content(&sql);
+    let protected = protect_alter_default_privileges(protected, &mut replacements);
 
     let strip_patterns = [
         r"(?i)\bSET\s+search_path\s+TO\s+'[^']*'(?:\s*,\s*'[^']*')*",
@@ -302,17 +328,13 @@ pub(super) fn preprocess_sql(sql: &str) -> String {
         r"(?i)ALTER\s+MATERIALIZED\s+VIEW\s+[^;]+;",
         r"(?i)ALTER\s+VIEW\s+[^;]+;",
         r"(?i)ALTER\s+SEQUENCE\s+[^;]+;",
-        // ALTER TYPE attribute / ownership / schema strips and the
-        // ALTER DEFAULT PRIVILEGES strip below could retire now that
-        // pgmold-sqlparser 0.61.0 exposes the corresponding AST variants.
-        // Tracked by pgmold-289.
-        r"(?i)ALTER\s+TYPE\s+[^;]+\s+OWNER\s+TO\s+[^;]+;",
-        r"(?i)ALTER\s+TYPE\s+[^;]+\s+SET\s+SCHEMA\s+[^;]+;",
-        r"(?i)ALTER\s+TYPE\s+[^;]+\s+(?:ADD|DROP|ALTER|RENAME)\s+ATTRIBUTE\s+[^;]+;",
         r"(?i)ALTER\s+DOMAIN\s+[^;]+;",
-        r"(?i)ALTER\s+DEFAULT\s+PRIVILEGES\s+[^;]+;",
         // COMMENT ON statements are now handled via the sqlparser AST; see
         // `comments::apply_comment_statement` (pgmold-273).
+        // ALTER TYPE OWNER TO / SET SCHEMA / *_ATTRIBUTE and ALTER DEFAULT
+        // PRIVILEGES are now handled via the sqlparser AST; see the
+        // `Statement::AlterType` and `Statement::AlterDefaultPrivileges`
+        // arms in parser/mod.rs (pgmold-289).
         r"(?i)REVOKE\s+[^;]+;",
         r"(?i)GRANT\s+[^;]+;",
     ];
@@ -641,10 +663,52 @@ $$;"
     }
 
     #[test]
-    fn preprocess_strips_alter_type_rename_attribute() {
+    fn preprocess_preserves_alter_type_rename_attribute() {
         let sql = "ALTER TYPE composite_t RENAME ATTRIBUTE a TO aa;\nSELECT 1;";
         let result = preprocess_sql(sql);
-        assert_eq!(result, "\nSELECT 1;");
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_preserves_alter_type_owner_to() {
+        let sql = "ALTER TYPE user_role OWNER TO admin;";
+        let result = preprocess_sql(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_preserves_alter_type_set_schema() {
+        let sql = "ALTER TYPE user_role SET SCHEMA staging;";
+        let result = preprocess_sql(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_preserves_alter_default_privileges() {
+        let sql = "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO readonly;";
+        let result = preprocess_sql(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_preserves_alter_default_privileges_revoke() {
+        let sql =
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES FROM readonly;";
+        let result = preprocess_sql(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn preprocess_preserves_multiple_alter_default_privileges() {
+        let sql = "\
+ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT SELECT ON TABLES TO reporter;
+ALTER DEFAULT PRIVILEGES IN SCHEMA api REVOKE INSERT ON TABLES FROM reporter;
+GRANT SELECT ON public.users TO readonly;
+";
+        let result = preprocess_sql(sql);
+        assert!(result.contains("ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT SELECT"));
+        assert!(result.contains("ALTER DEFAULT PRIVILEGES IN SCHEMA api REVOKE INSERT"));
+        assert!(!result.contains("GRANT SELECT ON public.users"));
     }
 
     #[test]
