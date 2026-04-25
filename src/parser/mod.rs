@@ -509,6 +509,15 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             // table; re-insert into schema.tables to model that.
                             schema.partitions.remove(&child_key);
                         }
+                        AlterTableOperation::OwnerTo { new_owner } => {
+                            if let Owner::Ident(ident) = new_owner {
+                                schema.pending_owners.push(PendingOwner {
+                                    object_type: PendingOwnerObjectType::Table,
+                                    object_key: tbl_key.clone(),
+                                    owner: ident.value.clone(),
+                                });
+                            }
+                        }
                         // PostgreSQL `ALTER TABLE` variants pgmold does not yet
                         // consume. Tracked as future work; listed explicitly
                         // so an upstream addition to `AlterTableOperation`
@@ -518,7 +527,6 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                         | AlterTableOperation::ValidateConstraint { .. }
                         | AlterTableOperation::DropPrimaryKey { .. }
                         | AlterTableOperation::ReplicaIdentity { .. }
-                        | AlterTableOperation::OwnerTo { .. }
                         | AlterTableOperation::SetOptionsParens { .. }
                         | AlterTableOperation::EnableRule { .. }
                         | AlterTableOperation::DisableRule { .. }
