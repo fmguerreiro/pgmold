@@ -311,7 +311,8 @@ pub(super) fn preprocess_sql(sql: &str) -> String {
         r"(?i)ALTER\s+TYPE\s+[^;]+\s+(?:ADD|DROP|ALTER|RENAME)\s+ATTRIBUTE\s+[^;]+;",
         r"(?i)ALTER\s+DOMAIN\s+[^;]+;",
         r"(?i)ALTER\s+DEFAULT\s+PRIVILEGES\s+[^;]+;",
-        r"(?i)COMMENT\s+ON\s+\w+(?:\s+\w+)*\s+.+?\s+IS\s+(?:(?i:E)'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'|\$\$[\s\S]*?\$\$|NULL)\s*;",
+        // COMMENT ON statements are now handled via the sqlparser AST; see
+        // `comments::apply_comment_statement` (pgmold-273).
         r"(?i)REVOKE\s+[^;]+;",
         r"(?i)GRANT\s+[^;]+;",
     ];

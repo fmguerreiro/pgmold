@@ -1,611 +1,342 @@
-use std::sync::LazyLock;
+//! AST-driven handling for `COMMENT ON …` statements.
+//!
+//! pgmold previously parsed COMMENT ON via a regex pass (see git history pre
+//! pgmold-273). The pgmold-sqlparser fork (>=0.61.0) now exposes the full
+//! PostgreSQL surface via `Statement::Comment`, so we dispatch to the AST
+//! variant from `parser/mod.rs`. The regex layer used to silently drop any
+//! shape it did not recognize, which masked schema drift for months
+//! (gh#246, gh#249, pgmold-278/280/281, pgmold-284/285,
+//! sagri-tokyo/mrv#3947). The AST path either records the comment or
+//! surfaces a structured warning — never silence.
+//!
+//! Object kinds pgmold does not model (`POLICY`, `INDEX`, `EXTENSION`,
+//! `PROCEDURE`, `ROLE`, `DATABASE`, `USER`, `COLLATION`) emit a warning
+//! through `eprintln!` and are skipped. Their existence is also surfaced by
+//! `unrecognized::find_unrecognized_statements`, which under `--strict`
+//! converts the warning into an error.
 
-use crate::model::*;
-use regex::Regex;
+use sqlparser::ast::{CommentObject, DataType, ObjectName};
 
-use super::util::unquote_ident;
+use crate::model::{
+    normalize_pg_type, qualified_name, PendingComment, PendingCommentObjectType, Schema,
+};
+use crate::util::{Result, SchemaError};
 
-/// Splits and normalizes a function/aggregate arg list so the pending-comment
-/// `object_key` matches the canonical key used by `Function::signature()` and
-/// `Aggregate::args_string()`. The upstream regexes capture args with `[^)]*`,
-/// which forbids inner parens, so plain `split(',')` is sufficient.
-///
-/// Each arg may include an optional argmode (`IN`/`OUT`/`INOUT`/`VARIADIC`) and
-/// an optional argname before the type. PostgreSQL ignores both when resolving
-/// function identity, so we strip them before normalizing the type so the
-/// resulting `object_key` matches the canonical type-only signature.
-fn normalize_callable_args(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return String::new();
+use super::util::{extract_qualified_name, unquote_ident};
+
+/// Parameters captured from `Statement::Comment` and forwarded to the
+/// pending-comment queue. Mirrors the fields of the AST variant so callers
+/// can pass them through without rebuilding a struct.
+pub(super) struct CommentStatement<'a> {
+    pub object_type: CommentObject,
+    pub object_name: &'a ObjectName,
+    pub arguments: Option<&'a [DataType]>,
+    pub relation: Option<&'a ObjectName>,
+    pub comment: Option<String>,
+}
+
+/// Translates a parsed `Statement::Comment` into pgmold's pending-comment
+/// queue. Unsupported but well-formed object kinds emit a warning and are
+/// skipped. A truly malformed input (e.g. `COMMENT ON TRIGGER` without an
+/// `ON <table>` tail) returns a hard error rather than dropping silently.
+pub(super) fn apply_comment_statement(stmt: CommentStatement<'_>, schema: &mut Schema) -> Result<()> {
+    let CommentStatement {
+        object_type,
+        object_name,
+        arguments,
+        relation,
+        comment,
+    } = stmt;
+
+    match object_type {
+        CommentObject::Table => {
+            let (obj_schema, obj_name) = extract_qualified_name(object_name);
+            push(
+                schema,
+                PendingCommentObjectType::Table,
+                qualified_name(&obj_schema, &obj_name),
+                comment,
+            );
+        }
+        CommentObject::Column => {
+            let (table_schema, table_name, column_name) = extract_three_part_name(object_name)?;
+            let key = format!("{table_schema}.{table_name}.{column_name}");
+            push(schema, PendingCommentObjectType::Column, key, comment);
+        }
+        CommentObject::View => {
+            let (obj_schema, obj_name) = extract_qualified_name(object_name);
+            push(
+                schema,
+                PendingCommentObjectType::View,
+                qualified_name(&obj_schema, &obj_name),
+                comment,
+            );
+        }
+        CommentObject::MaterializedView => {
+            let (obj_schema, obj_name) = extract_qualified_name(object_name);
+            push(
+                schema,
+                PendingCommentObjectType::MaterializedView,
+                qualified_name(&obj_schema, &obj_name),
+                comment,
+            );
+        }
+        CommentObject::Type => {
+            let (obj_schema, obj_name) = extract_qualified_name(object_name);
+            push(
+                schema,
+                PendingCommentObjectType::Type,
+                qualified_name(&obj_schema, &obj_name),
+                comment,
+            );
+        }
+        CommentObject::Domain => {
+            let (obj_schema, obj_name) = extract_qualified_name(object_name);
+            push(
+                schema,
+                PendingCommentObjectType::Domain,
+                qualified_name(&obj_schema, &obj_name),
+                comment,
+            );
+        }
+        CommentObject::Schema => {
+            // `extract_qualified_name` defaults to "public" when only one
+            // part is present, but a schema's pending key is the bare name.
+            let parts = object_name_parts(object_name);
+            if parts.len() != 1 {
+                return Err(SchemaError::ParseError(format!(
+                    "COMMENT ON SCHEMA expects a single identifier, got {object_name}"
+                )));
+            }
+            push(
+                schema,
+                PendingCommentObjectType::Schema,
+                parts.into_iter().next().unwrap(),
+                comment,
+            );
+        }
+        CommentObject::Sequence => {
+            let (obj_schema, obj_name) = extract_qualified_name(object_name);
+            push(
+                schema,
+                PendingCommentObjectType::Sequence,
+                qualified_name(&obj_schema, &obj_name),
+                comment,
+            );
+        }
+        CommentObject::Function => {
+            let (func_schema, func_name) = extract_qualified_name(object_name);
+            let args_canonical = canonical_args(arguments);
+            let key = format!("{func_schema}.{func_name}({args_canonical})");
+            push(schema, PendingCommentObjectType::Function, key, comment);
+        }
+        CommentObject::Aggregate => {
+            // The fork's parser hard-rejects `COMMENT ON AGGREGATE` without
+            // an argument list, so `arguments` is guaranteed `Some(_)`. The
+            // explicit check defends against a future fork relaxation.
+            let Some(args) = arguments else {
+                return Err(SchemaError::ParseError(format!(
+                    "COMMENT ON AGGREGATE {object_name}: argument list is required"
+                )));
+            };
+            let (agg_schema, agg_name) = extract_qualified_name(object_name);
+            let args_canonical = canonical_args(Some(args));
+            let key = format!("{agg_schema}.{agg_name}({args_canonical})");
+            push(schema, PendingCommentObjectType::Aggregate, key, comment);
+        }
+        CommentObject::Trigger => {
+            let trigger_parts = object_name_parts(object_name);
+            if trigger_parts.len() != 1 {
+                return Err(SchemaError::ParseError(format!(
+                    "COMMENT ON TRIGGER expects an unqualified trigger name, got {object_name}"
+                )));
+            }
+            let trigger_name = trigger_parts.into_iter().next().unwrap();
+            let Some(relation) = relation else {
+                return Err(SchemaError::ParseError(
+                    "COMMENT ON TRIGGER missing ON <table> tail".into(),
+                ));
+            };
+            let (table_schema, table_name) = extract_qualified_name(relation);
+            let key = format!("{table_schema}.{table_name}.{trigger_name}");
+            push(schema, PendingCommentObjectType::Trigger, key, comment);
+        }
+        // Object kinds pgmold does not model. Surface a warning so the
+        // statement is not silently lost; `unrecognized.rs` will also flag
+        // these via its preprocess-stage scan and turn them into errors
+        // under `--strict`.
+        CommentObject::Policy => {
+            let target = match relation {
+                Some(rel) => {
+                    let (rs, rn) = extract_qualified_name(rel);
+                    format!("{object_name} ON {rs}.{rn}")
+                }
+                None => object_name.to_string(),
+            };
+            eprintln!(
+                "warning: pgmold does not model COMMENT ON POLICY; dropping comment on {target}"
+            );
+        }
+        CommentObject::Index => {
+            eprintln!(
+                "warning: pgmold does not model COMMENT ON INDEX; dropping comment on {object_name}"
+            );
+        }
+        CommentObject::Extension => {
+            eprintln!(
+                "warning: pgmold does not model COMMENT ON EXTENSION; dropping comment on {object_name}"
+            );
+        }
+        CommentObject::Procedure => {
+            eprintln!(
+                "warning: pgmold does not model COMMENT ON PROCEDURE; dropping comment on {object_name}"
+            );
+        }
+        CommentObject::Role => {
+            eprintln!(
+                "warning: pgmold does not model COMMENT ON ROLE; dropping comment on {object_name}"
+            );
+        }
+        CommentObject::Database => {
+            eprintln!(
+                "warning: pgmold does not model COMMENT ON DATABASE; dropping comment on {object_name}"
+            );
+        }
+        CommentObject::User => {
+            eprintln!(
+                "warning: pgmold does not model COMMENT ON USER; dropping comment on {object_name}"
+            );
+        }
+        CommentObject::Collation => {
+            eprintln!(
+                "warning: pgmold does not model COMMENT ON COLLATION; dropping comment on {object_name}"
+            );
+        }
     }
-    trimmed
-        .split(',')
-        .map(|arg| normalize_pg_type(strip_argmode_and_argname(arg.trim())).into_owned())
+    Ok(())
+}
+
+fn push(
+    schema: &mut Schema,
+    object_type: PendingCommentObjectType,
+    object_key: String,
+    comment: Option<String>,
+) {
+    schema.pending_comments.push(PendingComment {
+        object_type,
+        object_key,
+        comment,
+    });
+}
+
+/// Returns the canonical comma-separated argument list pgmold uses as the
+/// signature suffix in function / aggregate object keys. Each argument is
+/// normalized via `normalize_pg_type` so `int` collapses to `integer`,
+/// `bool` to `boolean`, and `public.x` to `x`. `None` (no parens parsed)
+/// produces an empty string, matching the regex-era behaviour for the
+/// `COMMENT ON FUNCTION foo()` shape that historically dominated input.
+fn canonical_args(arguments: Option<&[DataType]>) -> String {
+    let Some(args) = arguments else {
+        return String::new();
+    };
+    args.iter()
+        .map(|dt| normalize_pg_type(&dt.to_string()).into_owned())
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-/// Strips optional leading argmode and argname, leaving just the type portion
-/// of a single function/aggregate argument.
-fn strip_argmode_and_argname(arg: &str) -> &str {
-    strip_leading_argname(strip_leading_mode(arg.trim_start()))
-}
-
-/// Strips a leading argmode keyword if present. Longest modes are checked
-/// first so `INOUT` doesn't match as `IN` + stray `OUT`.
-fn strip_leading_mode(s: &str) -> &str {
-    const MODES: &[&str] = &["INOUT", "VARIADIC", "IN", "OUT"];
-    for mode in MODES {
-        if s.len() > mode.len()
-            && s.as_bytes()[mode.len()].is_ascii_whitespace()
-            && s[..mode.len()].eq_ignore_ascii_case(mode)
-        {
-            return s[mode.len()..].trim_start();
-        }
-    }
-    s
-}
-
-/// Strips a leading argname if present. An argname exists when there are at
-/// least two whitespace-separated tokens AND the first token is not a known
-/// multi-word type starter. Quoted identifiers (`"…"`) count as a single
-/// token.
-fn strip_leading_argname(s: &str) -> &str {
-    let Some((first, rest)) = split_first_token(s) else {
-        return s;
-    };
-    if rest.is_empty() || is_multi_word_type_starter(first) {
-        return s;
-    }
-    rest
-}
-
-fn split_first_token(s: &str) -> Option<(&str, &str)> {
-    let s = s.trim_start();
-    if s.is_empty() {
-        return None;
-    }
-    if s.starts_with('"') {
-        let bytes = s.as_bytes();
-        let mut i = 1;
-        while i < bytes.len() {
-            if bytes[i] == b'"' {
-                // `""` inside a quoted identifier escapes a literal quote.
-                if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
-                    i += 2;
-                    continue;
-                }
-                let end = i + 1;
-                return Some((&s[..end], s[end..].trim_start()));
-            }
-            i += 1;
-        }
-        return Some((s, ""));
-    }
-    match s.find(char::is_whitespace) {
-        Some(ws) => Some((&s[..ws], s[ws..].trim_start())),
-        None => Some((s, "")),
-    }
-}
-
-/// First-word tokens of PostgreSQL multi-word built-in types. When the leading
-/// token of a stripped argument matches one of these, it is the start of the
-/// type (`double precision`, `character varying`, …), not an argname.
-fn is_multi_word_type_starter(token: &str) -> bool {
-    const STARTERS: &[&str] = &[
-        "double",    // double precision
-        "character", // character / character varying
-        "bit",       // bit / bit varying
-        "time",      // time / time with/without time zone
-        "timestamp", // timestamp / timestamp with/without time zone
-        "national",  // national character / national character varying
-    ];
-    // Strip any parenthesized precision modifier (e.g. `timestamp(3)` → `timestamp`)
-    // so the check still succeeds when the token carries a type precision.
-    let base = token.split('(').next().unwrap_or(token);
-    STARTERS
+fn object_name_parts(name: &ObjectName) -> Vec<String> {
+    name.0
         .iter()
-        .any(|starter| base.eq_ignore_ascii_case(starter))
+        .map(|part| unquote_ident(&part.to_string()).to_string())
+        .collect()
 }
 
-pub(super) fn parse_comment_statements(sql: &str, schema: &mut Schema) {
-    parse_table_comments(sql, schema);
-    parse_column_comments(sql, schema);
-    parse_function_comments(sql, schema);
-    parse_aggregate_comments(sql, schema);
-    parse_view_comments(sql, schema);
-    parse_materialized_view_comments(sql, schema);
-    parse_type_comments(sql, schema);
-    parse_domain_comments(sql, schema);
-    parse_schema_comments(sql, schema);
-    parse_sequence_comments(sql, schema);
-    parse_trigger_comments(sql, schema);
-}
-
-/// Matches any string literal form PostgreSQL accepts in a COMMENT ON ... IS clause:
-/// standard `'…'` (with `''` escape), escape-syntax `E'…'` (with backslash escapes),
-/// untagged dollar-quoted `$$…$$`, or the bare keyword `NULL`.
-///
-/// Tagged dollar-quoting (`$tag$…$tag$`) is intentionally omitted: the `regex` crate
-/// does not support backreferences, and comment literals rarely use custom tags.
-const IS_LITERAL_PATTERN: &str =
-    r"(?:(?i:E)'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'|\$\$[\s\S]*?\$\$|(?i:NULL))";
-
-fn compile(body: &str) -> Regex {
-    Regex::new(&format!(r"(?i){body}\s+IS\s+({IS_LITERAL_PATTERN})\s*;"))
-        .expect("COMMENT ON regex compiles")
-}
-
-fn extract_comment_text(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.eq_ignore_ascii_case("NULL") {
-        return None;
-    }
-    if let Some(rest) = trimmed.strip_prefix(['E', 'e']) {
-        if rest.starts_with('\'') && rest.ends_with('\'') && rest.len() >= 2 {
-            return Some(unescape_e_string(&rest[1..rest.len() - 1]));
-        }
-    }
-    if trimmed.starts_with('\'') && trimmed.ends_with('\'') && trimmed.len() >= 2 {
-        return Some(trimmed[1..trimmed.len() - 1].replace("''", "'"));
-    }
-    if trimmed.starts_with("$$") && trimmed.ends_with("$$") && trimmed.len() >= 4 {
-        return Some(trimmed[2..trimmed.len() - 2].to_string());
-    }
-    // `IS_LITERAL_PATTERN` only matches the forms handled above, so reaching here
-    // means the upstream regex and this extractor have drifted apart.
-    unreachable!(
-        "extract_comment_text received literal not covered by IS_LITERAL_PATTERN: {raw:?}"
-    );
-}
-
-/// Applies PostgreSQL's escape-string `E'…'` rules to the literal body.
-/// Handles the common C-style escapes; unknown escape sequences (including octal/hex
-/// byte forms such as `\0`, `\xHH`, `\uNNNN`) are kept verbatim, matching psql's
-/// permissive behaviour when `escape_string_warning` is off. Emitting a NUL byte
-/// would produce a string PostgreSQL itself rejects on write, so `\0` is preserved
-/// as `\0` rather than being substituted for `'\u{0}'`.
-fn unescape_e_string(body: &str) -> String {
-    let mut out = String::with_capacity(body.len());
-    let mut chars = body.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => match chars.next() {
-                Some('n') => out.push('\n'),
-                Some('t') => out.push('\t'),
-                Some('r') => out.push('\r'),
-                Some('b') => out.push('\u{08}'),
-                Some('f') => out.push('\u{0C}'),
-                Some('\\') => out.push('\\'),
-                Some('\'') => out.push('\''),
-                Some('"') => out.push('"'),
-                Some(other) => {
-                    out.push('\\');
-                    out.push(other);
-                }
-                None => out.push('\\'),
-            },
-            '\'' => {
-                if matches!(chars.peek(), Some('\'')) {
-                    chars.next();
-                }
-                out.push('\'');
-            }
-            c => out.push(c),
-        }
-    }
-    out
-}
-
-static TABLE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile(r#"COMMENT\s+ON\s+TABLE\s+(?:["']?([^"'\s.]+)["']?\.)?["']?([^"'\s;]+)["']?"#)
-});
-
-static COLUMN_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile(
-        r#"COMMENT\s+ON\s+COLUMN\s+(?:["']?([^"'\s.]+)["']?\.)?["']?([^"'\s.]+)["']?\.["']?([^"'\s;]+)["']?"#,
-    )
-});
-
-static FUNCTION_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile(
-        r#"COMMENT\s+ON\s+FUNCTION\s+(?:["']?([^"'\s(]+)["']?\.)?["']?([^"'\s(]+)["']?\s*\(([^)]*)\)"#,
-    )
-});
-
-static AGGREGATE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile(
-        r#"COMMENT\s+ON\s+AGGREGATE\s+(?:["']?([^"'\s(]+)["']?\.)?["']?([^"'\s(]+)["']?\s*\(([^)]*)\)"#,
-    )
-});
-
-static VIEW_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile(r#"COMMENT\s+ON\s+VIEW\s+(?:["']?([^"'\s.]+)["']?\.)?["']?([^"'\s;]+)["']?"#)
-});
-
-static MATERIALIZED_VIEW_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile(
-        r#"COMMENT\s+ON\s+MATERIALIZED\s+VIEW\s+(?:["']?([^"'\s.]+)["']?\.)?["']?([^"'\s;]+)["']?"#,
-    )
-});
-
-static TYPE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile(r#"COMMENT\s+ON\s+TYPE\s+(?:["']?([^"'\s.]+)["']?\.)?["']?([^"'\s;]+)["']?"#)
-});
-
-static DOMAIN_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile(r#"COMMENT\s+ON\s+DOMAIN\s+(?:["']?([^"'\s.]+)["']?\.)?["']?([^"'\s;]+)["']?"#)
-});
-
-static SCHEMA_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile(r#"COMMENT\s+ON\s+SCHEMA\s+["']?([^"'\s;]+)["']?"#));
-
-static SEQUENCE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile(r#"COMMENT\s+ON\s+SEQUENCE\s+(?:["']?([^"'\s.]+)["']?\.)?["']?([^"'\s;]+)["']?"#)
-});
-
-static TRIGGER_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile(
-        r#"COMMENT\s+ON\s+TRIGGER\s+["']?([^"'\s]+)["']?\s+ON\s+(?:["']?([^"'\s.]+)["']?\.)?["']?([^"'\s;]+)["']?"#,
-    )
-});
-
-fn parse_table_comments(sql: &str, schema: &mut Schema) {
-    for capture in TABLE_RE.captures_iter(sql) {
-        let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
-        let table_name = unquote_ident(capture.get(2).unwrap().as_str());
-        let comment = extract_comment_text(capture.get(3).unwrap().as_str());
-
-        let table_schema = schema_part.unwrap_or("public");
-        let object_key = qualified_name(table_schema, table_name);
-        schema.pending_comments.push(PendingComment {
-            object_type: PendingCommentObjectType::Table,
-            object_key,
-            comment,
-        });
-    }
-}
-
-fn parse_column_comments(sql: &str, schema: &mut Schema) {
-    for capture in COLUMN_RE.captures_iter(sql) {
-        let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
-        let table_name = unquote_ident(capture.get(2).unwrap().as_str());
-        let column_name = unquote_ident(capture.get(3).unwrap().as_str());
-        let comment = extract_comment_text(capture.get(4).unwrap().as_str());
-
-        let table_schema = schema_part.unwrap_or("public");
-        let object_key = format!("{}.{}.{}", table_schema, table_name, column_name);
-        schema.pending_comments.push(PendingComment {
-            object_type: PendingCommentObjectType::Column,
-            object_key,
-            comment,
-        });
-    }
-}
-
-fn parse_function_comments(sql: &str, schema: &mut Schema) {
-    for capture in FUNCTION_RE.captures_iter(sql) {
-        let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
-        let function_name = unquote_ident(capture.get(2).unwrap().as_str());
-        let arguments = normalize_callable_args(capture.get(3).unwrap().as_str());
-        let comment = extract_comment_text(capture.get(4).unwrap().as_str());
-
-        let function_schema = schema_part.unwrap_or("public");
-        let object_key = format!("{}.{}({})", function_schema, function_name, arguments);
-        schema.pending_comments.push(PendingComment {
-            object_type: PendingCommentObjectType::Function,
-            object_key,
-            comment,
-        });
-    }
-}
-
-fn parse_aggregate_comments(sql: &str, schema: &mut Schema) {
-    for capture in AGGREGATE_RE.captures_iter(sql) {
-        let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
-        let aggregate_name = unquote_ident(capture.get(2).unwrap().as_str());
-        let arguments = normalize_callable_args(capture.get(3).unwrap().as_str());
-        let comment = extract_comment_text(capture.get(4).unwrap().as_str());
-
-        let aggregate_schema = schema_part.unwrap_or("public");
-        let object_key = format!("{}.{}({})", aggregate_schema, aggregate_name, arguments);
-        schema.pending_comments.push(PendingComment {
-            object_type: PendingCommentObjectType::Aggregate,
-            object_key,
-            comment,
-        });
-    }
-}
-
-fn parse_view_comments(sql: &str, schema: &mut Schema) {
-    for capture in VIEW_RE.captures_iter(sql) {
-        let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
-        let view_name = unquote_ident(capture.get(2).unwrap().as_str());
-        let comment = extract_comment_text(capture.get(3).unwrap().as_str());
-
-        let view_schema = schema_part.unwrap_or("public");
-        let object_key = qualified_name(view_schema, view_name);
-        schema.pending_comments.push(PendingComment {
-            object_type: PendingCommentObjectType::View,
-            object_key,
-            comment,
-        });
-    }
-}
-
-fn parse_materialized_view_comments(sql: &str, schema: &mut Schema) {
-    for capture in MATERIALIZED_VIEW_RE.captures_iter(sql) {
-        let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
-        let view_name = unquote_ident(capture.get(2).unwrap().as_str());
-        let comment = extract_comment_text(capture.get(3).unwrap().as_str());
-
-        let view_schema = schema_part.unwrap_or("public");
-        let object_key = qualified_name(view_schema, view_name);
-        schema.pending_comments.push(PendingComment {
-            object_type: PendingCommentObjectType::MaterializedView,
-            object_key,
-            comment,
-        });
-    }
-}
-
-fn parse_type_comments(sql: &str, schema: &mut Schema) {
-    for capture in TYPE_RE.captures_iter(sql) {
-        let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
-        let type_name = unquote_ident(capture.get(2).unwrap().as_str());
-        let comment = extract_comment_text(capture.get(3).unwrap().as_str());
-
-        let type_schema = schema_part.unwrap_or("public");
-        let object_key = qualified_name(type_schema, type_name);
-        schema.pending_comments.push(PendingComment {
-            object_type: PendingCommentObjectType::Type,
-            object_key,
-            comment,
-        });
-    }
-}
-
-fn parse_domain_comments(sql: &str, schema: &mut Schema) {
-    for capture in DOMAIN_RE.captures_iter(sql) {
-        let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
-        let domain_name = unquote_ident(capture.get(2).unwrap().as_str());
-        let comment = extract_comment_text(capture.get(3).unwrap().as_str());
-
-        let domain_schema = schema_part.unwrap_or("public");
-        let object_key = qualified_name(domain_schema, domain_name);
-        schema.pending_comments.push(PendingComment {
-            object_type: PendingCommentObjectType::Domain,
-            object_key,
-            comment,
-        });
-    }
-}
-
-fn parse_schema_comments(sql: &str, schema: &mut Schema) {
-    for capture in SCHEMA_RE.captures_iter(sql) {
-        let schema_name = unquote_ident(capture.get(1).unwrap().as_str());
-        let comment = extract_comment_text(capture.get(2).unwrap().as_str());
-
-        schema.pending_comments.push(PendingComment {
-            object_type: PendingCommentObjectType::Schema,
-            object_key: schema_name.to_string(),
-            comment,
-        });
-    }
-}
-
-fn parse_sequence_comments(sql: &str, schema: &mut Schema) {
-    for capture in SEQUENCE_RE.captures_iter(sql) {
-        let schema_part = capture.get(1).map(|m| unquote_ident(m.as_str()));
-        let sequence_name = unquote_ident(capture.get(2).unwrap().as_str());
-        let comment = extract_comment_text(capture.get(3).unwrap().as_str());
-
-        let sequence_schema = schema_part.unwrap_or("public");
-        let object_key = qualified_name(sequence_schema, sequence_name);
-        schema.pending_comments.push(PendingComment {
-            object_type: PendingCommentObjectType::Sequence,
-            object_key,
-            comment,
-        });
-    }
-}
-
-fn parse_trigger_comments(sql: &str, schema: &mut Schema) {
-    for capture in TRIGGER_RE.captures_iter(sql) {
-        let trigger_name = unquote_ident(capture.get(1).unwrap().as_str());
-        let schema_part = capture.get(2).map(|m| unquote_ident(m.as_str()));
-        let table_name = unquote_ident(capture.get(3).unwrap().as_str());
-        let comment = extract_comment_text(capture.get(4).unwrap().as_str());
-
-        let table_schema = schema_part.unwrap_or("public");
-        let object_key = format!("{}.{}.{}", table_schema, table_name, trigger_name);
-        schema.pending_comments.push(PendingComment {
-            object_type: PendingCommentObjectType::Trigger,
-            object_key,
-            comment,
-        });
+fn extract_three_part_name(name: &ObjectName) -> Result<(String, String, String)> {
+    let parts = object_name_parts(name);
+    match parts.as_slice() {
+        [schema, table, column] => Ok((schema.clone(), table.clone(), column.clone())),
+        [table, column] => Ok(("public".to_string(), table.clone(), column.clone())),
+        _ => Err(SchemaError::ParseError(format!(
+            "COMMENT ON COLUMN expects [schema.]table.column, got {name}"
+        ))),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlparser::ast::{DataType, ExactNumberInfo, ObjectNamePart};
 
-    #[test]
-    fn extract_standard_string() {
-        assert_eq!(extract_comment_text("'hello'"), Some("hello".into()));
+    fn name(parts: &[&str]) -> ObjectName {
+        ObjectName(
+            parts
+                .iter()
+                .map(|p| ObjectNamePart::Identifier(sqlparser::ast::Ident::new(*p)))
+                .collect(),
+        )
     }
 
     #[test]
-    fn extract_doubled_quote_escape() {
-        assert_eq!(
-            extract_comment_text("'it''s fine'"),
-            Some("it's fine".into())
-        );
+    fn canonical_args_none_yields_empty_string() {
+        assert_eq!(canonical_args(None), "");
     }
 
     #[test]
-    fn extract_e_string_with_backslash_escapes() {
-        assert_eq!(
-            extract_comment_text(r"E'@name foo\n@omit create'"),
-            Some("@name foo\n@omit create".into())
-        );
+    fn canonical_args_empty_vec_yields_empty_string() {
+        assert_eq!(canonical_args(Some(&[])), "");
     }
 
     #[test]
-    fn extract_e_string_lowercase_prefix() {
-        assert_eq!(
-            extract_comment_text(r"e'tab\there'"),
-            Some("tab\there".into())
-        );
+    fn canonical_args_normalizes_int_alias_to_integer() {
+        let args = vec![DataType::Int(None)];
+        assert_eq!(canonical_args(Some(&args)), "integer");
     }
 
     #[test]
-    fn extract_e_string_unknown_escape_preserved() {
-        assert_eq!(
-            extract_comment_text(r"E'keep \z literally'"),
-            Some(r"keep \z literally".into())
-        );
+    fn canonical_args_normalizes_multiple_aliases() {
+        let args = vec![DataType::Int(None), DataType::Bool];
+        assert_eq!(canonical_args(Some(&args)), "integer, boolean");
     }
 
     #[test]
-    fn extract_e_string_null_byte_not_substituted() {
-        let result = extract_comment_text(r"E'null \0 escape'").unwrap();
-        assert!(
-            !result.contains('\0'),
-            "NUL byte must not be emitted (PostgreSQL rejects it): {result:?}",
-        );
-        assert_eq!(result, r"null \0 escape");
+    fn canonical_args_preserves_text_array() {
+        let args = vec![DataType::Array(sqlparser::ast::ArrayElemTypeDef::SquareBracket(
+            Box::new(DataType::Text),
+            None,
+        ))];
+        assert_eq!(canonical_args(Some(&args)), "text[]");
     }
 
     #[test]
-    fn extract_dollar_quoted_literal() {
-        assert_eq!(
-            extract_comment_text(r#"$$contains 'quotes' and \backslashes$$"#),
-            Some(r#"contains 'quotes' and \backslashes"#.into())
-        );
+    fn canonical_args_with_numeric_precision() {
+        let args = vec![DataType::Numeric(ExactNumberInfo::PrecisionAndScale(10, 2))];
+        // numeric(10,2) is left as-is by normalize_pg_type
+        assert_eq!(canonical_args(Some(&args)), "numeric(10,2)");
     }
 
     #[test]
-    fn extract_null_maps_to_none() {
-        assert_eq!(extract_comment_text("NULL"), None);
-        assert_eq!(extract_comment_text("null"), None);
+    fn extract_three_part_name_with_schema() {
+        let n = name(&["mrv", "orders", "total"]);
+        let (s, t, c) = extract_three_part_name(&n).unwrap();
+        assert_eq!(s, "mrv");
+        assert_eq!(t, "orders");
+        assert_eq!(c, "total");
     }
 
     #[test]
-    fn normalize_callable_args_empty_input() {
-        assert_eq!(normalize_callable_args(""), "");
-        assert_eq!(normalize_callable_args("   "), "");
+    fn extract_three_part_name_without_schema_defaults_to_public() {
+        let n = name(&["orders", "total"]);
+        let (s, t, c) = extract_three_part_name(&n).unwrap();
+        assert_eq!(s, "public");
+        assert_eq!(t, "orders");
+        assert_eq!(c, "total");
     }
 
     #[test]
-    fn normalize_callable_args_aliases_int_to_integer() {
-        assert_eq!(normalize_callable_args("int"), "integer");
-    }
-
-    #[test]
-    fn normalize_callable_args_alias_lookup_is_case_insensitive() {
-        assert_eq!(normalize_callable_args("INT"), "integer");
-    }
-
-    #[test]
-    fn normalize_callable_args_aliases_bool_to_boolean() {
-        assert_eq!(normalize_callable_args("bool"), "boolean");
-    }
-
-    #[test]
-    fn normalize_callable_args_strips_public_schema_prefix() {
-        assert_eq!(normalize_callable_args("public.mytype"), "mytype");
-    }
-
-    #[test]
-    fn normalize_callable_args_preserves_non_public_schema_prefix() {
-        assert_eq!(normalize_callable_args("mrv.mytype"), "mrv.mytype");
-    }
-
-    #[test]
-    fn normalize_callable_args_handles_multiple_args_with_spacing() {
-        assert_eq!(
-            normalize_callable_args("int,  bool , public.mytype"),
-            "integer, boolean, mytype"
-        );
-    }
-
-    #[test]
-    fn normalize_callable_args_strips_argname() {
-        assert_eq!(normalize_callable_args("a int"), "integer");
-    }
-
-    #[test]
-    fn normalize_callable_args_strips_in_mode() {
-        assert_eq!(normalize_callable_args("IN int"), "integer");
-    }
-
-    #[test]
-    fn normalize_callable_args_strips_out_mode() {
-        assert_eq!(normalize_callable_args("OUT text"), "text");
-    }
-
-    #[test]
-    fn normalize_callable_args_strips_inout_mode_and_argname() {
-        assert_eq!(normalize_callable_args("INOUT flag boolean"), "boolean");
-    }
-
-    #[test]
-    fn normalize_callable_args_strips_variadic_mode_and_argname() {
-        assert_eq!(normalize_callable_args("VARIADIC arr text[]"), "text[]");
-    }
-
-    #[test]
-    fn normalize_callable_args_strips_mode_and_argname() {
-        assert_eq!(normalize_callable_args("IN id int"), "integer");
-    }
-
-    #[test]
-    fn normalize_callable_args_mode_case_insensitive() {
-        assert_eq!(normalize_callable_args("in int"), "integer");
-        assert_eq!(normalize_callable_args("Variadic arr text"), "text");
-    }
-
-    #[test]
-    fn normalize_callable_args_preserves_multi_word_type_with_no_argname() {
-        assert_eq!(
-            normalize_callable_args("double precision"),
-            "double precision"
-        );
-    }
-
-    #[test]
-    fn normalize_callable_args_preserves_multi_word_type_with_argname() {
-        assert_eq!(
-            normalize_callable_args("n double precision"),
-            "double precision"
-        );
-    }
-
-    #[test]
-    fn normalize_callable_args_handles_mixed_modes_and_names_across_multiple_args() {
-        assert_eq!(
-            normalize_callable_args("a int, IN b text, OUT c bool"),
-            "integer, text, boolean"
-        );
-    }
-
-    #[test]
-    fn normalize_callable_args_strips_quoted_argname() {
-        assert_eq!(normalize_callable_args(r#""MyArg" int"#), "integer");
-    }
-
-    #[test]
-    fn normalize_callable_args_preserves_parenthesized_multi_word_type() {
-        assert_eq!(
-            normalize_callable_args("timestamp(3) with time zone"),
-            "timestamp(3) with time zone"
-        );
-        assert_eq!(
-            normalize_callable_args("ts timestamp(3) with time zone"),
-            "timestamp(3) with time zone"
-        );
+    fn extract_three_part_name_rejects_single_ident() {
+        let n = name(&["orders"]);
+        let err = extract_three_part_name(&n).unwrap_err();
+        assert!(err.to_string().contains("COMMENT ON COLUMN"));
     }
 }
