@@ -302,6 +302,10 @@ pub(super) fn preprocess_sql(sql: &str) -> String {
         r"(?i)ALTER\s+MATERIALIZED\s+VIEW\s+[^;]+;",
         r"(?i)ALTER\s+VIEW\s+[^;]+;",
         r"(?i)ALTER\s+SEQUENCE\s+[^;]+;",
+        // ALTER TYPE attribute / ownership / schema strips and the
+        // ALTER DEFAULT PRIVILEGES strip below could retire now that
+        // pgmold-sqlparser 0.61.0 exposes the corresponding AST variants.
+        // Tracked by pgmold-289.
         r"(?i)ALTER\s+TYPE\s+[^;]+\s+OWNER\s+TO\s+[^;]+;",
         r"(?i)ALTER\s+TYPE\s+[^;]+\s+SET\s+SCHEMA\s+[^;]+;",
         r"(?i)ALTER\s+TYPE\s+[^;]+\s+(?:ADD|DROP|ALTER|RENAME)\s+ATTRIBUTE\s+[^;]+;",
