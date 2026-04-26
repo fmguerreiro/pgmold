@@ -1111,6 +1111,16 @@ impl MigrationGraph {
                         CommentObjectType::Extension => {
                             edges_to_add.push((OpKey::CreateExtension(name.clone()), key.clone()));
                         }
+                        CommentObjectType::Policy => {
+                            let target_name = require(target, "Policy", "target");
+                            edges_to_add.push((
+                                OpKey::CreatePolicy {
+                                    table: QualifiedName::new(schema, &target_name),
+                                    name: name.clone(),
+                                },
+                                key.clone(),
+                            ));
+                        }
                     }
                 }
 
@@ -1952,6 +1962,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("id = current_user_id()".to_string()),
             check_expr: None,
+            comment: None,
         };
 
         let ops = vec![
@@ -2132,6 +2143,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("enterprise_id = current_enterprise_id()".to_string()),
             check_expr: None,
+            comment: None,
         };
 
         let ops = vec![
@@ -3540,6 +3552,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("true".to_string()),
             check_expr: None,
+            comment: None,
         }
     }
 
@@ -6510,6 +6523,30 @@ mod tests {
             &planned,
             |op| matches!(op, MigrationOp::CreateTable(t) if t.schema == "public" && t.name == "widgets"),
             "CreateTable(public.widgets)",
+        );
+    }
+
+    #[test]
+    fn policy_comment_ordered_after_create_policy() {
+        let policy = make_policy("p_self", "public", "users");
+        let ops = vec![
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Policy,
+                schema: "public".to_string(),
+                name: "p_self".to_string(),
+                arguments: None,
+                column: None,
+                target: Some("users".to_string()),
+                comment: Some("self-access only".to_string()),
+            },
+            MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
+            MigrationOp::CreatePolicy(policy),
+        ];
+        let planned = plan_migration(ops);
+        assert_creator_precedes_comment(
+            &planned,
+            |op| matches!(op, MigrationOp::CreatePolicy(p) if p.name == "p_self"),
+            "CreatePolicy(p_self)",
         );
     }
 

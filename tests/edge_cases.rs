@@ -371,6 +371,53 @@ async fn extension_comment_round_trips_through_apply_and_introspect() {
 }
 
 #[tokio::test]
+async fn policy_comment_round_trips_through_apply_and_introspect() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE TABLE public.users (id SERIAL PRIMARY KEY);
+        ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY p_self ON public.users USING (true);
+        COMMENT ON POLICY p_self ON public.users IS 'self-access only';
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let policy = after
+        .tables
+        .get("public.users")
+        .expect("users should be introspected")
+        .policies
+        .iter()
+        .find(|p| p.name == "p_self")
+        .expect("policy p_self should be introspected");
+    assert_eq!(policy.comment.as_deref(), Some("self-access only"));
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
 async fn cross_schema_fk_ordering_creates_referenced_table_first() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();

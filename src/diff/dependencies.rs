@@ -147,14 +147,36 @@ pub(super) fn generate_policy_ops_for_affected_tables(
                     table: QualifiedName::new(&from_table.schema, &from_table.name),
                     name: policy.name.clone(),
                 });
-                additional_ops.push(MigrationOp::CreatePolicy(
-                    target_policy.unwrap_or(policy).clone(),
-                ));
+                let effective_policy = target_policy.unwrap_or(policy).clone();
+                additional_ops.push(MigrationOp::CreatePolicy(effective_policy.clone()));
+                push_policy_recreate_comment(&mut additional_ops, &effective_policy);
             }
         }
     }
 
     (additional_ops, policies_to_filter)
+}
+
+/// When a policy is dropped+recreated due to a column or function dependency,
+/// PostgreSQL drops the row in `pg_description` along with the policy. The
+/// outer `diff_comments` pass can't notice — it compares source-side comment
+/// text to source-side comment text, both still equal — so the post-apply DB
+/// silently loses the comment until the next plan run. Re-emit `SetComment`
+/// alongside the recreate so the comment survives in lockstep with the
+/// policy.
+fn push_policy_recreate_comment(ops: &mut Vec<MigrationOp>, policy: &Policy) {
+    let Some(comment_text) = policy.comment.as_ref() else {
+        return;
+    };
+    ops.push(MigrationOp::SetComment {
+        object_type: crate::diff::CommentObjectType::Policy,
+        schema: policy.table_schema.clone(),
+        name: policy.name.clone(),
+        arguments: None,
+        column: None,
+        target: Some(policy.table.clone()),
+        comment: Some(comment_text.clone()),
+    });
 }
 
 /// Generate trigger drop/create ops for tables with affected columns (type changes or drops).
@@ -343,9 +365,9 @@ pub(super) fn generate_policy_ops_for_function_changes(
                     table: QualifiedName::new(&table.schema, &table.name),
                     name: policy.name.clone(),
                 });
-                additional_ops.push(MigrationOp::CreatePolicy(
-                    target_policy.unwrap_or(policy).clone(),
-                ));
+                let effective_policy = target_policy.unwrap_or(policy).clone();
+                additional_ops.push(MigrationOp::CreatePolicy(effective_policy.clone()));
+                push_policy_recreate_comment(&mut additional_ops, &effective_policy);
             }
         }
     }
@@ -669,6 +691,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("id = current_user_id()".to_string()),
             check_expr: None,
+            comment: None,
         });
         from.tables.insert("public.users".to_string(), users_table);
 
@@ -693,6 +716,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("id = current_user_id()".to_string()),
             check_expr: None,
+            comment: None,
         });
         to.tables
             .insert("public.users".to_string(), users_table_uuid);
@@ -729,6 +753,93 @@ mod tests {
         }
         if let MigrationOp::CreatePolicy(policy) = &create_policy_ops[0] {
             assert_eq!(policy.name, "users_select");
+        }
+    }
+
+    #[test]
+    fn policy_recreate_preserves_source_comment() {
+        // Regression: a column-type change forces DropPolicy+CreatePolicy. The
+        // outer `diff_comments` pass compares source-side comment text on each
+        // side and finds them equal, so it emits nothing. Without an explicit
+        // SetComment alongside the recreate, PostgreSQL silently loses the
+        // policy comment because it's tied to the dropped pg_policy row.
+        let mut from = empty_schema();
+        let mut users_table = simple_table("users");
+        users_table.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Integer,
+                nullable: false,
+                default: None,
+                comment: None,
+                generated: None,
+            },
+        );
+        users_table.policies.push(Policy {
+            name: "users_select".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("id = current_user_id()".to_string()),
+            check_expr: None,
+            comment: Some("self-access only".to_string()),
+        });
+        from.tables.insert("public.users".to_string(), users_table);
+
+        let mut to = empty_schema();
+        let mut users_table_uuid = simple_table("users");
+        users_table_uuid.columns.insert(
+            "id".to_string(),
+            Column {
+                name: "id".to_string(),
+                data_type: PgType::Uuid,
+                nullable: false,
+                default: None,
+                comment: None,
+                generated: None,
+            },
+        );
+        users_table_uuid.policies.push(Policy {
+            name: "users_select".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some("id = current_user_id()".to_string()),
+            check_expr: None,
+            comment: Some("self-access only".to_string()),
+        });
+        to.tables
+            .insert("public.users".to_string(), users_table_uuid);
+
+        let ops = compute_diff(&from, &to);
+
+        let create_pos = ops
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .expect("CreatePolicy should be emitted on column type change");
+        let comment_pos = ops
+            .iter()
+            .position(|op| {
+                matches!(
+                    op,
+                    MigrationOp::SetComment {
+                        object_type: crate::diff::CommentObjectType::Policy,
+                        ..
+                    }
+                )
+            })
+            .expect("SetComment for the recreated policy must be emitted alongside the recreate");
+        assert!(
+            create_pos < comment_pos,
+            "CreatePolicy must precede SetComment(Policy). create_pos={create_pos}, comment_pos={comment_pos}"
+        );
+
+        if let MigrationOp::SetComment { comment, name, .. } = &ops[comment_pos] {
+            assert_eq!(name, "users_select");
+            assert_eq!(comment.as_deref(), Some("self-access only"));
         }
     }
 
@@ -994,6 +1105,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("enterprise_id = current_enterprise_id()".to_string()),
             check_expr: None,
+            comment: None,
         });
         from.tables.insert("public.users".to_string(), users_table);
 
@@ -1018,6 +1130,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("id = current_user_id()".to_string()),
             check_expr: None,
+            comment: None,
         });
         to.tables.insert("public.users".to_string(), users_table_to);
 
@@ -1105,6 +1218,7 @@ mod tests {
             roles: vec!["public".to_string()],
             using_expr: Some("public.check_access()".to_string()),
             check_expr: None,
+            comment: None,
         });
         table.row_level_security = true;
 

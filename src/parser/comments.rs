@@ -9,9 +9,9 @@
 //! sagri-tokyo/mrv#3947). The AST path either records the comment or
 //! surfaces a structured warning — never silence.
 //!
-//! Object kinds pgmold does not model (`POLICY`, `INDEX`, `PROCEDURE`,
-//! `ROLE`, `DATABASE`, `USER`, `COLLATION`) emit a warning through
-//! `eprintln!` and are skipped. Their existence is also surfaced by
+//! Object kinds pgmold does not model (`INDEX`, `PROCEDURE`, `ROLE`,
+//! `DATABASE`, `USER`, `COLLATION`) emit a warning through `eprintln!` and
+//! are skipped. Their existence is also surfaced by
 //! `unrecognized::find_unrecognized_statements`, which under `--strict`
 //! converts the warning into an error.
 
@@ -159,16 +159,21 @@ pub(super) fn apply_comment_statement(
         // these via its preprocess-stage scan and turn them into errors
         // under `--strict`.
         CommentObject::Policy => {
-            let target = match partner_table {
-                Some(rel) => {
-                    let (rs, rn) = extract_qualified_name(rel);
-                    format!("{object_name} ON {rs}.{rn}")
-                }
-                None => object_name.to_string(),
+            let policy_parts = object_name_parts(object_name);
+            if policy_parts.len() != 1 {
+                return Err(SchemaError::ParseError(format!(
+                    "COMMENT ON POLICY expects an unqualified policy name, got {object_name}"
+                )));
+            }
+            let policy_name = policy_parts.into_iter().next().unwrap();
+            let Some(partner_table) = partner_table else {
+                return Err(SchemaError::ParseError(
+                    "COMMENT ON POLICY missing ON <table> tail".into(),
+                ));
             };
-            eprintln!(
-                "warning: pgmold does not model COMMENT ON POLICY; dropping comment on {target}"
-            );
+            let (table_schema, table_name) = extract_qualified_name(partner_table);
+            let key = format!("{table_schema}.{table_name}.{policy_name}");
+            push(schema, PendingCommentObjectType::Policy, key, comment);
         }
         CommentObject::Index => {
             eprintln!(

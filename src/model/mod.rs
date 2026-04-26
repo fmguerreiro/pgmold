@@ -91,6 +91,7 @@ pub enum PendingCommentObjectType {
     Sequence,
     Trigger,
     Extension,
+    Policy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -500,6 +501,8 @@ pub struct Policy {
     pub roles: Vec<String>,
     pub using_expr: Option<String>,
     pub check_expr: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -1329,6 +1332,21 @@ impl Schema {
                     false
                 }
             }
+            PendingCommentObjectType::Policy => {
+                // Key encodes schema.table.policy_name. Split off the policy
+                // name (last segment) and resolve the table from the prefix.
+                if let Some((table_key, policy_name)) = pc.object_key.rsplit_once('.') {
+                    if let Some(table) = self.tables.get_mut(table_key) {
+                        if let Some(policy) =
+                            table.policies.iter_mut().find(|p| p.name == policy_name)
+                        {
+                            policy.comment = pc.comment.clone();
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
         }
     }
 
@@ -1747,6 +1765,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("true".to_string()),
             check_expr: None,
+            comment: None,
         });
         schema
     }
@@ -1834,6 +1853,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("user_id = current_user_id()".to_string()),
             check_expr: None,
+            comment: None,
         };
         assert_eq!(policy.table_schema, "auth");
     }

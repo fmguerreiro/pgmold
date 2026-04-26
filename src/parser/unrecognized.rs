@@ -99,6 +99,8 @@ static COMMENT_ON_TRIGGER_CLAIM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bCOMMENT\s+ON\s+TRIGGER\s+").unwrap());
 static COMMENT_ON_EXTENSION_CLAIM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bCOMMENT\s+ON\s+EXTENSION\s+").unwrap());
+static COMMENT_ON_POLICY_CLAIM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)\bCOMMENT\s+ON\s+POLICY\s+").unwrap());
 
 // Mirrors grants.rs: GRANT privs ON [kind] target TO grantee. Object kind
 // keyword is optional so `GRANT SELECT ON public.users TO readonly;` is
@@ -157,6 +159,7 @@ static RECOGNIZERS: &[BroadRecognizer] = &[
             &COMMENT_ON_SEQUENCE_CLAIM,
             &COMMENT_ON_TRIGGER_CLAIM,
             &COMMENT_ON_EXTENSION_CLAIM,
+            &COMMENT_ON_POLICY_CLAIM,
         ],
     },
     BroadRecognizer {
@@ -251,21 +254,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn comment_on_policy_flagged() {
-        let sql = "\
-CREATE TABLE public.users (id serial);
-CREATE POLICY p ON public.users USING (true);
-COMMENT ON POLICY p ON public.users IS 'policy comment';
-";
-        let findings = find_unrecognized_statements(sql);
-        assert_eq!(findings.len(), 1, "expected one finding: {findings:?}");
-        let finding = &findings[0];
-        assert_eq!(finding.kind, "COMMENT ON");
-        assert_eq!(finding.line, 3);
-        assert!(
-            finding.snippet.contains("COMMENT ON POLICY"),
-            "snippet missing COMMENT ON POLICY: {finding:?}"
-        );
+    fn comment_on_policy_not_flagged() {
+        let sql = "COMMENT ON POLICY p ON public.users IS 'policy comment';";
+        assert!(find_unrecognized_statements(sql).is_empty());
     }
 
     #[test]
@@ -427,12 +418,12 @@ END $$;
 
     #[test]
     fn warning_message_includes_line_and_snippet() {
-        let sql = "\n\nCOMMENT ON POLICY p ON public.t IS 'x';";
+        let sql = "\n\nCOMMENT ON INDEX public.idx_foo IS 'x';";
         let finding = find_unrecognized_statements(sql).remove(0);
         let message = finding.warning_message();
         assert!(message.contains("line 3"), "missing line number: {message}");
         assert!(
-            message.contains("COMMENT ON POLICY"),
+            message.contains("COMMENT ON INDEX"),
             "missing snippet: {message}"
         );
     }
@@ -440,7 +431,7 @@ END $$;
     #[test]
     fn multiple_unrecognized_statements_reported() {
         let sql = "\
-COMMENT ON POLICY p ON public.t IS 'a';
+COMMENT ON INDEX public.idx_foo IS 'a';
 ALTER SCHEMA foo OWNER TO bar;
 GRANT role1 TO alice;
 ";

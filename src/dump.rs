@@ -131,6 +131,26 @@ fn push_trigger_comment_op(
     }
 }
 
+fn push_policy_comment_op(
+    ops: &mut Vec<MigrationOp>,
+    table_schema: &str,
+    policy_name: &str,
+    table_name: &str,
+    comment: &Option<String>,
+) {
+    if let Some(text) = comment {
+        ops.push(MigrationOp::SetComment {
+            object_type: CommentObjectType::Policy,
+            schema: table_schema.to_string(),
+            name: policy_name.to_string(),
+            arguments: None,
+            column: None,
+            target: Some(table_name.to_string()),
+            comment: Some(text.clone()),
+        });
+    }
+}
+
 fn push_owner_and_grant_ops(ops: &mut Vec<MigrationOp>, info: DumpObjectInfo<'_>) {
     if let Some(ref owner) = info.owner {
         push_owner_op(
@@ -282,6 +302,13 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
 
         for policy in &table.policies {
             ops.push(MigrationOp::CreatePolicy(policy.clone()));
+            push_policy_comment_op(
+                &mut ops,
+                &table.schema,
+                &policy.name,
+                &table.name,
+                &policy.comment,
+            );
         }
 
         push_grant_ops(

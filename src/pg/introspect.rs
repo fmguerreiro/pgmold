@@ -1479,7 +1479,8 @@ async fn introspect_all_policies(
                 ARRAY[]::text[]
             ) as roles,
             pg_get_expr(pol.polqual, pol.polrelid) as using_expr,
-            pg_get_expr(pol.polwithcheck, pol.polrelid) as check_expr
+            pg_get_expr(pol.polwithcheck, pol.polrelid) as check_expr,
+            obj_description(pol.oid, 'pg_policy') as comment
         FROM pg_policy pol
         JOIN pg_class c ON pol.polrelid = c.oid
         JOIN pg_namespace n ON c.relnamespace = n.oid
@@ -1502,6 +1503,7 @@ async fn introspect_all_policies(
         let roles: Vec<String> = row.get("roles");
         let using_expr: Option<String> = row.get("using_expr");
         let check_expr: Option<String> = row.get("check_expr");
+        let comment: Option<String> = row.get("comment");
 
         let roles = if roles.is_empty() {
             vec!["public".to_string()]
@@ -1520,6 +1522,7 @@ async fn introspect_all_policies(
                 roles,
                 using_expr,
                 check_expr,
+                comment,
             });
     }
 

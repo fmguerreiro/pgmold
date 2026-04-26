@@ -315,6 +315,33 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
         }
     }
 
+    // Policy comments live nested under tables; iterate every (table,
+    // policy) pair on the target side and look up the matching policy on
+    // the source side by name. Policies are entirely user-managed (no
+    // PostgreSQL-shipped defaults), so unlike extensions a normal exact
+    // diff is correct: emit SetComment whenever the target text differs
+    // from the source, including clears.
+    for (key, to_table) in &to.tables {
+        for to_policy in &to_table.policies {
+            let from_comment = from
+                .tables
+                .get(key)
+                .and_then(|t| t.policies.iter().find(|p| p.name == to_policy.name))
+                .and_then(|p| p.comment.as_ref());
+            if to_policy.comment.as_ref() != from_comment {
+                ops.push(MigrationOp::SetComment {
+                    object_type: CommentObjectType::Policy,
+                    schema: to_table.schema.clone(),
+                    name: to_policy.name.clone(),
+                    arguments: None,
+                    column: None,
+                    target: Some(to_table.name.clone()),
+                    comment: to_policy.comment.clone(),
+                });
+            }
+        }
+    }
+
     // Extension comments are source-managed only: PostgreSQL ships some
     // extensions with default `obj_description` text (e.g. btree_gist),
     // which would otherwise produce a spurious `COMMENT ON EXTENSION ...
@@ -1711,6 +1738,115 @@ mod tests {
         assert!(ops.is_empty(), "no migration ops expected, got {ops:?}");
     }
 
+    fn table_with_policy(comment: Option<&str>) -> crate::model::Table {
+        let mut t = simple_table("users");
+        t.row_level_security = true;
+        t.policies.push(crate::model::Policy {
+            name: "p_self".to_string(),
+            table_schema: "public".to_string(),
+            table: "users".to_string(),
+            command: crate::model::PolicyCommand::All,
+            roles: vec!["public".to_string()],
+            using_expr: Some("true".to_string()),
+            check_expr: None,
+            comment: comment.map(|s| s.to_string()),
+        });
+        t
+    }
+
+    #[test]
+    fn detects_added_policy_comment() {
+        let mut from = empty_schema();
+        from.tables
+            .insert("public.users".to_string(), table_with_policy(None));
+        let mut to = empty_schema();
+        to.tables.insert(
+            "public.users".to_string(),
+            table_with_policy(Some("self-access only")),
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                schema,
+                name,
+                target,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Policy);
+                assert_eq!(schema, "public");
+                assert_eq!(name, "p_self");
+                assert_eq!(target.as_deref(), Some("users"));
+                assert_eq!(comment.as_deref(), Some("self-access only"));
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn detects_changed_policy_comment() {
+        let mut from = empty_schema();
+        from.tables
+            .insert("public.users".to_string(), table_with_policy(Some("old")));
+        let mut to = empty_schema();
+        to.tables
+            .insert("public.users".to_string(), table_with_policy(Some("new")));
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Policy);
+                assert_eq!(comment.as_deref(), Some("new"));
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn detects_cleared_policy_comment() {
+        let mut from = empty_schema();
+        from.tables.insert(
+            "public.users".to_string(),
+            table_with_policy(Some("old comment")),
+        );
+        let mut to = empty_schema();
+        to.tables
+            .insert("public.users".to_string(), table_with_policy(None));
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Policy);
+                assert!(comment.is_none(), "clear should emit None comment");
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_op_when_policy_comment_unchanged() {
+        let mut from = empty_schema();
+        from.tables
+            .insert("public.users".to_string(), table_with_policy(Some("k/v")));
+        let to = from.clone();
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "no migration ops expected, got {ops:?}");
+    }
+
     #[test]
     fn detects_added_schema() {
         let from = empty_schema();
@@ -2261,6 +2397,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("role = 'admin'::TEXT".to_string()),
             check_expr: None,
+            comment: None,
         });
         from.tables.insert("public.users".to_string(), table);
 
@@ -2275,6 +2412,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("role = 'admin'::text".to_string()),
             check_expr: None,
+            comment: None,
         });
         to.tables.insert("public.users".to_string(), table);
 
@@ -2308,6 +2446,7 @@ mod tests {
                     .to_string(),
             ),
             check_expr: None,
+            comment: None,
         });
         from.tables.insert("public.entities".to_string(), table);
 
@@ -2329,6 +2468,7 @@ mod tests {
                     .to_string(),
             ),
             check_expr: None,
+            comment: None,
         });
         to.tables.insert("public.entities".to_string(), table);
 
@@ -2357,6 +2497,7 @@ mod tests {
                 "(EXISTS ( SELECT 1 FROM user_roles ur WHERE ur.user_id = auth.uid()))".to_string(),
             ),
             check_expr: None,
+            comment: None,
         });
         from.tables.insert("public.users".to_string(), table);
 
@@ -2373,6 +2514,7 @@ mod tests {
                 "(EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = auth.uid()))".to_string(),
             ),
             check_expr: None,
+            comment: None,
         });
         to.tables.insert("public.users".to_string(), table);
 
@@ -2397,6 +2539,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("(id = 1 )".to_string()),
             check_expr: None,
+            comment: None,
         });
         from.tables.insert("public.users".to_string(), table);
 
@@ -2411,6 +2554,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("(id = 1)".to_string()),
             check_expr: None,
+            comment: None,
         });
         to.tables.insert("public.users".to_string(), table);
 
@@ -2434,6 +2578,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("( SELECT auth.is_admin() AS is_admin)".to_string()),
             check_expr: Some("( SELECT auth.is_admin() AS is_admin)".to_string()),
+            comment: None,
         });
         from.tables
             .insert("public.feature_flags".to_string(), table);
@@ -2449,6 +2594,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("auth.is_admin()".to_string()),
             check_expr: Some("auth.is_admin()".to_string()),
+            comment: None,
         });
         to.tables.insert("public.feature_flags".to_string(), table);
 
@@ -2893,6 +3039,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             roles: vec!["authenticated".to_string()],
             using_expr: Some("true".to_string()),
             check_expr: None,
+            comment: None,
         }];
         to.tables.insert("public.users".to_string(), table);
 
@@ -3783,6 +3930,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             roles: vec!["authenticated".to_string()],
             using_expr: Some("old_col IS NOT NULL".to_string()),
             check_expr: None,
+            comment: None,
         });
         from.tables.insert("public.users".to_string(), table);
 
@@ -3800,6 +3948,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             roles: vec!["authenticated".to_string()],
             using_expr: Some("id IS NOT NULL".to_string()),
             check_expr: None,
+            comment: None,
         });
         to.tables.insert("public.users".to_string(), table_to);
 
@@ -3853,6 +4002,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             roles: vec!["authenticated".to_string()],
             using_expr: Some("enterprise_id = current_enterprise_id()".to_string()),
             check_expr: None,
+            comment: None,
         });
         from.tables
             .insert("public.suppliers".to_string(), suppliers);
@@ -3882,6 +4032,7 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
             roles: vec!["authenticated".to_string()],
             using_expr: Some("id IS NOT NULL".to_string()),
             check_expr: None,
+            comment: None,
         });
         to.tables
             .insert("public.suppliers".to_string(), suppliers_to);

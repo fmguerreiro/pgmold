@@ -230,6 +230,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     },
                     using_expr: using.as_ref().map(|e: &sqlparser::ast::Expr| normalize_expr(&e.to_string())),
                     check_expr: with_check.as_ref().map(|e: &sqlparser::ast::Expr| normalize_expr(&e.to_string())),
+                    comment: None,
                 };
                 schema.pending_policies.push(policy);
             }
