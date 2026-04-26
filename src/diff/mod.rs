@@ -315,9 +315,18 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
         }
     }
 
+    // Extension comments are source-managed only: PostgreSQL ships some
+    // extensions with default `obj_description` text (e.g. btree_gist),
+    // which would otherwise produce a spurious `COMMENT ON EXTENSION ...
+    // IS NULL` op on every run. Same trade-off pgmold made for source-
+    // silent GENERATED in gh#265: emit only when the source declares a
+    // comment; treat absence as "unmanaged".
     for (key, to_ext) in &to.extensions {
+        let Some(target_comment) = to_ext.comment.as_ref() else {
+            continue;
+        };
         let from_comment = from.extensions.get(key).and_then(|e| e.comment.as_ref());
-        if to_ext.comment.as_ref() != from_comment {
+        if from_comment != Some(target_comment) {
             ops.push(MigrationOp::SetComment {
                 object_type: CommentObjectType::Extension,
                 schema: String::new(),
@@ -325,7 +334,7 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                 arguments: None,
                 column: None,
                 target: None,
-                comment: to_ext.comment.clone(),
+                comment: Some(target_comment.clone()),
             });
         }
     }
@@ -1651,22 +1660,26 @@ mod tests {
     }
 
     #[test]
-    fn detects_removed_extension_comment() {
+    fn extension_comment_is_unmanaged_when_source_omits_it() {
+        // PostgreSQL ships some extensions with a default obj_description
+        // (e.g. btree_gist), which surfaces during introspection. If the
+        // schema source omits COMMENT ON EXTENSION, pgmold must not emit a
+        // SetComment to clear it — that would diverge on every plan.
         let mut from = empty_schema();
         from.extensions.insert(
-            "hstore".to_string(),
+            "btree_gist".to_string(),
             crate::model::Extension {
-                name: "hstore".to_string(),
+                name: "btree_gist".to_string(),
                 version: None,
                 schema: None,
-                comment: Some("legacy doc".to_string()),
+                comment: Some("default postgres comment".to_string()),
             },
         );
         let mut to = empty_schema();
         to.extensions.insert(
-            "hstore".to_string(),
+            "btree_gist".to_string(),
             crate::model::Extension {
-                name: "hstore".to_string(),
+                name: "btree_gist".to_string(),
                 version: None,
                 schema: None,
                 comment: None,
@@ -1674,20 +1687,10 @@ mod tests {
         );
 
         let ops = compute_diff(&from, &to);
-        assert_eq!(ops.len(), 1);
-        match &ops[0] {
-            MigrationOp::SetComment {
-                object_type,
-                name,
-                comment,
-                ..
-            } => {
-                assert_eq!(*object_type, CommentObjectType::Extension);
-                assert_eq!(name, "hstore");
-                assert!(comment.is_none(), "comment should be cleared");
-            }
-            other => panic!("expected SetComment, got {other:?}"),
-        }
+        assert!(
+            ops.is_empty(),
+            "source-silent extension comment must be unmanaged, got {ops:?}"
+        );
     }
 
     #[test]
