@@ -2404,6 +2404,39 @@ fn comment_on_table_accepts_dollar_quoted_literal() {
 }
 
 #[test]
+fn comment_on_table_accepts_tagged_dollar_quoted_literal() {
+    let sql = r#"
+        CREATE TABLE t (id integer PRIMARY KEY);
+        COMMENT ON TABLE t IS $tag$body with $$ inside$tag$;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+    assert_eq!(table.comment.as_deref(), Some("body with $$ inside"));
+}
+
+#[test]
+fn comment_on_function_accepts_tagged_dollar_quoted_literal() {
+    let sql = r#"
+        CREATE FUNCTION foo() RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
+        COMMENT ON FUNCTION foo() IS $fn$body with $$ and ' inside$fn$;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema.functions.get("public.foo()").unwrap();
+    assert_eq!(func.comment.as_deref(), Some("body with $$ and ' inside"));
+}
+
+#[test]
+fn comment_on_table_accepts_unicode_string_literal() {
+    let sql = r#"
+        CREATE TABLE t (id integer PRIMARY KEY);
+        COMMENT ON TABLE t IS U&'caf\00e9';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+    assert_eq!(table.comment.as_deref(), Some("café"));
+}
+
+#[test]
 fn comment_on_function_null_clears_comment() {
     let sql = r#"
         CREATE FUNCTION foo() RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
