@@ -315,6 +315,21 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
         }
     }
 
+    for (key, to_ext) in &to.extensions {
+        let from_comment = from.extensions.get(key).and_then(|e| e.comment.as_ref());
+        if to_ext.comment.as_ref() != from_comment {
+            ops.push(MigrationOp::SetComment {
+                object_type: CommentObjectType::Extension,
+                schema: String::new(),
+                name: to_ext.name.clone(),
+                arguments: None,
+                column: None,
+                target: None,
+                comment: to_ext.comment.clone(),
+            });
+        }
+    }
+
     ops
 }
 
@@ -1529,6 +1544,7 @@ mod tests {
                 name: "uuid-ossp".to_string(),
                 version: None,
                 schema: None,
+                comment: None,
             },
         );
 
@@ -1546,6 +1562,7 @@ mod tests {
                 name: "pgcrypto".to_string(),
                 version: None,
                 schema: None,
+                comment: None,
             },
         );
         let to = empty_schema();
@@ -1553,6 +1570,142 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], MigrationOp::DropExtension(name) if name == "pgcrypto"));
+    }
+
+    #[test]
+    fn detects_added_extension_comment() {
+        let mut from = empty_schema();
+        from.extensions.insert(
+            "hstore".to_string(),
+            crate::model::Extension {
+                name: "hstore".to_string(),
+                version: None,
+                schema: None,
+                comment: None,
+            },
+        );
+        let mut to = empty_schema();
+        to.extensions.insert(
+            "hstore".to_string(),
+            crate::model::Extension {
+                name: "hstore".to_string(),
+                version: None,
+                schema: None,
+                comment: Some("key/value store".to_string()),
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                name,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Extension);
+                assert_eq!(name, "hstore");
+                assert_eq!(comment.as_deref(), Some("key/value store"));
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn detects_changed_extension_comment() {
+        let mut from = empty_schema();
+        from.extensions.insert(
+            "hstore".to_string(),
+            crate::model::Extension {
+                name: "hstore".to_string(),
+                version: None,
+                schema: None,
+                comment: Some("old".to_string()),
+            },
+        );
+        let mut to = empty_schema();
+        to.extensions.insert(
+            "hstore".to_string(),
+            crate::model::Extension {
+                name: "hstore".to_string(),
+                version: None,
+                schema: None,
+                comment: Some("new".to_string()),
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Extension);
+                assert_eq!(comment.as_deref(), Some("new"));
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn detects_removed_extension_comment() {
+        let mut from = empty_schema();
+        from.extensions.insert(
+            "hstore".to_string(),
+            crate::model::Extension {
+                name: "hstore".to_string(),
+                version: None,
+                schema: None,
+                comment: Some("legacy doc".to_string()),
+            },
+        );
+        let mut to = empty_schema();
+        to.extensions.insert(
+            "hstore".to_string(),
+            crate::model::Extension {
+                name: "hstore".to_string(),
+                version: None,
+                schema: None,
+                comment: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                name,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Extension);
+                assert_eq!(name, "hstore");
+                assert!(comment.is_none(), "comment should be cleared");
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_op_when_extension_comment_unchanged() {
+        let mut from = empty_schema();
+        from.extensions.insert(
+            "hstore".to_string(),
+            crate::model::Extension {
+                name: "hstore".to_string(),
+                version: None,
+                schema: None,
+                comment: Some("k/v".to_string()),
+            },
+        );
+        let to = from.clone();
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "no migration ops expected, got {ops:?}");
     }
 
     #[test]

@@ -9,9 +9,9 @@
 //! sagri-tokyo/mrv#3947). The AST path either records the comment or
 //! surfaces a structured warning — never silence.
 //!
-//! Object kinds pgmold does not model (`POLICY`, `INDEX`, `EXTENSION`,
-//! `PROCEDURE`, `ROLE`, `DATABASE`, `USER`, `COLLATION`) emit a warning
-//! through `eprintln!` and are skipped. Their existence is also surfaced by
+//! Object kinds pgmold does not model (`POLICY`, `INDEX`, `PROCEDURE`,
+//! `ROLE`, `DATABASE`, `USER`, `COLLATION`) emit a warning through
+//! `eprintln!` and are skipped. Their existence is also surfaced by
 //! `unrecognized::find_unrecognized_statements`, which under `--strict`
 //! converts the warning into an error.
 
@@ -105,18 +105,8 @@ pub(super) fn apply_comment_statement(
         CommentObject::Schema => {
             // `extract_qualified_name` defaults to "public" when only one
             // part is present, but a schema's pending key is the bare name.
-            let parts = object_name_parts(object_name);
-            if parts.len() != 1 {
-                return Err(SchemaError::ParseError(format!(
-                    "COMMENT ON SCHEMA expects a single identifier, got {object_name}"
-                )));
-            }
-            push(
-                schema,
-                PendingCommentObjectType::Schema,
-                parts.into_iter().next().unwrap(),
-                comment,
-            );
+            let key = extract_unqualified_ident(object_name, "SCHEMA")?;
+            push(schema, PendingCommentObjectType::Schema, key, comment);
         }
         CommentObject::Sequence => {
             let (obj_schema, obj_name) = extract_qualified_name(object_name);
@@ -186,9 +176,8 @@ pub(super) fn apply_comment_statement(
             );
         }
         CommentObject::Extension => {
-            eprintln!(
-                "warning: pgmold does not model COMMENT ON EXTENSION; dropping comment on {object_name}"
-            );
+            let key = extract_unqualified_ident(object_name, "EXTENSION")?;
+            push(schema, PendingCommentObjectType::Extension, key, comment);
         }
         CommentObject::Procedure => {
             eprintln!(
@@ -253,6 +242,20 @@ fn object_name_parts(name: &ObjectName) -> Vec<String> {
         .iter()
         .map(|part| unquote_ident(&part.to_string()).to_string())
         .collect()
+}
+
+/// Returns the single-segment identifier from `name`, or a structured
+/// `ParseError` naming the object kind when the input is qualified. Used by
+/// `COMMENT ON SCHEMA` and `COMMENT ON EXTENSION`, both of which target
+/// objects that live above any schema.
+fn extract_unqualified_ident(name: &ObjectName, kind: &str) -> Result<String> {
+    let parts = object_name_parts(name);
+    if parts.len() != 1 {
+        return Err(SchemaError::ParseError(format!(
+            "COMMENT ON {kind} expects a single identifier, got {name}"
+        )));
+    }
+    Ok(parts.into_iter().next().unwrap())
 }
 
 fn extract_three_part_name(name: &ObjectName) -> Result<(String, String, String)> {

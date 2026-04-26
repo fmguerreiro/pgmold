@@ -97,6 +97,8 @@ static COMMENT_ON_SEQUENCE_CLAIM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bCOMMENT\s+ON\s+SEQUENCE\s+").unwrap());
 static COMMENT_ON_TRIGGER_CLAIM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bCOMMENT\s+ON\s+TRIGGER\s+").unwrap());
+static COMMENT_ON_EXTENSION_CLAIM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)\bCOMMENT\s+ON\s+EXTENSION\s+").unwrap());
 
 // Mirrors grants.rs: GRANT privs ON [kind] target TO grantee. Object kind
 // keyword is optional so `GRANT SELECT ON public.users TO readonly;` is
@@ -154,6 +156,7 @@ static RECOGNIZERS: &[BroadRecognizer] = &[
             &COMMENT_ON_SCHEMA_CLAIM,
             &COMMENT_ON_SEQUENCE_CLAIM,
             &COMMENT_ON_TRIGGER_CLAIM,
+            &COMMENT_ON_EXTENSION_CLAIM,
         ],
     },
     BroadRecognizer {
@@ -307,10 +310,9 @@ COMMENT ON TABLE public.users IS 'a table';
     }
 
     #[test]
-    fn comment_on_extension_flagged() {
+    fn comment_on_extension_not_flagged() {
         let sql = "COMMENT ON EXTENSION hstore IS 'extra';";
-        let findings = find_unrecognized_statements(sql);
-        assert_eq!(findings.len(), 1);
+        assert!(find_unrecognized_statements(sql).is_empty());
     }
 
     #[test]

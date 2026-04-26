@@ -660,6 +660,7 @@ mod tests {
                 name: "uuid-ossp".to_string(),
                 version: None,
                 schema: None,
+                comment: None,
             },
         );
 
@@ -1238,6 +1239,7 @@ mod tests {
                 name: "uuid-ossp".to_string(),
                 version: None,
                 schema: None,
+                comment: None,
             },
         );
         schema.tables.insert(
@@ -2235,6 +2237,7 @@ mod tests {
                 name: "uuid-ossp".to_string(),
                 version: None,
                 schema: None,
+                comment: None,
             },
         );
         schema.extensions.insert(
@@ -2243,6 +2246,7 @@ mod tests {
                 name: "pgcrypto".to_string(),
                 version: None,
                 schema: Some("public".to_string()),
+                comment: None,
             },
         );
 

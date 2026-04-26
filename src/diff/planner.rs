@@ -1108,6 +1108,9 @@ impl MigrationGraph {
                                 key.clone(),
                             ));
                         }
+                        CommentObjectType::Extension => {
+                            edges_to_add.push((OpKey::CreateExtension(name.clone()), key.clone()));
+                        }
                     }
                 }
 
@@ -3553,6 +3556,7 @@ mod tests {
             name: name.to_string(),
             version: None,
             schema: None,
+            comment: None,
         }
     }
 
@@ -6506,6 +6510,28 @@ mod tests {
             &planned,
             |op| matches!(op, MigrationOp::CreateTable(t) if t.schema == "public" && t.name == "widgets"),
             "CreateTable(public.widgets)",
+        );
+    }
+
+    #[test]
+    fn extension_comment_ordered_after_create_extension() {
+        let ops = vec![
+            MigrationOp::SetComment {
+                object_type: crate::diff::CommentObjectType::Extension,
+                schema: String::new(),
+                name: "uuid-ossp".to_string(),
+                arguments: None,
+                column: None,
+                target: None,
+                comment: Some("UUID helpers".to_string()),
+            },
+            MigrationOp::CreateExtension(make_extension("uuid-ossp")),
+        ];
+        let planned = plan_migration(ops);
+        assert_creator_precedes_comment(
+            &planned,
+            |op| matches!(op, MigrationOp::CreateExtension(e) if e.name == "uuid-ossp"),
+            "CreateExtension(uuid-ossp)",
         );
     }
 

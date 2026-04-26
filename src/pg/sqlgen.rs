@@ -602,6 +602,9 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                         quote_qualified(schema, target_name)
                     )
                 }
+                CommentObjectType::Extension => {
+                    format!("EXTENSION {}", quote_ident(name))
+                }
             };
             let comment_sql = match comment {
                 Some(text) => format!("'{}'", escape_string(text)),
@@ -2172,6 +2175,7 @@ mod tests {
             name: "uuid-ossp".to_string(),
             version: None,
             schema: None,
+            comment: None,
         })];
 
         let sql = generate_sql(&ops);
@@ -2185,6 +2189,7 @@ mod tests {
             name: "pgcrypto".to_string(),
             version: Some("1.3".to_string()),
             schema: Some("crypto".to_string()),
+            comment: None,
         })];
 
         let sql = generate_sql(&ops);
@@ -2202,6 +2207,43 @@ mod tests {
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
         assert_eq!(sql[0], "DROP EXTENSION IF EXISTS \"uuid-ossp\";");
+    }
+
+    #[test]
+    fn set_comment_extension_generates_valid_sql() {
+        let ops = vec![MigrationOp::SetComment {
+            object_type: CommentObjectType::Extension,
+            schema: String::new(),
+            name: "uuid-ossp".to_string(),
+            arguments: None,
+            column: None,
+            target: None,
+            comment: Some("UUID helpers".to_string()),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "COMMENT ON EXTENSION \"uuid-ossp\" IS 'UUID helpers';"
+        );
+    }
+
+    #[test]
+    fn set_comment_extension_null_clears() {
+        let ops = vec![MigrationOp::SetComment {
+            object_type: CommentObjectType::Extension,
+            schema: String::new(),
+            name: "hstore".to_string(),
+            arguments: None,
+            column: None,
+            target: None,
+            comment: None,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(sql[0], "COMMENT ON EXTENSION \"hstore\" IS NULL;");
     }
 
     #[test]

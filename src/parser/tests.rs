@@ -2517,6 +2517,48 @@ fn comment_on_aggregate_null_clears_comment() {
 }
 
 #[test]
+fn comment_on_extension_captures_text() {
+    let sql = r#"
+        CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+        COMMENT ON EXTENSION "uuid-ossp" IS 'UUID helpers';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let ext = schema
+        .extensions
+        .get("uuid-ossp")
+        .expect("extension should be parsed");
+    assert_eq!(ext.comment.as_deref(), Some("UUID helpers"));
+}
+
+#[test]
+fn comment_on_extension_null_clears_comment() {
+    let sql = r#"
+        CREATE EXTENSION IF NOT EXISTS hstore;
+        COMMENT ON EXTENSION hstore IS NULL;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let ext = schema.extensions.get("hstore").unwrap();
+    assert!(ext.comment.is_none());
+}
+
+#[test]
+fn comment_on_extension_roundtrips_through_dump() {
+    use crate::dump::generate_dump;
+    let sql = r#"
+        CREATE EXTENSION IF NOT EXISTS hstore;
+        COMMENT ON EXTENSION hstore IS 'key/value store';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let dump = generate_dump(&schema, None);
+    let reparsed = parse_sql_string(&dump).unwrap();
+    let ext = reparsed
+        .extensions
+        .get("hstore")
+        .expect("extension should survive roundtrip");
+    assert_eq!(ext.comment.as_deref(), Some("key/value store"));
+}
+
+#[test]
 fn comment_on_function_attaches_when_args_use_int_alias() {
     let sql = r#"
         CREATE FUNCTION add(a int, b int) RETURNS int LANGUAGE sql AS $$ SELECT a + b $$;
