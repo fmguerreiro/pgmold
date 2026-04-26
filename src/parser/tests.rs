@@ -2559,6 +2559,71 @@ fn comment_on_extension_roundtrips_through_dump() {
 }
 
 #[test]
+fn comment_on_policy_captures_text() {
+    let sql = r#"
+        CREATE TABLE public.users (id serial);
+        ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY p_self ON public.users USING (true);
+        COMMENT ON POLICY p_self ON public.users IS 'self-access only';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    schema
+        .tables
+        .get("public.users")
+        .expect("users should exist")
+        .policies
+        .iter()
+        .find(|p| p.name == "p_self")
+        .map(|p| {
+            assert_eq!(p.comment.as_deref(), Some("self-access only"));
+        })
+        .expect("policy p_self should be parsed");
+}
+
+#[test]
+fn comment_on_policy_null_clears_comment() {
+    let sql = r#"
+        CREATE TABLE public.users (id serial);
+        ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY p_self ON public.users USING (true);
+        COMMENT ON POLICY p_self ON public.users IS NULL;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let policy = schema
+        .tables
+        .get("public.users")
+        .unwrap()
+        .policies
+        .iter()
+        .find(|p| p.name == "p_self")
+        .unwrap();
+    assert!(policy.comment.is_none());
+}
+
+#[test]
+fn comment_on_policy_roundtrips_through_dump() {
+    use crate::dump::generate_dump;
+    let sql = r#"
+        CREATE TABLE public.users (id serial);
+        ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY p_self ON public.users USING (true);
+        COMMENT ON POLICY p_self ON public.users IS 'self-access only';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let dump = generate_dump(&schema, None);
+    let reparsed = parse_sql_string(&dump).unwrap();
+    let policy = reparsed
+        .tables
+        .get("public.users")
+        .expect("users should survive roundtrip")
+        .policies
+        .iter()
+        .find(|p| p.name == "p_self")
+        .expect("policy should survive roundtrip");
+    assert_eq!(policy.comment.as_deref(), Some("self-access only"));
+}
+
+#[test]
 fn comment_on_function_attaches_when_args_use_int_alias() {
     let sql = r#"
         CREATE FUNCTION add(a int, b int) RETURNS int LANGUAGE sql AS $$ SELECT a + b $$;

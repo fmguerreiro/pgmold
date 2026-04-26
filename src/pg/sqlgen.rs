@@ -605,6 +605,14 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                 CommentObjectType::Extension => {
                     format!("EXTENSION {}", quote_ident(name))
                 }
+                CommentObjectType::Policy => {
+                    let target_name = target.as_deref().unwrap_or("");
+                    format!(
+                        "POLICY {} ON {}",
+                        quote_ident(name),
+                        quote_qualified(schema, target_name)
+                    )
+                }
             };
             let comment_sql = match comment {
                 Some(text) => format!("'{}'", escape_string(text)),
@@ -2207,6 +2215,46 @@ mod tests {
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
         assert_eq!(sql[0], "DROP EXTENSION IF EXISTS \"uuid-ossp\";");
+    }
+
+    #[test]
+    fn set_comment_policy_generates_valid_sql() {
+        let ops = vec![MigrationOp::SetComment {
+            object_type: CommentObjectType::Policy,
+            schema: "public".to_string(),
+            name: "p_self".to_string(),
+            arguments: None,
+            column: None,
+            target: Some("users".to_string()),
+            comment: Some("self-access only".to_string()),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "COMMENT ON POLICY \"p_self\" ON \"public\".\"users\" IS 'self-access only';"
+        );
+    }
+
+    #[test]
+    fn set_comment_policy_null_clears() {
+        let ops = vec![MigrationOp::SetComment {
+            object_type: CommentObjectType::Policy,
+            schema: "public".to_string(),
+            name: "p_self".to_string(),
+            arguments: None,
+            column: None,
+            target: Some("users".to_string()),
+            comment: None,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "COMMENT ON POLICY \"p_self\" ON \"public\".\"users\" IS NULL;"
+        );
     }
 
     #[test]
@@ -3954,6 +4002,7 @@ mod tests {
             roles: vec!["public".to_string()],
             using_expr: Some("true".to_string()),
             check_expr: None,
+            comment: None,
         })];
 
         let sql = generate_sql(&ops);
@@ -3983,6 +4032,7 @@ mod tests {
             roles: vec!["authenticated".to_string(), "service_role".to_string()],
             using_expr: Some("auth.uid() = user_id".to_string()),
             check_expr: None,
+            comment: None,
         })];
 
         let sql = generate_sql(&ops);

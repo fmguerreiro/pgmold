@@ -621,6 +621,7 @@ mod tests {
             roles: vec!["authenticated".to_string()],
             using_expr: Some("user_id = current_user_id()".to_string()),
             check_expr: None,
+            comment: None,
         })];
         let warnings = detect_lock_hazards(&ops);
 

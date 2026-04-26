@@ -27,6 +27,7 @@ pub enum CommentObjectType {
     Sequence,
     Trigger,
     Extension,
+    Policy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
