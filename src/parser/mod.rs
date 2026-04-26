@@ -1328,7 +1328,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 object_type,
                 object_name,
                 arguments,
-                relation,
+                table_name,
                 comment,
                 if_exists: _,
             } => {
@@ -1337,7 +1337,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                         object_type,
                         object_name: &object_name,
                         arguments: arguments.as_deref(),
-                        relation: relation.as_ref(),
+                        table_name: table_name.as_ref(),
                         comment,
                     },
                     &mut schema,
