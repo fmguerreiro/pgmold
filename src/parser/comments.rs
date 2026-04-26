@@ -31,7 +31,7 @@ pub(super) struct CommentStatement<'a> {
     pub object_type: CommentObject,
     pub object_name: &'a ObjectName,
     pub arguments: Option<&'a [DataType]>,
-    pub relation: Option<&'a ObjectName>,
+    pub table_name: Option<&'a ObjectName>,
     pub comment: Option<String>,
 }
 
@@ -47,7 +47,7 @@ pub(super) fn apply_comment_statement(
         object_type,
         object_name,
         arguments,
-        relation,
+        table_name: partner_table,
         comment,
     } = stmt;
 
@@ -155,12 +155,12 @@ pub(super) fn apply_comment_statement(
                 )));
             }
             let trigger_name = trigger_parts.into_iter().next().unwrap();
-            let Some(relation) = relation else {
+            let Some(partner_table) = partner_table else {
                 return Err(SchemaError::ParseError(
                     "COMMENT ON TRIGGER missing ON <table> tail".into(),
                 ));
             };
-            let (table_schema, table_name) = extract_qualified_name(relation);
+            let (table_schema, table_name) = extract_qualified_name(partner_table);
             let key = format!("{table_schema}.{table_name}.{trigger_name}");
             push(schema, PendingCommentObjectType::Trigger, key, comment);
         }
@@ -169,7 +169,7 @@ pub(super) fn apply_comment_statement(
         // these via its preprocess-stage scan and turn them into errors
         // under `--strict`.
         CommentObject::Policy => {
-            let target = match relation {
+            let target = match partner_table {
                 Some(rel) => {
                     let (rs, rn) = extract_qualified_name(rel);
                     format!("{object_name} ON {rs}.{rn}")
