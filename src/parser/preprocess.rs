@@ -311,9 +311,10 @@ pub(super) fn protect_alter_default_privileges(
     result
 }
 
-/// Strips syntax not supported by sqlparser 0.52.
-/// Statements stripped here are parsed separately via regex
-/// (GRANT, REVOKE, OWNER TO, COMMENT ON, DO blocks).
+/// Strips syntax not handled by the sqlparser AST.
+/// `GRANT` / `REVOKE` are reparsed in `grants.rs`. `ALTER` of `FUNCTION`,
+/// `MATERIALIZED VIEW`, `VIEW`, `SEQUENCE`, and `DOMAIN` is reparsed in
+/// `ownership.rs`. `SET search_path` is discarded outright.
 pub(super) fn preprocess_sql(sql: &str) -> String {
     let sql = strip_comments(sql);
     let sql = strip_do_blocks(&sql);
