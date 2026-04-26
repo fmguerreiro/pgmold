@@ -176,6 +176,13 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
 
     for extension in schema.extensions.values() {
         ops.push(MigrationOp::CreateExtension(extension.clone()));
+        push_comment_op(
+            &mut ops,
+            CommentObjectType::Extension,
+            "",
+            &extension.name,
+            &extension.comment,
+        );
     }
 
     for server in schema.servers.values() {

@@ -315,6 +315,30 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
         }
     }
 
+    // Extension comments are source-managed only: PostgreSQL ships some
+    // extensions with default `obj_description` text (e.g. btree_gist),
+    // which would otherwise produce a spurious `COMMENT ON EXTENSION ...
+    // IS NULL` op on every run. Same trade-off pgmold made for source-
+    // silent GENERATED in gh#265: emit only when the source declares a
+    // comment; treat absence as "unmanaged".
+    for (key, to_ext) in &to.extensions {
+        let Some(target_comment) = to_ext.comment.as_ref() else {
+            continue;
+        };
+        let from_comment = from.extensions.get(key).and_then(|e| e.comment.as_ref());
+        if from_comment != Some(target_comment) {
+            ops.push(MigrationOp::SetComment {
+                object_type: CommentObjectType::Extension,
+                schema: String::new(),
+                name: to_ext.name.clone(),
+                arguments: None,
+                column: None,
+                target: None,
+                comment: Some(target_comment.clone()),
+            });
+        }
+    }
+
     ops
 }
 
@@ -1529,6 +1553,7 @@ mod tests {
                 name: "uuid-ossp".to_string(),
                 version: None,
                 schema: None,
+                comment: None,
             },
         );
 
@@ -1546,6 +1571,7 @@ mod tests {
                 name: "pgcrypto".to_string(),
                 version: None,
                 schema: None,
+                comment: None,
             },
         );
         let to = empty_schema();
@@ -1553,6 +1579,136 @@ mod tests {
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], MigrationOp::DropExtension(name) if name == "pgcrypto"));
+    }
+
+    #[test]
+    fn detects_added_extension_comment() {
+        let mut from = empty_schema();
+        from.extensions.insert(
+            "hstore".to_string(),
+            crate::model::Extension {
+                name: "hstore".to_string(),
+                version: None,
+                schema: None,
+                comment: None,
+            },
+        );
+        let mut to = empty_schema();
+        to.extensions.insert(
+            "hstore".to_string(),
+            crate::model::Extension {
+                name: "hstore".to_string(),
+                version: None,
+                schema: None,
+                comment: Some("key/value store".to_string()),
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                name,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Extension);
+                assert_eq!(name, "hstore");
+                assert_eq!(comment.as_deref(), Some("key/value store"));
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn detects_changed_extension_comment() {
+        let mut from = empty_schema();
+        from.extensions.insert(
+            "hstore".to_string(),
+            crate::model::Extension {
+                name: "hstore".to_string(),
+                version: None,
+                schema: None,
+                comment: Some("old".to_string()),
+            },
+        );
+        let mut to = empty_schema();
+        to.extensions.insert(
+            "hstore".to_string(),
+            crate::model::Extension {
+                name: "hstore".to_string(),
+                version: None,
+                schema: None,
+                comment: Some("new".to_string()),
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Extension);
+                assert_eq!(comment.as_deref(), Some("new"));
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extension_comment_is_unmanaged_when_source_omits_it() {
+        // PostgreSQL ships some extensions with a default obj_description
+        // (e.g. btree_gist), which surfaces during introspection. If the
+        // schema source omits COMMENT ON EXTENSION, pgmold must not emit a
+        // SetComment to clear it — that would diverge on every plan.
+        let mut from = empty_schema();
+        from.extensions.insert(
+            "btree_gist".to_string(),
+            crate::model::Extension {
+                name: "btree_gist".to_string(),
+                version: None,
+                schema: None,
+                comment: Some("default postgres comment".to_string()),
+            },
+        );
+        let mut to = empty_schema();
+        to.extensions.insert(
+            "btree_gist".to_string(),
+            crate::model::Extension {
+                name: "btree_gist".to_string(),
+                version: None,
+                schema: None,
+                comment: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert!(
+            ops.is_empty(),
+            "source-silent extension comment must be unmanaged, got {ops:?}"
+        );
+    }
+
+    #[test]
+    fn no_op_when_extension_comment_unchanged() {
+        let mut from = empty_schema();
+        from.extensions.insert(
+            "hstore".to_string(),
+            crate::model::Extension {
+                name: "hstore".to_string(),
+                version: None,
+                schema: None,
+                comment: Some("k/v".to_string()),
+            },
+        );
+        let to = from.clone();
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "no migration ops expected, got {ops:?}");
     }
 
     #[test]

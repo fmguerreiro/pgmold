@@ -26,6 +26,7 @@ pub enum CommentObjectType {
     Schema,
     Sequence,
     Trigger,
+    Extension,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

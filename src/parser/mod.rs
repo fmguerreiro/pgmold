@@ -720,6 +720,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     schema: ext_schema
                         .as_ref()
                         .map(|s| unquote_ident(&s.to_string()).to_string()),
+                    comment: None,
                 };
                 schema.extensions.insert(ext_name, ext);
             }

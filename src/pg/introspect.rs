@@ -213,7 +213,8 @@ async fn introspect_extensions(connection: &PgConnection) -> Result<BTreeMap<Str
         SELECT
             e.extname as name,
             e.extversion as version,
-            n.nspname as schema
+            n.nspname as schema,
+            obj_description(e.oid, 'pg_extension') as comment
         FROM pg_extension e
         JOIN pg_namespace n ON e.extnamespace = n.oid
         WHERE e.extname != 'plpgsql'
@@ -227,7 +228,8 @@ async fn introspect_extensions(connection: &PgConnection) -> Result<BTreeMap<Str
     for row in rows {
         let name: String = row.get("name");
         let version: Option<String> = row.get("version");
-        let schema: Option<String> = row.get::<Option<String>, _>("schema");
+        let schema: Option<String> = row.get("schema");
+        let comment: Option<String> = row.get("comment");
 
         extensions.insert(
             name.clone(),
@@ -235,6 +237,7 @@ async fn introspect_extensions(connection: &PgConnection) -> Result<BTreeMap<Str
                 name,
                 version,
                 schema,
+                comment,
             },
         );
     }

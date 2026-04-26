@@ -90,6 +90,7 @@ pub enum PendingCommentObjectType {
     Schema,
     Sequence,
     Trigger,
+    Extension,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -393,6 +394,8 @@ pub struct Extension {
     pub name: String,
     pub version: Option<String>,
     pub schema: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -1313,6 +1316,14 @@ impl Schema {
             PendingCommentObjectType::Trigger => {
                 if let Some(trigger) = self.triggers.get_mut(&pc.object_key) {
                     trigger.comment = pc.comment.clone();
+                    true
+                } else {
+                    false
+                }
+            }
+            PendingCommentObjectType::Extension => {
+                if let Some(ext) = self.extensions.get_mut(&pc.object_key) {
+                    ext.comment = pc.comment.clone();
                     true
                 } else {
                     false
