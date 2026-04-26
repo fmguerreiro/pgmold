@@ -418,12 +418,12 @@ END $$;
 
     #[test]
     fn warning_message_includes_line_and_snippet() {
-        let sql = "\n\nCOMMENT ON POLICY p ON public.t IS 'x';";
+        let sql = "\n\nCOMMENT ON INDEX public.idx_foo IS 'x';";
         let finding = find_unrecognized_statements(sql).remove(0);
         let message = finding.warning_message();
         assert!(message.contains("line 3"), "missing line number: {message}");
         assert!(
-            message.contains("COMMENT ON POLICY"),
+            message.contains("COMMENT ON INDEX"),
             "missing snippet: {message}"
         );
     }
@@ -431,7 +431,7 @@ END $$;
     #[test]
     fn multiple_unrecognized_statements_reported() {
         let sql = "\
-COMMENT ON POLICY p ON public.t IS 'a';
+COMMENT ON INDEX public.idx_foo IS 'a';
 ALTER SCHEMA foo OWNER TO bar;
 GRANT role1 TO alice;
 ";

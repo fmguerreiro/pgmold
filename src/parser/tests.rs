@@ -4937,14 +4937,13 @@ CREATE AGGREGATE public.group_concat(text) (
 fn parse_sql_string_with_strict_errors_on_unrecognized() {
     let sql = "\
 CREATE TABLE public.users (id serial);
-CREATE POLICY p ON public.users USING (true);
-COMMENT ON POLICY p ON public.users IS 'policy comment';
+COMMENT ON INDEX public.users_idx IS 'index comment';
 ";
     let result = parse_sql_string_with_strict(sql, true);
     let err = result.expect_err("strict mode should reject unrecognized statements");
     let message = err.to_string();
     assert!(
-        message.contains("COMMENT ON POLICY"),
+        message.contains("COMMENT ON INDEX"),
         "error should mention the offending statement: {message}"
     );
     assert!(
