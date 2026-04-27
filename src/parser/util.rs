@@ -158,6 +158,14 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
                     let dimension = modifiers.first().and_then(|m| m.parse::<u32>().ok());
                     return Ok(PgType::Vector(dimension));
                 }
+                "geometry" | "geography" => {
+                    let (subtype, srid) = parse_postgis_modifiers(modifiers);
+                    return Ok(if type_name_lower == "geometry" {
+                        PgType::Geometry(subtype, srid)
+                    } else {
+                        PgType::Geography(subtype, srid)
+                    });
+                }
                 "inet" => return Ok(PgType::Inet),
                 "cidr" => return Ok(PgType::Cidr),
                 "macaddr" => return Ok(PgType::Macaddr),
@@ -195,5 +203,28 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
         other => Err(SchemaError::ParseError(format!(
             "unsupported column type: {other:?}"
         ))),
+    }
+}
+
+/// Parse PostGIS `geometry`/`geography` modifiers from sqlparser into
+/// `(subtype, srid)`. Accepts `()`, `(<srid>)`, `(<subtype>)`, or
+/// `(<subtype>, <srid>)`. Subtype casing is preserved as written for
+/// round-trip stability with Postgres' `format_type` output.
+fn parse_postgis_modifiers(modifiers: &[String]) -> (Option<String>, Option<i32>) {
+    let cleaned: Vec<String> = modifiers
+        .iter()
+        .map(|m| m.trim().trim_matches('\'').to_string())
+        .filter(|m| !m.is_empty())
+        .collect();
+    match cleaned.as_slice() {
+        [] => (None, None),
+        [single] => match single.parse::<i32>() {
+            Ok(srid) => (None, Some(srid)),
+            Err(_) => (Some(single.clone()), None),
+        },
+        [subtype, srid_text, ..] => {
+            let srid = srid_text.parse::<i32>().ok();
+            (Some(subtype.clone()), srid)
+        }
     }
 }

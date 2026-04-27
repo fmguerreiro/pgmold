@@ -1927,6 +1927,48 @@ embedding_qualified public.vector(768)
 }
 
 #[test]
+fn parse_postgis_geometry_types() {
+    let sql = r#"
+CREATE TABLE shapes (
+id BIGINT NOT NULL PRIMARY KEY,
+g_bare geometry,
+g_polygon geometry(Polygon, 4326),
+g_qualified public.geometry(MultiPolygon, 4326),
+g_subtype_only geometry(Point),
+g_srid_only geometry(4326),
+geo_point geography(Point, 4326)
+);
+"#;
+
+    let schema = parse_sql_string(sql).expect("Should parse");
+    let shapes = &schema.tables["public.shapes"];
+    assert_eq!(
+        shapes.columns["g_bare"].data_type,
+        PgType::Geometry(None, None)
+    );
+    assert_eq!(
+        shapes.columns["g_polygon"].data_type,
+        PgType::Geometry(Some("Polygon".to_string()), Some(4326))
+    );
+    assert_eq!(
+        shapes.columns["g_qualified"].data_type,
+        PgType::Geometry(Some("MultiPolygon".to_string()), Some(4326))
+    );
+    assert_eq!(
+        shapes.columns["g_subtype_only"].data_type,
+        PgType::Geometry(Some("Point".to_string()), None)
+    );
+    assert_eq!(
+        shapes.columns["g_srid_only"].data_type,
+        PgType::Geometry(None, Some(4326))
+    );
+    assert_eq!(
+        shapes.columns["geo_point"].data_type,
+        PgType::Geography(Some("Point".to_string()), Some(4326))
+    );
+}
+
+#[test]
 fn real_parses_correctly() {
     let sql = r#"
 CREATE TABLE test (

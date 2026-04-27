@@ -1010,6 +1010,8 @@ fn format_pg_type(pg_type: &PgType) -> String {
         PgType::Xml => "XML".to_string(),
         PgType::Vector(Some(dim)) => format!("vector({dim})"),
         PgType::Vector(None) => "vector".to_string(),
+        PgType::Geometry(subtype, srid) => format_postgis("geometry", subtype.as_deref(), *srid),
+        PgType::Geography(subtype, srid) => format_postgis("geography", subtype.as_deref(), *srid),
         PgType::Array(inner) => format!("{}[]", format_pg_type(inner)),
         PgType::UserDefined(name) => {
             let (schema, enum_name) = parse_qualified_name(name);
@@ -1023,6 +1025,15 @@ fn format_pg_type(pg_type: &PgType) -> String {
                 name.to_uppercase()
             }
         }
+    }
+}
+
+fn format_postgis(name: &str, subtype: Option<&str>, srid: Option<i32>) -> String {
+    match (subtype, srid) {
+        (None, None) => name.to_string(),
+        (Some(s), None) => format!("{name}({s})"),
+        (None, Some(srid)) => format!("{name}({srid})"),
+        (Some(s), Some(srid)) => format!("{name}({s}, {srid})"),
     }
 }
 
@@ -1744,6 +1755,27 @@ mod tests {
     use super::*;
     use crate::model::{EnumType, PrimaryKey, QualifiedName};
     use std::collections::BTreeMap;
+
+    #[test]
+    fn format_pg_type_postgis_geometry_emits_typmod() {
+        assert_eq!(
+            format_pg_type(&PgType::Geometry(Some("Polygon".into()), Some(4326))),
+            "geometry(Polygon, 4326)"
+        );
+        assert_eq!(format_pg_type(&PgType::Geometry(None, None)), "geometry");
+        assert_eq!(
+            format_pg_type(&PgType::Geometry(Some("Point".into()), None)),
+            "geometry(Point)"
+        );
+        assert_eq!(
+            format_pg_type(&PgType::Geometry(None, Some(4326))),
+            "geometry(4326)"
+        );
+        assert_eq!(
+            format_pg_type(&PgType::Geography(Some("Point".into()), Some(4326))),
+            "geography(Point, 4326)"
+        );
+    }
 
     #[test]
     fn create_enum_generates_valid_sql() {
