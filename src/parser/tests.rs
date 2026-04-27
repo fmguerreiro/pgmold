@@ -2666,6 +2666,111 @@ fn comment_on_policy_roundtrips_through_dump() {
 }
 
 #[test]
+fn comment_on_constraint_on_table_captures_text() {
+    let sql = r#"
+        CREATE TABLE public.users (
+            id serial,
+            CONSTRAINT users_pkey PRIMARY KEY (id),
+            CONSTRAINT users_email_chk CHECK (id > 0)
+        );
+        COMMENT ON CONSTRAINT users_email_chk ON public.users IS 'positive id';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    assert_eq!(
+        schema
+            .table_constraint_comments
+            .get("public.users.users_email_chk")
+            .map(String::as_str),
+        Some("positive id"),
+    );
+    assert!(schema.domain_constraint_comments.is_empty());
+}
+
+#[test]
+fn comment_on_constraint_null_clears_comment() {
+    let sql = r#"
+        CREATE TABLE public.users (
+            id serial,
+            CONSTRAINT users_id_chk CHECK (id > 0)
+        );
+        COMMENT ON CONSTRAINT users_id_chk ON public.users IS 'positive id';
+        COMMENT ON CONSTRAINT users_id_chk ON public.users IS NULL;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    assert!(schema
+        .table_constraint_comments
+        .get("public.users.users_id_chk")
+        .is_none());
+}
+
+#[test]
+fn comment_on_constraint_on_domain_captures_text() {
+    let sql = r#"
+        CREATE DOMAIN public.amount AS INTEGER CONSTRAINT amount_positive CHECK (VALUE > 0);
+        COMMENT ON CONSTRAINT amount_positive ON DOMAIN public.amount IS 'must be positive';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    assert_eq!(
+        schema
+            .domain_constraint_comments
+            .get("public.amount.amount_positive")
+            .map(String::as_str),
+        Some("must be positive"),
+    );
+    assert!(schema.table_constraint_comments.is_empty());
+}
+
+#[test]
+fn comment_on_constraint_roundtrips_through_dump() {
+    use crate::dump::generate_dump;
+    let sql = r#"
+        CREATE TABLE public.users (
+            id serial,
+            CONSTRAINT users_id_chk CHECK (id > 0)
+        );
+        COMMENT ON CONSTRAINT users_id_chk ON public.users IS 'positive id';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let dump = generate_dump(&schema, None);
+    let reparsed = parse_sql_string(&dump).unwrap();
+    assert_eq!(
+        reparsed
+            .table_constraint_comments
+            .get("public.users.users_id_chk")
+            .map(String::as_str),
+        Some("positive id"),
+    );
+}
+
+#[test]
+fn comment_on_constraint_on_domain_roundtrips_through_dump() {
+    use crate::dump::generate_dump;
+    let sql = r#"
+        CREATE DOMAIN public.amount AS INTEGER CONSTRAINT amount_positive CHECK (VALUE > 0);
+        COMMENT ON CONSTRAINT amount_positive ON DOMAIN public.amount IS 'must be positive';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let dump = generate_dump(&schema, None);
+    let reparsed = parse_sql_string(&dump).unwrap();
+    assert_eq!(
+        reparsed
+            .domain_constraint_comments
+            .get("public.amount.amount_positive")
+            .map(String::as_str),
+        Some("must be positive"),
+    );
+}
+
+#[test]
+fn comment_on_constraint_dropped_when_parent_table_missing() {
+    let sql = r#"
+        COMMENT ON CONSTRAINT orphan_chk ON public.missing IS 'orphaned';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    assert!(schema.table_constraint_comments.is_empty());
+}
+
+#[test]
 fn comment_on_function_attaches_when_args_use_int_alias() {
     let sql = r#"
         CREATE FUNCTION add(a int, b int) RETURNS int LANGUAGE sql AS $$ SELECT a + b $$;

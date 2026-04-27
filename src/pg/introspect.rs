@@ -42,6 +42,8 @@ pub async fn introspect_schema(
         mut all_force_rls,
         mut all_policies,
         default_privileges,
+        table_constraint_comments,
+        domain_constraint_comments,
     ) = tokio::try_join!(
         introspect_schemas(connection, target_schemas),
         introspect_extensions(connection),
@@ -71,6 +73,8 @@ pub async fn introspect_schema(
         introspect_all_force_rls(connection, target_schemas),
         introspect_all_policies(connection, target_schemas),
         introspect_default_privileges(connection, target_schemas),
+        introspect_table_constraint_comments(connection, target_schemas),
+        introspect_domain_constraint_comments(connection, target_schemas),
     )?;
 
     let mut schema = Schema::new();
@@ -87,6 +91,8 @@ pub async fn introspect_schema(
     schema.sequences = sequences;
     schema.partitions = partitions;
     schema.default_privileges = default_privileges;
+    schema.table_constraint_comments = table_constraint_comments;
+    schema.domain_constraint_comments = domain_constraint_comments;
 
     for (qualified_name, grants) in table_view_grants {
         if let Some(table) = schema.tables.get_mut(&qualified_name) {
@@ -1568,6 +1574,96 @@ async fn introspect_all_policies(
             });
     }
 
+    Ok(result)
+}
+
+/// Reads `obj_description(con.oid, 'pg_constraint')` for every named
+/// constraint attached to a relation (PK / FK / CHECK / UNIQUE / EXCLUDE)
+/// in the target schemas. Returns a map keyed by
+/// `"schema.table.constraint_name"` so the diff path can iterate it
+/// alongside the source-side sidecar without needing per-kind lookups.
+async fn introspect_table_constraint_comments(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, String>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS table_schema,
+            c.relname AS table_name,
+            con.conname AS constraint_name,
+            obj_description(con.oid, 'pg_constraint') AS comment
+        FROM pg_constraint con
+        JOIN pg_class c ON con.conrelid = c.oid
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE n.nspname = ANY($1::text[])
+          AND c.relkind IN ('r', 'p')
+          AND c.relispartition = false
+          AND obj_description(con.oid, 'pg_constraint') IS NOT NULL
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| {
+        SchemaError::DatabaseError(format!("Failed to fetch table constraint comments: {e}"))
+    })?;
+
+    let mut result = BTreeMap::new();
+    for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
+        let constraint_name: String = row.get("constraint_name");
+        let comment: String = row.get("comment");
+        result.insert(
+            format!("{table_schema}.{table_name}.{constraint_name}"),
+            comment,
+        );
+    }
+    Ok(result)
+}
+
+/// Mirrors `introspect_table_constraint_comments` for CHECK constraints
+/// attached to domains. The relation tail uses `ON DOMAIN <name>` at
+/// emit time, distinguished from the table form via `on_domain` in the
+/// `SetComment` op.
+async fn introspect_domain_constraint_comments(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, String>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS domain_schema,
+            t.typname AS domain_name,
+            con.conname AS constraint_name,
+            obj_description(con.oid, 'pg_constraint') AS comment
+        FROM pg_constraint con
+        JOIN pg_type t ON con.contypid = t.oid
+        JOIN pg_namespace n ON t.typnamespace = n.oid
+        WHERE n.nspname = ANY($1::text[])
+          AND con.contype = 'c'
+          AND obj_description(con.oid, 'pg_constraint') IS NOT NULL
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| {
+        SchemaError::DatabaseError(format!("Failed to fetch domain constraint comments: {e}"))
+    })?;
+
+    let mut result = BTreeMap::new();
+    for row in rows {
+        let domain_schema: String = row.get("domain_schema");
+        let domain_name: String = row.get("domain_name");
+        let constraint_name: String = row.get("constraint_name");
+        let comment: String = row.get("comment");
+        result.insert(
+            format!("{domain_schema}.{domain_name}.{constraint_name}"),
+            comment,
+        );
+    }
     Ok(result)
 }
 

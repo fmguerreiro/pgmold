@@ -101,6 +101,8 @@ static COMMENT_ON_EXTENSION_CLAIM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bCOMMENT\s+ON\s+EXTENSION\s+").unwrap());
 static COMMENT_ON_POLICY_CLAIM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bCOMMENT\s+ON\s+POLICY\s+").unwrap());
+static COMMENT_ON_CONSTRAINT_CLAIM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)\bCOMMENT\s+ON\s+CONSTRAINT\s+").unwrap());
 
 // Mirrors grants.rs: GRANT privs ON [kind] target TO grantee. Object kind
 // keyword is optional so `GRANT SELECT ON public.users TO readonly;` is
@@ -160,6 +162,7 @@ static RECOGNIZERS: &[BroadRecognizer] = &[
             &COMMENT_ON_TRIGGER_CLAIM,
             &COMMENT_ON_EXTENSION_CLAIM,
             &COMMENT_ON_POLICY_CLAIM,
+            &COMMENT_ON_CONSTRAINT_CLAIM,
         ],
     },
     BroadRecognizer {
@@ -307,10 +310,15 @@ COMMENT ON TABLE public.users IS 'a table';
     }
 
     #[test]
-    fn comment_on_constraint_flagged() {
+    fn comment_on_constraint_on_table_not_flagged() {
         let sql = "COMMENT ON CONSTRAINT foo ON public.users IS 'check it';";
-        let findings = find_unrecognized_statements(sql);
-        assert_eq!(findings.len(), 1);
+        assert!(find_unrecognized_statements(sql).is_empty());
+    }
+
+    #[test]
+    fn comment_on_constraint_on_domain_not_flagged() {
+        let sql = "COMMENT ON CONSTRAINT positive ON DOMAIN public.amount IS 'amount > 0';";
+        assert!(find_unrecognized_statements(sql).is_empty());
     }
 
     #[test]

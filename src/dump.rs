@@ -66,6 +66,7 @@ fn push_comment_op(
             arguments: None,
             column: None,
             target: None,
+            on_domain: false,
             comment: Some(text.clone()),
         });
     }
@@ -86,6 +87,7 @@ fn push_column_comment_op(
             arguments: None,
             column: Some(column_name.to_string()),
             target: None,
+            on_domain: false,
             comment: Some(text.clone()),
         });
     }
@@ -106,6 +108,7 @@ fn push_function_comment_op(
             arguments: Some(arguments.to_string()),
             column: None,
             target: None,
+            on_domain: false,
             comment: Some(text.clone()),
         });
     }
@@ -126,8 +129,51 @@ fn push_trigger_comment_op(
             arguments: None,
             column: None,
             target: Some(target_name.to_string()),
+            on_domain: false,
             comment: Some(text.clone()),
         });
+    }
+}
+
+fn push_constraint_comment_op(
+    ops: &mut Vec<MigrationOp>,
+    parent_schema: &str,
+    parent_name: &str,
+    constraint_name: &str,
+    comment: &str,
+    on_domain: bool,
+) {
+    ops.push(MigrationOp::SetComment {
+        object_type: CommentObjectType::Constraint,
+        schema: parent_schema.to_string(),
+        name: constraint_name.to_string(),
+        arguments: None,
+        column: None,
+        target: Some(parent_name.to_string()),
+        on_domain,
+        comment: Some(comment.to_string()),
+    });
+}
+
+fn push_constraint_comment_ops(
+    ops: &mut Vec<MigrationOp>,
+    sidecar: &std::collections::BTreeMap<String, String>,
+    parent_schema: &str,
+    parent_name: &str,
+    on_domain: bool,
+) {
+    let parent_prefix = format!("{parent_schema}.{parent_name}.");
+    for (key, comment) in sidecar.iter() {
+        if let Some(constraint_name) = key.strip_prefix(&parent_prefix) {
+            push_constraint_comment_op(
+                ops,
+                parent_schema,
+                parent_name,
+                constraint_name,
+                comment,
+                on_domain,
+            );
+        }
     }
 }
 
@@ -146,6 +192,7 @@ fn push_policy_comment_op(
             arguments: None,
             column: None,
             target: Some(table_name.to_string()),
+            on_domain: false,
             comment: Some(text.clone()),
         });
     }
@@ -253,6 +300,13 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
             &domain.name,
             &domain.comment,
         );
+        push_constraint_comment_ops(
+            &mut ops,
+            &schema.domain_constraint_comments,
+            &domain.schema,
+            &domain.name,
+            true,
+        );
     }
 
     for sequence in schema.sequences.values() {
@@ -330,6 +384,13 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
         for (col_name, col) in &table.columns {
             push_column_comment_op(&mut ops, &table.schema, &table.name, col_name, &col.comment);
         }
+        push_constraint_comment_ops(
+            &mut ops,
+            &schema.table_constraint_comments,
+            &table.schema,
+            &table.name,
+            false,
+        );
     }
 
     for partition in schema.partitions.values() {
@@ -388,6 +449,7 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
                 arguments: Some(agg_args.clone()),
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: Some(text.clone()),
             });
         }

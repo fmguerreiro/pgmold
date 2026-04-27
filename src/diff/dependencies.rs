@@ -175,6 +175,7 @@ fn push_policy_recreate_comment(ops: &mut Vec<MigrationOp>, policy: &Policy) {
         arguments: None,
         column: None,
         target: Some(policy.table.clone()),
+        on_domain: false,
         comment: Some(comment_text.clone()),
     });
 }

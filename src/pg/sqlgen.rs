@@ -554,6 +554,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             arguments,
             column,
             target,
+            on_domain,
             comment,
         } => {
             let object_sql = match object_type {
@@ -610,6 +611,20 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                     format!(
                         "POLICY {} ON {}",
                         quote_ident(name),
+                        quote_qualified(schema, target_name)
+                    )
+                }
+                CommentObjectType::Constraint => {
+                    let target_name = target.as_deref().unwrap_or_else(|| {
+                        panic!(
+                            "SetComment(Constraint) requires `target` (parent table or domain), got None for {schema}.{name}"
+                        )
+                    });
+                    let relation_kind = if *on_domain { "DOMAIN " } else { "" };
+                    format!(
+                        "CONSTRAINT {} ON {}{}",
+                        quote_ident(name),
+                        relation_kind,
                         quote_qualified(schema, target_name)
                     )
                 }
@@ -2258,6 +2273,7 @@ mod tests {
             arguments: None,
             column: None,
             target: Some("users".to_string()),
+            on_domain: false,
             comment: Some("self-access only".to_string()),
         }];
 
@@ -2278,6 +2294,7 @@ mod tests {
             arguments: None,
             column: None,
             target: Some("users".to_string()),
+            on_domain: false,
             comment: None,
         }];
 
@@ -2298,6 +2315,7 @@ mod tests {
             arguments: None,
             column: None,
             target: None,
+            on_domain: false,
             comment: Some("UUID helpers".to_string()),
         }];
 
@@ -2318,12 +2336,76 @@ mod tests {
             arguments: None,
             column: None,
             target: None,
+            on_domain: false,
             comment: None,
         }];
 
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
         assert_eq!(sql[0], "COMMENT ON EXTENSION \"hstore\" IS NULL;");
+    }
+
+    #[test]
+    fn set_comment_constraint_on_table_generates_valid_sql() {
+        let ops = vec![MigrationOp::SetComment {
+            object_type: CommentObjectType::Constraint,
+            schema: "public".to_string(),
+            name: "users_pkey".to_string(),
+            arguments: None,
+            column: None,
+            target: Some("users".to_string()),
+            on_domain: false,
+            comment: Some("primary key".to_string()),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "COMMENT ON CONSTRAINT \"users_pkey\" ON \"public\".\"users\" IS 'primary key';"
+        );
+    }
+
+    #[test]
+    fn set_comment_constraint_on_domain_generates_valid_sql() {
+        let ops = vec![MigrationOp::SetComment {
+            object_type: CommentObjectType::Constraint,
+            schema: "public".to_string(),
+            name: "positive".to_string(),
+            arguments: None,
+            column: None,
+            target: Some("amount".to_string()),
+            on_domain: true,
+            comment: Some("amount > 0".to_string()),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "COMMENT ON CONSTRAINT \"positive\" ON DOMAIN \"public\".\"amount\" IS 'amount > 0';"
+        );
+    }
+
+    #[test]
+    fn set_comment_constraint_null_clears() {
+        let ops = vec![MigrationOp::SetComment {
+            object_type: CommentObjectType::Constraint,
+            schema: "public".to_string(),
+            name: "users_pkey".to_string(),
+            arguments: None,
+            column: None,
+            target: Some("users".to_string()),
+            on_domain: false,
+            comment: None,
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "COMMENT ON CONSTRAINT \"users_pkey\" ON \"public\".\"users\" IS NULL;"
+        );
     }
 
     #[test]

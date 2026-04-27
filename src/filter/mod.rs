@@ -253,7 +253,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         strip_grants_from_values(&mut schemas);
     }
 
-    Schema {
+    let mut filtered = Schema {
         schemas,
         extensions: filter_field(&schema.extensions, filter, ObjectType::Extensions),
         servers: schema.servers.clone(),
@@ -285,7 +285,13 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         } else {
             Vec::new()
         },
-    }
+        table_constraint_comments: schema.table_constraint_comments.clone(),
+        domain_constraint_comments: schema.domain_constraint_comments.clone(),
+    };
+    // Drop sidecar entries whose parent (table or domain) was filtered out
+    // so the diff loop cannot emit a `COMMENT ON CONSTRAINT ... ON missing`.
+    filtered.drop_orphan_constraint_comments();
+    filtered
 }
 
 pub fn exclude_unmanaged_partitions(current: &Schema, target: &Schema) -> Schema {

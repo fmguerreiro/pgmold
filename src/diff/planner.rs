@@ -1028,6 +1028,7 @@ impl MigrationGraph {
                     arguments,
                     column,
                     target,
+                    on_domain,
                 } => {
                     use crate::diff::CommentObjectType;
                     let require = |opt: &Option<String>, kind: &str, field: &str| -> String {
@@ -1120,6 +1121,49 @@ impl MigrationGraph {
                                 },
                                 key.clone(),
                             ));
+                        }
+                        CommentObjectType::Constraint => {
+                            // Each `COMMENT ON CONSTRAINT name ON [DOMAIN] tgt`
+                            // depends on the constraint existing. The
+                            // constraint kind is unknown at this point —
+                            // pgmold only retains "name + on which relation",
+                            // not "PK / FK / CHECK / UNIQUE / EXCLUDE".
+                            // `add_edge` silently skips unknown source keys,
+                            // so emit an edge for every plausible producer
+                            // and let the actual one bind. Inline forms are
+                            // subsumed under `CreateTable` / `CreateDomain`;
+                            // ALTER ADD forms get their own edges.
+                            let target_name = require(target, "Constraint", "target");
+                            let parent = QualifiedName::new(schema, &target_name);
+                            let candidates: Vec<OpKey> = if *on_domain {
+                                vec![OpKey::CreateDomain(qualified_name(schema, &target_name))]
+                            } else {
+                                vec![
+                                    OpKey::CreateTable(qualified_name(schema, &target_name)),
+                                    OpKey::AddPrimaryKey {
+                                        table: parent.clone(),
+                                    },
+                                    OpKey::AddIndex {
+                                        table: parent.clone(),
+                                        name: name.clone(),
+                                    },
+                                    OpKey::AddForeignKey {
+                                        table: parent.clone(),
+                                        name: name.clone(),
+                                    },
+                                    OpKey::AddCheckConstraint {
+                                        table: parent.clone(),
+                                        name: name.clone(),
+                                    },
+                                    OpKey::AddExclusionConstraint {
+                                        table: parent,
+                                        name: name.clone(),
+                                    },
+                                ]
+                            };
+                            for candidate in candidates {
+                                edges_to_add.push((candidate, key.clone()));
+                            }
                         }
                     }
                 }
@@ -6325,6 +6369,7 @@ mod tests {
             arguments: None,
             column: Some(column.to_string()),
             target: None,
+            on_domain: false,
             comment: Some("@omit create,update".to_string()),
         }
     }
@@ -6350,6 +6395,7 @@ mod tests {
                 arguments: None,
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: Some("widget table".to_string()),
             },
             column_comment("public", "widgets", "id"),
@@ -6365,6 +6411,7 @@ mod tests {
             arguments: Some(args.to_string()),
             column: None,
             target: None,
+            on_domain: false,
             comment: Some(body.to_string()),
         };
         assert_comments_all_distinct(vec![
@@ -6384,6 +6431,7 @@ mod tests {
             arguments: None,
             column: None,
             target: Some(target.to_string()),
+            on_domain: false,
             comment: Some(format!("audit trigger on {target}")),
         };
         assert_comments_all_distinct(vec![trigger_comment("users"), trigger_comment("orders")]);
@@ -6435,6 +6483,7 @@ mod tests {
                 arguments: None,
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: Some("managed reporting & verification".to_string()),
             },
             MigrationOp::CreateSchema(make_schema("mrv")),
@@ -6466,6 +6515,7 @@ mod tests {
                 arguments: Some(args_string.clone()),
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: Some("@deprecated".to_string()),
             },
             MigrationOp::CreateSchema(make_schema("mrv")),
@@ -6498,6 +6548,7 @@ mod tests {
                 arguments: None,
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: Some("widget table".to_string()),
             },
             MigrationOp::CreateTable(simple_table_with_fks("widgets", vec![])),
@@ -6537,6 +6588,7 @@ mod tests {
                 arguments: None,
                 column: None,
                 target: Some("users".to_string()),
+                on_domain: false,
                 comment: Some("self-access only".to_string()),
             },
             MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
@@ -6560,6 +6612,7 @@ mod tests {
                 arguments: None,
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: Some("UUID helpers".to_string()),
             },
             MigrationOp::CreateExtension(make_extension("uuid-ossp")),
@@ -6582,6 +6635,7 @@ mod tests {
                 arguments: None,
                 column: None,
                 target: Some("users".to_string()),
+                on_domain: false,
                 comment: Some("audit trigger".to_string()),
             },
             MigrationOp::CreateTable(simple_table_with_fks("users", vec![])),
@@ -6606,6 +6660,7 @@ mod tests {
                 arguments: None,
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: Some("active users view".to_string()),
             },
             MigrationOp::CreateView(make_view(
