@@ -1942,7 +1942,10 @@ geo_point geography(Point, 4326)
 
     let schema = parse_sql_string(sql).expect("Should parse");
     let shapes = &schema.tables["public.shapes"];
-    assert_eq!(shapes.columns["g_bare"].data_type, PgType::Geometry(None, None));
+    assert_eq!(
+        shapes.columns["g_bare"].data_type,
+        PgType::Geometry(None, None)
+    );
     assert_eq!(
         shapes.columns["g_polygon"].data_type,
         PgType::Geometry(Some("Polygon".to_string()), Some(4326))

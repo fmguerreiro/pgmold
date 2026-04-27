@@ -8,10 +8,7 @@ use common::*;
 
 use testcontainers_modules::postgres::Postgres as PostgresImage;
 
-async fn setup_postgis() -> (
-    testcontainers::ContainerAsync<PostgresImage>,
-    String,
-) {
+async fn setup_postgis() -> (testcontainers::ContainerAsync<PostgresImage>, String) {
     let container = PostgresImage::default()
         .with_name("postgis/postgis")
         .with_tag("16-3.4")
@@ -82,9 +79,9 @@ async fn introspect_postgis_geometry_typmod_round_trips() {
 
 #[tokio::test]
 async fn create_table_with_geometry_typmod_introspects_back_to_source() {
+    use pgmold::diff::{compute_diff, planner::plan_migration};
     use pgmold::parser::parse_sql_string;
     use pgmold::pg::sqlgen::generate_sql;
-    use pgmold::diff::{compute_diff, planner::plan_migration};
 
     let (_container, url) = setup_postgis().await;
     let connection = PgConnection::new(&url).await.unwrap();
