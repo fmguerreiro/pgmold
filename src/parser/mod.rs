@@ -1330,7 +1330,9 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 object_type,
                 object_name,
                 arguments,
+                operator_args: _,
                 table_name,
+                on_domain: _,
                 comment,
                 if_exists: _,
             } => {
