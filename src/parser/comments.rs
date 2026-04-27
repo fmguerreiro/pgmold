@@ -32,6 +32,9 @@ pub(super) struct CommentStatement<'a> {
     pub object_name: &'a ObjectName,
     pub arguments: Option<&'a [DataType]>,
     pub table_name: Option<&'a ObjectName>,
+    /// `true` when the AST's relation tail used `ON DOMAIN <domain>` rather
+    /// than `ON <table>`. Only meaningful for `CommentObject::Constraint`.
+    pub on_domain: bool,
     pub comment: Option<String>,
 }
 
@@ -48,6 +51,7 @@ pub(super) fn apply_comment_statement(
         object_name,
         arguments,
         table_name: partner_table,
+        on_domain,
         comment,
     } = stmt;
 
@@ -159,16 +163,26 @@ pub(super) fn apply_comment_statement(
         // these via its preprocess-stage scan and turn them into errors
         // under `--strict`. Per-kind modeling lands in subtasks of pgmold-270.
         CommentObject::Constraint => {
-            let target = match partner_table {
-                Some(rel) => {
-                    let (rs, rn) = extract_qualified_name(rel);
-                    format!("{object_name} ON {rs}.{rn}")
-                }
-                None => object_name.to_string(),
+            let constraint_parts = object_name_parts(object_name);
+            if constraint_parts.len() != 1 {
+                return Err(SchemaError::ParseError(format!(
+                    "COMMENT ON CONSTRAINT expects an unqualified constraint name, got {object_name}"
+                )));
+            }
+            let constraint_name = constraint_parts.into_iter().next().unwrap();
+            let Some(partner_relation) = partner_table else {
+                return Err(SchemaError::ParseError(
+                    "COMMENT ON CONSTRAINT missing ON [DOMAIN] <relation> tail".into(),
+                ));
             };
-            eprintln!(
-                "warning: pgmold does not model COMMENT ON CONSTRAINT; dropping comment on {target}"
-            );
+            let (parent_schema, parent_name) = extract_qualified_name(partner_relation);
+            let key = format!("{parent_schema}.{parent_name}.{constraint_name}");
+            schema.pending_comments.push(PendingComment {
+                object_type: PendingCommentObjectType::Constraint,
+                object_key: key,
+                comment,
+                on_domain,
+            });
         }
         CommentObject::Operator => {
             eprintln!(
@@ -252,6 +266,7 @@ fn push(
         object_type,
         object_key,
         comment,
+        on_domain: false,
     });
 }
 

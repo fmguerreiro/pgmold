@@ -371,6 +371,96 @@ async fn extension_comment_round_trips_through_apply_and_introspect() {
 }
 
 #[tokio::test]
+async fn table_constraint_comment_round_trips_through_apply_and_introspect() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE TABLE public.users (
+            id BIGINT NOT NULL,
+            CONSTRAINT users_pkey PRIMARY KEY (id),
+            CONSTRAINT users_id_positive CHECK (id > 0)
+        );
+        COMMENT ON CONSTRAINT users_id_positive ON public.users IS 'must be positive';
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    assert_eq!(
+        after
+            .table_constraint_comments
+            .get("public.users.users_id_positive")
+            .map(String::as_str),
+        Some("must be positive"),
+    );
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn domain_constraint_comment_round_trips_through_apply_and_introspect() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE DOMAIN public.amount AS INTEGER CONSTRAINT amount_positive CHECK (VALUE > 0);
+        COMMENT ON CONSTRAINT amount_positive ON DOMAIN public.amount IS 'must be positive';
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    assert_eq!(
+        after
+            .domain_constraint_comments
+            .get("public.amount.amount_positive")
+            .map(String::as_str),
+        Some("must be positive"),
+    );
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
 async fn policy_comment_round_trips_through_apply_and_introspect() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();

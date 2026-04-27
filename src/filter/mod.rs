@@ -253,7 +253,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         strip_grants_from_values(&mut schemas);
     }
 
-    Schema {
+    let mut filtered = Schema {
         schemas,
         extensions: filter_field(&schema.extensions, filter, ObjectType::Extensions),
         servers: schema.servers.clone(),
@@ -285,7 +285,13 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         } else {
             Vec::new()
         },
-    }
+        table_constraint_comments: schema.table_constraint_comments.clone(),
+        domain_constraint_comments: schema.domain_constraint_comments.clone(),
+    };
+    // Drop sidecar entries whose parent (table or domain) was filtered out
+    // so the diff loop cannot emit a `COMMENT ON CONSTRAINT ... ON missing`.
+    filtered.drop_orphan_constraint_comments();
+    filtered
 }
 
 pub fn exclude_unmanaged_partitions(current: &Schema, target: &Schema) -> Schema {
@@ -336,7 +342,20 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
             .collect()
     }
 
-    Schema {
+    fn retain_by_key_schema(
+        map: &BTreeMap<String, String>,
+        allowed: &HashSet<&str>,
+    ) -> BTreeMap<String, String> {
+        map.iter()
+            .filter(|(key, _)| {
+                key.split_once('.')
+                    .is_some_and(|(s, _)| allowed.contains(s))
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    let mut result = Schema {
         schemas: retain_by_schema(&schema.schemas, &allowed, |s| &s.name),
         extensions: schema.extensions.clone(),
         servers: schema.servers.clone(),
@@ -363,7 +382,21 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
         pending_grants: Vec::new(),
         pending_revokes: Vec::new(),
         pending_comments: Vec::new(),
-    }
+        table_constraint_comments: retain_by_key_schema(
+            &schema.table_constraint_comments,
+            &allowed,
+        ),
+        domain_constraint_comments: retain_by_key_schema(
+            &schema.domain_constraint_comments,
+            &allowed,
+        ),
+    };
+    // Mirror the filter_schema path: drop orphan sidecar entries even
+    // though the schema-prefix filter above already covers the only orphan
+    // shape currently possible. Defense-in-depth so future changes to
+    // table / domain filtering cannot leak stale comments.
+    result.drop_orphan_constraint_comments();
+    result
 }
 
 fn filter_map<T>(map: &BTreeMap<String, T>, filter: &Filter) -> BTreeMap<String, T>

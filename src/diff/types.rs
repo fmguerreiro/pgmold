@@ -28,6 +28,12 @@ pub enum CommentObjectType {
     Trigger,
     Extension,
     Policy,
+    /// Comment on a named PK/FK/CHECK/UNIQUE/EXCLUDE constraint. The
+    /// `target` field on `SetComment` carries the parent relation name and
+    /// `on_domain` distinguishes the `ON DOMAIN <name>` form from the
+    /// `ON <table>` form. The constraint kind itself is not recorded —
+    /// PostgreSQL resolves it from `pg_constraint` at apply time.
+    Constraint,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -256,6 +262,11 @@ pub enum MigrationOp {
         arguments: Option<String>,
         column: Option<String>,
         target: Option<String>,
+        /// Only meaningful for `CommentObjectType::Constraint`. `true`
+        /// emits `COMMENT ON CONSTRAINT name ON DOMAIN target IS …`,
+        /// `false` emits `COMMENT ON CONSTRAINT name ON target IS …`.
+        /// Always `false` for every other variant.
+        on_domain: bool,
         comment: Option<String>,
     },
 

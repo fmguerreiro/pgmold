@@ -180,6 +180,7 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                 arguments: None,
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: to_table.comment.clone(),
             });
         }
@@ -198,6 +199,7 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                     arguments: None,
                     column: Some(col_name.clone()),
                     target: None,
+                    on_domain: false,
                     comment: to_col.comment.clone(),
                 });
             }
@@ -215,6 +217,7 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                 arguments: Some(to_func.args_string()),
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: to_func.comment.clone(),
             });
         }
@@ -235,6 +238,7 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                 arguments: None,
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: to_view.comment.clone(),
             });
         }
@@ -250,6 +254,7 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                 arguments: None,
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: to_enum.comment.clone(),
             });
         }
@@ -265,6 +270,7 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                 arguments: None,
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: to_domain.comment.clone(),
             });
         }
@@ -280,6 +286,7 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                 arguments: None,
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: to_schema.comment.clone(),
             });
         }
@@ -295,6 +302,7 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                 arguments: None,
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: to_seq.comment.clone(),
             });
         }
@@ -310,6 +318,7 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                 arguments: None,
                 column: None,
                 target: Some(to_trigger.target_name.clone()),
+                on_domain: false,
                 comment: to_trigger.comment.clone(),
             });
         }
@@ -336,6 +345,7 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                     arguments: None,
                     column: None,
                     target: Some(to_table.name.clone()),
+                    on_domain: false,
                     comment: to_policy.comment.clone(),
                 });
             }
@@ -361,12 +371,67 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
                 arguments: None,
                 column: None,
                 target: None,
+                on_domain: false,
                 comment: Some(target_comment.clone()),
             });
         }
     }
 
+    diff_constraint_comments(
+        &from.table_constraint_comments,
+        &to.table_constraint_comments,
+        false,
+        &mut ops,
+    );
+    diff_constraint_comments(
+        &from.domain_constraint_comments,
+        &to.domain_constraint_comments,
+        true,
+        &mut ops,
+    );
+
     ops
+}
+
+/// Emits `SetComment(Constraint)` ops for every entry whose text differs
+/// between source and target. Mirrors policy comments: the constraint is
+/// fully user-managed (no PostgreSQL-shipped defaults), so a normal exact
+/// diff applies, including clears via `IS NULL` when the source drops a
+/// previously-set comment.
+///
+/// Keys are `"schema.parent.constraint_name"` where `parent` is a table or
+/// domain. The parent name is split off here and passed through `target`,
+/// while `name` carries the constraint identifier.
+fn diff_constraint_comments(
+    from: &std::collections::BTreeMap<String, String>,
+    to: &std::collections::BTreeMap<String, String>,
+    on_domain: bool,
+    ops: &mut Vec<MigrationOp>,
+) {
+    let mut keys: std::collections::BTreeSet<&String> = from.keys().collect();
+    keys.extend(to.keys());
+
+    for key in keys {
+        let from_text = from.get(key);
+        let to_text = to.get(key);
+        if from_text == to_text {
+            continue;
+        }
+        let (parent_key, constraint_name) = key.rsplit_once('.').unwrap_or_else(|| {
+            panic!("constraint comment key {key:?} must encode schema.parent.constraint_name")
+        });
+        let (parent_schema, parent_name) = crate::model::parse_qualified_name(parent_key);
+        ops.push(MigrationOp::SetComment {
+            object_type: CommentObjectType::Constraint,
+            schema: parent_schema,
+            name: constraint_name.to_string(),
+            arguments: None,
+            column: None,
+            target: Some(parent_name),
+            on_domain,
+            comment: to_text.cloned(),
+        });
+    }
 }
 
 #[cfg(test)]
@@ -1845,6 +1910,146 @@ mod tests {
 
         let ops = compute_diff(&from, &to);
         assert!(ops.is_empty(), "no migration ops expected, got {ops:?}");
+    }
+
+    fn schema_with_table_constraint_comment(comment: Option<&str>) -> crate::model::Schema {
+        let mut schema = empty_schema();
+        schema
+            .tables
+            .insert("public.users".to_string(), simple_table("users"));
+        if let Some(text) = comment {
+            schema
+                .table_constraint_comments
+                .insert("public.users.users_pkey".to_string(), text.to_string());
+        }
+        schema
+    }
+
+    #[test]
+    fn detects_added_table_constraint_comment() {
+        let from = schema_with_table_constraint_comment(None);
+        let to = schema_with_table_constraint_comment(Some("primary key"));
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                schema,
+                name,
+                target,
+                on_domain,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Constraint);
+                assert_eq!(schema, "public");
+                assert_eq!(name, "users_pkey");
+                assert_eq!(target.as_deref(), Some("users"));
+                assert!(!*on_domain);
+                assert_eq!(comment.as_deref(), Some("primary key"));
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn detects_changed_table_constraint_comment() {
+        let from = schema_with_table_constraint_comment(Some("old"));
+        let to = schema_with_table_constraint_comment(Some("new"));
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Constraint);
+                assert_eq!(comment.as_deref(), Some("new"));
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn detects_cleared_table_constraint_comment() {
+        let from = schema_with_table_constraint_comment(Some("old"));
+        let to = schema_with_table_constraint_comment(None);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Constraint);
+                assert!(comment.is_none(), "clear must emit None");
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_op_when_table_constraint_comment_unchanged() {
+        let from = schema_with_table_constraint_comment(Some("primary key"));
+        let to = from.clone();
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "no migration ops expected, got {ops:?}");
+    }
+
+    #[test]
+    fn detects_added_domain_constraint_comment_with_on_domain_flag() {
+        let mut from = empty_schema();
+        let mut to = empty_schema();
+        let domain = crate::model::Domain {
+            schema: "public".to_string(),
+            name: "amount".to_string(),
+            data_type: crate::model::PgType::Integer,
+            default: None,
+            not_null: false,
+            collation: None,
+            check_constraints: vec![crate::model::DomainConstraint {
+                name: Some("amount_positive".to_string()),
+                expression: "VALUE > 0".to_string(),
+            }],
+            owner: None,
+            grants: Vec::new(),
+            comment: None,
+        };
+        from.domains
+            .insert("public.amount".to_string(), domain.clone());
+        to.domains.insert("public.amount".to_string(), domain);
+        to.domain_constraint_comments.insert(
+            "public.amount.amount_positive".to_string(),
+            "must be positive".to_string(),
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                schema,
+                name,
+                target,
+                on_domain,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Constraint);
+                assert_eq!(schema, "public");
+                assert_eq!(name, "amount_positive");
+                assert_eq!(target.as_deref(), Some("amount"));
+                assert!(*on_domain, "domain form must set on_domain=true");
+                assert_eq!(comment.as_deref(), Some("must be positive"));
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
     }
 
     #[test]

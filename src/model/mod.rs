@@ -92,6 +92,7 @@ pub enum PendingCommentObjectType {
     Trigger,
     Extension,
     Policy,
+    Constraint,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +100,11 @@ pub struct PendingComment {
     pub object_type: PendingCommentObjectType,
     pub object_key: String,
     pub comment: Option<String>,
+    /// Only meaningful for `PendingCommentObjectType::Constraint`. `true`
+    /// when the source statement used the `ON DOMAIN <domain>` tail rather
+    /// than `ON <table>`. Routes resolution through `Schema::domains`
+    /// instead of `Schema::tables`. Always `false` for every other variant.
+    pub on_domain: bool,
 }
 
 /// Represents a pending GRANT parsed from a GRANT statement.
@@ -171,6 +177,21 @@ pub struct Schema {
     #[serde(skip)]
     pub pending_comments: Vec<PendingComment>,
     pub default_privileges: Vec<DefaultPrivilege>,
+    /// Comments on named table constraints (PK, FK, CHECK, UNIQUE, EXCLUDE)
+    /// keyed as `"schema.table.constraint_name"`. Stored as a Schema-level
+    /// sidecar so adding the field does not require changing every
+    /// `Table` / `ForeignKey` / `CheckConstraint` / `Index` constructor in
+    /// the codebase. The constraint kind is irrelevant for emitting
+    /// `COMMENT ON CONSTRAINT name ON tbl IS '...'` because PostgreSQL
+    /// resolves the kind from `pg_constraint`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub table_constraint_comments: BTreeMap<String, String>,
+    /// Comments on named CHECK constraints attached to domains, keyed as
+    /// `"schema.domain.constraint_name"`. Mirrors
+    /// `table_constraint_comments` but resolved against `domains` and
+    /// emitted via the `ON DOMAIN` form.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub domain_constraint_comments: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -984,6 +1005,8 @@ impl Schema {
             pending_revokes: Vec::new(),
             pending_comments: Vec::new(),
             default_privileges: Vec::new(),
+            table_constraint_comments: BTreeMap::new(),
+            domain_constraint_comments: BTreeMap::new(),
         }
     }
 
@@ -1353,7 +1376,56 @@ impl Schema {
                 }
                 false
             }
+            PendingCommentObjectType::Constraint => {
+                // Key encodes schema.parent.constraint_name where parent is
+                // either a table (default) or a domain (when on_domain).
+                // Routed through the matching Schema-level sidecar map so we
+                // do not have to mutate every constraint variant struct.
+                let Some((parent_key, _)) = pc.object_key.rsplit_once('.') else {
+                    return false;
+                };
+                if pc.on_domain {
+                    if !self.domains.contains_key(parent_key) {
+                        return false;
+                    }
+                    update_constraint_comment(
+                        &mut self.domain_constraint_comments,
+                        &pc.object_key,
+                        pc.comment.as_ref(),
+                    );
+                } else {
+                    if !self.tables.contains_key(parent_key) {
+                        return false;
+                    }
+                    update_constraint_comment(
+                        &mut self.table_constraint_comments,
+                        &pc.object_key,
+                        pc.comment.as_ref(),
+                    );
+                }
+                true
+            }
         }
+    }
+
+    /// Drops sidecar constraint comment entries whose parent table or
+    /// domain has been pruned from the schema. Called by the filter and
+    /// drift-baseline pipelines so that orphan entries cannot leak into
+    /// downstream emit. The constraint name itself is not validated against
+    /// the parent's per-kind constraint vectors — pgmold accepts the comment
+    /// even if the underlying constraint is filtered out at a finer
+    /// granularity, and PostgreSQL will surface the mismatch at apply time.
+    pub fn drop_orphan_constraint_comments(&mut self) {
+        let tables = &self.tables;
+        self.table_constraint_comments.retain(|key, _| {
+            key.rsplit_once('.')
+                .is_some_and(|(parent, _)| tables.contains_key(parent))
+        });
+        let domains = &self.domains;
+        self.domain_constraint_comments.retain(|key, _| {
+            key.rsplit_once('.')
+                .is_some_and(|(parent, _)| domains.contains_key(parent))
+        });
     }
 
     fn merge_all_grants(&mut self) {
@@ -1406,6 +1478,21 @@ pub fn revoke_from_grants(
             true
         }
     });
+}
+
+fn update_constraint_comment(
+    sidecar: &mut BTreeMap<String, String>,
+    key: &str,
+    comment: Option<&String>,
+) {
+    match comment {
+        Some(text) => {
+            sidecar.insert(key.to_string(), text.clone());
+        }
+        None => {
+            sidecar.remove(key);
+        }
+    }
 }
 
 fn merge_grants_by_grantee(grants: &mut Vec<Grant>) {

@@ -222,6 +222,11 @@ pub(crate) enum OpKey {
         arguments: Option<String>,
         column: Option<String>,
         target: Option<String>,
+        /// Required for `CommentObjectType::Constraint` so a constraint
+        /// with the same name appearing on both a table and a domain
+        /// produces two distinct keys. Always `false` for every other
+        /// variant.
+        on_domain: bool,
     },
 }
 
@@ -490,6 +495,7 @@ impl OpKey {
                 arguments,
                 column,
                 target,
+                on_domain,
                 ..
             } => OpKey::SetComment {
                 object_type: *object_type,
@@ -498,6 +504,7 @@ impl OpKey {
                 arguments: arguments.clone(),
                 column: column.clone(),
                 target: target.clone(),
+                on_domain: *on_domain,
             },
         }
     }
