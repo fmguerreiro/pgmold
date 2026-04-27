@@ -342,6 +342,19 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
             .collect()
     }
 
+    fn retain_by_key_schema(
+        map: &BTreeMap<String, String>,
+        allowed: &HashSet<&str>,
+    ) -> BTreeMap<String, String> {
+        map.iter()
+            .filter(|(key, _)| {
+                key.split_once('.')
+                    .is_some_and(|(s, _)| allowed.contains(s))
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
     let mut result = Schema {
         schemas: retain_by_schema(&schema.schemas, &allowed, |s| &s.name),
         extensions: schema.extensions.clone(),
@@ -369,24 +382,14 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
         pending_grants: Vec::new(),
         pending_revokes: Vec::new(),
         pending_comments: Vec::new(),
-        table_constraint_comments: schema
-            .table_constraint_comments
-            .iter()
-            .filter(|(key, _)| {
-                key.split_once('.')
-                    .is_some_and(|(s, _)| allowed.contains(s))
-            })
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
-        domain_constraint_comments: schema
-            .domain_constraint_comments
-            .iter()
-            .filter(|(key, _)| {
-                key.split_once('.')
-                    .is_some_and(|(s, _)| allowed.contains(s))
-            })
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
+        table_constraint_comments: retain_by_key_schema(
+            &schema.table_constraint_comments,
+            &allowed,
+        ),
+        domain_constraint_comments: retain_by_key_schema(
+            &schema.domain_constraint_comments,
+            &allowed,
+        ),
     };
     // Mirror the filter_schema path: drop orphan sidecar entries even
     // though the schema-prefix filter above already covers the only orphan
