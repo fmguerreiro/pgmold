@@ -256,6 +256,12 @@ pub enum PgType {
     Point,
     Xml,
     Vector(Option<u32>),
+    /// PostGIS `geometry` type with optional subtype (e.g. `Polygon`,
+    /// `MultiPolygon`, `Point`) and optional SRID. Both unset means a bare
+    /// `geometry` declaration with no typmod.
+    Geometry(Option<String>, Option<i32>),
+    /// PostGIS `geography` type, mirrors `Geometry`.
+    Geography(Option<String>, Option<i32>),
     Array(Box<PgType>),
     UserDefined(String),
     BuiltinNamed(String),

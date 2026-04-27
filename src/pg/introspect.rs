@@ -794,6 +794,7 @@ async fn introspect_all_columns(
             c.domain_schema,
             c.domain_name,
             a.atttypmod,
+            pg_catalog.format_type(a.atttypid, a.atttypmod) AS pg_format_type,
             a.attgenerated,
             CASE WHEN a.attgenerated = 's'
                  THEN pg_catalog.pg_get_expr(ad.adbin, a.attrelid)
@@ -829,6 +830,7 @@ async fn introspect_all_columns(
         let domain_schema: Option<String> = row.get("domain_schema");
         let domain_name: Option<String> = row.get("domain_name");
         let atttypmod: i32 = row.get("atttypmod");
+        let pg_format_type: String = row.get("pg_format_type");
         let generation_expression: Option<String> = row.get("generation_expression");
 
         let pg_type = match (domain_schema, domain_name) {
@@ -839,6 +841,7 @@ async fn introspect_all_columns(
                 &udt_schema,
                 &udt_name,
                 atttypmod,
+                &pg_format_type,
             )?,
         };
 
@@ -909,6 +912,7 @@ fn map_pg_type(
     udt_schema: &str,
     udt_name: &str,
     atttypmod: i32,
+    pg_format_type: &str,
 ) -> Result<PgType> {
     if udt_schema != "pg_catalog"
         && udt_schema != "information_schema"
@@ -959,6 +963,13 @@ fn map_pg_type(
                     None
                 };
                 Ok(PgType::Vector(dimension))
+            } else if udt_name == "geometry" || udt_name == "geography" {
+                let (subtype, srid) = parse_postgis_format_type(pg_format_type);
+                Ok(if udt_name == "geometry" {
+                    PgType::Geometry(subtype, srid)
+                } else {
+                    PgType::Geography(subtype, srid)
+                })
             } else {
                 Ok(PgType::UserDefined(format!("{udt_schema}.{udt_name}")))
             }
@@ -981,6 +992,37 @@ fn map_pg_type(
 
 fn map_domain_element_type(base_udt: &str, domain_schema: &str) -> PgType {
     map_udt_name_to_pg_type(base_udt, domain_schema, None)
+}
+
+/// Parse Postgres' `format_type(atttypid, atttypmod)` output for PostGIS
+/// columns. Returns `(subtype, srid)` extracted from forms like
+/// `geometry`, `geometry(4326)`, `geometry(Polygon)`, `geometry(Polygon,4326)`.
+/// Subtype casing is preserved as Postgres reports it (e.g. `Polygon`).
+fn parse_postgis_format_type(format_type: &str) -> (Option<String>, Option<i32>) {
+    let open = match format_type.find('(') {
+        Some(idx) => idx,
+        None => return (None, None),
+    };
+    let close = match format_type.rfind(')') {
+        Some(idx) => idx,
+        None => return (None, None),
+    };
+    if close <= open + 1 {
+        return (None, None);
+    }
+    let inside = &format_type[open + 1..close];
+    let parts: Vec<&str> = inside.split(',').map(|s| s.trim()).collect();
+    match parts.as_slice() {
+        [single] => match single.parse::<i32>() {
+            Ok(srid) => (None, Some(srid)),
+            Err(_) => (Some((*single).to_string()), None),
+        },
+        [subtype, srid_text, ..] => {
+            let srid = srid_text.parse::<i32>().ok();
+            (Some((*subtype).to_string()), srid)
+        }
+        _ => (None, None),
+    }
 }
 
 async fn introspect_all_primary_keys(
@@ -2807,7 +2849,8 @@ mod tests {
 
     #[test]
     fn map_pg_type_domain_based_on_numeric_returns_user_defined() {
-        let result = map_pg_type("numeric", None, "public", "positive_money", -1).unwrap();
+        let result =
+            map_pg_type("numeric", None, "public", "positive_money", -1, "numeric").unwrap();
         assert_eq!(
             result,
             PgType::UserDefined("public.positive_money".to_string())
@@ -2816,7 +2859,7 @@ mod tests {
 
     #[test]
     fn map_pg_type_domain_based_on_text_returns_user_defined() {
-        let result = map_pg_type("text", None, "public", "email_address", -1).unwrap();
+        let result = map_pg_type("text", None, "public", "email_address", -1, "text").unwrap();
         assert_eq!(
             result,
             PgType::UserDefined("public.email_address".to_string())
@@ -2825,14 +2868,55 @@ mod tests {
 
     #[test]
     fn map_pg_type_builtin_numeric_stays_builtin() {
-        let result = map_pg_type("numeric", None, "pg_catalog", "numeric", -1).unwrap();
+        let result = map_pg_type("numeric", None, "pg_catalog", "numeric", -1, "numeric").unwrap();
         assert_eq!(result, PgType::BuiltinNamed("numeric".to_string()));
     }
 
     #[test]
     fn map_pg_type_builtin_text_stays_builtin() {
-        let result = map_pg_type("text", None, "pg_catalog", "text", -1).unwrap();
+        let result = map_pg_type("text", None, "pg_catalog", "text", -1, "text").unwrap();
         assert_eq!(result, PgType::Text);
+    }
+
+    #[test]
+    fn map_pg_type_postgis_geometry_with_subtype_and_srid() {
+        let result = map_pg_type(
+            "USER-DEFINED",
+            None,
+            "public",
+            "geometry",
+            0,
+            "geometry(Polygon,4326)",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            PgType::Geometry(Some("Polygon".to_string()), Some(4326))
+        );
+    }
+
+    #[test]
+    fn map_pg_type_postgis_geometry_bare_returns_no_typmod() {
+        let result =
+            map_pg_type("USER-DEFINED", None, "public", "geometry", -1, "geometry").unwrap();
+        assert_eq!(result, PgType::Geometry(None, None));
+    }
+
+    #[test]
+    fn map_pg_type_postgis_geography_point_with_srid() {
+        let result = map_pg_type(
+            "USER-DEFINED",
+            None,
+            "public",
+            "geography",
+            0,
+            "geography(Point,4326)",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            PgType::Geography(Some("Point".to_string()), Some(4326))
+        );
     }
 
     #[test]
