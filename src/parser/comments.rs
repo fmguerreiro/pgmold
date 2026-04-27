@@ -157,7 +157,36 @@ pub(super) fn apply_comment_statement(
         // Object kinds pgmold does not model. Surface a warning so the
         // statement is not silently lost; `unrecognized.rs` will also flag
         // these via its preprocess-stage scan and turn them into errors
-        // under `--strict`.
+        // under `--strict`. Per-kind modeling lands in subtasks of pgmold-270.
+        CommentObject::Constraint => {
+            let target = match partner_table {
+                Some(rel) => {
+                    let (rs, rn) = extract_qualified_name(rel);
+                    format!("{object_name} ON {rs}.{rn}")
+                }
+                None => object_name.to_string(),
+            };
+            eprintln!(
+                "warning: pgmold does not model COMMENT ON CONSTRAINT; dropping comment on {target}"
+            );
+        }
+        CommentObject::Operator => {
+            eprintln!(
+                "warning: pgmold does not model COMMENT ON OPERATOR; dropping comment on {object_name}"
+            );
+        }
+        CommentObject::Rule => {
+            let target = match partner_table {
+                Some(rel) => {
+                    let (rs, rn) = extract_qualified_name(rel);
+                    format!("{object_name} ON {rs}.{rn}")
+                }
+                None => object_name.to_string(),
+            };
+            eprintln!(
+                "warning: pgmold does not model COMMENT ON RULE; dropping comment on {target}"
+            );
+        }
         CommentObject::Policy => {
             let policy_parts = object_name_parts(object_name);
             if policy_parts.len() != 1 {

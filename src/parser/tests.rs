@@ -5012,6 +5012,45 @@ COMMENT ON POLICY p ON public.users IS 'x';
 }
 
 #[test]
+fn comment_on_constraint_parses_without_error_table_form() {
+    let sql = "\
+CREATE TABLE public.orders (id serial, total numeric CHECK (total > 0));
+COMMENT ON CONSTRAINT orders_total_check ON public.orders IS 'must be positive';
+";
+    parse_sql_string(sql).expect("COMMENT ON CONSTRAINT should parse");
+}
+
+#[test]
+fn comment_on_constraint_parses_without_error_domain_form() {
+    let sql = "\
+CREATE DOMAIN public.email AS text CHECK (VALUE LIKE '%@%');
+COMMENT ON CONSTRAINT email_check ON DOMAIN public.email IS 'rough shape';
+";
+    parse_sql_string(sql).expect("COMMENT ON CONSTRAINT ON DOMAIN should parse");
+}
+
+#[test]
+fn comment_on_operator_parses_without_error() {
+    let sql = "COMMENT ON OPERATOR public.+(integer, integer) IS 'integer addition';";
+    parse_sql_string(sql).expect("COMMENT ON OPERATOR should parse");
+}
+
+#[test]
+fn comment_on_operator_unary_none_parses_without_error() {
+    let sql = "COMMENT ON OPERATOR -(NONE, integer) IS 'unary minus';";
+    parse_sql_string(sql).expect("COMMENT ON OPERATOR with NONE slot should parse");
+}
+
+#[test]
+fn comment_on_rule_parses_without_error() {
+    let sql = "\
+CREATE TABLE public.orders (id serial);
+COMMENT ON RULE notify_me ON public.orders IS 'rewrite rule';
+";
+    parse_sql_string(sql).expect("COMMENT ON RULE should parse");
+}
+
+#[test]
 fn alter_aggregate_owner_records_pending_owner() {
     let sql = r#"
 CREATE AGGREGATE public.group_concat(text) (
