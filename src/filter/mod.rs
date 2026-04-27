@@ -369,6 +369,24 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
         pending_grants: Vec::new(),
         pending_revokes: Vec::new(),
         pending_comments: Vec::new(),
+        table_constraint_comments: schema
+            .table_constraint_comments
+            .iter()
+            .filter(|(key, _)| {
+                key.split_once('.')
+                    .is_some_and(|(s, _)| allowed.contains(s))
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+        domain_constraint_comments: schema
+            .domain_constraint_comments
+            .iter()
+            .filter(|(key, _)| {
+                key.split_once('.')
+                    .is_some_and(|(s, _)| allowed.contains(s))
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
     }
 }
 
