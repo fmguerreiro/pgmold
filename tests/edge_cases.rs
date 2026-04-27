@@ -465,22 +465,25 @@ async fn partition_child_constraint_comment_round_trips_through_apply_and_intros
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::query(
+    for stmt in [
         r#"
         CREATE TABLE public.measurement (
             city_id INT NOT NULL,
             logdate DATE NOT NULL,
             peaktemp INT
-        ) PARTITION BY RANGE (logdate);
-        CREATE TABLE public.measurement_2024 PARTITION OF public.measurement
-            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-        ALTER TABLE public.measurement_2024
-            ADD CONSTRAINT measurement_2024_peak_positive CHECK (peaktemp > 0);
+        ) PARTITION BY RANGE (logdate)
         "#,
-    )
-    .execute(connection.pool())
-    .await
-    .unwrap();
+        r#"
+        CREATE TABLE public.measurement_2024 PARTITION OF public.measurement
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')
+        "#,
+        r#"
+        ALTER TABLE public.measurement_2024
+            ADD CONSTRAINT measurement_2024_peak_positive CHECK (peaktemp > 0)
+        "#,
+    ] {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
 
     let target = parse_sql_string(
         r#"
