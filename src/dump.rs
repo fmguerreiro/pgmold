@@ -395,6 +395,13 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
 
     for partition in schema.partitions.values() {
         ops.push(MigrationOp::CreatePartition(partition.clone()));
+        push_constraint_comment_ops(
+            &mut ops,
+            &schema.table_constraint_comments,
+            &partition.schema,
+            &partition.name,
+            false,
+        );
     }
 
     for function in schema.functions.values() {

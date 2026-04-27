@@ -1135,11 +1135,13 @@ impl MigrationGraph {
                             // ALTER ADD forms get their own edges.
                             let target_name = require(target, "Constraint", "target");
                             let parent = QualifiedName::new(schema, &target_name);
+                            let parent_qualified = qualified_name(schema, &target_name);
                             let candidates: Vec<OpKey> = if *on_domain {
-                                vec![OpKey::CreateDomain(qualified_name(schema, &target_name))]
+                                vec![OpKey::CreateDomain(parent_qualified)]
                             } else {
                                 vec![
-                                    OpKey::CreateTable(qualified_name(schema, &target_name)),
+                                    OpKey::CreateTable(parent_qualified.clone()),
+                                    OpKey::CreatePartition(parent_qualified),
                                     OpKey::AddPrimaryKey {
                                         table: parent.clone(),
                                     },

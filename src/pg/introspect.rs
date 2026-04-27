@@ -1582,6 +1582,11 @@ async fn introspect_all_policies(
 /// in the target schemas. Returns a map keyed by
 /// `"schema.table.constraint_name"` so the diff path can iterate it
 /// alongside the source-side sidecar without needing per-kind lookups.
+///
+/// Partition children (`relispartition = true`) are included: PostgreSQL
+/// stores their constraint comments on the child relation, not the parent,
+/// and `COMMENT ON CONSTRAINT name ON child_table` is the syntactic form
+/// pgmold must round-trip.
 async fn introspect_table_constraint_comments(
     connection: &PgConnection,
     target_schemas: &[String],
@@ -1598,7 +1603,6 @@ async fn introspect_table_constraint_comments(
         JOIN pg_namespace n ON c.relnamespace = n.oid
         WHERE n.nspname = ANY($1::text[])
           AND c.relkind IN ('r', 'p')
-          AND c.relispartition = false
           AND obj_description(con.oid, 'pg_constraint') IS NOT NULL
         "#,
     )

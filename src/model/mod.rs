@@ -1378,9 +1378,12 @@ impl Schema {
             }
             PendingCommentObjectType::Constraint => {
                 // Key encodes schema.parent.constraint_name where parent is
-                // either a table (default) or a domain (when on_domain).
-                // Routed through the matching Schema-level sidecar map so we
-                // do not have to mutate every constraint variant struct.
+                // either a table, a partition child, or a domain (when
+                // on_domain). Routed through the matching Schema-level
+                // sidecar map so we do not have to mutate every constraint
+                // variant struct. Partition children share the table sidecar
+                // because PostgreSQL stores constraint comments on the child
+                // relation, and the diff/emit path is parent-kind agnostic.
                 let Some((parent_key, _)) = pc.object_key.rsplit_once('.') else {
                     return false;
                 };
@@ -1394,7 +1397,9 @@ impl Schema {
                         pc.comment.as_ref(),
                     );
                 } else {
-                    if !self.tables.contains_key(parent_key) {
+                    if !self.tables.contains_key(parent_key)
+                        && !self.partitions.contains_key(parent_key)
+                    {
                         return false;
                     }
                     update_constraint_comment(
@@ -1417,9 +1422,11 @@ impl Schema {
     /// granularity, and PostgreSQL will surface the mismatch at apply time.
     pub fn drop_orphan_constraint_comments(&mut self) {
         let tables = &self.tables;
+        let partitions = &self.partitions;
         self.table_constraint_comments.retain(|key, _| {
-            key.rsplit_once('.')
-                .is_some_and(|(parent, _)| tables.contains_key(parent))
+            key.rsplit_once('.').is_some_and(|(parent, _)| {
+                tables.contains_key(parent) || partitions.contains_key(parent)
+            })
         });
         let domains = &self.domains;
         self.domain_constraint_comments.retain(|key, _| {
