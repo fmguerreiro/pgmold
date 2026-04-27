@@ -2697,10 +2697,9 @@ fn comment_on_constraint_null_clears_comment() {
         COMMENT ON CONSTRAINT users_id_chk ON public.users IS NULL;
     "#;
     let schema = parse_sql_string(sql).unwrap();
-    assert!(schema
+    assert!(!schema
         .table_constraint_comments
-        .get("public.users.users_id_chk")
-        .is_none());
+        .contains_key("public.users.users_id_chk"));
 }
 
 #[test]

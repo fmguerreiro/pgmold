@@ -342,7 +342,7 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
             .collect()
     }
 
-    Schema {
+    let mut result = Schema {
         schemas: retain_by_schema(&schema.schemas, &allowed, |s| &s.name),
         extensions: schema.extensions.clone(),
         servers: schema.servers.clone(),
@@ -387,7 +387,13 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
             })
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
-    }
+    };
+    // Mirror the filter_schema path: drop orphan sidecar entries even
+    // though the schema-prefix filter above already covers the only orphan
+    // shape currently possible. Defense-in-depth so future changes to
+    // table / domain filtering cannot leak stale comments.
+    result.drop_orphan_constraint_comments();
+    result
 }
 
 fn filter_map<T>(map: &BTreeMap<String, T>, filter: &Filter) -> BTreeMap<String, T>
