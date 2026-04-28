@@ -1326,7 +1326,10 @@ fn normalize_expr(expr: &Expr) -> Expr {
         // Normalize CompoundIdentifier (lowercase for case-insensitive comparison)
         // Also remove quote_style since after lowercasing, "mrv" and mrv are equivalent
         // For 2-part identifiers (table.column or schema.table), normalize to just the last part
-        // because PostgreSQL may add or remove these qualifications in stored expressions
+        // because PostgreSQL may add or remove these qualifications in stored expressions.
+        // For 3-part identifiers (schema.table.column), also normalize to just the last part
+        // because PostgreSQL qualifies bare column references with schema+table in stored
+        // policy expressions (e.g. mrv."VcsProject"."id" for a bare "id" reference).
         Expr::CompoundIdentifier(idents) => {
             let normalized: Vec<_> = idents
                 .iter()
@@ -1337,10 +1340,9 @@ fn normalize_expr(expr: &Expr) -> Expr {
                 })
                 .collect();
 
-            // For 2-part identifiers, normalize to just the last part (column name)
-            // This handles both public.table -> table and table.column -> column
-            if normalized.len() == 2 {
-                Expr::Identifier(normalized[1].clone())
+            // For 2-part or 3-part identifiers, normalize to just the last part (column name)
+            if normalized.len() == 2 || normalized.len() == 3 {
+                Expr::Identifier(normalized[normalized.len() - 1].clone())
             } else {
                 Expr::CompoundIdentifier(normalized)
             }
@@ -2186,6 +2188,17 @@ fn expression_comparison_handles_postgresql_identifier_normalization() {
     assert!(
         expressions_semantically_equal(parsed_schema, db_no_schema),
         "Table with schema should equal table without schema: {parsed_schema} vs {db_no_schema}"
+    );
+
+    // Case 3: bare column vs schema+table qualified column (3-part identifier)
+    // PostgreSQL qualifies bare column references with schema.table in non-public schemas
+    // e.g. "id" in source vs mrv."VcsProject"."id" in pg_get_expr output
+    let bare_column = r#"vpi."projectId" = "id""#;
+    let schema_table_qualified = r#"vpi."projectId" = mrv."VcsProject"."id""#;
+
+    assert!(
+        expressions_semantically_equal(bare_column, schema_table_qualified),
+        "Bare column should equal schema+table-qualified column: {bare_column} vs {schema_table_qualified}"
     );
 }
 

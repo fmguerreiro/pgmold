@@ -100,8 +100,17 @@ pub fn compute_diff_with_flags(
         to,
         &type_change_columns,
     ));
-    let (type_change_policy_ops, _) =
+    let (type_change_policy_ops, type_change_policies_to_filter) =
         generate_policy_ops_for_affected_tables(&ops, from, to, &affected_tables);
+    if !type_change_policies_to_filter.is_empty() {
+        ops.retain(|op| {
+            if let MigrationOp::AlterPolicy { table, name, .. } = op {
+                !type_change_policies_to_filter.contains(&(table.to_string(), name.clone()))
+            } else {
+                true
+            }
+        });
+    }
     ops.extend(type_change_policy_ops);
     ops.extend(generate_trigger_ops_for_affected_tables(
         &ops,
@@ -4488,6 +4497,128 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         assert!(
             facility_drop_pos < farmer_drop_pos,
             "DropView(facility) at {facility_drop_pos} must come before DropView(farmer_users) at {farmer_drop_pos}"
+        );
+    }
+
+    // Regression test for #281: when a column type change forces DROP+CREATE for all policies
+    // on a table, any AlterPolicy emitted by the per-policy diff pass for those same policies
+    // must be suppressed. Without the fix, the plan contains both DROP POLICY and ALTER POLICY
+    // for the same policy, which aborts mid-apply with "policy does not exist".
+    #[test]
+    fn column_type_change_does_not_emit_alter_policy_alongside_drop_create() {
+        use crate::model::{Policy, PolicyCommand};
+
+        let mut from = empty_schema();
+        let mut table = simple_table_with_schema("VcsProject", "mrv");
+        table
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::BigInt));
+        // The column whose type is changing — this triggers rebuild of all policies on the table
+        table.columns.insert(
+            "eligibilityBoundary".to_string(),
+            simple_column(
+                "eligibilityBoundary",
+                PgType::Geometry(Some("Polygon".to_string()), Some(4326)),
+            ),
+        );
+        table.row_level_security = true;
+        // This policy's USING clause references "id" bare in source but will be stored
+        // as mrv."VcsProject"."id" by PostgreSQL (the DB-introspected form).
+        // The expression comparison must treat them as equal; either way the AlterPolicy
+        // must be suppressed when a DROP+CREATE is already scheduled.
+        table.policies.push(Policy {
+            name: "vcs_project_verifier_select".to_string(),
+            table_schema: "mrv".to_string(),
+            table: "VcsProject".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            // Simulate what PostgreSQL stores (3-part qualified column)
+            using_expr: Some(
+                r#"EXISTS (SELECT 1 FROM mrv."VcsProjectInstance" vpi WHERE vpi."projectId" = mrv."VcsProject"."id" AND vpi."supplierId" IS NOT NULL)"#.to_string(),
+            ),
+            check_expr: None,
+            comment: None,
+        });
+        table.policies.push(Policy {
+            name: "vcs_project_service_role_all".to_string(),
+            table_schema: "mrv".to_string(),
+            table: "VcsProject".to_string(),
+            command: PolicyCommand::All,
+            roles: vec!["service_role".to_string()],
+            using_expr: Some("true".to_string()),
+            check_expr: Some("true".to_string()),
+            comment: None,
+        });
+        from.tables.insert("mrv.VcsProject".to_string(), table);
+
+        let mut to = empty_schema();
+        let mut table_to = simple_table_with_schema("VcsProject", "mrv");
+        table_to
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::BigInt));
+        // Column type changed: Polygon -> MultiPolygon
+        table_to.columns.insert(
+            "eligibilityBoundary".to_string(),
+            simple_column(
+                "eligibilityBoundary",
+                PgType::Geometry(Some("MultiPolygon".to_string()), Some(4326)),
+            ),
+        );
+        table_to.row_level_security = true;
+        // Source uses bare "id" reference — semantically identical to the DB form above
+        table_to.policies.push(Policy {
+            name: "vcs_project_verifier_select".to_string(),
+            table_schema: "mrv".to_string(),
+            table: "VcsProject".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some(
+                r#"EXISTS (SELECT 1 FROM mrv."VcsProjectInstance" vpi WHERE vpi."projectId" = "id" AND vpi."supplierId" IS NOT NULL)"#.to_string(),
+            ),
+            check_expr: None,
+            comment: None,
+        });
+        table_to.policies.push(Policy {
+            name: "vcs_project_service_role_all".to_string(),
+            table_schema: "mrv".to_string(),
+            table: "VcsProject".to_string(),
+            command: PolicyCommand::All,
+            roles: vec!["service_role".to_string()],
+            using_expr: Some("true".to_string()),
+            check_expr: Some("true".to_string()),
+            comment: None,
+        });
+        to.tables.insert("mrv.VcsProject".to_string(), table_to);
+
+        let ops = compute_diff(&from, &to);
+
+        let alter_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterPolicy { .. }))
+            .collect();
+        let drop_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropPolicy { .. }))
+            .collect();
+        let create_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreatePolicy(_)))
+            .collect();
+
+        assert_eq!(
+            alter_policy_ops.len(),
+            0,
+            "AlterPolicy must be suppressed when DROP+CREATE are already scheduled for the same policy (column type change path). Got: {alter_policy_ops:?}"
+        );
+        assert_eq!(
+            drop_policy_ops.len(),
+            2,
+            "Should have DropPolicy for each policy on the table"
+        );
+        assert_eq!(
+            create_policy_ops.len(),
+            2,
+            "Should have CreatePolicy for each policy on the table"
         );
     }
 }
