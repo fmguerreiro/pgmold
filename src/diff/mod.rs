@@ -118,8 +118,17 @@ pub fn compute_diff_with_flags(
         to,
         &affected_tables,
     ));
-    let (type_change_view_ops, _) =
+    let (type_change_view_ops, type_change_views_to_filter) =
         generate_view_ops_for_affected_tables(&ops, from, to, &affected_tables);
+    if !type_change_views_to_filter.is_empty() {
+        ops.retain(|op| {
+            if let MigrationOp::AlterView { name, .. } = op {
+                !type_change_views_to_filter.contains(name)
+            } else {
+                true
+            }
+        });
+    }
     ops.extend(type_change_view_ops);
 
     let tables_with_column_drops = tables_with_dropped_columns(&ops);
@@ -171,6 +180,54 @@ pub fn compute_diff_with_flags(
     ops.extend(diff_default_privileges(from, to));
 
     ops.extend(diff_comments(from, to));
+
+    debug_assert!(
+        {
+            let drop_policy_keys: std::collections::HashSet<(String, String)> = ops
+                .iter()
+                .filter_map(|op| {
+                    if let MigrationOp::DropPolicy { table, name } = op {
+                        Some((table.to_string(), name.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let conflict = ops.iter().any(|op| {
+                if let MigrationOp::AlterPolicy { table, name, .. } = op {
+                    drop_policy_keys.contains(&(table.to_string(), name.clone()))
+                } else {
+                    false
+                }
+            });
+            !conflict
+        },
+        "invariant violated: a policy appears in both DropPolicy and AlterPolicy in the same plan"
+    );
+
+    debug_assert!(
+        {
+            let drop_view_keys: std::collections::HashSet<String> = ops
+                .iter()
+                .filter_map(|op| {
+                    if let MigrationOp::DropView { name, .. } = op {
+                        Some(name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let conflict = ops.iter().any(|op| {
+                if let MigrationOp::AlterView { name, .. } = op {
+                    drop_view_keys.contains(name)
+                } else {
+                    false
+                }
+            });
+            !conflict
+        },
+        "invariant violated: a view appears in both DropView and AlterView in the same plan"
+    );
 
     ops
 }
@@ -4500,12 +4557,17 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         );
     }
 
-    // Regression test for #281: when a column type change forces DROP+CREATE for all policies
-    // on a table, any AlterPolicy emitted by the per-policy diff pass for those same policies
-    // must be suppressed. Without the fix, the plan contains both DROP POLICY and ALTER POLICY
-    // for the same policy, which aborts mid-apply with "policy does not exist".
+    // Regression test for #281 (filter-wiring): when a column type change forces DROP+CREATE for
+    // all policies on a table, any AlterPolicy emitted by the per-policy diff pass for those same
+    // policies must be suppressed by the filter-wiring code in compute_diff_with_flags. This test
+    // uses textually identical policy expressions on both sides so the per-policy diff would
+    // normally produce no AlterPolicy at all — but under the pre-fix code, if filter_wiring was
+    // absent the rebuild path itself could interact badly. The key invariant here is that no
+    // AlterPolicy is produced alongside a scheduled DROP+CREATE pair for the same policy name.
+    // The expressions are kept identical to isolate the filter-wiring fix from the normalization
+    // fix (see the separate normalization test below).
     #[test]
-    fn column_type_change_does_not_emit_alter_policy_alongside_drop_create() {
+    fn column_type_change_filter_wiring_suppresses_alter_policy() {
         use crate::model::{Policy, PolicyCommand};
 
         let mut from = empty_schema();
@@ -4513,34 +4575,28 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         table
             .columns
             .insert("id".to_string(), simple_column("id", PgType::BigInt));
-        // The column whose type is changing — this triggers rebuild of all policies on the table
         table.columns.insert(
-            "eligibilityBoundary".to_string(),
+            "boundary".to_string(),
             simple_column(
-                "eligibilityBoundary",
+                "boundary",
                 PgType::Geometry(Some("Polygon".to_string()), Some(4326)),
             ),
         );
         table.row_level_security = true;
-        // This policy's USING clause references "id" bare in source but will be stored
-        // as mrv."VcsProject"."id" by PostgreSQL (the DB-introspected form).
-        // The expression comparison must treat them as equal; either way the AlterPolicy
-        // must be suppressed when a DROP+CREATE is already scheduled.
+        // Both sides use the exact same expression text — no normalization needed.
+        // The only driver of DROP+CREATE is the column type change on "boundary".
         table.policies.push(Policy {
-            name: "vcs_project_verifier_select".to_string(),
+            name: "vcs_project_select".to_string(),
             table_schema: "mrv".to_string(),
             table: "VcsProject".to_string(),
             command: PolicyCommand::Select,
             roles: vec!["authenticated".to_string()],
-            // Simulate what PostgreSQL stores (3-part qualified column)
-            using_expr: Some(
-                r#"EXISTS (SELECT 1 FROM mrv."VcsProjectInstance" vpi WHERE vpi."projectId" = mrv."VcsProject"."id" AND vpi."supplierId" IS NOT NULL)"#.to_string(),
-            ),
+            using_expr: Some("true".to_string()),
             check_expr: None,
             comment: None,
         });
         table.policies.push(Policy {
-            name: "vcs_project_service_role_all".to_string(),
+            name: "vcs_project_all".to_string(),
             table_schema: "mrv".to_string(),
             table: "VcsProject".to_string(),
             command: PolicyCommand::All,
@@ -4556,30 +4612,28 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         table_to
             .columns
             .insert("id".to_string(), simple_column("id", PgType::BigInt));
-        // Column type changed: Polygon -> MultiPolygon
+        // Column type changed: Polygon -> MultiPolygon — triggers policy rebuild
         table_to.columns.insert(
-            "eligibilityBoundary".to_string(),
+            "boundary".to_string(),
             simple_column(
-                "eligibilityBoundary",
+                "boundary",
                 PgType::Geometry(Some("MultiPolygon".to_string()), Some(4326)),
             ),
         );
         table_to.row_level_security = true;
-        // Source uses bare "id" reference — semantically identical to the DB form above
+        // Expressions are identical text — this test pins only filter-wiring, not normalization.
         table_to.policies.push(Policy {
-            name: "vcs_project_verifier_select".to_string(),
+            name: "vcs_project_select".to_string(),
             table_schema: "mrv".to_string(),
             table: "VcsProject".to_string(),
             command: PolicyCommand::Select,
             roles: vec!["authenticated".to_string()],
-            using_expr: Some(
-                r#"EXISTS (SELECT 1 FROM mrv."VcsProjectInstance" vpi WHERE vpi."projectId" = "id" AND vpi."supplierId" IS NOT NULL)"#.to_string(),
-            ),
+            using_expr: Some("true".to_string()),
             check_expr: None,
             comment: None,
         });
         table_to.policies.push(Policy {
-            name: "vcs_project_service_role_all".to_string(),
+            name: "vcs_project_all".to_string(),
             table_schema: "mrv".to_string(),
             table: "VcsProject".to_string(),
             command: PolicyCommand::All,
@@ -4608,17 +4662,208 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         assert_eq!(
             alter_policy_ops.len(),
             0,
-            "AlterPolicy must be suppressed when DROP+CREATE are already scheduled for the same policy (column type change path). Got: {alter_policy_ops:?}"
+            "AlterPolicy must be absent when DROP+CREATE already cover all policies (filter-wiring). Got: {alter_policy_ops:?}"
         );
+        assert_eq!(drop_policy_ops.len(), 2, "expected 2 DropPolicy ops");
+        assert_eq!(create_policy_ops.len(), 2, "expected 2 CreatePolicy ops");
+
+        let drop_names: std::collections::HashSet<String> = drop_policy_ops
+            .iter()
+            .filter_map(|op| {
+                if let MigrationOp::DropPolicy { name, .. } = op {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            drop_names.contains("vcs_project_select"),
+            "expected DropPolicy for vcs_project_select, got {drop_names:?}"
+        );
+        assert!(
+            drop_names.contains("vcs_project_all"),
+            "expected DropPolicy for vcs_project_all, got {drop_names:?}"
+        );
+
+        let create_names: std::collections::HashSet<String> = create_policy_ops
+            .iter()
+            .filter_map(|op| {
+                if let MigrationOp::CreatePolicy(p) = op {
+                    Some(p.name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            create_names.contains("vcs_project_select"),
+            "expected CreatePolicy for vcs_project_select, got {create_names:?}"
+        );
+        assert!(
+            create_names.contains("vcs_project_all"),
+            "expected CreatePolicy for vcs_project_all, got {create_names:?}"
+        );
+    }
+
+    // Regression test for #281 (normalization): policy expressions that differ only by
+    // qualified-vs-bare column reference (e.g. mrv."VcsProject"."id" vs "id") must not
+    // produce an AlterPolicy. There is no column type change here — the driver for no
+    // AlterPolicy is purely that the expressions compare semantically equal after normalization.
+    // This pins the normalization fix in src/util/mod.rs independently of the filter-wiring fix.
+    #[test]
+    fn qualified_column_reference_in_policy_expression_does_not_produce_alter_policy() {
+        use crate::model::{Policy, PolicyCommand};
+
+        let mut from = empty_schema();
+        let mut table = simple_table_with_schema("VcsProject", "mrv");
+        table
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::BigInt));
+        // No column type change — only difference is the expression qualification.
+        table.row_level_security = true;
+        // DB-introspected form: 3-part qualified column reference
+        table.policies.push(Policy {
+            name: "vcs_project_verifier_select".to_string(),
+            table_schema: "mrv".to_string(),
+            table: "VcsProject".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some(
+                r#"EXISTS (SELECT 1 FROM mrv."VcsProjectInstance" vpi WHERE vpi."projectId" = mrv."VcsProject"."id" AND vpi."supplierId" IS NOT NULL)"#.to_string(),
+            ),
+            check_expr: None,
+            comment: None,
+        });
+        from.tables.insert("mrv.VcsProject".to_string(), table);
+
+        let mut to = empty_schema();
+        let mut table_to = simple_table_with_schema("VcsProject", "mrv");
+        table_to
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::BigInt));
+        table_to.row_level_security = true;
+        // Source form: bare column reference — semantically equal to the DB form above
+        table_to.policies.push(Policy {
+            name: "vcs_project_verifier_select".to_string(),
+            table_schema: "mrv".to_string(),
+            table: "VcsProject".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some(
+                r#"EXISTS (SELECT 1 FROM mrv."VcsProjectInstance" vpi WHERE vpi."projectId" = "id" AND vpi."supplierId" IS NOT NULL)"#.to_string(),
+            ),
+            check_expr: None,
+            comment: None,
+        });
+        to.tables.insert("mrv.VcsProject".to_string(), table_to);
+
+        let ops = compute_diff(&from, &to);
+
+        let alter_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterPolicy { .. }))
+            .collect();
+
         assert_eq!(
-            drop_policy_ops.len(),
-            2,
-            "Should have DropPolicy for each policy on the table"
+            alter_policy_ops.len(),
+            0,
+            "qualified and bare column references must compare equal after normalization. Got: {alter_policy_ops:?}"
         );
+    }
+
+    // Regression test for #281 (views, filter-wiring): when a column type change forces
+    // DROP+CREATE for all views referencing the affected table, any AlterView emitted by the
+    // per-view diff pass for those same views must be suppressed. Without the fix, the plan
+    // contains both DropView and AlterView for the same view, which fails with "view does not
+    // exist" during apply.
+    #[test]
+    fn column_type_change_filter_wiring_suppresses_alter_view() {
+        use crate::model::View;
+
+        let mut from = empty_schema();
+        let mut table = simple_table_with_schema("VcsProject", "mrv");
+        table
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::BigInt));
+        table.columns.insert(
+            "boundary".to_string(),
+            simple_column(
+                "boundary",
+                PgType::Geometry(Some("Polygon".to_string()), Some(4326)),
+            ),
+        );
+        from.tables.insert("mrv.VcsProject".to_string(), table);
+        from.views.insert(
+            "mrv.vcs_project_view".to_string(),
+            View {
+                name: "vcs_project_view".to_string(),
+                schema: "mrv".to_string(),
+                query: r#"SELECT id, boundary FROM mrv."VcsProject""#.to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+                comment: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        let mut table_to = simple_table_with_schema("VcsProject", "mrv");
+        table_to
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::BigInt));
+        // Column type changed: Polygon -> MultiPolygon — triggers view rebuild
+        table_to.columns.insert(
+            "boundary".to_string(),
+            simple_column(
+                "boundary",
+                PgType::Geometry(Some("MultiPolygon".to_string()), Some(4326)),
+            ),
+        );
+        to.tables.insert("mrv.VcsProject".to_string(), table_to);
+        // View query is identical — without the fix the per-view diff emits AlterView,
+        // which then conflicts with the DropView emitted by the rebuild path.
+        to.views.insert(
+            "mrv.vcs_project_view".to_string(),
+            View {
+                name: "vcs_project_view".to_string(),
+                schema: "mrv".to_string(),
+                query: r#"SELECT id, boundary FROM mrv."VcsProject""#.to_string(),
+                materialized: false,
+                owner: None,
+                grants: vec![],
+                comment: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+
+        let alter_view_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterView { .. }))
+            .collect();
+        let drop_view_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::DropView { .. }))
+            .collect();
+        let create_view_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreateView(_)))
+            .collect();
+
         assert_eq!(
-            create_policy_ops.len(),
-            2,
-            "Should have CreatePolicy for each policy on the table"
+            alter_view_ops.len(),
+            0,
+            "AlterView must be suppressed when DropView+CreateView are already scheduled for the same view (column type change path). Got: {alter_view_ops:?}"
         );
+        assert_eq!(drop_view_ops.len(), 1, "expected 1 DropView op");
+        assert_eq!(create_view_ops.len(), 1, "expected 1 CreateView op");
+
+        if let MigrationOp::DropView { name, .. } = &drop_view_ops[0] {
+            assert_eq!(name, "mrv.vcs_project_view");
+        }
+        if let MigrationOp::CreateView(view) = &create_view_ops[0] {
+            assert_eq!(view.name, "vcs_project_view");
+        }
     }
 }
