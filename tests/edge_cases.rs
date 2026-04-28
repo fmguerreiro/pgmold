@@ -461,6 +461,79 @@ async fn domain_constraint_comment_round_trips_through_apply_and_introspect() {
 }
 
 #[tokio::test]
+async fn partition_child_constraint_comment_round_trips_through_apply_and_introspect() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    for stmt in [
+        r#"
+        CREATE TABLE public.measurement (
+            city_id INT NOT NULL,
+            logdate DATE NOT NULL,
+            peaktemp INT
+        ) PARTITION BY RANGE (logdate)
+        "#,
+        r#"
+        CREATE TABLE public.measurement_2024 PARTITION OF public.measurement
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')
+        "#,
+        r#"
+        ALTER TABLE public.measurement_2024
+            ADD CONSTRAINT measurement_2024_peak_positive CHECK (peaktemp > 0)
+        "#,
+    ] {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    let target = parse_sql_string(
+        r#"
+        CREATE TABLE public.measurement (
+            city_id INT NOT NULL,
+            logdate DATE NOT NULL,
+            peaktemp INT
+        ) PARTITION BY RANGE (logdate);
+        CREATE TABLE public.measurement_2024 PARTITION OF public.measurement
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+        ALTER TABLE public.measurement_2024
+            ADD CONSTRAINT measurement_2024_peak_positive CHECK (peaktemp > 0);
+        COMMENT ON CONSTRAINT measurement_2024_peak_positive ON public.measurement_2024
+            IS 'partition-local sanity check';
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    assert_eq!(
+        after
+            .table_constraint_comments
+            .get("public.measurement_2024.measurement_2024_peak_positive")
+            .map(String::as_str),
+        Some("partition-local sanity check"),
+        "introspect must capture COMMENT ON CONSTRAINT on partition child"
+    );
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
 async fn policy_comment_round_trips_through_apply_and_introspect() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
