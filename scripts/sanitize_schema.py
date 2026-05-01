@@ -171,7 +171,11 @@ def scrub_text(sql: str) -> str:
                 # `unknown` and rejected.
                 body = f"SELECT NULL::{returns_all[-1]}" if returns_all else "SELECT NULL"
         else:
-            if ret_kind in ("TABLE", "SETOF"):
+            # plpgsql:
+            #   - set-returning (TABLE/SETOF): RETURN takes no parameter
+            #   - void: RETURN takes no parameter
+            #   - scalar / trigger / record: RETURN NULL is fine
+            if ret_kind in ("TABLE", "SETOF", "VOID"):
                 body = "BEGIN RETURN; END;"
             else:
                 body = "BEGIN RETURN NULL; END;"
