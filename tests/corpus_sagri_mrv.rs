@@ -43,6 +43,32 @@ async fn sagri_mrv_snapshot_converges() {
         .await
         .expect("postgis extension should install");
 
+    // Pre-create the cluster-level roles the snapshot grants/RLS-policies
+    // reference. Supabase and the staging/prod environments provide these
+    // out of the box; the bare postgis image does not. CREATE ROLE has no
+    // IF NOT EXISTS, so we wrap each in a DO block that swallows
+    // duplicate_object.
+    for role in [
+        "authenticated",
+        "service_role",
+        "anon",
+        "supabase_admin",
+        "supabase_auth_admin",
+        "dashboard_user",
+        "metabase_ro",
+        "mrv_staging_admin",
+        "mrv_production_admin",
+    ] {
+        let stmt = format!(
+            "DO $$ BEGIN CREATE ROLE \"{role}\"; \
+             EXCEPTION WHEN duplicate_object THEN NULL; END $$"
+        );
+        sqlx::query(&stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("create role {role}: {e}"));
+    }
+
     // Supabase pre-creates the `extensions` schema; the snapshot relies on
     // that and never issues `CREATE SCHEMA "extensions"`. Inject it into the
     // pre-create set so the loop below creates it before apply runs.
