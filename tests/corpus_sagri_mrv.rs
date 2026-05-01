@@ -89,17 +89,22 @@ async fn sagri_mrv_snapshot_converges() {
     }
     schema_names.push("public".to_string());
 
+    // postgis/postgis ships with extra extensions (fuzzystrmatch,
+    // postgis_tiger_geocoder, ...) the snapshot does not declare. The
+    // snapshot is not trying to converge cluster-level extensions, so
+    // any DropExtension op from the diff is fixture noise, not signal.
+    let diff_without_drop_ext = |from: &Schema, to: &Schema| -> Vec<MigrationOp> {
+        compute_diff(from, to)
+            .into_iter()
+            .filter(|op| !matches!(op, MigrationOp::DropExtension { .. }))
+            .collect()
+    };
+
     let target = parse_sql_string(SNAPSHOT).expect("parse snapshot");
     let empty = introspect_schema(&connection, &schema_names, false)
         .await
         .expect("introspect empty");
-    // postgis/postgis ships with extra extensions (fuzzystrmatch,
-    // postgis_tiger_geocoder, ...) the snapshot does not declare. Filter
-    // DropExtension out of the plan — they're not the snapshot's concern.
-    let ops: Vec<MigrationOp> = compute_diff(&empty, &target)
-        .into_iter()
-        .filter(|op| !matches!(op, MigrationOp::DropExtension { .. }))
-        .collect();
+    let ops = diff_without_drop_ext(&empty, &target);
     let planned = plan_migration(ops);
     let sql_stmts = generate_sql(&planned);
 
@@ -113,10 +118,7 @@ async fn sagri_mrv_snapshot_converges() {
     let after = introspect_schema(&connection, &schema_names, false)
         .await
         .expect("introspect after apply");
-    let second_diff: Vec<MigrationOp> = compute_diff(&after, &target)
-        .into_iter()
-        .filter(|op| !matches!(op, MigrationOp::DropExtension { .. }))
-        .collect();
+    let second_diff = diff_without_drop_ext(&after, &target);
 
     if !second_diff.is_empty() {
         let remaining_sql = generate_sql(&plan_migration(second_diff.clone()));
