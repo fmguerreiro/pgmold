@@ -519,32 +519,44 @@ RE_DEFAULT_LITERAL = re.compile(
 
 
 def stub_check_expressions(sql: str) -> str:
-    """Replace every `CHECK (<expr>)` body with a UNIQUE always-true expr.
+    """Replace every `CHECK (<expr>)` body with a unique always-true expr,
+    and inject a unique CONSTRAINT name where one is missing.
 
     CHECK expressions can reference enum-typed columns adjacent to
     string literals (`<col> <op> '_'`), and PG validates these at apply
     time — the blanket `'_'` scrub fails because it isn't a valid enum
-    label. Stub the expression body. The constraint's existence, name,
-    and target are preserved; only the body content is dropped.
+    label. Stub the expression body to a tautology.
 
-    Each stubbed body must be unique because pgmold's planner names
-    inline unnamed CHECK constraints by expression — collapsing every
-    expression to the same `(true)` would generate duplicate
-    `<table>_check` names that collide at apply time.
+    Each stubbed body must be unique: pgmold's planner names inline
+    unnamed CHECK constraints `<table>_check` without uniquification,
+    so two unnamed CHECKs on the same table collide. Two defenses:
+      1. unique tautology body per CHECK
+      2. inject `CONSTRAINT "chk_<n>"` where the CHECK isn't already
+         preceded by `CONSTRAINT <name>` or `WITH ` (policy clause).
     """
     out: list[str] = []
     i = 0
     counter = 0
-    pat = re.compile(r"CHECK\s*\(", re.IGNORECASE)
+    pat = re.compile(r"\bCHECK\s*\(", re.IGNORECASE)
+    # Look back: already has a constraint name, or is a policy WITH CHECK.
+    constraint_re = re.compile(
+        r"\bCONSTRAINT\s+(?:\"[^\"]+\"|\w+)\s*$", re.IGNORECASE
+    )
+    with_re = re.compile(r"\bWITH\s+$", re.IGNORECASE)
     while True:
         m = pat.search(sql, i)
         if not m:
             out.append(sql[i:])
             return "".join(out)
         out.append(sql[i : m.start()])
-        # Find matching close paren via state-machine that respects
-        # single-quoted strings (which may contain parens). Dollar-
-        # quoted bodies have already been scrubbed at this stage.
+
+        # Decide whether to inject a CONSTRAINT name. Look back ~80
+        # chars for either CONSTRAINT <name> or WITH (whitespace).
+        lookback = sql[max(0, m.start() - 80) : m.start()]
+        already_named = bool(constraint_re.search(lookback))
+        is_policy_with = bool(with_re.search(lookback))
+
+        # Find matching close paren for the CHECK body.
         j = m.end()
         depth = 1
         in_string = False
@@ -567,7 +579,10 @@ def stub_check_expressions(sql: str) -> str:
                         break
             j += 1
         counter += 1
-        out.append(f"CHECK ({counter} = {counter})")
+        if already_named or is_policy_with:
+            out.append(f"CHECK ({counter} = {counter})")
+        else:
+            out.append(f'CONSTRAINT "chk_{counter}" CHECK ({counter} = {counter})')
         i = j + 1
 
 
