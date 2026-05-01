@@ -3732,6 +3732,26 @@ fn parses_alter_type_attribute_ops_no_model_effect() {
 }
 
 #[test]
+fn parses_alter_schema_owner_to_no_model_effect() {
+    let sql = r#"
+        CREATE SCHEMA foo;
+        ALTER SCHEMA "foo" OWNER TO "bar";
+    "#;
+    let schema = parse_sql_string(sql).expect("ALTER SCHEMA OWNER TO must parse without error");
+    assert!(schema.schemas.contains_key("foo"));
+}
+
+#[test]
+fn alter_schema_owner_to_does_not_warn() {
+    let sql = "ALTER SCHEMA \"foo\" OWNER TO \"bar\";";
+    let findings = find_unrecognized_statements(sql);
+    assert!(
+        findings.is_empty(),
+        "expected no unrecognized findings for ALTER SCHEMA OWNER TO, got: {findings:?}"
+    );
+}
+
+#[test]
 fn parses_alter_default_privileges_multi_grantee() {
     let sql = r#"
         ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA public

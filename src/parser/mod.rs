@@ -32,14 +32,14 @@ use crate::pg::sqlgen::strip_ident_quotes;
 use crate::util::{normalize_sql_whitespace, Result, SchemaError};
 use sqlparser::ast::{
     Action, AlterDefaultPrivileges, AlterDefaultPrivilegesAction, AlterDefaultPrivilegesObjectType,
-    AlterFunction, AlterFunctionKind, AlterFunctionOperation, AlterIndexOperation, AlterTable,
-    AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
-    AlterTypeOperation, CreateAggregate, CreateAggregateOption, CreateDomain, CreateExtension,
-    CreateFunction, CreateServerStatement, CreateTrigger, CreateView, DeferrableInitial,
-    DropDomain, DropExtension, DropFunction, DropTrigger, FunctionParallel, Grantee, GranteeName,
-    GranteesType, ObjectType, Owner, Privileges, RenameTableNameKind, SchemaName, Statement,
-    TableConstraint, TriggerEvent as SqlTriggerEvent, TriggerPeriod, TriggerReferencingType,
-    UserDefinedTypeRepresentation,
+    AlterFunction, AlterFunctionKind, AlterFunctionOperation, AlterIndexOperation, AlterSchema,
+    AlterSchemaOperation, AlterTable, AlterTableOperation, AlterType, AlterTypeAddValue,
+    AlterTypeAddValuePosition, AlterTypeOperation, CreateAggregate, CreateAggregateOption,
+    CreateDomain, CreateExtension, CreateFunction, CreateServerStatement, CreateTrigger,
+    CreateView, DeferrableInitial, DropDomain, DropExtension, DropFunction, DropTrigger,
+    FunctionParallel, Grantee, GranteeName, GranteesType, ObjectType, Owner, Privileges,
+    RenameTableNameKind, SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent,
+    TriggerPeriod, TriggerReferencingType, UserDefinedTypeRepresentation,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -655,6 +655,22 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     | AlterTypeOperation::RenameAttribute { .. } => {}
                 }
             }
+            Statement::AlterSchema(AlterSchema { operations, .. }) => {
+                // `PgSchema` does not yet carry an `owner` field, so OWNER TO
+                // accepts-and-ignores like ALTER TYPE SET SCHEMA. Other
+                // operations (Rename, SetDefaultCollate, replica/options ops)
+                // are BigQuery-flavoured or storage-only and not modelled.
+                for op in operations {
+                    match op {
+                        AlterSchemaOperation::OwnerTo { .. }
+                        | AlterSchemaOperation::Rename { .. }
+                        | AlterSchemaOperation::SetDefaultCollate { .. }
+                        | AlterSchemaOperation::AddReplica { .. }
+                        | AlterSchemaOperation::DropReplica { .. }
+                        | AlterSchemaOperation::SetOptionsParens { .. } => {}
+                    }
+                }
+            }
             Statement::AlterDefaultPrivileges(adp) => {
                 apply_alter_default_privileges(adp, &mut schema);
             }
@@ -1260,7 +1276,6 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             // pgmold consumes `AlterTable` (above) but not these sibling
             // ALTER variants yet.
             Statement::AlterView { .. }
-            | Statement::AlterSchema(_)
             | Statement::AlterPolicy { .. }
             | Statement::RenameTable(_)
             // Maintenance ops (VACUUM / ANALYZE / LOCK TABLE, etc.).
