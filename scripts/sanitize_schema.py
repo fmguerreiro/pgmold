@@ -519,18 +519,22 @@ RE_DEFAULT_LITERAL = re.compile(
 
 
 def stub_check_expressions(sql: str) -> str:
-    """Replace every `CHECK (<expr>)` body with `(true)`.
+    """Replace every `CHECK (<expr>)` body with a UNIQUE always-true expr.
 
     CHECK expressions can reference enum-typed columns adjacent to
     string literals (`<col> <op> '_'`), and PG validates these at apply
     time — the blanket `'_'` scrub fails because it isn't a valid enum
-    label. Rather than build a column-type map and rewrite each literal
-    comparison, stub the entire expression. The CHECK constraint's
-    existence, name, and target are preserved (so pgmold's diff/sqlgen
-    surface is exercised); only the body content is dropped.
+    label. Stub the expression body. The constraint's existence, name,
+    and target are preserved; only the body content is dropped.
+
+    Each stubbed body must be unique because pgmold's planner names
+    inline unnamed CHECK constraints by expression — collapsing every
+    expression to the same `(true)` would generate duplicate
+    `<table>_check` names that collide at apply time.
     """
     out: list[str] = []
     i = 0
+    counter = 0
     pat = re.compile(r"CHECK\s*\(", re.IGNORECASE)
     while True:
         m = pat.search(sql, i)
@@ -538,10 +542,9 @@ def stub_check_expressions(sql: str) -> str:
             out.append(sql[i:])
             return "".join(out)
         out.append(sql[i : m.start()])
-        # Find matching close paren via state-machine that tracks
-        # nesting and respects single-quoted strings (which may contain
-        # parens) — dollar-quoted bodies have already been scrubbed at
-        # this stage, so we only worry about regular literals.
+        # Find matching close paren via state-machine that respects
+        # single-quoted strings (which may contain parens). Dollar-
+        # quoted bodies have already been scrubbed at this stage.
         j = m.end()
         depth = 1
         in_string = False
@@ -563,7 +566,8 @@ def stub_check_expressions(sql: str) -> str:
                     if depth == 0:
                         break
             j += 1
-        out.append("CHECK (true)")
+        counter += 1
+        out.append(f"CHECK ({counter} = {counter})")
         i = j + 1
 
 
