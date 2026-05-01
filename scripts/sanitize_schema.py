@@ -93,6 +93,56 @@ RE_ENUM_DEF = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# Match a single-quoted string immediately followed by `::TYPE` cast.
+# Type can be: bare ident, schema.ident, schema."Ident", "Ident", with
+# optional `[]` array suffix.
+RE_TYPED_CAST = re.compile(
+    r"'(?:[^']|'')*'\s*::\s*"
+    r"((?:\"[^\"]+\"|[A-Za-z_][\w]*)"
+    r"(?:\s*\.\s*(?:\"[^\"]+\"|[A-Za-z_][\w]*))?"
+    r"(?:\s*\[\])?)",
+    re.IGNORECASE,
+)
+
+
+def _typed_cast_replacement(cast_target: str) -> str:
+    """Pick a type-compatible literal so `'X'::TYPE` parses + applies.
+
+    PG validates constant casts at function-create time (the JSONB cast
+    is the case CI surfaced), so the literal content has to be valid for
+    the target type, not just any old `'_'`.
+    """
+    target = cast_target.strip().lower()
+    is_array = target.endswith("[]")
+    base = target.rstrip("[] ")
+    if is_array:
+        return f"'{{}}'::{cast_target}"
+    if base in ("jsonb", "json"):
+        return f"'null'::{cast_target}"
+    if base == "uuid":
+        return f"'00000000-0000-0000-0000-000000000000'::{cast_target}"
+    if base == "interval":
+        return f"'1 day'::{cast_target}"
+    if base == "regclass":
+        return f"'pg_catalog.pg_class'::{cast_target}"
+    if base in ("date",):
+        return f"'1970-01-01'::{cast_target}"
+    if base in ("timestamp", "timestamptz", "time", "timetz"):
+        return f"'1970-01-01 00:00:00'::{cast_target}"
+    if base in ("inet", "cidr"):
+        return f"'0.0.0.0'::{cast_target}"
+    if base in ("int", "integer", "smallint", "bigint", "int2", "int4", "int8",
+                "real", "double precision", "float", "float4", "float8",
+                "numeric", "decimal", "money", "bool", "boolean"):
+        # 0 / FALSE both parse for these; bare 0 covers all numerics, FALSE for bool.
+        return ("'false'" if base in ("bool", "boolean") else "'0'") + f"::{cast_target}"
+    # Schema-qualified custom types (e.g. mrv.SomeEnum) — our enum scrubber
+    # always rewrites enum labels to `'v1'..'vN'`, so 'v1' is a safe pick.
+    if "." in base:
+        return f"'v1'::{cast_target}"
+    # text-like (text, varchar, char, character, citext, name, ...)
+    return f"'_'::{cast_target}"
+
 
 def scrub_text(sql: str) -> str:
     """Strip comments + scrub string-literal contents.
@@ -132,6 +182,14 @@ def scrub_text(sql: str) -> str:
         return stash(head + new_slots + tail)
 
     sql = RE_ENUM_DEF.sub(repl_enum, sql)
+
+    # Typed-cast literals (`'X'::TYPE`) need a value valid for the target
+    # type. PG evaluates constant casts at function-create time and the
+    # blanket `'_'` substitution would fail for jsonb / uuid / etc.
+    def repl_cast(m: re.Match[str]) -> str:
+        return stash(_typed_cast_replacement(m.group(1)))
+
+    sql = RE_TYPED_CAST.sub(repl_cast, sql)
 
     # Dollar-quoted blocks are function bodies. We need a body that the
     # PG parser accepts for the function's LANGUAGE — `NULL` alone is

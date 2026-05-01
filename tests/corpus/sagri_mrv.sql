@@ -425,7 +425,7 @@ ALTER TABLE "auth"."t_0070" ADD CONSTRAINT "con_0127" FOREIGN KEY ("c_0438") REF
 
 CREATE TABLE "auth"."t_0077" (
     "c_0094" TIMESTAMP WITH TIME ZONE,
-    "id" BIGINT NOT NULL DEFAULT nextval('_'::regclass),
+    "id" BIGINT NOT NULL DEFAULT nextval('pg_catalog.pg_class'::regclass),
     "c_0237" UUID,
     "c_0338" VARCHAR(255),
     "c_0412" BOOLEAN,
@@ -1044,7 +1044,7 @@ GRANT ALL ON TABLE "public"."t_0051" TO "service_role";
 CREATE TABLE "public"."t_0052" (
     "name" TEXT NOT NULL,
     "c_0165" BOOLEAN NOT NULL DEFAULT false,
-    "c_0416" JSONB NOT NULL DEFAULT '_'::jsonb,
+    "c_0416" JSONB NOT NULL DEFAULT 'null'::jsonb,
     "c_0139" TEXT,
     "c_0094" TIMESTAMPTZ NOT NULL DEFAULT now(),
     "c_0525" TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1217,7 +1217,7 @@ CREATE TABLE public.t_0096 (
     p_0001     UUID NOT NULL REFERENCES public.t_0050(id) ON DELETE CASCADE,
     c_0220        UUID NOT NULL REFERENCES auth.t_0095(id),
     c_0219        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    c_0180        TIMESTAMPTZ NOT NULL DEFAULT (now() + '_'::interval),
+    c_0180        TIMESTAMPTZ NOT NULL DEFAULT (now() + '1 day'::interval),
     c_0413        TIMESTAMPTZ,
     c_0414        UUID REFERENCES auth.t_0095(id),
     UNIQUE (c_0533, p_0001, c_0219)
@@ -3089,9 +3089,9 @@ ON DELETE SET NULL ON UPDATE CASCADE;
 
 ALTER TABLE "mrv"."t_0001"
 ADD CONSTRAINT "con_0108" CHECK (
-    ("c_0217" = '_'::mrv."ty_0001" AND "c_0490" IS NOT NULL AND "c_0491" IS NULL)
+    ("c_0217" = 'v1'::mrv."ty_0001" AND "c_0490" IS NOT NULL AND "c_0491" IS NULL)
     OR
-    ("c_0217" = '_'::mrv."ty_0001" AND "c_0491" IS NOT NULL AND "c_0490" IS NULL)
+    ("c_0217" = 'v1'::mrv."ty_0001" AND "c_0491" IS NOT NULL AND "c_0490" IS NULL)
 );
 
 
@@ -3183,7 +3183,7 @@ ON "mrv"."t_0006"("c_0186", "c_0101", "c_0470");
 
 CREATE UNIQUE INDEX IF NOT EXISTS "idx_0145"
 ON "mrv"."t_0006"("c_0186", "c_0434", "c_0101")
-WHERE "c_0470" = '_'::"mrv"."ty_0005";
+WHERE "c_0470" = 'v1'::"mrv"."ty_0005";
 
 
 ALTER TABLE "mrv"."t_0006"
@@ -3713,7 +3713,7 @@ ADD CONSTRAINT "con_0174" CHECK (
 
 ALTER TABLE "mrv"."t_0034"
 ADD CONSTRAINT "con_0175" CHECK (
-    (("c_0355" <> '_'::mrv."ty_0025") OR ("c_0255" = true))
+    (("c_0355" <> 'v1'::mrv."ty_0025") OR ("c_0255" = true))
 );
 
 
@@ -5162,7 +5162,7 @@ CREATE OR REPLACE FUNCTION mrv.f_0128(
     p_0070 text,
     p_0014 char(2)[],
     p_0116 text DEFAULT NULL,
-    p_0024 jsonb DEFAULT '_'::jsonb
+    p_0024 jsonb DEFAULT 'null'::jsonb
 )
 RETURNS JSONB
 LANGUAGE plpgsql
