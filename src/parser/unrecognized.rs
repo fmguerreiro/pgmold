@@ -56,11 +56,9 @@ static REVOKE_BROAD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bREVOKE\s+[^;]+;").unwrap());
 
 // Restricted to the object kinds whose OWNER TO is routed through the
-// preprocess strip + ownership.rs regex pass. ALTER AGGREGATE ... OWNER
-// TO is parsed through the sqlparser AST path instead and must not appear
-// here. SCHEMA is included: preprocess leaves it alone and sqlparser's
-// AlterSchema is ignored in parser/mod.rs, so owner changes there are
-// silently dropped — exactly the shape this detector exists to surface.
+// preprocess strip + ownership.rs regex pass, plus the AST-handled kinds
+// (TYPE, SCHEMA). ALTER AGGREGATE ... OWNER TO is parsed through the
+// sqlparser AST path instead and must not appear here.
 static ALTER_OWNER_BROAD: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?is)\bALTER\s+(?:TABLE|FUNCTION|TYPE|DOMAIN|MATERIALIZED\s+VIEW|VIEW|SEQUENCE|SCHEMA)\s+[^;]+?\s+OWNER\s+TO\s+[^;]+;",
@@ -130,6 +128,8 @@ static ALTER_VIEW_OWNER_CLAIM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bALTER\s+VIEW\s+.+?\s+OWNER\s+TO\s+").unwrap());
 static ALTER_SEQUENCE_OWNER_CLAIM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bALTER\s+SEQUENCE\s+.+?\s+OWNER\s+TO\s+").unwrap());
+static ALTER_SCHEMA_OWNER_CLAIM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)\bALTER\s+SCHEMA\s+.+?\s+OWNER\s+TO\s+").unwrap());
 
 // AST-handled since pgmold-289: any well-formed statement is processed by
 // `apply_alter_default_privileges` regardless of role/schema/grantee count
@@ -186,6 +186,7 @@ static RECOGNIZERS: &[BroadRecognizer] = &[
             &ALTER_MATERIALIZED_VIEW_OWNER_CLAIM,
             &ALTER_VIEW_OWNER_CLAIM,
             &ALTER_SEQUENCE_OWNER_CLAIM,
+            &ALTER_SCHEMA_OWNER_CLAIM,
         ],
     },
     BroadRecognizer {
@@ -370,11 +371,15 @@ COMMENT ON TABLE public.users IS 'a table';
     }
 
     #[test]
-    fn alter_schema_owner_flagged() {
+    fn alter_schema_owner_not_flagged() {
         let sql = "ALTER SCHEMA foo OWNER TO bar;";
-        let findings = find_unrecognized_statements(sql);
-        assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].kind, "ALTER ... OWNER TO");
+        assert!(find_unrecognized_statements(sql).is_empty());
+    }
+
+    #[test]
+    fn alter_schema_owner_quoted_not_flagged() {
+        let sql = "ALTER SCHEMA \"foo\" OWNER TO \"bar\";";
+        assert!(find_unrecognized_statements(sql).is_empty());
     }
 
     #[test]
@@ -440,14 +445,13 @@ END $$;
     fn multiple_unrecognized_statements_reported() {
         let sql = "\
 COMMENT ON INDEX public.idx_foo IS 'a';
-ALTER SCHEMA foo OWNER TO bar;
+ALTER COLLATION foo OWNER TO bar;
 GRANT role1 TO alice;
 ";
         let findings = find_unrecognized_statements(sql);
-        assert_eq!(findings.len(), 3);
+        assert_eq!(findings.len(), 2);
         let kinds: Vec<&str> = findings.iter().map(|f| f.kind).collect();
         assert!(kinds.contains(&"COMMENT ON"));
-        assert!(kinds.contains(&"ALTER ... OWNER TO"));
         assert!(kinds.contains(&"GRANT"));
     }
 }
