@@ -106,6 +106,29 @@ RE_TYPED_CAST = re.compile(
 )
 
 
+# Keyword-prefixed typed literals: `INTERVAL '...'`, `DATE '...'`,
+# `TIMESTAMP '...'`, etc. The blanket scrub turns these into bodies
+# that don't parse for the typed-literal grammar.
+RE_KEYWORD_TYPED_LITERAL = re.compile(
+    r"\b(INTERVAL|DATE|TIME|TIMESTAMP(?:TZ)?|TIMESTAMPZ|TIMESTAMP\s+WITH\s+TIME\s+ZONE)"
+    r"\s+'(?:[^']|'')*'",
+    re.IGNORECASE,
+)
+
+
+def _keyword_typed_replacement(keyword: str) -> str:
+    kw = re.sub(r"\s+", " ", keyword.strip().upper())
+    if kw == "INTERVAL":
+        return "INTERVAL '1 day'"
+    if kw == "DATE":
+        return "DATE '1970-01-01'"
+    if kw in ("TIMESTAMP", "TIMESTAMP WITH TIME ZONE", "TIMESTAMPTZ", "TIMESTAMPZ"):
+        return f"{keyword} '1970-01-01 00:00:00'"
+    if kw == "TIME":
+        return "TIME '00:00:00'"
+    return f"{keyword} '_'"  # fallback
+
+
 def _typed_cast_replacement(cast_target: str) -> str:
     """Pick a type-compatible literal so `'X'::TYPE` parses + applies.
 
@@ -183,6 +206,13 @@ def scrub_text(sql: str) -> str:
         return stash(head + new_slots + tail)
 
     sql = RE_ENUM_DEF.sub(repl_enum, sql)
+
+    # Keyword-prefixed typed literals (`INTERVAL '...'`, `DATE '...'`)
+    # also need a valid body for the type. Run before the blanket scrub.
+    def repl_kw_typed(m: re.Match[str]) -> str:
+        return stash(_keyword_typed_replacement(m.group(1)))
+
+    sql = RE_KEYWORD_TYPED_LITERAL.sub(repl_kw_typed, sql)
 
     # Typed-cast literals (`'X'::TYPE`) need a value valid for the target
     # type. PG evaluates constant casts at function-create time and the
