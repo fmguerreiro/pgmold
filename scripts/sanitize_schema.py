@@ -95,12 +95,13 @@ RE_ENUM_DEF = re.compile(
 
 # Match a single-quoted string immediately followed by `::TYPE` cast.
 # Type can be: bare ident, schema.ident, schema."Ident", "Ident", with
-# optional `[]` array suffix.
+# optional `(n)` / `(n,m)` typmod and optional `[]` array suffix.
 RE_TYPED_CAST = re.compile(
     r"'(?:[^']|'')*'\s*::\s*"
     r"((?:\"[^\"]+\"|[A-Za-z_][\w]*)"
     r"(?:\s*\.\s*(?:\"[^\"]+\"|[A-Za-z_][\w]*))?"
-    r"(?:\s*\[\])?)",
+    r"(?:\s*\([^)]*\))?"     # optional (n) / (n,m) typmod
+    r"(?:\s*\[\])?)",        # optional [] array
     re.IGNORECASE,
 )
 
@@ -491,30 +492,63 @@ def scrub_view_bodies(sql: str) -> str:
     return RE_VIEW_DEF.sub(lambda m: m.group(1) + "SELECT 1 AS placeholder", sql)
 
 
-# Match a column definition where the type is one of our renamed enum
-# types (`ty_NNNN`, possibly schema-qualified, possibly quoted) and the
-# DEFAULT is a string literal. The blanket scrub leaves the default as
-# `'_'`, which isn't a valid label of the rewritten enum, and PG
-# validates the literal at apply time. Group 1 captures the prefix up
-# to (but not including) the literal so we can swap just the tail.
-RE_ENUM_COL_DEFAULT = re.compile(
-    r"("
-    r"(?:(?:\"\w+\"|\w+)\s*\.\s*)?"   # optional schema prefix
-    r"(?:\"ty_\d+\"|ty_\d+)"          # enum type ident (quoted or bare)
-    r"\s[^,\n;]*?DEFAULT\s+"          # column suffix up to and including DEFAULT
+# Column line in a CREATE TABLE body, anchored to line-start so the
+# column name (not the type) starts the match. After the column name
+# comes the type token (possibly schema-qualified, possibly with
+# `[]` array or `(n,m)` typmod), then up to a DEFAULT '<literal>'.
+#
+# Captures:
+#   1: full prefix up to and including DEFAULT
+#   2: type leaf-name (quoted form) or
+#   3: type leaf-name (bare form)
+#   4: `[]` array suffix if present
+RE_DEFAULT_LITERAL = re.compile(
+    r"(?m)"
+    r"("                                                # group 1: prefix
+    r"^\s+"                                             # leading indent
+    r"(?:\"[^\"]+\"|\w+)\s+"                            # column name + sep
+    r"(?:(?:\"\w+\"|\w+)\s*\.\s*)?"                     # optional schema prefix on type
+    r"(?:\"([A-Za-z_]\w*)\"|([A-Za-z_]\w*))"            # type ident (g2 quoted, g3 bare)
+    r"(\s*\[\])?"                                       # g4: optional []
+    r"(?:\s*\([^)]*\))?"                                # optional (n,m) typmod
+    r"[^,\n;]*?DEFAULT\s+"                              # column suffix up to DEFAULT
     r")"
-    r"'(?:[^']|'')*'",                # the literal we replace
+    r"'(?:[^']|'')*'",                                  # literal we replace
     re.IGNORECASE,
 )
 
 
-def fix_enum_column_defaults(sql: str) -> str:
-    """Rewrite DEFAULT literals on custom-enum columns to a valid label.
+def fix_default_literals(sql: str) -> str:
+    """Rewrite implicit-cast DEFAULT literals to a value valid for the type.
 
-    The enum-label scrubber rewrites every enum value to `'v1'..'vN'`,
-    so `'v1'` is always a valid default for any of our scrubbed enums.
+    Cases the blanket scrub gets wrong (because PG validates the literal
+    at apply time when implicitly cast to the column type):
+      - custom enum (ty_NNNN): use 'v1' (matches the enum-label scrub)
+      - any array (<type>[]): use '{}' (empty array literal)
+      - jsonb / json: use 'null'
+      - uuid: use a zero UUID
+      - text-like / numeric / bool: leave the blanket '_' alone (it's
+        accepted for text-like; numeric/bool defaults rarely use string
+        literals — those fail differently and are out of scope here)
     """
-    return RE_ENUM_COL_DEFAULT.sub(lambda m: m.group(1) + "'v1'", sql)
+
+    def repl(m: re.Match[str]) -> str:
+        prefix = m.group(1)
+        type_name = (m.group(2) or m.group(3) or "").lower()
+        is_array = m.group(4) is not None
+        if is_array:
+            new_lit = "'{}'"
+        elif re.fullmatch(r"ty_\d+", type_name):
+            new_lit = "'v1'"
+        elif type_name in ("jsonb", "json"):
+            new_lit = "'null'"
+        elif type_name == "uuid":
+            new_lit = "'00000000-0000-0000-0000-000000000000'"
+        else:
+            return m.group(0)  # leave blanket '_' for text/etc.
+        return prefix + new_lit
+
+    return RE_DEFAULT_LITERAL.sub(repl, sql)
 
 
 def discover_identifiers(all_sql: str) -> "OrderedDict[str, str]":
@@ -720,7 +754,7 @@ def main() -> int:
     scrubbed = scrub_view_bodies(raw)
     scrubbed = scrub_text(scrubbed)
     renamed = apply_rename(scrubbed, manifest)
-    renamed = fix_enum_column_defaults(renamed)
+    renamed = fix_default_literals(renamed)
 
     args.output_file.parent.mkdir(parents=True, exist_ok=True)
     args.output_file.write_text(
