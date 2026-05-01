@@ -650,31 +650,44 @@ def find_enum_columns(sql: str) -> set[str]:
 
 
 def rewrite_enum_predicates(sql: str, enum_cols: set[str]) -> str:
-    """For each known enum column, rewrite `<col> <op> '<lit>'` and
-    `<col> IN ('<lit>',...)` predicates to use `'v1'` (always a valid
-    label of any of our scrubbed enums)."""
+    """For each known enum column, rewrite literal predicates to use
+    `'v1'` (always a valid label of any of our scrubbed enums).
+
+    Handles every shape we've seen so far:
+      "col" = '_',  col = '_',  s.col = '_',  s."col" = '_',
+      (col)::text <> '_'::text  (cast-wrap from PG's introspect dump),
+      "col" IN ('_', '_', ...).
+    """
     if not enum_cols:
         return sql
     name_alt = "|".join(re.escape(c) for c in enum_cols)
-    # `"col" <op> '<lit>'` (op = =, <>, !=, IS [NOT] DISTINCT FROM)
+    # Column reference: optional alias prefix, then quoted or bare ident,
+    # optionally wrapped as `(col)::text` or `(s.col)::text`.
+    col_ref = (
+        r"(?:\(\s*)?"                     # optional `(`
+        r"(?:\w+\s*\.\s*)?"               # optional alias.
+        r"(?:\"(?:" + name_alt + r")\"|(?:" + name_alt + r"))"
+        r"(?:\s*\)\s*::\s*\w+)?"          # optional `)::text` cast wrap
+    )
+    op = r"(?:=|<>|!=|IS\s+DISTINCT\s+FROM|IS\s+NOT\s+DISTINCT\s+FROM)"
+
+    # `<col_ref> <op> '<lit>'[::TYPE]?`
     cmp_re = re.compile(
-        r"(\"(?:" + name_alt + r")\"\s*"
-        r"(?:=|<>|!=|IS\s+DISTINCT\s+FROM|IS\s+NOT\s+DISTINCT\s+FROM)\s*)"
-        r"'(?:[^']|'')*'",
+        r"(" + col_ref + r"\s*" + op + r"\s*)"
+        r"'(?:[^']|'')*'(?:\s*::\s*\w+)?",
         re.IGNORECASE,
     )
     sql = cmp_re.sub(lambda m: m.group(1) + "'v1'", sql)
-    # `'<lit>' <op> "col"` (operands swapped)
+    # `'<lit>'[::TYPE]? <op> <col_ref>` (operands swapped)
     cmp_re2 = re.compile(
-        r"'(?:[^']|'')*'"
-        r"(\s*(?:=|<>|!=|IS\s+DISTINCT\s+FROM|IS\s+NOT\s+DISTINCT\s+FROM)\s*"
-        r"\"(?:" + name_alt + r")\")",
+        r"'(?:[^']|'')*'(?:\s*::\s*\w+)?"
+        r"(\s*" + op + r"\s*" + col_ref + r")",
         re.IGNORECASE,
     )
     sql = cmp_re2.sub(lambda m: "'v1'" + m.group(1), sql)
-    # `"col" [NOT] IN ('<lit>', '<lit>', ...)` — replace each literal
+    # `<col_ref> [NOT] IN ('<lit>', ...)`
     in_re = re.compile(
-        r"(\"(?:" + name_alt + r")\"\s*(?:NOT\s+)?IN\s*\()([^)]*)\)",
+        r"(" + col_ref + r"\s*(?:NOT\s+)?IN\s*\()([^)]*)\)",
         re.IGNORECASE,
     )
 

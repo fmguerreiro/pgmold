@@ -1782,7 +1782,7 @@ CREATE POLICY "pol_0054" ON "public"."t_0092" FOR SELECT TO "authenticated" USIN
 CREATE POLICY "pol_0048" ON "public"."t_0092" FOR DELETE TO "authenticated" USING ((EXISTS (SELECT 1
    FROM (t_0094 ur
      JOIN t_0079 r ON ((ur.c_0415 = r.id)))
-  WHERE ((ur.p_0123 = ( SELECT auth.f_0100() AS f_0100)) AND (ur.p_0121 = t_0092.id) AND (NOT EXISTS (SELECT 1 FROM t_0049 es WHERE es.p_0121 = t_0092.id)) AND (r.name = '_'::text)))));
+  WHERE ((ur.p_0123 = ( SELECT auth.f_0100() AS f_0100)) AND (ur.p_0121 = t_0092.id) AND (NOT EXISTS (SELECT 1 FROM t_0049 es WHERE es.p_0121 = t_0092.id)) AND (r.name = 'v1')))));
 
 
 CREATE POLICY "pol_0008" ON "public"."t_0094" FOR ALL TO "authenticated" USING (auth.f_0060());
@@ -5346,7 +5346,7 @@ CREATE POLICY "pol_0091" ON mrv."t_0001" FOR SELECT TO authenticated
             SELECT 1
             FROM public.t_0092 s
             WHERE s.id = "c_0171"
-              AND s.ty_0034 = '_'
+              AND s.ty_0034 = 'v1'
         )
     );
 
@@ -5360,7 +5360,7 @@ CREATE POLICY "pol_0092" ON mrv."t_0001" FOR UPDATE TO authenticated
             SELECT 1
             FROM public.t_0092 s
             WHERE s.id = "c_0171"
-              AND s.ty_0034 = '_'
+              AND s.ty_0034 = 'v1'
         )
     )
     WITH CHECK (85 = 85);
@@ -5372,7 +5372,7 @@ CREATE POLICY "pol_0089" ON mrv."t_0001" FOR DELETE TO authenticated
             SELECT 1
             FROM public.t_0092 s
             WHERE s.id = "c_0171"
-              AND s.ty_0034 = '_'
+              AND s.ty_0034 = 'v1'
         )
     );
 
@@ -5391,7 +5391,7 @@ CREATE POLICY "pol_0086" ON mrv."t_0002" FOR SELECT TO authenticated
         JOIN public.t_0092 s ON s.id = cp."c_0171"
         WHERE cp.id = "t_0002"."c_0057"
         AND cp."c_0171" = auth.f_0100()
-        AND s.ty_0034 = '_'
+        AND s.ty_0034 = 'v1'
     ));
 
 CREATE POLICY "pol_0085" ON mrv."t_0002" FOR INSERT TO authenticated
@@ -5403,7 +5403,7 @@ CREATE POLICY "pol_0087" ON mrv."t_0002" FOR UPDATE TO authenticated
         JOIN public.t_0092 s ON s.id = cp."c_0171"
         WHERE cp.id = "t_0002"."c_0057"
         AND cp."c_0171" = auth.f_0100()
-        AND s.ty_0034 = '_'
+        AND s.ty_0034 = 'v1'
     ))
     WITH CHECK (89 = 89);
 
@@ -5413,7 +5413,7 @@ CREATE POLICY "pol_0084" ON mrv."t_0002" FOR DELETE TO authenticated
         JOIN public.t_0092 s ON s.id = cp."c_0171"
         WHERE cp.id = "t_0002"."c_0057"
         AND cp."c_0171" = auth.f_0100()
-        AND s.ty_0034 = '_'
+        AND s.ty_0034 = 'v1'
     ));
 
 
