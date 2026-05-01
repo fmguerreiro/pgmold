@@ -93,7 +93,13 @@ async fn sagri_mrv_snapshot_converges() {
     let empty = introspect_schema(&connection, &schema_names, false)
         .await
         .expect("introspect empty");
-    let ops = compute_diff(&empty, &target);
+    // postgis/postgis ships with extra extensions (fuzzystrmatch,
+    // postgis_tiger_geocoder, ...) the snapshot does not declare. Filter
+    // DropExtension out of the plan — they're not the snapshot's concern.
+    let ops: Vec<MigrationOp> = compute_diff(&empty, &target)
+        .into_iter()
+        .filter(|op| !matches!(op, MigrationOp::DropExtension { .. }))
+        .collect();
     let planned = plan_migration(ops);
     let sql_stmts = generate_sql(&planned);
 
@@ -107,7 +113,10 @@ async fn sagri_mrv_snapshot_converges() {
     let after = introspect_schema(&connection, &schema_names, false)
         .await
         .expect("introspect after apply");
-    let second_diff = compute_diff(&after, &target);
+    let second_diff: Vec<MigrationOp> = compute_diff(&after, &target)
+        .into_iter()
+        .filter(|op| !matches!(op, MigrationOp::DropExtension { .. }))
+        .collect();
 
     if !second_diff.is_empty() {
         let remaining_sql = generate_sql(&plan_migration(second_diff.clone()));
