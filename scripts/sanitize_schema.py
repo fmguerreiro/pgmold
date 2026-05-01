@@ -518,6 +518,55 @@ RE_DEFAULT_LITERAL = re.compile(
 )
 
 
+def stub_check_expressions(sql: str) -> str:
+    """Replace every `CHECK (<expr>)` body with `(true)`.
+
+    CHECK expressions can reference enum-typed columns adjacent to
+    string literals (`<col> <op> '_'`), and PG validates these at apply
+    time — the blanket `'_'` scrub fails because it isn't a valid enum
+    label. Rather than build a column-type map and rewrite each literal
+    comparison, stub the entire expression. The CHECK constraint's
+    existence, name, and target are preserved (so pgmold's diff/sqlgen
+    surface is exercised); only the body content is dropped.
+    """
+    out: list[str] = []
+    i = 0
+    pat = re.compile(r"CHECK\s*\(", re.IGNORECASE)
+    while True:
+        m = pat.search(sql, i)
+        if not m:
+            out.append(sql[i:])
+            return "".join(out)
+        out.append(sql[i : m.start()])
+        # Find matching close paren via state-machine that tracks
+        # nesting and respects single-quoted strings (which may contain
+        # parens) — dollar-quoted bodies have already been scrubbed at
+        # this stage, so we only worry about regular literals.
+        j = m.end()
+        depth = 1
+        in_string = False
+        while j < len(sql) and depth > 0:
+            c = sql[j]
+            if in_string:
+                if c == "'":
+                    if j + 1 < len(sql) and sql[j + 1] == "'":
+                        j += 2
+                        continue
+                    in_string = False
+            else:
+                if c == "'":
+                    in_string = True
+                elif c == "(":
+                    depth += 1
+                elif c == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            j += 1
+        out.append("CHECK (true)")
+        i = j + 1
+
+
 def fix_default_literals(sql: str) -> str:
     """Rewrite implicit-cast DEFAULT literals to a value valid for the type.
 
@@ -755,6 +804,7 @@ def main() -> int:
     scrubbed = scrub_text(scrubbed)
     renamed = apply_rename(scrubbed, manifest)
     renamed = fix_default_literals(renamed)
+    renamed = stub_check_expressions(renamed)
 
     args.output_file.parent.mkdir(parents=True, exist_ok=True)
     args.output_file.write_text(

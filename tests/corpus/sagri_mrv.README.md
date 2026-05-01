@@ -59,6 +59,13 @@ against a pinned pgmold version, not from refreshing this snapshot.
 
 ## Known gaps (file follow-up issues if they bite)
 
+- **CHECK expression bodies are stubbed to `(true)`**, so the snapshot
+  doesn't exercise CHECK expression normalization (operator/function
+  call reformatting, parenthesization). The constraint name and target
+  *are* preserved, so add/drop diff still gets exercised. This was
+  needed because CHECK expressions on enum-typed columns compare to
+  string literals (`<col> <op> 'X'`) which the blanket scrub turns
+  into `'_'`, an invalid enum label that fails at apply.
 - **View bodies are stubbed**, so view-body parser surface (CTEs, LATERAL
   joins, window functions, complex projections) isn't exercised. A smarter
   scrubber that renames inside view bodies via column-aware substitution
