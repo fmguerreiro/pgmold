@@ -586,6 +586,76 @@ def stub_check_expressions(sql: str) -> str:
         i = j + 1
 
 
+def find_enum_columns(sql: str) -> set[str]:
+    """Return the set of column names that are typed as a renamed enum
+    (`ty_NNNN`, optionally schema-qualified, optionally quoted) inside
+    any CREATE TABLE body. Used to rewrite `<col> <op> '<lit>'` and
+    `<col> IN ('<lit>',...)` predicates so they don't fail enum-cast
+    validation at apply time.
+    """
+    cols: set[str] = set()
+    # Note: `\b` after `\"ty_\d+\"` would fail (the closing `"` is
+    # non-word and the next char is also non-word), so we only attach
+    # the boundary check to the bare-form alternative.
+    line_re = re.compile(
+        r"^\s+(?:\"([^\"]+)\"|(\w+))\s+"
+        r"(?:(?:\"\w+\"|\w+)\s*\.\s*)?"
+        r"(?:\"ty_\d+\"|ty_\d+\b)",
+        re.MULTILINE,
+    )
+    for table_match in RE_TABLE_HEAD.finditer(sql):
+        depth = 1
+        i = table_match.end()
+        while i < len(sql) and depth > 0:
+            c = sql[i]
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            i += 1
+        body = sql[table_match.end() : i - 1]
+        for m in line_re.finditer(body):
+            cols.add(m.group(1) or m.group(2))
+    return cols
+
+
+def rewrite_enum_predicates(sql: str, enum_cols: set[str]) -> str:
+    """For each known enum column, rewrite `<col> <op> '<lit>'` and
+    `<col> IN ('<lit>',...)` predicates to use `'v1'` (always a valid
+    label of any of our scrubbed enums)."""
+    if not enum_cols:
+        return sql
+    name_alt = "|".join(re.escape(c) for c in enum_cols)
+    # `"col" <op> '<lit>'` (op = =, <>, !=, IS [NOT] DISTINCT FROM)
+    cmp_re = re.compile(
+        r"(\"(?:" + name_alt + r")\"\s*"
+        r"(?:=|<>|!=|IS\s+DISTINCT\s+FROM|IS\s+NOT\s+DISTINCT\s+FROM)\s*)"
+        r"'(?:[^']|'')*'",
+        re.IGNORECASE,
+    )
+    sql = cmp_re.sub(lambda m: m.group(1) + "'v1'", sql)
+    # `'<lit>' <op> "col"` (operands swapped)
+    cmp_re2 = re.compile(
+        r"'(?:[^']|'')*'"
+        r"(\s*(?:=|<>|!=|IS\s+DISTINCT\s+FROM|IS\s+NOT\s+DISTINCT\s+FROM)\s*"
+        r"\"(?:" + name_alt + r")\")",
+        re.IGNORECASE,
+    )
+    sql = cmp_re2.sub(lambda m: "'v1'" + m.group(1), sql)
+    # `"col" [NOT] IN ('<lit>', '<lit>', ...)` — replace each literal
+    in_re = re.compile(
+        r"(\"(?:" + name_alt + r")\"\s*(?:NOT\s+)?IN\s*\()([^)]*)\)",
+        re.IGNORECASE,
+    )
+
+    def repl_in(m: re.Match[str]) -> str:
+        body = re.sub(r"'(?:[^']|'')*'", "'v1'", m.group(2))
+        return m.group(1) + body + ")"
+
+    sql = in_re.sub(repl_in, sql)
+    return sql
+
+
 def fix_default_literals(sql: str) -> str:
     """Rewrite implicit-cast DEFAULT literals to a value valid for the type.
 
@@ -822,6 +892,8 @@ def main() -> int:
     scrubbed = scrub_view_bodies(raw)
     scrubbed = scrub_text(scrubbed)
     renamed = apply_rename(scrubbed, manifest)
+    enum_cols = find_enum_columns(renamed)
+    renamed = rewrite_enum_predicates(renamed, enum_cols)
     renamed = fix_default_literals(renamed)
     renamed = stub_check_expressions(renamed)
 

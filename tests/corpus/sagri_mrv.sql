@@ -3773,7 +3773,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "idx_0047" ON "mrv"."t_0037"("c_0367", "c_0482
 
 
 CREATE UNIQUE INDEX IF NOT EXISTS "idx_0046" ON "mrv"."t_0037"("c_0367", "c_0088")
-    WHERE "c_0236" = '_';
+    WHERE "c_0236" = 'v1';
 
 
 ALTER TABLE "mrv"."t_0037"
@@ -6947,7 +6947,7 @@ CREATE POLICY "pol_0400" ON mrv."t_0032" FOR SELECT TO authenticated
             SELECT 1 FROM mrv."t_0037" vpi
             WHERE vpi."c_0367" = mrv."t_0032"."id"
               AND vpi."c_0482" IS NOT NULL
-              AND vpi."c_0470" <> '_'
+              AND vpi."c_0470" <> 'v1'
               AND auth.f_0140(vpi."c_0482")
         )
     );
@@ -6991,7 +6991,7 @@ CREATE POLICY "pol_0353" ON mrv."t_0033" FOR SELECT TO authenticated
             SELECT 1 FROM mrv."t_0037" vpi
             WHERE vpi."c_0367" = "c_0367"
               AND vpi."c_0482" IS NOT NULL
-              AND vpi."c_0470" <> '_'
+              AND vpi."c_0470" <> 'v1'
               AND auth.f_0140(vpi."c_0482")
         )
     );
@@ -7025,7 +7025,7 @@ CREATE POLICY "pol_0361" ON mrv."t_0034" FOR SELECT TO authenticated
             SELECT 1 FROM mrv."t_0037" vpi
             WHERE vpi."c_0367" = mrv."t_0034"."c_0367"
               AND vpi."c_0482" IS NOT NULL
-              AND vpi."c_0470" <> '_'
+              AND vpi."c_0470" <> 'v1'
               AND auth.f_0140(vpi."c_0482")
         )
     );
@@ -7074,7 +7074,7 @@ CREATE POLICY "pol_0372" ON mrv."t_0036" FOR SELECT TO authenticated
             SELECT 1 FROM mrv."t_0037" vpi
             WHERE vpi."c_0367" = mrv."t_0036"."c_0367"
               AND vpi."c_0482" IS NOT NULL
-              AND vpi."c_0470" <> '_'
+              AND vpi."c_0470" <> 'v1'
               AND auth.f_0140(vpi."c_0482")
         )
     );
@@ -7105,7 +7105,7 @@ CREATE POLICY "pol_0375" ON mrv."t_0037" FOR SELECT TO authenticated
 CREATE POLICY "pol_0377" ON mrv."t_0037" FOR SELECT TO authenticated
     USING (
         "c_0482" IS NOT NULL
-        AND "c_0470" <> '_'
+        AND "c_0470" <> 'v1'
         AND auth.f_0140("c_0482")
     );
 
@@ -7138,7 +7138,7 @@ CREATE POLICY "pol_0384" ON mrv."t_0038" FOR SELECT TO authenticated
             SELECT 1 FROM mrv."t_0037" vpi
             WHERE vpi."c_0367" = "c_0367"
               AND vpi."c_0482" IS NOT NULL
-              AND vpi."c_0470" <> '_'
+              AND vpi."c_0470" <> 'v1'
               AND auth.f_0140(vpi."c_0482")
         )
     );
@@ -7173,7 +7173,7 @@ CREATE POLICY "pol_0398" ON mrv."t_0039" FOR SELECT TO authenticated
             SELECT 1 FROM mrv."t_0037" vpi
             WHERE vpi."c_0367" = "c_0367"
               AND vpi."c_0482" IS NOT NULL
-              AND vpi."c_0470" <> '_'
+              AND vpi."c_0470" <> 'v1'
               AND auth.f_0140(vpi."c_0482")
         )
     );
@@ -7224,7 +7224,7 @@ CREATE POLICY "pol_0396" ON mrv."t_0040" FOR SELECT TO authenticated
             JOIN mrv."t_0037" vpi ON vpi."c_0367" = npr."c_0367"
             WHERE npr."id" = "c_0323"
               AND vpi."c_0482" IS NOT NULL
-              AND vpi."c_0470" <> '_'
+              AND vpi."c_0470" <> 'v1'
               AND auth.f_0140(vpi."c_0482")
         )
     );
