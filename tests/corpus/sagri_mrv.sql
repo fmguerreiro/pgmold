@@ -578,31 +578,31 @@ CREATE FUNCTION "auth"."f_0028"() RETURNS TABLE (
   p_0123 uuid,
   f_0041 text,
   c_0198 text[]
-) LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+) LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "auth"."f_0037"("p_0003" jsonb) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
-
-
-
-CREATE FUNCTION "auth"."f_0041"() RETURNS text LANGUAGE sql STABLE SECURITY INVOKER AS $$ NULL $$;
+CREATE FUNCTION "auth"."f_0037"("p_0003" jsonb) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
+CREATE FUNCTION "auth"."f_0041"() RETURNS text LANGUAGE sql STABLE SECURITY INVOKER AS $$ SELECT NULL $$;
 
 
 
 
 
 
-CREATE FUNCTION "auth"."f_0055"() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$ NULL $$;
+
+
+
+CREATE FUNCTION "auth"."f_0055"() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$ SELECT NULL $$;
 
 
 CREATE OR REPLACE FUNCTION auth.f_0060() RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ NULL $$;
+AS $$ SELECT NULL $$;
 
 
 
@@ -610,45 +610,45 @@ CREATE OR REPLACE FUNCTION auth.f_0061() RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ NULL $$;
+AS $$ SELECT NULL $$;
 
 
-CREATE FUNCTION "auth"."f_0064"("p_0090" text, "p_0026" uuid DEFAULT null::uuid, "p_0104" uuid DEFAULT null::uuid, "p_0037" uuid DEFAULT null::uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
-
-
-
+CREATE FUNCTION "auth"."f_0064"("p_0090" text, "p_0026" uuid DEFAULT null::uuid, "p_0104" uuid DEFAULT null::uuid, "p_0037" uuid DEFAULT null::uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
-CREATE FUNCTION "auth"."f_0065"() RETURNS jsonb LANGUAGE sql STABLE SECURITY INVOKER AS $$ NULL $$;
 
 
-CREATE OR REPLACE FUNCTION "auth"."f_0069"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$ NULL $$;
+
+CREATE FUNCTION "auth"."f_0065"() RETURNS jsonb LANGUAGE sql STABLE SECURITY INVOKER AS $$ SELECT NULL $$;
+
+
+CREATE OR REPLACE FUNCTION "auth"."f_0069"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$ BEGIN RETURN NULL; END; $$;
 
 ALTER FUNCTION auth.f_0069() OWNER TO supabase_auth_admin;
 
 
 
-CREATE OR REPLACE FUNCTION "auth"."f_0070"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$ NULL $$;
+CREATE OR REPLACE FUNCTION "auth"."f_0070"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$ BEGIN RETURN NULL; END; $$;
 
 ALTER FUNCTION auth.f_0070() OWNER TO supabase_auth_admin;
 
 
 
-CREATE FUNCTION "auth"."role"() RETURNS text LANGUAGE sql STABLE SECURITY INVOKER AS $$ NULL $$;
+CREATE FUNCTION "auth"."role"() RETURNS text LANGUAGE sql STABLE SECURITY INVOKER AS $$ SELECT NULL $$;
 
 
-CREATE FUNCTION "auth"."f_0090"("p_0006" jsonb) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY INVOKER AS $$ NULL $$;
-
-
-
+CREATE FUNCTION "auth"."f_0090"("p_0006" jsonb) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY INVOKER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
 
 
 
-CREATE FUNCTION "auth"."f_0100"() RETURNS uuid LANGUAGE sql STABLE SECURITY INVOKER AS $$ NULL $$;
+
+
+
+CREATE FUNCTION "auth"."f_0100"() RETURNS uuid LANGUAGE sql STABLE SECURITY INVOKER AS $$ SELECT NULL $$;
 
 
 
@@ -668,7 +668,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = '_'
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -692,13 +692,13 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = '_'
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "auth"."f_0111"("p_0026" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "auth"."f_0111"("p_0026" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "auth"."f_0113"("p_0037" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "auth"."f_0113"("p_0037" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -713,7 +713,7 @@ CREATE OR REPLACE FUNCTION auth.f_0114(
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ NULL $$;
+AS $$ SELECT NULL $$;
 
 
 
@@ -724,10 +724,10 @@ CREATE OR REPLACE FUNCTION auth.f_0115(
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ NULL $$;
+AS $$ SELECT NULL $$;
 
 
-CREATE FUNCTION "auth"."f_0116"("p_0104" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "auth"."f_0116"("p_0104" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 CREATE OR REPLACE FUNCTION auth.f_0117(
@@ -738,7 +738,7 @@ CREATE OR REPLACE FUNCTION auth.f_0117(
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ NULL $$;
+AS $$ SELECT NULL $$;
 
 
 
@@ -755,10 +755,10 @@ CREATE OR REPLACE FUNCTION auth.f_0118(
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ NULL $$;
+AS $$ SELECT NULL $$;
 
 
-CREATE FUNCTION "auth"."f_0119"() RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "auth"."f_0119"() RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -770,12 +770,12 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = '_'
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 CREATE OR REPLACE FUNCTION auth.f_0121(p_0026 uuid)
 RETURNS boolean
-LANGUAGE sql STABLE SECURITY INVOKER AS $$ NULL $$;
+LANGUAGE sql STABLE SECURITY INVOKER AS $$ SELECT NULL $$;
 
 
 
@@ -786,18 +786,18 @@ CREATE OR REPLACE FUNCTION auth.f_0122(
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ NULL $$;
+AS $$ SELECT NULL $$;
 
 
 
-CREATE FUNCTION "auth"."f_0124"("p_0112" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "auth"."f_0124"("p_0112" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
 
 CREATE OR REPLACE FUNCTION auth.f_0140(p_0027 uuid)
 RETURNS boolean
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '_' AS $$ NULL $$;
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '_' AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -1234,62 +1234,62 @@ GRANT SELECT, INSERT, UPDATE ON TABLE public.t_0096 TO authenticated;
 GRANT ALL ON TABLE public.t_0096 TO service_role;
 
 
-CREATE FUNCTION "public"."f_0004"("p_0122" uuid, "p_0010" text, "p_0009" uuid, "p_0007" text) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0004"("p_0122" uuid, "p_0010" text, "p_0009" uuid, "p_0007" text) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0005"("p_0029" text, "p_0027" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0005"("p_0029" text, "p_0027" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 CREATE FUNCTION "public"."f_0006"(
   "p_0105" text,
   "p_0026" uuid
-) RETURNS uuid LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_catalog AS $$ NULL $$;
+) RETURNS uuid LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_catalog AS $$ BEGIN RETURN NULL; END; $$;
 
 GRANT EXECUTE ON FUNCTION "public"."f_0006"(text, uuid) TO "service_role";
 GRANT EXECUTE ON FUNCTION "public"."f_0006"(text, uuid) TO "supabase_auth_admin";
 
 
-CREATE FUNCTION "public"."f_0007"("p_0104" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0007"("p_0104" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 GRANT EXECUTE ON FUNCTION "public"."f_0007"(uuid) TO "authenticated";
 GRANT EXECUTE ON FUNCTION "public"."f_0007"(uuid) TO "service_role";
 
 
-CREATE FUNCTION "public"."f_0008"("p_0002" text, "con_0119" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0008"("p_0002" text, "con_0119" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
 CREATE FUNCTION "public"."f_0009"(
   "p_0026" uuid
-) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_catalog AS $$ NULL $$;
+) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_catalog AS $$ BEGIN RETURN NULL; END; $$;
 
 GRANT EXECUTE ON FUNCTION "public"."f_0009"(uuid) TO "authenticated";
 GRANT EXECUTE ON FUNCTION "public"."f_0009"(uuid) TO "service_role";
 
 
-CREATE FUNCTION "public"."f_0010"("p_0104" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0010"("p_0104" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 GRANT EXECUTE ON FUNCTION "public"."f_0010"(uuid) TO "authenticated";
 GRANT EXECUTE ON FUNCTION "public"."f_0010"(uuid) TO "service_role";
 
 
-CREATE FUNCTION "public"."f_0011"("p_0122" uuid, "p_0010" text, "p_0009" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0011"("p_0122" uuid, "p_0010" text, "p_0009" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
 CREATE FUNCTION "public"."f_0012"(
   "p_0104" uuid,
   "p_0026" uuid
-) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_catalog AS $$ NULL $$;
+) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_catalog AS $$ BEGIN RETURN NULL; END; $$;
 
 GRANT EXECUTE ON FUNCTION "public"."f_0012"(uuid, uuid) TO "authenticated";
 GRANT EXECUTE ON FUNCTION "public"."f_0012"(uuid, uuid) TO "service_role";
 
 
-CREATE FUNCTION "public"."f_0013"("p_0123" uuid, "p_0120" text, "p_0001" uuid DEFAULT null::uuid, "p_0121" uuid DEFAULT null::uuid, "p_0005" uuid DEFAULT null::uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0013"("p_0123" uuid, "p_0120" text, "p_0001" uuid DEFAULT null::uuid, "p_0121" uuid DEFAULT null::uuid, "p_0005" uuid DEFAULT null::uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0019"("p_0122" uuid, "p_0010" text, "p_0009" uuid, "p_0007" text) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0019"("p_0122" uuid, "p_0010" text, "p_0009" uuid, "p_0007" text) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -1305,14 +1305,14 @@ CREATE FUNCTION "public"."f_0019"("p_0122" uuid, "p_0010" text, "p_0009" uuid, "
 
 CREATE FUNCTION "public"."f_0020"("p_0065" text)
 RETURNS TABLE("c_0007" boolean, "c_0537" timestamptz, "c_0122" integer, "c_0289" integer)
-LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$ NULL $$;
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
-CREATE FUNCTION "public"."f_0021"() RETURNS trigger LANGUAGE plpgsql AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0021"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0022"("p_0112" uuid, "p_0002" text, "con_0119" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0022"("p_0112" uuid, "p_0002" text, "con_0119" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -1335,20 +1335,17 @@ CREATE FUNCTION "public"."f_0023"() RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
 
 
 
-CREATE FUNCTION "public"."f_0024"("p_0122" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0024"("p_0122" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0025"("p_0112" uuid, "p_0119" text, "p_0008" text) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
-
-
-
+CREATE FUNCTION "public"."f_0025"("p_0112" uuid, "p_0119" text, "p_0008" text) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -1358,23 +1355,26 @@ CREATE FUNCTION "public"."f_0025"("p_0112" uuid, "p_0119" text, "p_0008" text) R
 
 
 
-CREATE FUNCTION "public"."f_0026"() RETURNS trigger LANGUAGE plpgsql AS $$ NULL $$;
 
 
-CREATE FUNCTION "public"."f_0036"() RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER AS $$ NULL $$;
+
+CREATE FUNCTION "public"."f_0026"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0039"("p_0002" text, "con_0119" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, auth AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0036"() RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER AS $$ SELECT NULL $$;
 
 
-CREATE FUNCTION "public"."f_0040"("p_0122" uuid, "p_0010" text, "p_0009" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0039"("p_0002" text, "con_0119" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, auth AS $$ BEGIN RETURN NULL; END; $$;
+
+
+CREATE FUNCTION "public"."f_0040"("p_0122" uuid, "p_0010" text, "p_0009" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
 CREATE FUNCTION "public"."f_0050"(
   "p_0026" uuid,
   "p_0105" text
-) RETURNS TABLE("p_0121" uuid) LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_catalog AS $$ NULL $$;
+) RETURNS TABLE("p_0121" uuid) LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_catalog AS $$ BEGIN RETURN NULL; END; $$;
 
 GRANT EXECUTE ON FUNCTION "public"."f_0050"(uuid, text) TO "service_role";
 GRANT EXECUTE ON FUNCTION "public"."f_0050"(uuid, text) TO "supabase_auth_admin";
@@ -1402,38 +1402,38 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = '_'
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0058"("p_0112" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0058"("p_0112" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0062"("p_0123" uuid, "p_0002" text, "con_0119" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0062"("p_0123" uuid, "p_0002" text, "con_0119" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0063"("p_0123" uuid, "p_0002" text, "con_0119" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY INVOKER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0063"("p_0123" uuid, "p_0002" text, "con_0119" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY INVOKER AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0080"("p_0122" uuid, "p_0010" text, "p_0009" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0080"("p_0122" uuid, "p_0010" text, "p_0009" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0083"("p_0122" uuid, "p_0002" text, "con_0119" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0083"("p_0122" uuid, "p_0002" text, "con_0119" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
-CREATE FUNCTION "public"."f_0085"("p_0065" text) RETURNS uuid LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0085"("p_0065" text) RETURNS uuid LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0095"() RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0095"() RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0103"("p_0123" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0103"("p_0123" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0123"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0123"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
-CREATE FUNCTION "public"."f_0139"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ NULL $$;
+CREATE FUNCTION "public"."f_0139"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -2035,14 +2035,14 @@ ALTER TABLE audit.t_0097 ENABLE ROW LEVEL SECURITY;
 
 
 CREATE OR REPLACE FUNCTION audit.f_0066()
-RETURNS TRIGGER AS $$ NULL $$ LANGUAGE plpgsql SECURITY DEFINER
+RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql SECURITY DEFINER
    SET search_path = '_';
 
 
 
 
 CREATE OR REPLACE FUNCTION audit.f_0076()
-RETURNS TRIGGER AS $$ NULL $$ LANGUAGE plpgsql
+RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql
    SET search_path = '_';
 
 
@@ -2052,14 +2052,14 @@ RETURNS TRIGGER AS $$ NULL $$ LANGUAGE plpgsql
 CREATE OR REPLACE FUNCTION audit.f_0086(
     p_0107 TEXT,
     p_0082 JSONB
-) RETURNS UUID AS $$ NULL $$ LANGUAGE plpgsql STABLE SECURITY DEFINER
+) RETURNS UUID AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql STABLE SECURITY DEFINER
    SET search_path = '_';
 
 
 
 
 CREATE OR REPLACE FUNCTION audit.f_0096()
-RETURNS TRIGGER AS $$ NULL $$ LANGUAGE plpgsql SECURITY DEFINER
+RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql SECURITY DEFINER
    SET search_path = '_';
 
 
@@ -2203,7 +2203,7 @@ ALTER TABLE "ai"."t_0047" ENABLE ROW LEVEL SECURITY;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "ai"."t_0047" TO "authenticated";
 GRANT ALL ON TABLE "ai"."t_0047" TO "service_role";
 
-CREATE OR REPLACE FUNCTION "ai"."f_0091"() RETURNS TRIGGER AS $$ NULL $$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION "ai"."f_0091"() RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER "trg_0017" BEFORE UPDATE ON "ai"."t_0047"
   FOR EACH ROW EXECUTE FUNCTION "ai"."f_0091"();
@@ -2230,7 +2230,7 @@ ALTER TABLE "ai"."t_0069" ENABLE ROW LEVEL SECURITY;
 GRANT SELECT, INSERT, DELETE ON TABLE "ai"."t_0069" TO "authenticated";
 GRANT ALL ON TABLE "ai"."t_0069" TO "service_role";
 
-CREATE OR REPLACE FUNCTION "ai"."f_0075"() RETURNS TRIGGER AS $$ NULL $$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION "ai"."f_0075"() RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER "trg_0019" BEFORE UPDATE ON "ai"."t_0069"
   FOR EACH ROW EXECUTE FUNCTION "ai"."f_0075"();
@@ -2265,12 +2265,12 @@ ALTER TABLE "ai"."t_0093" ENABLE ROW LEVEL SECURITY;
 GRANT SELECT, INSERT, UPDATE ON TABLE "ai"."t_0093" TO "authenticated";
 GRANT ALL ON TABLE "ai"."t_0093" TO "service_role";
 
-CREATE OR REPLACE FUNCTION "ai"."f_0094"() RETURNS TRIGGER AS $$ NULL $$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION "ai"."f_0094"() RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER "trg_0026" BEFORE UPDATE ON "ai"."t_0093"
   FOR EACH ROW EXECUTE FUNCTION "ai"."f_0094"();
 
-CREATE OR REPLACE FUNCTION "ai"."f_0003"(p_0122 UUID) RETURNS INTEGER AS $$ NULL $$ LANGUAGE plpgsql SECURITY DEFINER;
+CREATE OR REPLACE FUNCTION "ai"."f_0003"(p_0122 UUID) RETURNS INTEGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 REVOKE ALL ON FUNCTION "ai"."f_0003"(UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION "ai"."f_0003"(UUID) TO "service_role";
@@ -2280,7 +2280,7 @@ RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = '_'
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 ALTER FUNCTION "ai"."f_0045"() OWNER TO "supabase_admin";
 
@@ -2288,7 +2288,7 @@ GRANT EXECUTE ON FUNCTION "ai"."f_0045"() TO "service_role";
 REVOKE EXECUTE ON FUNCTION "ai"."f_0045"() FROM "authenticated";
 REVOKE EXECUTE ON FUNCTION "ai"."f_0045"() FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION "ai"."f_0074"() RETURNS TRIGGER AS $$ NULL $$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION "ai"."f_0074"() RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER "trg_0012" BEFORE UPDATE ON "ai"."t_0044"
   FOR EACH ROW EXECUTE FUNCTION "ai"."f_0074"();
@@ -2296,7 +2296,7 @@ CREATE TRIGGER "trg_0012" BEFORE UPDATE ON "ai"."t_0044"
 CREATE TRIGGER "trg_0011" BEFORE DELETE ON "ai"."t_0044"
   FOR EACH ROW EXECUTE FUNCTION "ai"."f_0074"();
 
-CREATE OR REPLACE FUNCTION "ai"."f_0042"() RETURNS TRIGGER AS $$ NULL $$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION "ai"."f_0042"() RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER "trg_0027" BEFORE UPDATE OF "c_0470" ON "ai"."t_0093"
   FOR EACH ROW EXECUTE FUNCTION "ai"."f_0042"();
@@ -3335,7 +3335,7 @@ ALTER TABLE mrv.t_0082
     ADD CONSTRAINT con_0143 CHECK (c_0301 IN ('_', '_', '_', '_'));
 
 CREATE OR REPLACE FUNCTION mrv.f_0084() RETURNS TRIGGER
-LANGUAGE plpgsql AS $$ NULL $$;
+LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE TRIGGER trg_0032
     BEFORE UPDATE ON mrv.t_0082
@@ -3354,7 +3354,7 @@ CREATE INDEX IF NOT EXISTS idx_0094
 
 
 CREATE OR REPLACE FUNCTION mrv.f_0092() RETURNS TRIGGER
-LANGUAGE plpgsql AS $$ NULL $$;
+LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE TRIGGER trg_0034
     BEFORE UPDATE ON mrv.t_0082
@@ -3393,7 +3393,7 @@ ALTER TABLE mrv.t_0083
     FOREIGN KEY (c_0477) REFERENCES mrv.t_0085(id) ON DELETE CASCADE;
 
 CREATE OR REPLACE FUNCTION mrv.f_0126() RETURNS TRIGGER
-LANGUAGE plpgsql AS $$ NULL $$;
+LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE TRIGGER trg_0035
     BEFORE INSERT OR UPDATE ON mrv.t_0083
@@ -3461,7 +3461,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_0144
     WHERE c_0230 IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION mrv.f_0093() RETURNS TRIGGER
-LANGUAGE plpgsql AS $$ NULL $$;
+LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE TRIGGER trg_0033
     BEFORE UPDATE ON mrv.t_0084
@@ -4116,7 +4116,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0002(
     p_0027 uuid,
@@ -4129,7 +4129,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0014(
     p_0032 uuid,
@@ -4140,7 +4140,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0015(
     p_0076 uuid,
@@ -4159,7 +4159,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -4177,7 +4177,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0017(
     p_0073 uuid
@@ -4214,7 +4214,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0027()
 RETURNS integer
@@ -4222,7 +4222,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0029(
     p_0104 uuid,
@@ -4284,7 +4284,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 COMMENT ON FUNCTION mrv.f_0029(uuid, text, text, int, double precision, double precision, boolean[], boolean, boolean[], boolean, double precision, boolean, double precision, text, boolean, boolean[], boolean, double precision, boolean, double precision, text, uuid[]) IS E'_';
 
@@ -4304,7 +4304,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0031(
     p_0027 uuid,
@@ -4337,7 +4337,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0032(
     p_0084 uuid,
@@ -4367,7 +4367,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -4389,7 +4389,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 COMMENT ON FUNCTION mrv.f_0033(uuid, uuid, int, text, text, text, int, bigint, timestamptz, boolean) IS E'_';
 
@@ -4408,7 +4408,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0035(
     p_0050 uuid,
@@ -4425,7 +4425,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -4450,7 +4450,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -4472,7 +4472,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -4514,7 +4514,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0046(
     p_0004 uuid
@@ -4524,7 +4524,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0047(
     p_0035 uuid,
@@ -4543,7 +4543,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0048(
     p_0037 uuid,
@@ -4557,7 +4557,7 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0049(
     p_0026 uuid,
@@ -4575,7 +4575,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0051(
     p_0104 uuid,
@@ -4588,7 +4588,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0052(
     p_0073 uuid
@@ -4630,7 +4630,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0053()
 RETURNS TABLE (
@@ -4669,7 +4669,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0054()
 RETURNS TABLE (
@@ -4680,7 +4680,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0057(
     p_0051 text,
@@ -4695,7 +4695,7 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0059(
     p_0115 uuid,
@@ -4707,7 +4707,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -4716,7 +4716,7 @@ RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0068(p_0093 UUID)
 RETURNS TABLE (
@@ -4730,7 +4730,7 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 VOLATILE
 SET search_path = mrv, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0071(
     p_0095 text,
@@ -4744,7 +4744,7 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0072(
     p_0066 float8,
@@ -4760,7 +4760,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0073(
     p_0026 uuid,
@@ -4778,7 +4778,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0077(p_0078 UUID)
 RETURNS TABLE (
@@ -4795,7 +4795,7 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SET search_path = mrv, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0078(
     p_0084 uuid,
@@ -4813,7 +4813,7 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -4832,7 +4832,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0081(
     p_0035 uuid
@@ -4846,7 +4846,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0082(
     p_0027 uuid,
@@ -4857,7 +4857,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0087(
     p_0050 uuid,
@@ -4870,7 +4870,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0088(
     p_0114 uuid
@@ -4880,7 +4880,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0089(
     p_0035 uuid
@@ -4893,7 +4893,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0097(
     p_0104 uuid,
@@ -4909,7 +4909,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -4930,13 +4930,13 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
 
 CREATE OR REPLACE FUNCTION mrv.f_0099()
-RETURNS TRIGGER AS $$ NULL $$ LANGUAGE plpgsql SECURITY DEFINER;
+RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION mrv.f_0101(
     p_0073 uuid,
@@ -4947,7 +4947,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0102(
     p_0073 uuid,
@@ -4991,7 +4991,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0104(p_0023 jsonb)
 RETURNS TABLE (
@@ -5009,7 +5009,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0105(
     p_0039 jsonb
@@ -5026,7 +5026,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0106(
     p_0027 uuid,
@@ -5047,7 +5047,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0107(p_0023 jsonb)
 RETURNS TABLE (
@@ -5067,7 +5067,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0108(p_0023 jsonb)
 RETURNS TABLE (
@@ -5081,7 +5081,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0112(
     p_0029 text,
@@ -5092,7 +5092,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -5125,7 +5125,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -5155,7 +5155,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0128(
     p_0079 uuid,
@@ -5169,7 +5169,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 COMMENT ON FUNCTION mrv.f_0128(uuid, text, char(2)[], text, jsonb) IS E'_';
 
@@ -5189,7 +5189,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -5205,7 +5205,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -5237,7 +5237,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -5254,7 +5254,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0133()
 RETURNS JSONB
@@ -5262,7 +5262,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0134(
     p_0078 uuid,
@@ -5273,7 +5273,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0135(
     p_0078 uuid
@@ -5283,7 +5283,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0136(
     p_0078 uuid,
@@ -5294,7 +5294,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0137(
     p_0078 uuid,
@@ -5305,7 +5305,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 CREATE OR REPLACE FUNCTION mrv.f_0138(
@@ -5335,7 +5335,7 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -5350,7 +5350,7 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0142(
     p_0050 uuid
@@ -5360,7 +5360,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0143(
     p_0026 uuid,
@@ -5379,7 +5379,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 
 
@@ -5433,7 +5433,7 @@ CREATE TRIGGER trg_0015
 CREATE OR REPLACE FUNCTION mrv.f_0018()
 RETURNS trigger
 LANGUAGE plpgsql
-AS $$ NULL $$;
+AS $$ BEGIN RETURN NULL; END; $$;
 
 CREATE OR REPLACE TRIGGER trg_0016
   AFTER UPDATE OF c_0470 ON mrv."t_0001"

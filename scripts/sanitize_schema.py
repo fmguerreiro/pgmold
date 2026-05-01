@@ -133,11 +133,20 @@ def scrub_text(sql: str) -> str:
 
     sql = RE_ENUM_DEF.sub(repl_enum, sql)
 
+    # Dollar-quoted blocks are function bodies. We need a body that the
+    # PG parser accepts for the function's LANGUAGE — `NULL` alone is
+    # valid in neither plpgsql nor sql. Find the LAST LANGUAGE clause in
+    # the lookback (re.search would give us the FIRST, which belongs to
+    # an earlier function). Default to plpgsql when no clause is found.
     def repl_dollar(m: re.Match[str]) -> str:
+        lookback = sql[max(0, m.start() - 1000) : m.start()]
+        langs = re.findall(r"LANGUAGE\s+(sql|plpgsql)\b", lookback, re.IGNORECASE)
+        lang = langs[-1].lower() if langs else "plpgsql"
+        body = "SELECT NULL" if lang == "sql" else "BEGIN RETURN NULL; END;"
         if m.group(1) is not None:
-            return stash("$$ NULL $$")
+            return stash(f"$$ {body} $$")
         tag = m.group(2)
-        return stash(f"${tag}$ NULL ${tag}$")
+        return stash(f"${tag}$ {body} ${tag}$")
 
     sql = RE_DOLLAR_QUOTED.sub(repl_dollar, sql)
 
