@@ -149,17 +149,29 @@ def scrub_text(sql: str) -> str:
         lookback = sql[max(0, m.start() - 1500) : m.start()]
         langs = re.findall(r"LANGUAGE\s+(sql|plpgsql)\b", lookback, re.IGNORECASE)
         lang = langs[-1].lower() if langs else "plpgsql"
+        # Extract the LAST RETURNS clause's full type token. Patterns we
+        # need to handle: `RETURNS uuid`, `RETURNS text[]`, `RETURNS
+        # jsonb`, `RETURNS TABLE(...)`, `RETURNS SETOF type`. The type
+        # token is everything up to the next whitespace before LANGUAGE
+        # (which always follows in this codebase).
+        returns_all = re.findall(
+            r"RETURNS\s+(TABLE|SETOF|[A-Za-z_][\w\[\]]*)",
+            lookback,
+            re.IGNORECASE,
+        )
+        ret_kind = returns_all[-1].upper() if returns_all else "VOID"
         if lang == "sql":
-            body = "SELECT NULL"
+            if ret_kind in ("TABLE", "SETOF"):
+                # No sql TABLE/SETOF functions in the current corpus, but
+                # if one appears the safest stub is an empty result set.
+                body = "SELECT NULL WHERE FALSE"
+            else:
+                # Cast NULL to the declared scalar type. PG's sql function
+                # body must match the return type exactly; bare NULL is
+                # `unknown` and rejected.
+                body = f"SELECT NULL::{returns_all[-1]}" if returns_all else "SELECT NULL"
         else:
-            # Match ALL RETURNS clauses in the lookback, take the last
-            # (the current function's). If we only matched TABLE/SETOF
-            # we'd miss the case where the previous function returned
-            # TABLE and the current one returns a scalar.
-            returns_all = re.findall(
-                r"RETURNS\s+(TABLE|SETOF|\w+)\b", lookback, re.IGNORECASE
-            )
-            if returns_all and returns_all[-1].upper() in ("TABLE", "SETOF"):
+            if ret_kind in ("TABLE", "SETOF"):
                 body = "BEGIN RETURN; END;"
             else:
                 body = "BEGIN RETURN NULL; END;"
