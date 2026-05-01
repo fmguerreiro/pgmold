@@ -491,6 +491,32 @@ def scrub_view_bodies(sql: str) -> str:
     return RE_VIEW_DEF.sub(lambda m: m.group(1) + "SELECT 1 AS placeholder", sql)
 
 
+# Match a column definition where the type is one of our renamed enum
+# types (`ty_NNNN`, possibly schema-qualified, possibly quoted) and the
+# DEFAULT is a string literal. The blanket scrub leaves the default as
+# `'_'`, which isn't a valid label of the rewritten enum, and PG
+# validates the literal at apply time. Group 1 captures the prefix up
+# to (but not including) the literal so we can swap just the tail.
+RE_ENUM_COL_DEFAULT = re.compile(
+    r"("
+    r"(?:(?:\"\w+\"|\w+)\s*\.\s*)?"   # optional schema prefix
+    r"(?:\"ty_\d+\"|ty_\d+)"          # enum type ident (quoted or bare)
+    r"\s[^,\n;]*?DEFAULT\s+"          # column suffix up to and including DEFAULT
+    r")"
+    r"'(?:[^']|'')*'",                # the literal we replace
+    re.IGNORECASE,
+)
+
+
+def fix_enum_column_defaults(sql: str) -> str:
+    """Rewrite DEFAULT literals on custom-enum columns to a valid label.
+
+    The enum-label scrubber rewrites every enum value to `'v1'..'vN'`,
+    so `'v1'` is always a valid default for any of our scrubbed enums.
+    """
+    return RE_ENUM_COL_DEFAULT.sub(lambda m: m.group(1) + "'v1'", sql)
+
+
 def discover_identifiers(all_sql: str) -> "OrderedDict[str, str]":
     """Scan all SQL for definition patterns; return {original: kind}.
 
@@ -694,6 +720,7 @@ def main() -> int:
     scrubbed = scrub_view_bodies(raw)
     scrubbed = scrub_text(scrubbed)
     renamed = apply_rename(scrubbed, manifest)
+    renamed = fix_enum_column_defaults(renamed)
 
     args.output_file.parent.mkdir(parents=True, exist_ok=True)
     args.output_file.write_text(
