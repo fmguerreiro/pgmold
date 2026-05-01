@@ -88,6 +88,12 @@ RE_LINE_COMMENT = re.compile(r"--[^\n]*")
 RE_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 
 
+RE_ENUM_DEF = re.compile(
+    r"(CREATE\s+TYPE\s+(?:\"?\w+\"?\s*\.\s*)?\"?\w+\"?\s+AS\s+ENUM\s*\()([^)]*?)(\))",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 def scrub_text(sql: str) -> str:
     """Strip comments + scrub string-literal contents.
 
@@ -95,12 +101,14 @@ def scrub_text(sql: str) -> str:
     that the string regex would otherwise treat as opening quotes,
     swallowing arbitrary downstream SQL. So:
 
-      1. Strip line comments first (they cannot legally start inside a
-         dollar-quoted block at the same offset because the block
-         delimiter would be on the same line).
-      2. Stash dollar-quoted blocks and string literals.
-      3. Strip block comments outside the stashed regions.
-      4. Restore stashes.
+      1. Strip line comments first.
+      2. Stash ENUM literal lists with positionally-unique labels — the
+         blanket single-quoted scrub later in this function would
+         otherwise collapse every label to `'_'` and apply-time fails
+         on the pg_enum_typid_label_index uniqueness constraint.
+      3. Stash dollar-quoted blocks and string literals.
+      4. Strip block comments outside the stashed regions.
+      5. Restore stashes.
 
     This still mishandles a string literal that contains a literal `--`
     (the line-comment strip would eat from `--` to end-of-line). That is
@@ -114,6 +122,16 @@ def scrub_text(sql: str) -> str:
         idx = len(placeholders)
         placeholders.append(s)
         return f"\0PH{idx}\0"
+
+    def repl_enum(m: re.Match[str]) -> str:
+        head, body, tail = m.group(1), m.group(2), m.group(3)
+        slots = re.findall(r"'(?:[^']|'')*'", body)
+        if not slots:
+            return m.group(0)
+        new_slots = ", ".join(f"'v{i + 1}'" for i in range(len(slots)))
+        return stash(head + new_slots + tail)
+
+    sql = RE_ENUM_DEF.sub(repl_enum, sql)
 
     def repl_dollar(m: re.Match[str]) -> str:
         if m.group(1) is not None:
