@@ -103,6 +103,16 @@ jobs:
       - name: Run corpus convergence tests
         run: cargo test --all-features --test corpus -- --ignored --test-threads=1
 
+  corpus-sagri-mrv:
+    name: Corpus Convergence (sagri/mrv)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run sagri/mrv snapshot convergence
+        run: cargo test --all-features --test corpus_sagri_mrv -- --ignored --test-threads=1 --nocapture
+
   parser-coverage-triage:
     name: Parser Coverage Triage
     runs-on: ubuntu-latest
