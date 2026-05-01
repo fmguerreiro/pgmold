@@ -1,7 +1,6 @@
 mod common;
 use common::*;
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 fn corpus_dir() -> std::path::PathBuf {
@@ -15,32 +14,6 @@ fn read_ignore_marker(content: &str) -> Option<String> {
         .unwrap_or("")
         .strip_prefix("-- IGNORE:")
         .map(|rest| rest.trim().to_string())
-}
-
-fn extract_schema_names(sql: &str) -> BTreeSet<String> {
-    let mut schemas = BTreeSet::new();
-    schemas.insert("public".to_string());
-
-    for line in sql.lines() {
-        let line = line.trim();
-
-        let normalized = line.to_uppercase();
-        let normalized = normalized.as_str();
-
-        if let Some(rest) = normalized.strip_prefix("CREATE SCHEMA IF NOT EXISTS ") {
-            let name = rest.trim_end_matches(';').trim().trim_matches('"');
-            if !name.is_empty() && name != "PUBLIC" {
-                schemas.insert(name.to_lowercase());
-            }
-        } else if let Some(rest) = normalized.strip_prefix("CREATE SCHEMA ") {
-            let name = rest.trim_end_matches(';').trim().trim_matches('"');
-            if !name.is_empty() && name != "PUBLIC" {
-                schemas.insert(name.to_lowercase());
-            }
-        }
-    }
-
-    schemas
 }
 
 #[test]
