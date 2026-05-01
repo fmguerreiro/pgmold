@@ -699,6 +699,38 @@ def rewrite_enum_predicates(sql: str, enum_cols: set[str]) -> str:
     return sql
 
 
+RE_PARTITION_RANGE = re.compile(
+    r"(FOR\s+VALUES\s+FROM\s*\()'(?:[^']|'')*'(\s*\)\s+TO\s*\()'(?:[^']|'')*'(\s*\))",
+    re.IGNORECASE,
+)
+
+
+def fix_partition_bounds(sql: str) -> str:
+    """Give each RANGE partition unique non-overlapping monthly bounds.
+
+    PartitionFROM/TO bounds are implicit-cast to the partition column
+    type — `'_'` fails for timestamp/date partitions (the audit log
+    case). Use month-aligned timestamps that work for both timestamp
+    and date types and are guaranteed non-overlapping across siblings.
+    Counter is global; PG validates non-overlap per-parent only.
+    """
+    counter = [0]
+
+    def repl(m: re.Match[str]) -> str:
+        counter[0] += 1
+        # Spread starts evenly over a few centuries to avoid
+        # collisions when many partitions exist.
+        year = 1970 + counter[0] // 12
+        month = (counter[0] % 12) + 1
+        next_month = month + 1 if month < 12 else 1
+        next_year = year if month < 12 else year + 1
+        from_lit = f"'{year:04d}-{month:02d}-01'"
+        to_lit = f"'{next_year:04d}-{next_month:02d}-01'"
+        return m.group(1) + from_lit + m.group(2) + to_lit + m.group(3)
+
+    return RE_PARTITION_RANGE.sub(repl, sql)
+
+
 def fix_default_literals(sql: str) -> str:
     """Rewrite implicit-cast DEFAULT literals to a value valid for the type.
 
@@ -938,6 +970,7 @@ def main() -> int:
     enum_cols = find_enum_columns(renamed)
     renamed = rewrite_enum_predicates(renamed, enum_cols)
     renamed = fix_default_literals(renamed)
+    renamed = fix_partition_bounds(renamed)
     renamed = stub_check_expressions(renamed)
 
     args.output_file.parent.mkdir(parents=True, exist_ok=True)
