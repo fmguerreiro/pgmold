@@ -56,7 +56,8 @@ use ownership::parse_owner_statements;
 use preprocess::preprocess_sql;
 use sequences::parse_create_sequence;
 use tables::{
-    apply_primary_key, parse_column_with_serial, parse_create_table, parse_referential_action,
+    apply_primary_key, dedup_check_constraint_name, parse_column_with_serial, parse_create_table,
+    parse_referential_action,
 };
 use util::{
     extract_qualified_name, normalize_expr, parse_data_type, parse_for_values,
@@ -324,11 +325,13 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                                         });
                                     }
                                     TableConstraint::Check(chk) => {
-                                        let constraint_name = chk
-                                            .name
-                                            .as_ref()
-                                            .map(|n| unquote_ident(&n.to_string()).to_string())
-                                            .unwrap_or_else(|| format!("{tbl_name}_check"));
+                                        let constraint_name = match &chk.name {
+                                            Some(name) => unquote_ident(&name.to_string()).to_string(),
+                                            None => dedup_check_constraint_name(
+                                                &format!("{tbl_name}_check"),
+                                                table,
+                                            ),
+                                        };
 
                                         table.check_constraints.push(CheckConstraint {
                                             name: constraint_name,
