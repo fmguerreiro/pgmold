@@ -257,3 +257,64 @@ async fn check_constraint_double_precision_cast_round_trip() {
         "Should have no CHECK constraint diff after apply (double precision case). Got: {check_ops:?}"
     );
 }
+
+#[tokio::test]
+async fn multiple_unnamed_inline_check_constraints_apply_without_collision() {
+    // Regression for pgmold-289: multiple unnamed inline CHECK constraints on the same
+    // table both auto-named to `<table>_check`, producing duplicate
+    // `ALTER TABLE ADD CONSTRAINT "<table>_check"` statements that fail on apply with
+    // `constraint "<table>_check" already exists`.
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let schema_sql = r#"
+        CREATE TABLE "public"."t" (
+            "a" NUMERIC NOT NULL CHECK (1 = 1),
+            "b" INTEGER NOT NULL DEFAULT 1 CHECK (2 = 2)
+        );
+    "#;
+
+    let parsed_schema = parse_sql_string(schema_sql).unwrap();
+    let empty_schema = Schema::new();
+    let diff_ops = compute_diff(&empty_schema, &parsed_schema);
+    let planned = plan_migration(diff_ops);
+    let sql = generate_sql(&planned);
+
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("apply failed on statement {stmt:?}: {e}"));
+    }
+
+    let db_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let table = db_schema.tables.get("public.t").unwrap();
+    assert_eq!(table.check_constraints.len(), 2);
+    let names: std::collections::BTreeSet<&str> = table
+        .check_constraints
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(
+        names.len(),
+        2,
+        "every CHECK constraint must have a unique name post-apply; got: {names:?}"
+    );
+
+    let second_diff = compute_diff(&db_schema, &parsed_schema);
+    let check_ops: Vec<_> = second_diff
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::AddCheckConstraint { .. } | MigrationOp::DropCheckConstraint { .. }
+            )
+        })
+        .collect();
+    assert!(
+        check_ops.is_empty(),
+        "second plan must converge: parser-assigned names must match what Postgres stores. Got: {check_ops:?}"
+    );
+}

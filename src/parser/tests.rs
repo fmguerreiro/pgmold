@@ -4711,6 +4711,112 @@ fn inline_check_constraint_name_is_truncated_to_63_bytes() {
 }
 
 #[test]
+fn multiple_unnamed_inline_checks_with_no_column_refs_get_unique_names() {
+    // Two inline CHECK constraints whose expressions reference no table column would both
+    // collapse to the bare `{table}_check` default. Postgres resolves the collision by
+    // appending a numeric suffix (`_check`, `_check1`, ...). Without dedup, sqlgen emits
+    // two `ALTER TABLE ADD CONSTRAINT "t_check" CHECK (...)` statements and the second
+    // fails at apply with `constraint "t_check" already exists`.
+    let sql = r#"
+        CREATE TABLE t (
+            a NUMERIC NOT NULL CHECK (1 = 1),
+            b INTEGER NOT NULL CHECK (2 = 2)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+    assert_eq!(table.check_constraints.len(), 2);
+    let names: Vec<&str> = table
+        .check_constraints
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    let unique: std::collections::BTreeSet<&str> = names.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        names.len(),
+        "every CHECK constraint within a table must have a unique name; got: {names:?}"
+    );
+    assert!(
+        unique.contains("t_check"),
+        "first unnamed CHECK should keep the bare `{{table}}_check` name; got: {names:?}"
+    );
+    assert!(
+        unique.contains("t_check1"),
+        "second collision should append `1` (Postgres scheme); got: {names:?}"
+    );
+}
+
+#[test]
+fn multiple_unnamed_inline_checks_referencing_same_column_get_unique_names() {
+    // Two inline CHECKs both referencing column `a` produce the same base name `t_a_check`
+    // under the column-aware default. Postgres assigns `t_a_check` and `t_a_check1`.
+    let sql = r#"
+        CREATE TABLE t (
+            a INTEGER NOT NULL CHECK (a > 0),
+            b INTEGER NOT NULL CHECK (a < 100)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+    assert_eq!(table.check_constraints.len(), 2);
+    let names: std::collections::BTreeSet<&str> = table
+        .check_constraints
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert!(names.contains("t_a_check"), "got: {names:?}");
+    assert!(names.contains("t_a_check1"), "got: {names:?}");
+}
+
+#[test]
+fn multiple_unnamed_table_level_checks_get_unique_names() {
+    // Out-of-line table-level CHECKs that don't share a single referenced column collapse
+    // to `{table}_check`. Two such constraints must resolve via Postgres' suffix scheme.
+    let sql = r#"
+        CREATE TABLE t (
+            a INTEGER,
+            b INTEGER,
+            CHECK (1 = 1),
+            CHECK (2 = 2)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+    assert_eq!(table.check_constraints.len(), 2);
+    let names: std::collections::BTreeSet<&str> = table
+        .check_constraints
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert!(names.contains("t_check"), "got: {names:?}");
+    assert!(names.contains("t_check1"), "got: {names:?}");
+}
+
+#[test]
+fn unnamed_check_does_not_collide_with_explicit_user_name() {
+    // If the user explicitly named their CHECK `t_check`, an unnamed CHECK that would
+    // otherwise default to `t_check` must dedup to `t_check1` rather than colliding.
+    let sql = r#"
+        CREATE TABLE t (
+            a INTEGER,
+            CONSTRAINT t_check CHECK (a > 0),
+            CHECK (1 = 1)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+    assert_eq!(table.check_constraints.len(), 2);
+    let names: std::collections::BTreeSet<&str> = table
+        .check_constraints
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert!(names.contains("t_check"), "got: {names:?}");
+    assert!(names.contains("t_check1"), "got: {names:?}");
+}
+
+#[test]
 fn alter_type_add_value_appends() {
     let sql = "CREATE TYPE color AS ENUM ('red', 'blue'); ALTER TYPE color ADD VALUE 'green';";
     let schema = parse_sql_string(sql).expect("Should parse");

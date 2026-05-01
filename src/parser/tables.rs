@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 
 use super::util::{
     extract_qualified_name, normalize_expr, parse_data_type, truncate_identifier, unquote_ident,
+    PG_MAX_IDENTIFIER_LENGTH,
 };
 
 pub(super) struct ParsedTable {
@@ -120,22 +121,21 @@ pub(super) fn parse_create_table(
                     });
                 }
                 ColumnOption::Check(chk) => {
-                    let constraint_name = explicit_name.clone().unwrap_or_else(|| {
-                        // Postgres names unnamed CHECKs after the columns the expression
-                        // *references*, not the column they are attached to. Walk the
-                        // expression and apply the same single-vs-multi logic as the
-                        // out-of-line path so inline and table-level CHECKs converge.
-                        let table_cols: Vec<&str> =
-                            table.columns.keys().map(|s| s.as_str()).collect();
-                        let referenced = collect_referenced_columns(&chk.expr, &table_cols);
-                        if referenced.len() == 1 {
-                            format!("{}_{}_check", table.name, referenced[0])
-                        } else {
-                            format!("{}_check", table.name)
+                    let constraint_name = match &explicit_name {
+                        Some(name) => truncate_identifier(name),
+                        None => {
+                            let table_cols: Vec<&str> =
+                                table.columns.keys().map(|s| s.as_str()).collect();
+                            let base = default_check_constraint_base_name(
+                                &table.name,
+                                &chk.expr,
+                                &table_cols,
+                            );
+                            dedup_check_constraint_name(&base, &table)
                         }
-                    });
+                    };
                     table.check_constraints.push(CheckConstraint {
-                        name: truncate_identifier(&constraint_name),
+                        name: constraint_name,
                         expression: normalize_expr(&chk.expr.to_string()),
                     });
                 }
@@ -194,26 +194,19 @@ pub(super) fn parse_create_table(
                 });
             }
             TableConstraint::Check(chk) => {
-                let constraint_name = chk
-                    .name
-                    .as_ref()
-                    .map(|n| unquote_ident(&n.to_string()).to_string())
-                    .unwrap_or_else(|| {
-                        // Postgres names unnamed CHECKs `{table}_{column}_check` when the
-                        // expression references exactly one known column, and `{table}_check`
-                        // otherwise.
+                let constraint_name = match &chk.name {
+                    Some(name) => truncate_identifier(unquote_ident(&name.to_string())),
+                    None => {
                         let table_cols: Vec<&str> =
                             table.columns.keys().map(|s| s.as_str()).collect();
-                        let referenced = collect_referenced_columns(&chk.expr, &table_cols);
-                        if referenced.len() == 1 {
-                            format!("{}_{}_check", table.name, referenced[0])
-                        } else {
-                            format!("{}_check", table.name)
-                        }
-                    });
+                        let base =
+                            default_check_constraint_base_name(&table.name, &chk.expr, &table_cols);
+                        dedup_check_constraint_name(&base, &table)
+                    }
+                };
 
                 table.check_constraints.push(CheckConstraint {
-                    name: truncate_identifier(&constraint_name),
+                    name: constraint_name,
                     expression: normalize_expr(&chk.expr.to_string()),
                 });
             }
@@ -493,6 +486,54 @@ pub(super) fn parse_referential_action(action: &Option<SqlReferentialAction>) ->
         Some(SqlReferentialAction::SetDefault) => ReferentialAction::SetDefault,
         None => ReferentialAction::NoAction,
     }
+}
+
+/// Pick the Postgres-compatible default name for an unnamed CHECK constraint, given the
+/// expression and the table's columns. Postgres' `ChooseConstraintName` builds the base
+/// name as `{table}_{column}_check` when the expression references exactly one known
+/// column, and `{table}_check` otherwise.
+pub(super) fn default_check_constraint_base_name(
+    table_name: &str,
+    expr: &Expr,
+    table_columns: &[&str],
+) -> String {
+    let referenced = collect_referenced_columns(expr, table_columns);
+    if referenced.len() == 1 {
+        format!("{}_{}_check", table_name, referenced[0])
+    } else {
+        format!("{}_check", table_name)
+    }
+}
+
+/// Disambiguate a candidate constraint name against the names already taken by CHECK
+/// constraints on the same table. Mirrors Postgres' `ChooseConstraintName` numeric-suffix
+/// scheme: if `base` is free, use it as-is; otherwise try `{base}1`, `{base}2`, ... until
+/// a free slot is found. When the base is at the 63-byte cap, the base is truncated
+/// further so the numeric suffix fits without falling off — Postgres does the same.
+pub(super) fn dedup_check_constraint_name(base: &str, table: &Table) -> String {
+    let candidate = truncate_identifier(base);
+    if !check_name_taken(&candidate, table) {
+        return candidate;
+    }
+    let mut counter: u32 = 1;
+    loop {
+        let suffix = counter.to_string();
+        let max_base = PG_MAX_IDENTIFIER_LENGTH.saturating_sub(suffix.len());
+        let truncated_base = if base.len() > max_base {
+            &base[..max_base]
+        } else {
+            base
+        };
+        let candidate = format!("{truncated_base}{suffix}");
+        if !check_name_taken(&candidate, table) {
+            return candidate;
+        }
+        counter += 1;
+    }
+}
+
+fn check_name_taken(name: &str, table: &Table) -> bool {
+    table.check_constraints.iter().any(|c| c.name == name)
 }
 
 /// Collect the set of known table columns referenced by a CHECK expression, in the order

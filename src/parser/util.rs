@@ -11,7 +11,7 @@ use sqlparser::ast::{
 };
 
 /// PostgreSQL's NAMEDATALEN is 64, so identifiers are truncated to 63 bytes.
-const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
+pub(super) const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
 
 pub(super) fn truncate_identifier(s: &str) -> String {
     if s.len() <= PG_MAX_IDENTIFIER_LENGTH {
