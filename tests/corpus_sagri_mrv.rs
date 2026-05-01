@@ -36,18 +36,20 @@ async fn setup_postgis() -> (testcontainers::ContainerAsync<PostgresImage>, Stri
 #[ignore]
 async fn sagri_mrv_snapshot_converges() {
     let (_container, url) = setup_postgis().await;
-    let connection = PgConnection::new(&url).await.unwrap();
+    let connection = PgConnection::new(&url)
+        .await
+        .expect("connect to postgis container");
 
     sqlx::query("CREATE EXTENSION IF NOT EXISTS postgis")
         .execute(connection.pool())
         .await
-        .expect("postgis extension should install");
+        .expect("install postgis extension");
 
-    // Pre-create the cluster-level roles the snapshot grants/RLS-policies
-    // reference. Supabase and the staging/prod environments provide these
-    // out of the box; the bare postgis image does not. CREATE ROLE has no
-    // IF NOT EXISTS, so we wrap each in a DO block that swallows
-    // duplicate_object.
+    // Cluster-level roles the snapshot grants/RLS-policies reference;
+    // Supabase and staging/prod provide these out of the box, the bare
+    // postgis image does not. Check pg_roles first rather than swallowing
+    // duplicate_object — keeps the fail-fast posture if CREATE ROLE
+    // errors for any other reason.
     for role in [
         "authenticated",
         "service_role",
@@ -59,35 +61,38 @@ async fn sagri_mrv_snapshot_converges() {
         "mrv_staging_admin",
         "mrv_production_admin",
     ] {
-        let stmt = format!(
-            "DO $$ BEGIN CREATE ROLE \"{role}\"; \
-             EXCEPTION WHEN duplicate_object THEN NULL; END $$"
-        );
-        sqlx::query(&stmt)
-            .execute(connection.pool())
-            .await
-            .unwrap_or_else(|e| panic!("create role {role}: {e}"));
-    }
-
-    // Supabase pre-creates the `extensions` schema; the snapshot relies on
-    // that and never issues `CREATE SCHEMA "extensions"`. Inject it into the
-    // pre-create set so the loop below creates it before apply runs.
-    let mut schemas = extract_schema_names(SNAPSHOT);
-    schemas.insert("extensions".to_string());
-    let schema_names: Vec<String> = schemas.into_iter().collect();
-    for schema in &schema_names {
-        if schema != "public" {
-            sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS \"{schema}\""))
+        let exists: (bool,) =
+            sqlx::query_as("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)")
+                .bind(role)
+                .fetch_one(connection.pool())
+                .await
+                .unwrap_or_else(|e| panic!("check role {role}: {e}"));
+        if !exists.0 {
+            sqlx::query(&format!("CREATE ROLE \"{role}\""))
                 .execute(connection.pool())
                 .await
-                .unwrap_or_else(|e| panic!("create schema {schema}: {e}"));
+                .unwrap_or_else(|e| panic!("create role {role}: {e}"));
         }
     }
 
-    let target = parse_sql_string(SNAPSHOT).expect("snapshot must parse");
+    // Supabase pre-creates the `extensions` schema; the snapshot relies on
+    // it and never issues `CREATE SCHEMA "extensions"`.
+    let mut schemas = extract_schema_names(SNAPSHOT);
+    schemas.insert("extensions".to_string());
+    schemas.remove("public");
+    let mut schema_names: Vec<String> = schemas.into_iter().collect();
+    for schema in &schema_names {
+        sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS \"{schema}\""))
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("create schema {schema}: {e}"));
+    }
+    schema_names.push("public".to_string());
+
+    let target = parse_sql_string(SNAPSHOT).expect("parse snapshot");
     let empty = introspect_schema(&connection, &schema_names, false)
         .await
-        .unwrap();
+        .expect("introspect empty");
     let ops = compute_diff(&empty, &target);
     let planned = plan_migration(ops);
     let sql_stmts = generate_sql(&planned);
@@ -101,7 +106,7 @@ async fn sagri_mrv_snapshot_converges() {
 
     let after = introspect_schema(&connection, &schema_names, false)
         .await
-        .unwrap();
+        .expect("introspect after apply");
     let second_diff = compute_diff(&after, &target);
 
     if !second_diff.is_empty() {
