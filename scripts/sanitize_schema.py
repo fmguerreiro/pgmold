@@ -135,14 +135,34 @@ def scrub_text(sql: str) -> str:
 
     # Dollar-quoted blocks are function bodies. We need a body that the
     # PG parser accepts for the function's LANGUAGE — `NULL` alone is
-    # valid in neither plpgsql nor sql. Find the LAST LANGUAGE clause in
-    # the lookback (re.search would give us the FIRST, which belongs to
-    # an earlier function). Default to plpgsql when no clause is found.
+    # valid in neither plpgsql nor sql. Pick by lookback:
+    #
+    #   - sql                          → SELECT NULL
+    #   - plpgsql, set-returning       → BEGIN RETURN; END;
+    #     (RETURNS TABLE / RETURNS SETOF can't take RETURN NULL)
+    #   - plpgsql, scalar / trigger    → BEGIN RETURN NULL; END;
+    #
+    # We take the LAST LANGUAGE / RETURNS in the lookback, since
+    # re.search would return the FIRST and consecutive function
+    # definitions would mismatch.
     def repl_dollar(m: re.Match[str]) -> str:
-        lookback = sql[max(0, m.start() - 1000) : m.start()]
+        lookback = sql[max(0, m.start() - 1500) : m.start()]
         langs = re.findall(r"LANGUAGE\s+(sql|plpgsql)\b", lookback, re.IGNORECASE)
         lang = langs[-1].lower() if langs else "plpgsql"
-        body = "SELECT NULL" if lang == "sql" else "BEGIN RETURN NULL; END;"
+        if lang == "sql":
+            body = "SELECT NULL"
+        else:
+            # Match ALL RETURNS clauses in the lookback, take the last
+            # (the current function's). If we only matched TABLE/SETOF
+            # we'd miss the case where the previous function returned
+            # TABLE and the current one returns a scalar.
+            returns_all = re.findall(
+                r"RETURNS\s+(TABLE|SETOF|\w+)\b", lookback, re.IGNORECASE
+            )
+            if returns_all and returns_all[-1].upper() in ("TABLE", "SETOF"):
+                body = "BEGIN RETURN; END;"
+            else:
+                body = "BEGIN RETURN NULL; END;"
         if m.group(1) is not None:
             return stash(f"$$ {body} $$")
         tag = m.group(2)
