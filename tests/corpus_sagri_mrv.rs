@@ -55,12 +55,24 @@ async fn sagri_mrv_snapshot_converges() {
     let (_container, url) = setup_postgis().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
+    // Supabase pre-creates the `extensions` schema; the snapshot relies on
+    // that and never issues `CREATE SCHEMA "extensions"`. Create it here so
+    // `CREATE EXTENSION ... WITH SCHEMA extensions` doesn't fail on apply.
+    sqlx::query(r#"CREATE SCHEMA IF NOT EXISTS "extensions""#)
+        .execute(connection.pool())
+        .await
+        .expect("create extensions schema");
+
     sqlx::query("CREATE EXTENSION IF NOT EXISTS postgis")
         .execute(connection.pool())
         .await
         .expect("postgis extension should install");
 
-    let schema_names: Vec<String> = extract_schema_names(SNAPSHOT).into_iter().collect();
+    let mut schema_names: Vec<String> = extract_schema_names(SNAPSHOT).into_iter().collect();
+    if !schema_names.iter().any(|s| s == "extensions") {
+        schema_names.push("extensions".to_string());
+        schema_names.sort();
+    }
     for schema in &schema_names {
         if schema != "public" {
             sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS \"{schema}\""))
