@@ -1869,6 +1869,123 @@ mod tests {
         assert!(ops.is_empty(), "no migration ops expected, got {ops:?}");
     }
 
+    #[test]
+    fn detects_extension_schema_change() {
+        let mut from = empty_schema();
+        from.extensions.insert(
+            "pgcrypto".to_string(),
+            crate::model::Extension {
+                name: "pgcrypto".to_string(),
+                version: None,
+                schema: Some("public".to_string()),
+                comment: None,
+            },
+        );
+        let mut to = empty_schema();
+        to.extensions.insert(
+            "pgcrypto".to_string(),
+            crate::model::Extension {
+                name: "pgcrypto".to_string(),
+                version: None,
+                schema: Some("extensions".to_string()),
+                comment: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(
+            ops,
+            vec![MigrationOp::AlterExtensionSetSchema {
+                name: "pgcrypto".to_string(),
+                new_schema: "extensions".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn no_op_when_target_extension_schema_is_unmanaged() {
+        // `CREATE EXTENSION pgcrypto;` (no SCHEMA clause) means the source
+        // does not pin a schema. Pre-installed schemas in the live DB must
+        // be left in place.
+        let mut from = empty_schema();
+        from.extensions.insert(
+            "pgcrypto".to_string(),
+            crate::model::Extension {
+                name: "pgcrypto".to_string(),
+                version: None,
+                schema: Some("public".to_string()),
+                comment: None,
+            },
+        );
+        let mut to = empty_schema();
+        to.extensions.insert(
+            "pgcrypto".to_string(),
+            crate::model::Extension {
+                name: "pgcrypto".to_string(),
+                version: None,
+                schema: None,
+                comment: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert!(
+            ops.is_empty(),
+            "source-silent extension schema must be unmanaged, got {ops:?}"
+        );
+    }
+
+    #[test]
+    fn no_op_when_source_extension_schema_is_unmanaged() {
+        // `from.schema = None` happens in SQL-vs-SQL diffs when the prior
+        // file has no SCHEMA clause. We have no basis to pick a target, so
+        // pgmold must not emit an ALTER even if the target pins a schema.
+        let mut from = empty_schema();
+        from.extensions.insert(
+            "pgcrypto".to_string(),
+            crate::model::Extension {
+                name: "pgcrypto".to_string(),
+                version: None,
+                schema: None,
+                comment: None,
+            },
+        );
+        let mut to = empty_schema();
+        to.extensions.insert(
+            "pgcrypto".to_string(),
+            crate::model::Extension {
+                name: "pgcrypto".to_string(),
+                version: None,
+                schema: Some("extensions".to_string()),
+                comment: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert!(
+            ops.is_empty(),
+            "unmanaged source schema must not trigger ALTER, got {ops:?}"
+        );
+    }
+
+    #[test]
+    fn no_op_when_extension_schema_matches() {
+        let mut from = empty_schema();
+        from.extensions.insert(
+            "pgcrypto".to_string(),
+            crate::model::Extension {
+                name: "pgcrypto".to_string(),
+                version: None,
+                schema: Some("extensions".to_string()),
+                comment: None,
+            },
+        );
+        let to = from.clone();
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "no migration ops expected, got {ops:?}");
+    }
+
     fn table_with_policy(comment: Option<&str>) -> crate::model::Table {
         let mut t = simple_table("users");
         t.row_level_security = true;

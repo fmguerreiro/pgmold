@@ -67,6 +67,10 @@ pub enum MigrationOp {
     DropSchema(String),
     CreateExtension(Extension),
     DropExtension(String),
+    AlterExtensionSetSchema {
+        name: String,
+        new_schema: String,
+    },
     CreateServer(Server),
     DropServer(String),
     AlterServer {

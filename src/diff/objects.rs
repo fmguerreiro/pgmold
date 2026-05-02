@@ -238,7 +238,24 @@ pub(super) fn diff_extensions(
         &from.extensions,
         &to.extensions,
         |_key, ext| MigrationOp::CreateExtension(ext.clone()),
-        |_ops, _key, _from_val, _to_val| {},
+        |ops, _key, from_ext, to_ext| {
+            // Both schemas must be pinned for the diff to fire. A `None` on
+            // either side means the source is silent about placement, and
+            // pgmold leaves it alone. Concretely:
+            //   - `to.schema = None`: target is unmanaged; never relocate.
+            //   - `from.schema = None`: prior placement is unknown, so we
+            //     can't justify an ALTER to a specific schema. This case
+            //     only arises in SQL-vs-SQL diffs; introspection always
+            //     populates `schema`.
+            if let (Some(from_schema), Some(target_schema)) = (&from_ext.schema, &to_ext.schema) {
+                if from_schema != target_schema {
+                    ops.push(MigrationOp::AlterExtensionSetSchema {
+                        name: to_ext.name.clone(),
+                        new_schema: target_schema.clone(),
+                    });
+                }
+            }
+        },
         |name, _val| MigrationOp::DropExtension(name.clone()),
         |name, _val| ObjectCoords {
             schema: String::new(),

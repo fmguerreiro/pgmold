@@ -27,6 +27,7 @@ struct NodeSets {
     schemas: Vec<NodeIndex>,
     version_schemas: Vec<NodeIndex>,
     extensions: Vec<NodeIndex>,
+    alter_extension_set_schemas: Vec<NodeIndex>,
     servers: Vec<NodeIndex>,
     enums: Vec<NodeIndex>,
     add_enum_values: Vec<NodeIndex>,
@@ -82,6 +83,8 @@ impl NodeSets {
             version_schemas: graph
                 .nodes_matching(|k| matches!(k, OpKey::CreateVersionSchema { .. })),
             extensions: graph.nodes_matching(|k| matches!(k, OpKey::CreateExtension(_))),
+            alter_extension_set_schemas: graph
+                .nodes_matching(|k| matches!(k, OpKey::AlterExtensionSetSchema(_))),
             servers: graph.nodes_matching(|k| matches!(k, OpKey::CreateServer(_))),
             enums: graph.nodes_matching(|k| matches!(k, OpKey::CreateEnum(_))),
             add_enum_values: graph.nodes_matching(|k| matches!(k, OpKey::AddEnumValue { .. })),
@@ -220,6 +223,15 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.extensions, &ns.domains);
         self.edges_all_to_all(&ns.extensions, &ns.tables);
         self.edges_all_to_all(&ns.extensions, &ns.servers);
+
+        // Relocating an existing extension must wait until its destination
+        // schema exists, and must finish before any new object that resolves
+        // a type through the extension via its post-move schema.
+        self.edges_all_to_all(&ns.schemas, &ns.alter_extension_set_schemas);
+        self.edges_all_to_all(&ns.alter_extension_set_schemas, &ns.enums);
+        self.edges_all_to_all(&ns.alter_extension_set_schemas, &ns.domains);
+        self.edges_all_to_all(&ns.alter_extension_set_schemas, &ns.tables);
+        self.edges_all_to_all(&ns.alter_extension_set_schemas, &ns.servers);
     }
 
     /// Tier 2: Type system — enums, enum values, and domains before tables and columns.
@@ -467,6 +479,7 @@ impl MigrationGraph {
             &ns.schemas,
             &ns.version_schemas,
             &ns.extensions,
+            &ns.alter_extension_set_schemas,
             &ns.servers,
             &ns.enums,
             &ns.add_enum_values,
@@ -3849,6 +3862,77 @@ mod tests {
             "CreateTable",
             |op| matches!(op, MigrationOp::CreateExtension(_)),
             |op| matches!(op, MigrationOp::CreateTable(_)),
+        );
+    }
+
+    #[test]
+    fn create_schema_before_alter_extension_set_schema() {
+        let ops = vec![
+            MigrationOp::AlterExtensionSetSchema {
+                name: "pgcrypto".to_string(),
+                new_schema: "extensions".to_string(),
+            },
+            MigrationOp::CreateSchema(make_schema("extensions")),
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreateSchema",
+            "AlterExtensionSetSchema",
+            |op| matches!(op, MigrationOp::CreateSchema(_)),
+            |op| matches!(op, MigrationOp::AlterExtensionSetSchema { .. }),
+        );
+    }
+
+    #[test]
+    fn alter_extension_set_schema_before_table() {
+        let ops = vec![
+            MigrationOp::CreateTable(simple_table_with_fks("orders", vec![])),
+            MigrationOp::AlterExtensionSetSchema {
+                name: "pgcrypto".to_string(),
+                new_schema: "extensions".to_string(),
+            },
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "AlterExtensionSetSchema",
+            "CreateTable",
+            |op| matches!(op, MigrationOp::AlterExtensionSetSchema { .. }),
+            |op| matches!(op, MigrationOp::CreateTable(_)),
+        );
+    }
+
+    #[test]
+    fn create_schema_then_alter_extension_then_create_table() {
+        let ops = vec![
+            MigrationOp::CreateTable(simple_table_with_fks("orders", vec![])),
+            MigrationOp::AlterExtensionSetSchema {
+                name: "pgcrypto".to_string(),
+                new_schema: "extensions".to_string(),
+            },
+            MigrationOp::CreateSchema(make_schema("extensions")),
+        ];
+        let planned = plan_migration(ops);
+        let schema_idx = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateSchema(_)))
+            .expect("CreateSchema must appear in plan");
+        let alter_idx = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterExtensionSetSchema { .. }))
+            .expect("AlterExtensionSetSchema must appear in plan");
+        let table_idx = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateTable(_)))
+            .expect("CreateTable must appear in plan");
+        assert!(
+            schema_idx < alter_idx,
+            "CreateSchema must precede AlterExtensionSetSchema (got {schema_idx} vs {alter_idx})"
+        );
+        assert!(
+            alter_idx < table_idx,
+            "AlterExtensionSetSchema must precede CreateTable (got {alter_idx} vs {table_idx})"
         );
     }
 

@@ -371,6 +371,73 @@ async fn extension_comment_round_trips_through_apply_and_introspect() {
 }
 
 #[tokio::test]
+async fn extension_relocation_emits_alter_set_schema_and_converges() {
+    // Reproduces gh#300: when pgcrypto is pre-installed in `public` but the
+    // snapshot pins it in `extensions`, plan must emit
+    // `ALTER EXTENSION ... SET SCHEMA ...` and the second-diff must be empty.
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA public")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE SCHEMA IF NOT EXISTS extensions;
+        CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(
+        &connection,
+        &["public".to_string(), "extensions".to_string()],
+        false,
+    )
+    .await
+    .unwrap();
+
+    let ops = compute_diff(&current, &target);
+    let expected_alter = MigrationOp::AlterExtensionSetSchema {
+        name: "pgcrypto".to_string(),
+        new_schema: "extensions".to_string(),
+    };
+    assert!(
+        ops.contains(&expected_alter),
+        "expected {expected_alter:?} in plan, got {ops:?}"
+    );
+
+    let sql_stmts = generate_sql(&plan_migration(ops));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(
+        &connection,
+        &["public".to_string(), "extensions".to_string()],
+        false,
+    )
+    .await
+    .unwrap();
+    let ext = after
+        .extensions
+        .get("pgcrypto")
+        .expect("pgcrypto should still be installed");
+    assert_eq!(ext.schema.as_deref(), Some("extensions"));
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
 async fn table_constraint_comment_round_trips_through_apply_and_introspect() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
