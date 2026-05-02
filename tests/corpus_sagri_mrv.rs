@@ -91,12 +91,9 @@ async fn sagri_mrv_snapshot_converges() {
 
     // postgis/postgis ships with extra extensions (fuzzystrmatch,
     // postgis_tiger_geocoder, ...) the snapshot doesn't declare. Filter
-    // DropExtension — the snapshot is not converging cluster-level
-    // extensions, and this is genuine fixture/environment variance,
-    // not signal. (CreateExtension and AlterFunction are NOT filtered
-    // here because they would mask real pgmold regression signal; see
-    // the convergence-baseline assertion below for how those are
-    // tolerated without being silenced.)
+    // DropExtension — genuine fixture/environment variance, not signal.
+    // No other op classes are filtered: convergence is asserted at zero
+    // diff ops below.
     let diff_modulo_drop_ext = |from: &Schema, to: &Schema| -> Vec<MigrationOp> {
         compute_diff(from, to)
             .into_iter()
@@ -124,17 +121,20 @@ async fn sagri_mrv_snapshot_converges() {
         .expect("introspect after apply");
     let second_diff = diff_modulo_drop_ext(&after, &target);
 
-    // Convergence baseline: pgmold currently emits some no-op ops in the
-    // second diff against this snapshot. Tracked as gh#291 (functions
-    // re-emit AlterFunction after a no-op apply). The baseline is a
-    // ratchet — if it grows we've hit a NEW convergence bug and the
-    // test fails. When gh#291 is resolved drop the baseline to 0.
-    const CONVERGENCE_BASELINE: usize = 50;
+    // Convergence ratchet: pgmold currently emits some no-op ops in the
+    // second diff for object kinds that pgmold doesn't fully model yet.
+    // The 30-op baseline is fully attributed:
+    //   - 23 COMMENT ON   — introspect doesn't read pg_description (gh#298)
+    //   -  4 DROP+CREATE  — char(N)[] vs character[] in func sig key (gh#299)
+    //   -  2 CreateExt    — ALTER EXTENSION SET SCHEMA missing      (gh#300)
+    //   -  1 ALTER TABLE  — scrubber rewrote default to pg_catalog  (gh#301)
+    // Drop the baseline by the corresponding op count as each issue lands.
+    const CONVERGENCE_BASELINE: usize = 30;
     if second_diff.len() > CONVERGENCE_BASELINE {
         let remaining_sql = generate_sql(&plan_migration(second_diff.clone()));
         panic!(
             "sagri_mrv convergence regressed: {} op(s) remain (baseline {}). \
-             A new convergence bug appeared — see gh#291 for context.\n\
+             A new convergence bug appeared — see gh#298–301 for tracked classes.\n\
              remaining ops: {:#?}\n\
              remaining SQL:\n{}",
             second_diff.len(),

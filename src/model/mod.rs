@@ -579,7 +579,7 @@ impl Function {
             && self.language == other.language
             && self.volatility == other.volatility
             && self.security == other.security
-            && self.config_params == other.config_params
+            && config_params_equal(&self.config_params, &other.config_params)
             && normalize_sql_body(&self.body) == normalize_sql_body(&other.body)
     }
 
@@ -637,6 +637,29 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
 fn normalize_sql_body(body: &str) -> String {
     let stripped = crate::util::strip_dollar_quotes(body);
     stripped.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Canonicalises a `SET <param> = <value>` value for comparison.
+///
+/// `SET search_path = 'foo'` and `SET search_path = foo` are equivalent in
+/// PostgreSQL: pg_proc.proconfig stores both as the bareword `foo`. The SQL
+/// parser preserves the literal form (`'foo'` keeps its quotes); the
+/// introspector returns the bareword. Strip a single layer of surrounding
+/// single quotes so both sides match.
+fn normalize_config_value(value: &str) -> &str {
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'' {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
+}
+
+fn config_params_equal(left: &[(String, String)], right: &[(String, String)]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right.iter()).all(|(l, r)| {
+            l.0 == r.0 && normalize_config_value(&l.1) == normalize_config_value(&r.1)
+        })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2505,6 +2528,46 @@ mod tests {
         };
         assert_eq!(func.config_params.len(), 1);
         assert_eq!(func.config_params[0].0, "search_path");
+    }
+
+    #[test]
+    fn function_semantically_equals_normalises_quoted_config_value() {
+        // Parser path keeps `SET search_path = '_'` as `'_'`; introspect path
+        // returns the bareword `_` from pg_proc.proconfig. Both must compare equal.
+        let make = |value: &str| Function {
+            name: "f".to_string(),
+            schema: "public".to_string(),
+            arguments: vec![],
+            return_type: "void".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security: SecurityType::Definer,
+            config_params: vec![("search_path".to_string(), value.to_string())],
+            owner: None,
+            grants: Vec::new(),
+            comment: None,
+        };
+        assert!(make("'_'").semantically_equals(&make("_")));
+        assert!(make("'public'").semantically_equals(&make("public")));
+        assert!(make("'pg_temp, public'").semantically_equals(&make("'pg_temp, public'")));
+        // Asymmetric multi-element: defends against future introspect changes
+        // that could return the bareword form for values containing commas.
+        assert!(make("'pg_temp, public'").semantically_equals(&make("pg_temp, public")));
+        assert!(!make("foo").semantically_equals(&make("bar")));
+    }
+
+    #[test]
+    fn normalize_config_value_strips_outer_single_quotes() {
+        assert_eq!(normalize_config_value("'_'"), "_");
+        assert_eq!(
+            normalize_config_value("'pg_temp, public'"),
+            "pg_temp, public"
+        );
+        assert_eq!(normalize_config_value("public"), "public");
+        assert_eq!(normalize_config_value("''"), "");
+        assert_eq!(normalize_config_value("'"), "'");
+        assert_eq!(normalize_config_value(""), "");
     }
 
     #[test]
