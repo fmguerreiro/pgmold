@@ -876,7 +876,7 @@ BEGIN
         WHERE
             name = p_0120;
         IF new_role_id IS NULL THEN
-            RAISE EXCEPTION '_', p_0120;
+            RAISE EXCEPTION '_%_', p_0120;
         END IF;
         
         IF c_0239 = '_' THEN
@@ -890,7 +890,7 @@ BEGIN
                 ur.p_0123 = inviter_id;
             
             IF supplier_id_param IS NULL AND enterprise_id_param IS NULL THEN
-                RAISE EXCEPTION '_', inviter_id, inviter_roles, NEW.c_0384;
+                RAISE EXCEPTION '_%_%_%_', inviter_id, inviter_roles, NEW.c_0384;
             END IF;
             IF supplier_id_param IS NOT NULL THEN
                 
@@ -1017,12 +1017,12 @@ BEGIN
                 WHERE
                     ur.p_0123 = inviter_id
                     AND (r.name IN ('v1', 'v1') OR r.level = '_')) THEN
-            RAISE EXCEPTION '_', inviter_id, inviter_roles;
+            RAISE EXCEPTION '_%_%_', inviter_id, inviter_roles;
         END IF;
     END IF;
     
     IF enterprise_id_param IS NULL AND methodology_mode_param IS NULL AND supplier_id_param IS NULL THEN
-        RAISE EXCEPTION '_', inviter_id, enterprise_id_param, supplier_id_param, p_0120, c_0239, inviter_roles, NEW.c_0384;
+        RAISE EXCEPTION '_%_%_%_%_%_%_%_', inviter_id, enterprise_id_param, supplier_id_param, p_0120, c_0239, inviter_roles, NEW.c_0384;
     END IF;
     
     
@@ -1066,7 +1066,7 @@ BEGIN
                     (ur.p_0121 = supplier_id_param AND r.name = 'v1')
                     OR r.level = '_'
                 )) THEN
-        RAISE EXCEPTION '_', inviter_id, supplier_id_param, inviter_roles;
+        RAISE EXCEPTION '_%_%_%_', inviter_id, supplier_id_param, inviter_roles;
     END IF;
 END IF;
     
@@ -1079,7 +1079,7 @@ END IF;
             WHERE
                 es.p_0121 = supplier_id_param
                 AND es.p_0001 = enterprise_id_param) THEN
-        RAISE EXCEPTION '_', supplier_id_param, enterprise_id_param;
+        RAISE EXCEPTION '_%_%_', supplier_id_param, enterprise_id_param;
     END IF;
 END IF;
     
@@ -1131,7 +1131,7 @@ ELSIF c_0239 = '_' THEN
     
     
 ELSE
-    RAISE EXCEPTION '_', c_0239;
+    RAISE EXCEPTION '_%_', c_0239;
 END IF;
     
     PERFORM
@@ -2096,7 +2096,7 @@ BEGIN
       entity_column := '_';
       admin_role := '_';
     ELSE
-      RAISE EXCEPTION '_', p_0029;
+      RAISE EXCEPTION '_%_', p_0029;
   END CASE;
 
   
@@ -2107,12 +2107,12 @@ BEGIN
     WHERE ur.p_0123 = auth.f_0100()
     AND r.name = admin_role
   ) THEN
-    RAISE EXCEPTION '_', admin_role;
+    RAISE EXCEPTION '_%_', admin_role;
   END IF;
 
   
   IF NOT f_0022(auth.f_0100(), p_0029, p_0027) THEN
-    RAISE EXCEPTION '_', p_0029;
+    RAISE EXCEPTION '_%_', p_0029;
   END IF;
 
   
@@ -2127,7 +2127,7 @@ BEGIN
   GET DIAGNOSTICS rows_affected = ROW_COUNT;
 
   
-  EXECUTE format('_', entity_column)
+  EXECUTE format('_%_', entity_column)
   USING p_0027;
 
   RETURN rows_affected > 0;
@@ -2209,7 +2209,7 @@ BEGIN
 
     GET DIAGNOSTICS v_row_count = ROW_COUNT;
     IF v_row_count = 0 THEN
-      RAISE EXCEPTION '_', p_0104;
+      RAISE EXCEPTION '_%_', p_0104;
     END IF;
 
     c_0409 := jsonb_build_object(
@@ -2237,7 +2237,7 @@ CREATE FUNCTION "public"."f_0008"("p_0002" text, "con_0119" uuid) RETURNS jsonb 
 BEGIN
   BEGIN
     
-    RAISE NOTICE '_', p_0002, con_0119;
+    RAISE NOTICE '_%_%_', p_0002, con_0119;
 
     PERFORM f_0039(p_0002, con_0119);
 
@@ -2373,7 +2373,7 @@ BEGIN
 
     GET DIAGNOSTICS v_row_count = ROW_COUNT;
     IF v_row_count = 0 THEN
-      RAISE EXCEPTION '_', p_0104;
+      RAISE EXCEPTION '_%_', p_0104;
     END IF;
 
     c_0409 := jsonb_build_object(
@@ -2416,15 +2416,15 @@ BEGIN
     id_column := p_0010 || '_';
 
     
-    EXECUTE format('_', id_column) INTO total_users USING p_0009, p_0122;
+    EXECUTE format('_%_', id_column) INTO total_users USING p_0009, p_0122;
 
     
-    EXECUTE format('_', id_column) INTO admin_count USING p_0009, admin_role_id;
+    EXECUTE format('_%_', id_column) INTO admin_count USING p_0009, admin_role_id;
 
     
     IF admin_count = 1 THEN
       
-      EXECUTE format('_', id_column) INTO f_0060 USING p_0122, p_0009, admin_role_id;
+      EXECUTE format('_%_', id_column) INTO f_0060 USING p_0122, p_0009, admin_role_id;
 
       IF f_0060 THEN
         
@@ -2445,7 +2445,7 @@ BEGIN
     
     IF bypass_last_admin_check THEN
       
-      EXECUTE format('_', id_column) USING p_0122, p_0009;
+      EXECUTE format('_%_', id_column) USING p_0122, p_0009;
 
       
       PERFORM f_0103(p_0122);
@@ -2524,7 +2524,7 @@ BEGIN
       AND ur.p_0001 = p_0026
       AND r.name = 'v1'
   ) THEN
-    RAISE EXCEPTION '_', p_0026;
+    RAISE EXCEPTION '_%_', p_0026;
   END IF;
 
   
@@ -2533,7 +2533,7 @@ BEGIN
     WHERE p_0001 = p_0026
       AND p_0121 = p_0104
   ) THEN
-    RAISE EXCEPTION '_', p_0104, p_0026;
+    RAISE EXCEPTION '_%_%_', p_0104, p_0026;
   END IF;
 
   
@@ -2634,7 +2634,7 @@ BEGIN
   WHERE name = p_0007;
 
   IF new_role_id IS NULL THEN
-    RAISE EXCEPTION '_', p_0007;
+    RAISE EXCEPTION '_%_', p_0007;
   END IF;
 
   
@@ -2782,7 +2782,7 @@ CREATE FUNCTION "public"."f_0021"() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN
       AND ty_0034 IS NOT NULL
   ) THEN
     RAISE EXCEPTION
-      '_',
+      '_%_',
       NEW.p_0121;
   END IF;
 
@@ -2862,7 +2862,7 @@ BEGIN
     SELECT 1 FROM public.t_0048 ef WHERE ef.p_0005 = NEW.id
   ) THEN
     RAISE EXCEPTION
-      '_',
+      '_%_',
       NEW.id
       USING ERRCODE = '_';
   END IF;
@@ -2955,13 +2955,13 @@ BEGIN
   ) INTO v_is_enterprise_supplier;
 
   IF v_is_enterprise_supplier AND v_methodology_mode IS NOT NULL THEN
-    RAISE EXCEPTION '_', v_supplier_id;
+    RAISE EXCEPTION '_%_', v_supplier_id;
   END IF;
 
   
   
   IF NOT v_is_enterprise_supplier AND v_methodology_mode IS NULL AND NOT (TG_TABLE_NAME = 'v1' AND TG_OP = '_') THEN
-    RAISE EXCEPTION '_', v_supplier_id;
+    RAISE EXCEPTION '_%_', v_supplier_id;
   END IF;
 
   IF TG_OP = '_' THEN
@@ -3271,7 +3271,7 @@ BEGIN
 
   EXCEPTION
     WHEN OTHERS THEN
-      RAISE EXCEPTION '_', p_0112, SQLERRM;
+      RAISE EXCEPTION '_%_%_', p_0112, SQLERRM;
   END;
 
   
@@ -3390,9 +3390,9 @@ CREATE FUNCTION "public"."f_0063"("p_0123" uuid, "p_0002" text, "con_0119" uuid)
   is_user BOOLEAN;
   id_column TEXT := p_0002 || '_';
 BEGIN
-  EXECUTE format('_', id_column) INTO user_count USING con_0119;
+  EXECUTE format('_%_', id_column) INTO user_count USING con_0119;
 
-  EXECUTE format('_', id_column) INTO is_user USING p_0123, con_0119;
+  EXECUTE format('_%_', id_column) INTO is_user USING p_0123, con_0119;
 
   RETURN user_count = 1 AND is_user;
 END;$$;
@@ -3487,7 +3487,7 @@ BEGIN
 
   
   IF f_0062 THEN
-    RAISE EXCEPTION '_', p_0002;
+    RAISE EXCEPTION '_%_', p_0002;
   END IF;
 
   
@@ -4300,7 +4300,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER
 CREATE OR REPLACE FUNCTION audit.f_0076()
 RETURNS TRIGGER AS $$
 BEGIN
-    RAISE EXCEPTION '_', TG_OP, TG_TABLE_SCHEMA, TG_TABLE_NAME;
+    RAISE EXCEPTION '_%_%_%_', TG_OP, TG_TABLE_SCHEMA, TG_TABLE_NAME;
 END;
 $$ LANGUAGE plpgsql
    SET search_path = '_';
@@ -4363,7 +4363,7 @@ BEGIN
             ) INTO c_0409;
 
         ELSE
-            RAISE EXCEPTION '_', p_0107;
+            RAISE EXCEPTION '_%_', p_0107;
     END CASE;
 
     RETURN c_0409;
@@ -4701,11 +4701,11 @@ BEGIN
   END IF;
 
   IF OLD.c_0470 IN ('v1', 'v1', 'v1') THEN
-    RAISE EXCEPTION '_', OLD.c_0470, NEW.c_0470;
+    RAISE EXCEPTION '_%_%_', OLD.c_0470, NEW.c_0470;
   END IF;
 
   IF OLD.c_0470 = 'v1' AND NEW.c_0470 NOT IN ('v1', 'v1', 'v1') THEN
-    RAISE EXCEPTION '_', NEW.c_0470;
+    RAISE EXCEPTION '_%_', NEW.c_0470;
   END IF;
 
   RETURN NEW;
@@ -5776,7 +5776,7 @@ BEGIN
         SELECT 1 FROM mrv.t_0084
         WHERE id = NEW.c_0477 AND c_0423 = NEW.c_0423
     ) THEN
-        RAISE EXCEPTION '_',
+        RAISE EXCEPTION '_%_%_',
             NEW.c_0477, NEW.c_0423;
     END IF;
     RETURN NEW;
@@ -6493,7 +6493,7 @@ BEGIN
     BEGIN
         PERFORM p_0029::mrv."ty_0007";
     EXCEPTION WHEN invalid_text_representation THEN
-        RAISE EXCEPTION '_', p_0029;
+        RAISE EXCEPTION '_%_', p_0029;
     END;
 
     
@@ -6528,7 +6528,7 @@ BEGIN
               AND "c_0171" = p_0027
               AND "c_0172" = p_0029::mrv."ty_0007"
         ) THEN
-            RAISE EXCEPTION '_', v_facility_id, p_0027;
+            RAISE EXCEPTION '_%_%_', v_facility_id, p_0027;
         END IF;
 
         
@@ -7129,7 +7129,7 @@ BEGIN
     BEGIN
         PERFORM p_0029::mrv."ty_0007";
     EXCEPTION WHEN invalid_text_representation THEN
-        RAISE EXCEPTION '_', p_0029;
+        RAISE EXCEPTION '_%_', p_0029;
     END;
 
     
@@ -7159,7 +7159,7 @@ BEGIN
     BEGIN
         PERFORM upper(p_0015)::mrv."ty_0003";
     EXCEPTION WHEN invalid_text_representation THEN
-        RAISE EXCEPTION '_', p_0015;
+        RAISE EXCEPTION '_%_', p_0015;
     END;
 
     
@@ -7238,7 +7238,7 @@ BEGIN
         OR auth.f_0117(p_0104 => p_0027)
         OR auth.f_0117(p_0037 => p_0027)
     ) THEN
-        RAISE EXCEPTION '_', p_0027;
+        RAISE EXCEPTION '_%_', p_0027;
     END IF;
 
     
@@ -7252,21 +7252,21 @@ BEGIN
     BEGIN
         PERFORM p_0016::mrv."ty_0004";
     EXCEPTION WHEN invalid_text_representation THEN
-        RAISE EXCEPTION '_', p_0016;
+        RAISE EXCEPTION '_%_', p_0016;
     END;
 
     IF p_0110 IS NOT NULL THEN
         BEGIN
             PERFORM p_0110::mrv."ty_0019";
         EXCEPTION WHEN invalid_text_representation THEN
-            RAISE EXCEPTION '_', p_0110;
+            RAISE EXCEPTION '_%_', p_0110;
         END;
     END IF;
 
     BEGIN
         PERFORM p_0102::mrv."ty_0005";
     EXCEPTION WHEN invalid_text_representation THEN
-        RAISE EXCEPTION '_', p_0102;
+        RAISE EXCEPTION '_%_', p_0102;
     END;
 
     
@@ -7441,14 +7441,14 @@ BEGIN
     END IF;
 
     IF jsonb_typeof(p_0077) != '_' THEN
-        RAISE EXCEPTION '_', jsonb_typeof(p_0077);
+        RAISE EXCEPTION '_%_', jsonb_typeof(p_0077);
     END IF;
 
     BEGIN
         PERFORM p_0085::mrv."ty_0007";
         PERFORM p_0099::mrv."ty_0007";
     EXCEPTION WHEN invalid_text_representation THEN
-        RAISE EXCEPTION '_',
+        RAISE EXCEPTION '_%_%_',
             p_0085, p_0099;
     END;
 
@@ -7477,7 +7477,7 @@ BEGIN
             PERFORM v_country_code::mrv."ty_0003";
             PERFORM v_unit::mrv."ty_0021";
         EXCEPTION WHEN invalid_text_representation OR invalid_parameter_value THEN
-            RAISE EXCEPTION '_',
+            RAISE EXCEPTION '_%_%_%_',
                 v_crop_type, v_country_code, v_unit;
         END;
 
@@ -7492,7 +7492,7 @@ BEGIN
                 AND f."c_0171" = p_0098;
 
             IF v_amount > v_total_yield THEN
-                RAISE EXCEPTION '_',
+                RAISE EXCEPTION '_%_%_%_',
                     v_amount, v_total_yield, v_crop_type;
             END IF;
         END IF;
@@ -7533,13 +7533,13 @@ BEGIN
             WHERE f.id = v_facility_id;
 
             IF v_facility_entity_id IS NULL THEN
-                RAISE EXCEPTION '_',
+                RAISE EXCEPTION '_%_%_%_',
                     v_facility_id, v_crop_type, v_country_code;
             END IF;
 
             IF v_facility_entity_id != p_0084
                 OR v_facility_entity_type != p_0085 THEN
-                RAISE EXCEPTION '_',
+                RAISE EXCEPTION '_%_%_%_',
                     v_facility_id, v_crop_type, v_country_code;
             END IF;
 
@@ -7601,7 +7601,7 @@ BEGIN
         RAISE EXCEPTION '_';
     END IF;
 
-    EXECUTE format('_', '_', '_');
+    EXECUTE format('_%_%_', '_', '_');
 
     INSERT INTO mrv."t_0041" (
         id, "c_0169", "c_0056", "c_0426",
@@ -7656,14 +7656,14 @@ BEGIN
     END IF;
 
     IF p_0069 NOT IN ('_', '_') THEN
-        RAISE EXCEPTION '_', p_0069;
+        RAISE EXCEPTION '_%_', p_0069;
     END IF;
 
     IF NOT auth.f_0061() AND NOT auth.f_0117(p_0104 => p_0104) THEN
         RAISE EXCEPTION '_';
     END IF;
 
-    EXECUTE format('_', '_', '_');
+    EXECUTE format('_%_%_', '_', '_');
 
     INSERT INTO mrv."t_0031" (
         id, "c_0482", "c_0235", "c_0308",
@@ -7705,7 +7705,7 @@ BEGIN
         RAISE EXCEPTION '_';
     END IF;
 
-    EXECUTE format('_', '_', '_');
+    EXECUTE format('_%_%_', '_', '_');
 
     INSERT INTO mrv."t_0041" (
         id, "c_0482", "c_0426",
@@ -7866,7 +7866,7 @@ BEGIN
     END IF;
 
     IF p_0117 < 2000 OR p_0117 > EXTRACT(YEAR FROM NOW())::int + 5 THEN
-        RAISE EXCEPTION '_', p_0117;
+        RAISE EXCEPTION '_%_', p_0117;
     END IF;
 
     RETURN QUERY
@@ -8338,7 +8338,7 @@ BEGIN
     END IF;
 
     IF p_0117 < 2000 OR p_0117 > EXTRACT(YEAR FROM NOW())::int + 5 THEN
-        RAISE EXCEPTION '_', p_0117;
+        RAISE EXCEPTION '_%_', p_0117;
     END IF;
 
     RETURN QUERY
@@ -8874,7 +8874,7 @@ BEGIN
       AND ief."c_0394" = p_0083;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION '_', p_0051, p_0083;
+        RAISE EXCEPTION '_%_%_', p_0051, p_0083;
     END IF;
 END;
 $$;
@@ -8904,7 +8904,7 @@ BEGIN
     END IF;
 
     IF p_0031 < 1 OR p_0031 > 365 THEN
-        RAISE EXCEPTION '_', p_0031;
+        RAISE EXCEPTION '_%_', p_0031;
     END IF;
 
     v_expires_at := now() + make_interval(days => p_0031);
@@ -8969,15 +8969,15 @@ BEGIN
             v_farm_id := NEW."c_0186";
             v_fk_column := '_';
         ELSE
-            RAISE EXCEPTION '_', TG_TABLE_NAME;
+            RAISE EXCEPTION '_%_', TG_TABLE_NAME;
     END CASE;
 
     IF v_farm_id IS NULL THEN
-        RAISE EXCEPTION '_', TG_TABLE_NAME, NEW.id;
+        RAISE EXCEPTION '_%_%_', TG_TABLE_NAME, NEW.id;
     END IF;
 
     EXECUTE format(
-        '_',
+        '_%_',
         v_fk_column
     ) USING v_type, v_date, 'null'::jsonb, v_farm_id, NEW.id;
 
@@ -9239,7 +9239,7 @@ BEGIN
     END IF;
 
     IF p_0117 < 2000 OR p_0117 > EXTRACT(YEAR FROM NOW())::int + 5 THEN
-        RAISE EXCEPTION '_', p_0117;
+        RAISE EXCEPTION '_%_', p_0117;
     END IF;
 
     RETURN QUERY
@@ -9486,7 +9486,7 @@ BEGIN
     END IF;
 
     IF v_procurement_date IS NULL THEN
-        RAISE EXCEPTION '_', p_0076;
+        RAISE EXCEPTION '_%_', p_0076;
     END IF;
 
     v_procurement_year := EXTRACT(YEAR FROM v_procurement_date)::int;
@@ -9567,7 +9567,7 @@ BEGIN
     WHERE f.id = p_0035;
 
     IF v_farm IS NULL THEN
-        RAISE EXCEPTION '_', p_0035;
+        RAISE EXCEPTION '_%_', p_0035;
     END IF;
 
     IF NOT (
@@ -9575,7 +9575,7 @@ BEGIN
         OR auth.f_0117(p_0104 => v_farm."c_0171")
         OR auth.f_0117(p_0037 => v_farm."c_0171")
     ) THEN
-        RAISE EXCEPTION '_', p_0035;
+        RAISE EXCEPTION '_%_', p_0035;
     END IF;
 
     DELETE FROM mrv."t_0012" WHERE mrv."t_0012".id = p_0035;
@@ -9619,7 +9619,7 @@ BEGIN
         OR auth.f_0117(p_0104 => p_0027)
         OR auth.f_0117(p_0037 => p_0027)
     ) THEN
-        RAISE EXCEPTION '_', p_0027;
+        RAISE EXCEPTION '_%_', p_0027;
     END IF;
 
     IF NOT EXISTS (
@@ -9698,7 +9698,7 @@ BEGIN
         LIMIT 1;
 
         IF v_farm IS NULL OR v_farm."c_0171" != v_existing."c_0482" THEN
-            RAISE EXCEPTION '_',
+            RAISE EXCEPTION '_%_%_',
                 v_existing."c_0456", v_existing."c_0482";
         END IF;
 
@@ -9731,7 +9731,7 @@ BEGIN
           AND pr."c_0101"::text = v_existing."c_0101"::text;
 
     ELSE
-        RAISE EXCEPTION '_', v_existing."c_0453"::text;
+        RAISE EXCEPTION '_%_', v_existing."c_0453"::text;
     END IF;
 
     SELECT COALESCE(SUM("c_0379"), 0)
@@ -9744,7 +9744,7 @@ BEGIN
       AND id != p_0050;
 
     IF p_0080 > (v_available - v_already_supplied) THEN
-        RAISE EXCEPTION '_',
+        RAISE EXCEPTION '_%_%_%_%_%_',
             p_0080, (v_available - v_already_supplied),
             v_existing."c_0453"::text, v_existing."c_0456", v_existing."c_0101"::text;
     END IF;
@@ -9759,7 +9759,7 @@ BEGIN
         WHERE id = p_0050;
 
         IF NOT FOUND THEN
-            RAISE EXCEPTION '_', p_0050;
+            RAISE EXCEPTION '_%_', p_0050;
         END IF;
     EXCEPTION WHEN unique_violation THEN
         RAISE EXCEPTION '_';
@@ -9799,7 +9799,7 @@ BEGIN
     WHERE id = p_0114;
 
     IF v_enterprise_id IS NULL THEN
-        RAISE EXCEPTION '_', p_0114;
+        RAISE EXCEPTION '_%_', p_0114;
     END IF;
 
     IF NOT auth.f_0117(p_0026 => v_enterprise_id) THEN
@@ -9813,7 +9813,7 @@ BEGIN
 
     GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
     IF v_updated_rows = 0 THEN
-        RAISE EXCEPTION '_', p_0114;
+        RAISE EXCEPTION '_%_', p_0114;
     END IF;
 
     
@@ -9922,13 +9922,13 @@ BEGIN
     BEGIN
         PERFORM p_0097::mrv."ty_0018";
     EXCEPTION WHEN invalid_text_representation THEN
-        RAISE EXCEPTION '_', p_0097;
+        RAISE EXCEPTION '_%_', p_0097;
     END;
 
     BEGIN
         PERFORM p_0016::mrv."ty_0004";
     EXCEPTION WHEN invalid_text_representation THEN
-        RAISE EXCEPTION '_', p_0016;
+        RAISE EXCEPTION '_%_', p_0016;
     END;
 
     IF p_0080 <= 0 OR p_0080 > 1000000 THEN
@@ -9952,7 +9952,7 @@ BEGIN
         LIMIT 1;
 
         IF v_farm IS NULL OR v_farm."c_0171" != p_0104 THEN
-            RAISE EXCEPTION '_',
+            RAISE EXCEPTION '_%_%_',
                 p_0100, p_0104;
         END IF;
 
@@ -9985,7 +9985,7 @@ BEGIN
           AND pr."c_0101"::text = p_0016;
 
     ELSE
-        RAISE EXCEPTION '_', p_0097;
+        RAISE EXCEPTION '_%_', p_0097;
     END IF;
 
     SELECT COALESCE(SUM("c_0379"), 0)
@@ -9997,7 +9997,7 @@ BEGIN
       AND "c_0101"::text = p_0016;
 
     IF p_0080 > (v_available - v_already_supplied) THEN
-        RAISE EXCEPTION '_',
+        RAISE EXCEPTION '_%_%_%_%_%_',
             p_0080, (v_available - v_already_supplied),
             p_0097, p_0100, p_0016;
     END IF;
@@ -10084,7 +10084,7 @@ BEGIN
     END IF;
 
     IF p_0026 IS NOT NULL AND NOT auth.f_0117(p_0026 => p_0026) THEN
-        RAISE EXCEPTION '_', p_0026;
+        RAISE EXCEPTION '_%_', p_0026;
     END IF;
 
     IF p_0117 IS NULL THEN
@@ -10092,7 +10092,7 @@ BEGIN
     END IF;
 
     IF p_0117 < 2000 OR p_0117 > EXTRACT(YEAR FROM NOW())::int + 5 THEN
-        RAISE EXCEPTION '_', p_0117;
+        RAISE EXCEPTION '_%_', p_0117;
     END IF;
 
     RETURN QUERY
@@ -10301,7 +10301,7 @@ BEGIN
       WHERE id = NEW."c_0353";
 
       IF existing_farm_id IS NOT NULL AND existing_farm_id <> NEW.id THEN
-        RAISE EXCEPTION '_', NEW."c_0353", existing_farm_id;
+        RAISE EXCEPTION '_%_%_', NEW."c_0353", existing_farm_id;
       END IF;
 
       IF TG_OP = '_' AND OLD."c_0353" IS NOT NULL AND OLD."c_0353" <> NEW."c_0353" THEN
@@ -10320,11 +10320,11 @@ BEGIN
       WHERE id = NEW."c_0186";
 
       IF existing_polygon_id IS NOT NULL AND existing_polygon_id <> NEW.id THEN
-        RAISE EXCEPTION '_', NEW."c_0186", existing_polygon_id;
+        RAISE EXCEPTION '_%_%_', NEW."c_0186", existing_polygon_id;
       END IF;
 
       IF TG_OP = '_' AND OLD."c_0186" IS NOT NULL AND OLD."c_0186" <> NEW."c_0186" THEN
-        RAISE EXCEPTION '_', NEW.id, OLD."c_0186";
+        RAISE EXCEPTION '_%_%_', NEW.id, OLD."c_0186";
       END IF;
 
       UPDATE mrv."t_0012"
@@ -10369,7 +10369,7 @@ BEGIN
 
     GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
     IF v_updated_rows = 0 THEN
-        RAISE EXCEPTION '_', p_0073;
+        RAISE EXCEPTION '_%_', p_0073;
     END IF;
 END;
 $$;
@@ -10441,7 +10441,7 @@ BEGIN
 
     GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
     IF v_updated_rows = 0 THEN
-        RAISE EXCEPTION '_', p_0073;
+        RAISE EXCEPTION '_%_', p_0073;
     END IF;
 
     RETURN QUERY
@@ -10537,7 +10537,7 @@ BEGIN
         OR auth.f_0117(p_0104 => v_entity_id)
         OR auth.f_0117(p_0037 => v_entity_id)
     ) THEN
-        RAISE EXCEPTION '_', v_entity_id;
+        RAISE EXCEPTION '_%_', v_entity_id;
     END IF;
 
     IF NOT EXISTS (
@@ -10687,7 +10687,7 @@ BEGIN
     END IF;
 
     IF jsonb_typeof(p_0039) != '_' THEN
-        RAISE EXCEPTION '_', jsonb_typeof(p_0039);
+        RAISE EXCEPTION '_%_', jsonb_typeof(p_0039);
     END IF;
 
     FOR v_item IN SELECT * FROM jsonb_array_elements(p_0039)
@@ -10705,7 +10705,7 @@ BEGIN
             OR auth.f_0117(p_0104 => v_entity_id)
             OR auth.f_0117(p_0037 => v_entity_id)
         ) THEN
-            RAISE EXCEPTION '_', v_entity_id;
+            RAISE EXCEPTION '_%_', v_entity_id;
         END IF;
 
         IF v_name IS NULL OR v_name = 'v1' THEN
@@ -10758,7 +10758,7 @@ BEGIN
             LIMIT 1;
 
             IF FOUND THEN
-                RAISE EXCEPTION '_', v_overlapping_farm."name", v_overlapping_farm.id;
+                RAISE EXCEPTION '_%_%_', v_overlapping_farm."name", v_overlapping_farm.id;
             END IF;
 
             INSERT INTO mrv."Polygon" (id, geometry, "c_0092", "c_0524")
@@ -10778,11 +10778,11 @@ BEGIN
             WHERE p.id = v_polygon_id;
 
             IF v_existing_polygon IS NULL THEN
-                RAISE EXCEPTION '_', v_polygon_id;
+                RAISE EXCEPTION '_%_', v_polygon_id;
             END IF;
 
             IF v_existing_polygon."c_0186" IS NOT NULL AND v_existing_polygon."c_0186" != v_farm_id THEN
-                RAISE EXCEPTION '_', v_polygon_id;
+                RAISE EXCEPTION '_%_', v_polygon_id;
             END IF;
         END IF;
 
@@ -10791,7 +10791,7 @@ BEGIN
             BEGIN
                 PERFORM v_country_code::mrv."ty_0003";
             EXCEPTION WHEN invalid_text_representation THEN
-                RAISE EXCEPTION '_', v_country_code;
+                RAISE EXCEPTION '_%_', v_country_code;
             END;
         END IF;
 
@@ -10799,7 +10799,7 @@ BEGIN
             BEGIN
                 PERFORM v_scope::mrv."ty_0016";
             EXCEPTION WHEN invalid_text_representation THEN
-                RAISE EXCEPTION '_', v_scope;
+                RAISE EXCEPTION '_%_', v_scope;
             END;
         END IF;
 
@@ -10807,7 +10807,7 @@ BEGIN
             BEGIN
                 PERFORM v_land_ownership::mrv."ty_0013";
             EXCEPTION WHEN invalid_text_representation THEN
-                RAISE EXCEPTION '_', v_land_ownership;
+                RAISE EXCEPTION '_%_', v_land_ownership;
             END;
         END IF;
 
@@ -10869,7 +10869,7 @@ BEGIN
                         BEGIN
                             PERFORM v_crop_type::mrv."ty_0004";
                         EXCEPTION WHEN invalid_text_representation THEN
-                            RAISE EXCEPTION '_', v_crop_type;
+                            RAISE EXCEPTION '_%_', v_crop_type;
                         END;
 
                         INSERT INTO mrv."t_0004" (id, "c_0101", "c_0100", "c_0349")
@@ -10933,7 +10933,7 @@ BEGIN
         OR auth.f_0117(p_0104 => p_0027)
         OR auth.f_0117(p_0037 => p_0027)
     ) THEN
-        RAISE EXCEPTION '_', p_0027;
+        RAISE EXCEPTION '_%_', p_0027;
     END IF;
 
     IF p_0041 IS NULL OR jsonb_typeof(p_0041) != '_' THEN
@@ -10971,7 +10971,7 @@ BEGIN
         BEGIN
             PERFORM v_fertilizer_type::mrv."ty_0010";
         EXCEPTION WHEN invalid_text_representation THEN
-            RAISE EXCEPTION '_', v_fertilizer_type;
+            RAISE EXCEPTION '_%_', v_fertilizer_type;
         END;
 
         IF v_fertilizer_id IS NOT NULL THEN
@@ -10981,7 +10981,7 @@ BEGIN
                 JOIN mrv."t_0012" f ON f.id = c."c_0186"
                 WHERE fa.id = v_fertilizer_id AND f."c_0171" = p_0027
             ) THEN
-                RAISE EXCEPTION '_', v_fertilizer_id;
+                RAISE EXCEPTION '_%_', v_fertilizer_id;
             END IF;
 
             UPDATE mrv."t_0014"
@@ -11065,7 +11065,7 @@ BEGIN
         OR auth.f_0117(p_0104 => v_entity_id)
         OR auth.f_0117(p_0037 => v_entity_id)
     ) THEN
-        RAISE EXCEPTION '_', v_entity_id;
+        RAISE EXCEPTION '_%_', v_entity_id;
     END IF;
 
     v_cultivation_id := (p_0023->>'_')::uuid;
@@ -11183,7 +11183,7 @@ BEGIN
         OR auth.f_0117(p_0104 => v_entity_id)
         OR auth.f_0117(p_0037 => v_entity_id)
     ) THEN
-        RAISE EXCEPTION '_', v_entity_id;
+        RAISE EXCEPTION '_%_', v_entity_id;
     END IF;
 
     v_farm_id := (p_0023->>'_')::uuid;
@@ -11248,7 +11248,7 @@ BEGIN
         BEGIN
             PERFORM v_parameter::mrv."ty_0009";
         EXCEPTION WHEN invalid_text_representation THEN
-            RAISE EXCEPTION '_', v_parameter;
+            RAISE EXCEPTION '_%_', v_parameter;
         END;
 
         INSERT INTO mrv."t_0025" (
@@ -11394,17 +11394,17 @@ BEGIN
 
     
     IF p_0025 IS NULL OR p_0025 !~ '_' THEN
-        RAISE EXCEPTION '_', COALESCE(p_0025, '_');
+        RAISE EXCEPTION '_%_', COALESCE(p_0025, '_');
     END IF;
 
     
     IF p_0089 NOT IN ('_', '_') THEN
-        RAISE EXCEPTION '_', p_0089;
+        RAISE EXCEPTION '_%_', p_0089;
     END IF;
 
     
     IF p_0054 NOT IN ('_', '_', '_') THEN
-        RAISE EXCEPTION '_', p_0054;
+        RAISE EXCEPTION '_%_', p_0054;
     END IF;
 
     
@@ -11568,7 +11568,7 @@ BEGIN
     WHERE id = p_0078;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION '_', p_0078;
+        RAISE EXCEPTION '_%_', p_0078;
     END IF;
 
     
@@ -11579,7 +11579,7 @@ BEGIN
     WHERE id = p_0035;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION '_', p_0035;
+        RAISE EXCEPTION '_%_', p_0035;
     END IF;
 
     
@@ -11710,7 +11710,7 @@ BEGIN
         v_proponent_id := p_0079;
 
         IF NOT EXISTS (SELECT 1 FROM mrv."t_0023" WHERE id = v_proponent_id) THEN
-            RAISE EXCEPTION '_', v_proponent_id;
+            RAISE EXCEPTION '_%_', v_proponent_id;
         END IF;
     END IF;
 
@@ -11751,7 +11751,7 @@ BEGIN
                 OR (v_eligibility_row->>'_') IS NULL
                 OR (v_eligibility_row->>'_') IS NULL
             THEN
-                RAISE EXCEPTION '_', v_row_index;
+                RAISE EXCEPTION '_%_', v_row_index;
             END IF;
 
             SELECT ARRAY(
@@ -11829,7 +11829,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM public.t_0091 WHERE id = p_0104
     ) THEN
-        RAISE EXCEPTION '_', p_0104;
+        RAISE EXCEPTION '_%_', p_0104;
     END IF;
 
     SELECT id INTO v_proponent_id
@@ -11960,7 +11960,7 @@ BEGIN
     WHERE id = p_0078;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION '_', p_0078;
+        RAISE EXCEPTION '_%_', p_0078;
     END IF;
 
     IF NOT auth.f_0120(v_proponent_id) THEN
@@ -11968,7 +11968,7 @@ BEGIN
     END IF;
 
     IF p_0053 NOT IN ('_', '_', '_') THEN
-        RAISE EXCEPTION '_', p_0053;
+        RAISE EXCEPTION '_%_', p_0053;
     END IF;
 
     IF EXISTS (
@@ -12198,7 +12198,7 @@ BEGIN
     IF p_0111 ? '_' AND p_0111->>'_' IS NOT NULL THEN
         v_status_value := p_0111->>'_';
         IF v_status_value NOT IN ('_', '_', '_', '_') THEN
-            RAISE EXCEPTION '_', v_status_value;
+            RAISE EXCEPTION '_%_', v_status_value;
         END IF;
     END IF;
 
@@ -12285,7 +12285,7 @@ BEGIN
         END IF;
 
         IF NOT v_is_included AND v_justification IS NULL THEN
-            RAISE EXCEPTION '_', v_pool_type;
+            RAISE EXCEPTION '_%_', v_pool_type;
         END IF;
     END LOOP;
 
@@ -12710,7 +12710,7 @@ BEGIN
     DELETE FROM mrv."t_0027" WHERE id = p_0050;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION '_', p_0050;
+        RAISE EXCEPTION '_%_', p_0050;
     END IF;
 
     RETURN QUERY SELECT
@@ -12764,7 +12764,7 @@ BEGIN
     END IF;
 
     IF p_0117 < 2000 OR p_0117 > EXTRACT(YEAR FROM NOW())::int + 5 THEN
-        RAISE EXCEPTION '_', p_0117;
+        RAISE EXCEPTION '_%_', p_0117;
     END IF;
 
     RETURN QUERY

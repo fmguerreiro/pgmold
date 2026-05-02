@@ -186,6 +186,35 @@ def _replace_typed_cast(m: re.Match[str]) -> str:
     return _typed_cast_replacement(cast_target)
 
 
+def _scrub_string_preserving_pct(match: re.Match[str], prefix: str = "") -> str:
+    """Replace a string-literal match with ``'_'`` (or ``E'_'``), preserving
+    the count of non-doubled ``%`` placeholders in the original.
+
+    ``RAISE EXCEPTION 'oops % failed for %', a, b`` and
+    ``format('%I = %L', col, val)`` need the format-string ``%`` count
+    to match the number of trailing arguments, or PG raises
+    ``too many parameters specified for RAISE`` at apply time. The
+    blanket ``'_'`` substitution drops every ``%`` and breaks those
+    callsites. This helper preserves the count: ``'%foo % done'``
+    becomes ``'_%_%_'`` (two ``%``, three ``_`` separators).
+    """
+    raw = match.group(0)
+    inner_start = len(prefix) + 1
+    body_chars = raw[inner_start:-1]
+    pct = 0
+    i = 0
+    while i < len(body_chars):
+        if body_chars[i] == "%":
+            if i + 1 < len(body_chars) and body_chars[i + 1] == "%":
+                i += 2
+                continue
+            pct += 1
+        i += 1
+    if pct == 0:
+        return f"{prefix}'_'"
+    return f"{prefix}'" + "_%" * pct + "_'"
+
+
 def _scan_quoted(body: str, start: int, *, escaped: bool) -> int:
     """Return the index of the closing ``'`` for a string opened at
     ``start - 1``. ``start`` is the first char *after* the opening quote.
@@ -302,8 +331,11 @@ def _scrub_body(body: str) -> str:
         lambda m: stash(_keyword_typed_replacement(m.group(1))), body
     )
     body = RE_TYPED_CAST.sub(lambda m: stash(_replace_typed_cast(m)), body)
-    body = RE_E_STRING.sub(lambda _m: "E'_'", body)
-    body = RE_SINGLE_QUOTED.sub(lambda _m: "'_'", body)
+    body = RE_E_STRING.sub(
+        lambda m: _scrub_string_preserving_pct(m, prefix=m.group(0)[0]),
+        body,
+    )
+    body = RE_SINGLE_QUOTED.sub(_scrub_string_preserving_pct, body)
     body = re.sub(r"\0ph(\d+)\0", lambda m: placeholders[int(m.group(1))], body)
     return body
 
