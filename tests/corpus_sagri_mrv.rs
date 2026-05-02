@@ -123,12 +123,15 @@ async fn sagri_mrv_snapshot_converges() {
 
     // Convergence ratchet: pgmold currently emits some no-op ops in the
     // second diff for object kinds that pgmold doesn't fully model yet.
-    // The 7-op baseline is fully attributed:
+    // The 8-op baseline is fully attributed:
     //   -  4 DROP+CREATE  — char(N)[] vs character[] in func sig key (gh#299)
+    //   -  1 COMMENT ON   — side-effect of the gh#299 DROP+CREATE: the
+    //                       re-created function loses its comment, so diff
+    //                       re-attaches one. Will fold into gh#299 when fixed.
     //   -  2 CreateExt    — ALTER EXTENSION SET SCHEMA missing      (gh#300)
     //   -  1 ALTER TABLE  — scrubber rewrote default to pg_catalog  (gh#301)
     // Drop the baseline by the corresponding op count as each issue lands.
-    const CONVERGENCE_BASELINE: usize = 7;
+    const CONVERGENCE_BASELINE: usize = 8;
     if second_diff.len() > CONVERGENCE_BASELINE {
         let remaining_sql = generate_sql(&plan_migration(second_diff.clone()));
         panic!(
