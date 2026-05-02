@@ -1608,6 +1608,19 @@ pub fn normalize_pg_type(type_name: &str) -> Cow<'_, str> {
         return Cow::Owned(format!("setof {inner}"));
     }
 
+    // Array types in function signatures lose element-level typmod at storage
+    // time: pg_proc.proargtypes stores element OID only, so `char(2)[]`
+    // (parser) and `character[]` (introspect) must canonicalize identically.
+    // Strip a single `(...)` typmod from the element, then recursively normalize
+    // for alias canonicalization (`char` → `character`, `varchar` → `character
+    // varying`).
+    if let Some(element) = trimmed.strip_suffix("[]") {
+        let element = element.trim_end();
+        let base = strip_outer_typmod(element).unwrap_or(element);
+        let normalized = normalize_pg_type(base);
+        return Cow::Owned(format!("{normalized}[]"));
+    }
+
     // Strip public. schema prefix — PostgreSQL qualifies user-defined types
     // in function signatures but SQL declarations typically omit it
     let trimmed = trimmed.strip_prefix("public.").unwrap_or(trimmed);
@@ -1634,6 +1647,7 @@ fn canonical_alias(lowercase: &str) -> Option<&'static str> {
         "float4" => "real",
         "float8" => "double precision",
         "bool" => "boolean",
+        "char" => "character",
         "varchar" => "character varying",
         "timestamp" => "timestamp without time zone",
         "timestamptz" => "timestamp with time zone",
@@ -1641,6 +1655,22 @@ fn canonical_alias(lowercase: &str) -> Option<&'static str> {
         "timetz" => "time with time zone",
         _ => return None,
     })
+}
+
+/// Strips a single trailing parenthesized typmod from a type string.
+/// `char(2)` → `Some("char")`, `numeric(10,2)` → `Some("numeric")`, `text` → `None`.
+///
+/// PostgreSQL typmod syntax is `<type><whitespace>?(<args>)` — the typmod opens
+/// with the first `(` and closes at the trailing `)`. Use `find` (first paren)
+/// rather than `rfind` so any nested parens inside the typmod can't shift the
+/// split point.
+fn strip_outer_typmod(s: &str) -> Option<&str> {
+    let s = s.trim_end();
+    if !s.ends_with(')') {
+        return None;
+    }
+    let open = s.find('(')?;
+    Some(s[..open].trim_end())
 }
 
 /// Normalizes a single column definition within a `TABLE(...)` return type.
@@ -3618,4 +3648,185 @@ fn function_with_enum_param_converges() {
         from_schema.semantically_equals(&from_db),
         "Functions with public-qualified enum params should match after normalization"
     );
+}
+
+// --- gh#299: char(N)[] vs character[] in function-signature key ---
+
+#[test]
+fn function_signature_strips_array_element_typmod() {
+    // PostgreSQL drops typmod from array-typed function arguments at storage
+    // time: pg_proc.proargtypes stores element OID only, so `char(2)[]`
+    // becomes `character[]` after introspection while the parser preserves
+    // the user's `char(2)[]`. The signature key must match either form.
+    let from_schema = Function {
+        name: "f".to_string(),
+        schema: "mrv".to_string(),
+        arguments: vec![FunctionArg {
+            name: Some("p".to_string()),
+            data_type: "char(2)[]".to_string(),
+            mode: ArgMode::In,
+            default: None,
+        }],
+        return_type: "void".to_string(),
+        language: "sql".to_string(),
+        body: "SELECT 1".to_string(),
+        volatility: Volatility::Volatile,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: Vec::new(),
+        comment: None,
+    };
+
+    let from_db = Function {
+        arguments: vec![FunctionArg {
+            name: Some("p".to_string()),
+            data_type: "character[]".to_string(),
+            mode: ArgMode::In,
+            default: None,
+        }],
+        ..from_schema.clone()
+    };
+
+    assert_eq!(
+        from_schema.signature(),
+        from_db.signature(),
+        "char(2)[] and character[] must produce the same signature key"
+    );
+}
+
+#[test]
+fn function_signature_strips_varchar_array_typmod() {
+    let from_schema = Function {
+        name: "f".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![FunctionArg {
+            name: None,
+            data_type: "varchar(10)[]".to_string(),
+            mode: ArgMode::In,
+            default: None,
+        }],
+        return_type: "void".to_string(),
+        language: "sql".to_string(),
+        body: "SELECT 1".to_string(),
+        volatility: Volatility::Volatile,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: Vec::new(),
+        comment: None,
+    };
+
+    let from_db = Function {
+        arguments: vec![FunctionArg {
+            name: None,
+            data_type: "character varying[]".to_string(),
+            mode: ArgMode::In,
+            default: None,
+        }],
+        ..from_schema.clone()
+    };
+
+    assert_eq!(from_schema.signature(), from_db.signature());
+}
+
+#[test]
+fn function_signature_strips_numeric_array_typmod() {
+    let from_schema = Function {
+        name: "f".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![FunctionArg {
+            name: None,
+            data_type: "numeric(10,2)[]".to_string(),
+            mode: ArgMode::In,
+            default: None,
+        }],
+        return_type: "void".to_string(),
+        language: "sql".to_string(),
+        body: "SELECT 1".to_string(),
+        volatility: Volatility::Volatile,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: Vec::new(),
+        comment: None,
+    };
+
+    let from_db = Function {
+        arguments: vec![FunctionArg {
+            name: None,
+            data_type: "numeric[]".to_string(),
+            mode: ArgMode::In,
+            default: None,
+        }],
+        ..from_schema.clone()
+    };
+
+    assert_eq!(from_schema.signature(), from_db.signature());
+}
+
+#[test]
+fn function_signature_preserves_scalar_typmod() {
+    // Scope marker for gh#299: this PR strips typmod only from array argument
+    // types because that is what the sagri/mrv canary surfaced. Scalar typmod
+    // (e.g. `numeric(10,2)` arg) almost certainly has the same divergence —
+    // pg_proc.proargtypes is an oidvector, no typmod for scalars either —
+    // but no observed regression today. Tracked as gh#303. When that lands
+    // this test should be replaced with a parser-vs-introspect equality
+    // assertion analogous to function_signature_strips_array_element_typmod.
+    let func = Function {
+        name: "f".to_string(),
+        schema: "public".to_string(),
+        arguments: vec![FunctionArg {
+            name: None,
+            data_type: "numeric(10,2)".to_string(),
+            mode: ArgMode::In,
+            default: None,
+        }],
+        return_type: "void".to_string(),
+        language: "sql".to_string(),
+        body: "SELECT 1".to_string(),
+        volatility: Volatility::Volatile,
+        security: SecurityType::Invoker,
+        config_params: vec![],
+        owner: None,
+        grants: Vec::new(),
+        comment: None,
+    };
+    assert_eq!(func.signature(), "f(numeric(10,2))");
+}
+
+#[test]
+fn function_arg_semantically_equals_array_typmod_alias() {
+    let parser_arg = FunctionArg {
+        name: Some("p".to_string()),
+        data_type: "char(2)[]".to_string(),
+        mode: ArgMode::In,
+        default: None,
+    };
+    let introspect_arg = FunctionArg {
+        name: Some("p".to_string()),
+        data_type: "character[]".to_string(),
+        mode: ArgMode::In,
+        default: None,
+    };
+    assert!(parser_arg.semantically_equals(&introspect_arg));
+}
+
+#[test]
+fn normalize_pg_type_strips_array_element_typmod() {
+    assert_eq!(normalize_pg_type("char(2)[]"), "character[]");
+    assert_eq!(normalize_pg_type("varchar(10)[]"), "character varying[]");
+    assert_eq!(normalize_pg_type("numeric(10,2)[]"), "numeric[]");
+    // Already-stripped forms canonicalize identically.
+    assert_eq!(normalize_pg_type("character[]"), "character[]");
+    assert_eq!(
+        normalize_pg_type("character varying[]"),
+        "character varying[]"
+    );
+    // Aliases without typmod still canonicalize.
+    assert_eq!(normalize_pg_type("varchar[]"), "character varying[]");
+    // Scalar typmod is preserved (only array element typmod is stripped).
+    assert_eq!(normalize_pg_type("char(2)"), "char(2)");
+    assert_eq!(normalize_pg_type("numeric(10,2)"), "numeric(10,2)");
 }
