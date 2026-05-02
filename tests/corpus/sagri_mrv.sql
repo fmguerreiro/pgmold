@@ -5547,7 +5547,7 @@ ON "mrv"."t_0006"("c_0186", "c_0101", "c_0470");
 
 CREATE UNIQUE INDEX IF NOT EXISTS "idx_0145"
 ON "mrv"."t_0006"("c_0186", "c_0434", "c_0101")
-WHERE "c_0470" = 'v1'::"mrv"."ty_0005";
+WHERE "c_0470" = 'v1';
 
 
 ALTER TABLE "mrv"."t_0006"
@@ -6812,11 +6812,11 @@ BEGIN
         RAISE EXCEPTION '_';
     END IF;
 
-    IF v_plan.c_0470 = 'v1'."ty_0002" THEN
+    IF v_plan.c_0470 = 'v1' THEN
         RAISE EXCEPTION '_';
     END IF;
 
-    IF v_plan.c_0470 = 'v1'."ty_0002" THEN
+    IF v_plan.c_0470 = 'v1' THEN
         RETURN QUERY SELECT
             v_plan.id,
             v_plan."c_0171",
@@ -6848,7 +6848,7 @@ BEGIN
     END IF;
 
     UPDATE mrv."t_0001"
-    SET c_0470 = 'v1'."ty_0002",
+    SET c_0470 = 'v1',
         "c_0174" = NULL,
         "c_0524" = NOW()
     WHERE mrv."t_0001".id = p_0073
@@ -7307,7 +7307,7 @@ BEGIN
             SELECT 1 FROM mrv."t_0006" c
             WHERE c."c_0186" = p_0035
               AND c."c_0434" = p_0096
-              AND c.c_0470 = 'v1'."ty_0005"
+              AND c.c_0470 = 'v1'
               AND c.id != p_0050
         ) THEN
             RAISE EXCEPTION '_';
@@ -7332,7 +7332,7 @@ BEGIN
             SELECT 1 FROM mrv."t_0006" c
             WHERE c."c_0186" = p_0035
               AND c."c_0434" = p_0096
-              AND c.c_0470 = 'v1'."ty_0005"
+              AND c.c_0470 = 'v1'
         ) THEN
             RAISE EXCEPTION '_';
         END IF;
@@ -11101,7 +11101,7 @@ BEGIN
     END IF;
 
     UPDATE mrv."t_0006"
-    SET c_0470 = 'v1'."ty_0005",
+    SET c_0470 = 'v1',
         "c_0221" = v_harvest_date,
         "c_0524" = NOW()
     WHERE mrv."t_0006".id = v_cultivation_id;

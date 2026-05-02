@@ -790,26 +790,36 @@ def rewrite_enum_predicates(sql: str, enum_cols: set[str]) -> str:
     if not enum_cols:
         return sql
     name_alt = "|".join(re.escape(c) for c in enum_cols)
+    # Type token used in trailing casts. Must match a schema-qualified
+    # quoted enum like ``mrv."ty_0002"`` — using a bare ``\w+`` here
+    # consumed only ``::mrv`` and orphaned ``."ty_0002"`` after the
+    # rewrite, breaking apply-time syntax (gh#286 flushed real plpgsql
+    # bodies into the corpus, which surfaced this).
+    type_ref = (
+        r"(?:\w+|\"[^\"]+\")"
+        r"(?:\s*\.\s*(?:\w+|\"[^\"]+\"))?"
+        r"(?:\s*\[\])?"
+    )
     # Column reference: optional alias prefix, then quoted or bare ident,
     # optionally wrapped as `(col)::text` or `(s.col)::text`.
     col_ref = (
         r"(?:\(\s*)?"                     # optional `(`
         r"(?:\w+\s*\.\s*)?"               # optional alias.
         r"(?:\"(?:" + name_alt + r")\"|(?:" + name_alt + r"))"
-        r"(?:\s*\)\s*::\s*\w+)?"          # optional `)::text` cast wrap
+        r"(?:\s*\)\s*::\s*" + type_ref + r")?"  # optional `)::text` cast wrap
     )
     op = r"(?:=|<>|!=|IS\s+DISTINCT\s+FROM|IS\s+NOT\s+DISTINCT\s+FROM)"
 
     # `<col_ref> <op> '<lit>'[::TYPE]?`
     cmp_re = re.compile(
         r"(" + col_ref + r"\s*" + op + r"\s*)"
-        r"'(?:[^']|'')*'(?:\s*::\s*\w+)?",
+        r"'(?:[^']|'')*'(?:\s*::\s*" + type_ref + r")?",
         re.IGNORECASE,
     )
     sql = cmp_re.sub(lambda m: m.group(1) + "'v1'", sql)
     # `'<lit>'[::TYPE]? <op> <col_ref>` (operands swapped)
     cmp_re2 = re.compile(
-        r"'(?:[^']|'')*'(?:\s*::\s*\w+)?"
+        r"'(?:[^']|'')*'(?:\s*::\s*" + type_ref + r")?"
         r"(\s*" + op + r"\s*" + col_ref + r")",
         re.IGNORECASE,
     )
