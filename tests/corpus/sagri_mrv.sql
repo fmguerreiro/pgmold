@@ -425,7 +425,7 @@ ALTER TABLE "auth"."t_0070" ADD CONSTRAINT "con_0127" FOREIGN KEY ("c_0438") REF
 
 CREATE TABLE "auth"."t_0077" (
     "c_0094" TIMESTAMP WITH TIME ZONE,
-    "id" BIGINT NOT NULL DEFAULT nextval('pg_catalog.pg_class'::regclass),
+    "id" BIGINT NOT NULL DEFAULT nextval('auth.seq_0001'::regclass),
     "c_0237" UUID,
     "c_0338" VARCHAR(255),
     "c_0412" BOOLEAN,

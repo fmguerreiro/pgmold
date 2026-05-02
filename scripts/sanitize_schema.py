@@ -135,10 +135,14 @@ def _typed_cast_replacement(cast_target: str) -> str:
     PG validates constant casts at function-create time (the JSONB cast
     is the case CI surfaced), so the literal content has to be valid for
     the target type, not just any old `'_'`.
+
+    Scalar `regclass` is intentionally NOT handled here — see `repl_cast`,
+    which preserves the original literal so the identifier-rename pass
+    can rewrite the inner object name (gh#301).
     """
     target = cast_target.strip().lower()
     is_array = target.endswith("[]")
-    base = target.rstrip("[] ")
+    base = target.rstrip("[]").strip()
     if is_array:
         return f"'{{}}'::{cast_target}"
     if base in ("jsonb", "json"):
@@ -147,8 +151,6 @@ def _typed_cast_replacement(cast_target: str) -> str:
         return f"'00000000-0000-0000-0000-000000000000'::{cast_target}"
     if base == "interval":
         return f"'1 day'::{cast_target}"
-    if base == "regclass":
-        return f"'pg_catalog.pg_class'::{cast_target}"
     if base in ("date",):
         return f"'1970-01-01'::{cast_target}"
     if base in ("timestamp", "timestamptz", "time", "timetz"):
@@ -217,8 +219,15 @@ def scrub_text(sql: str) -> str:
     # Typed-cast literals (`'X'::TYPE`) need a value valid for the target
     # type. PG evaluates constant casts at function-create time and the
     # blanket `'_'` substitution would fail for jsonb / uuid / etc.
+    # Scalar `'X'::regclass` is preserved verbatim: the literal names a
+    # real PG object (sequence / table / function) and the later
+    # identifier-rename pass rewrites the inner name to its opaque form
+    # (gh#301). Array `regclass[]` falls through and gets `'{}'::regclass[]`.
     def repl_cast(m: re.Match[str]) -> str:
-        return stash(_typed_cast_replacement(m.group(1)))
+        cast_target = m.group(1)
+        if cast_target.strip().lower() == "regclass":
+            return stash(m.group(0))
+        return stash(_typed_cast_replacement(cast_target))
 
     sql = RE_TYPED_CAST.sub(repl_cast, sql)
 
