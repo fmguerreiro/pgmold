@@ -45,6 +45,14 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             vec![format!("DROP EXTENSION IF EXISTS {};", quote_ident(name))]
         }
 
+        MigrationOp::AlterExtensionSetSchema { name, new_schema } => {
+            vec![format!(
+                "ALTER EXTENSION {} SET SCHEMA {};",
+                quote_ident(name),
+                quote_ident(new_schema)
+            )]
+        }
+
         MigrationOp::CreateServer(server) => {
             vec![generate_create_server(server)]
         }
@@ -2262,6 +2270,21 @@ mod tests {
         let sql = generate_sql(&ops);
         assert_eq!(sql.len(), 1);
         assert_eq!(sql[0], "DROP EXTENSION IF EXISTS \"uuid-ossp\";");
+    }
+
+    #[test]
+    fn alter_extension_set_schema_generates_valid_sql() {
+        let ops = vec![MigrationOp::AlterExtensionSetSchema {
+            name: "pgcrypto".to_string(),
+            new_schema: "extensions".to_string(),
+        }];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER EXTENSION \"pgcrypto\" SET SCHEMA \"extensions\";"
+        );
     }
 
     #[test]

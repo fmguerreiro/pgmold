@@ -48,6 +48,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::SetComment { .. } => set_comments.push(op),
             MigrationOp::DropSchema(_)
             | MigrationOp::DropExtension(_)
+            | MigrationOp::AlterExtensionSetSchema { .. }
             | MigrationOp::DropServer(_)
             | MigrationOp::AlterServer { .. }
             | MigrationOp::DropEnum(_)
