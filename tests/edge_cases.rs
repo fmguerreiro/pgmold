@@ -386,7 +386,7 @@ async fn extension_relocation_emits_alter_set_schema_and_converges() {
     let target = parse_sql_string(
         r#"
         CREATE SCHEMA IF NOT EXISTS extensions;
-        CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
+        CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA extensions;
         "#,
     )
     .unwrap();
