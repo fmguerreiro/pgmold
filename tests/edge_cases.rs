@@ -580,6 +580,384 @@ async fn policy_comment_round_trips_through_apply_and_introspect() {
     );
 }
 
+// ── COMMENT ON ... read-back from pg_description (gh#298) ────────────────────
+//
+// pgmold's diff layer compares `comment: Option<String>` between the parsed
+// target and the introspected current. If introspect leaves `comment: None`
+// when the database actually has a comment set, the diff re-emits the same
+// `COMMENT ON ... IS '...'` op forever. Each test below applies a comment,
+// re-introspects, and asserts both that the model field is populated and that
+// the second diff is empty.
+
+#[tokio::test]
+async fn schema_comment_round_trips_through_apply_and_introspect() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE SCHEMA app;
+        COMMENT ON SCHEMA app IS 'application objects';
+        "#,
+    )
+    .unwrap();
+
+    let schemas = vec!["app".to_string()];
+    let current = introspect_schema(&connection, &schemas, false)
+        .await
+        .unwrap();
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &schemas, false)
+        .await
+        .unwrap();
+    let schema = after.schemas.get("app").expect("app schema introspected");
+    assert_eq!(schema.comment.as_deref(), Some("application objects"));
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn enum_type_comment_round_trips_through_apply_and_introspect() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE TYPE public.mood AS ENUM ('sad', 'ok', 'happy');
+        COMMENT ON TYPE public.mood IS 'user mood';
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let mood = after
+        .enums
+        .get("public.mood")
+        .expect("mood enum introspected");
+    assert_eq!(mood.comment.as_deref(), Some("user mood"));
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn domain_comment_round_trips_through_apply_and_introspect() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE DOMAIN public.amount AS INTEGER;
+        COMMENT ON DOMAIN public.amount IS 'monetary amount in cents';
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let domain = after
+        .domains
+        .get("public.amount")
+        .expect("amount domain introspected");
+    assert_eq!(domain.comment.as_deref(), Some("monetary amount in cents"));
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn table_comment_round_trips_through_apply_and_introspect() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE TABLE public.users (id BIGINT PRIMARY KEY);
+        COMMENT ON TABLE public.users IS 'all registered users';
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let users = after
+        .tables
+        .get("public.users")
+        .expect("users table introspected");
+    assert_eq!(users.comment.as_deref(), Some("all registered users"));
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn column_comment_round_trips_through_apply_and_introspect() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE TABLE public.users (id BIGINT PRIMARY KEY, email TEXT NOT NULL);
+        COMMENT ON COLUMN public.users.email IS 'lowercase email address';
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let email = after
+        .tables
+        .get("public.users")
+        .expect("users table introspected")
+        .columns
+        .get("email")
+        .expect("email column introspected");
+    assert_eq!(email.comment.as_deref(), Some("lowercase email address"));
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn function_comment_round_trips_through_apply_and_introspect() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE OR REPLACE FUNCTION public.add_one(x integer)
+        RETURNS integer
+        LANGUAGE sql
+        AS $$ SELECT x + 1 $$;
+        COMMENT ON FUNCTION public.add_one(integer) IS 'increment helper';
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let func = after
+        .functions
+        .get("public.add_one(integer)")
+        .expect("add_one function introspected");
+    assert_eq!(func.comment.as_deref(), Some("increment helper"));
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn view_comment_round_trips_through_apply_and_introspect() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE TABLE public.users (id BIGINT PRIMARY KEY);
+        CREATE VIEW public.user_ids AS SELECT id FROM public.users;
+        COMMENT ON VIEW public.user_ids IS 'just the ids';
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let view = after
+        .views
+        .get("public.user_ids")
+        .expect("user_ids view introspected");
+    assert_eq!(view.comment.as_deref(), Some("just the ids"));
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn trigger_comment_round_trips_through_apply_and_introspect() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE TABLE public.users (id BIGINT PRIMARY KEY);
+        CREATE FUNCTION public.noop_trigger() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
+        CREATE TRIGGER t_noop BEFORE INSERT ON public.users
+        FOR EACH ROW EXECUTE FUNCTION public.noop_trigger();
+        COMMENT ON TRIGGER t_noop ON public.users IS 'placeholder trigger';
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let trigger = after
+        .triggers
+        .get("public.users.t_noop")
+        .expect("t_noop trigger introspected");
+    assert_eq!(trigger.comment.as_deref(), Some("placeholder trigger"));
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn sequence_comment_round_trips_through_apply_and_introspect() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let target = parse_sql_string(
+        r#"
+        CREATE SEQUENCE public.order_id_seq;
+        COMMENT ON SEQUENCE public.order_id_seq IS 'order id allocator';
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let seq = after
+        .sequences
+        .get("public.order_id_seq")
+        .expect("order_id_seq introspected");
+    assert_eq!(seq.comment.as_deref(), Some("order id allocator"));
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
 #[tokio::test]
 async fn cross_schema_fk_ordering_creates_referenced_table_first() {
     let (_container, url) = setup_postgres().await;

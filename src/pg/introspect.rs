@@ -178,7 +178,9 @@ async fn introspect_schemas(
 ) -> Result<BTreeMap<String, PgSchema>> {
     let rows = sqlx::query(
         r#"
-        SELECT nspname as name
+        SELECT
+            nspname as name,
+            obj_description(oid, 'pg_namespace') as comment
         FROM pg_namespace
         WHERE nspname NOT LIKE 'pg_%'
           AND nspname != 'information_schema'
@@ -191,6 +193,7 @@ async fn introspect_schemas(
     let mut schemas = BTreeMap::new();
     for row in rows {
         let name: String = row.get("name");
+        let comment: Option<String> = row.get("comment");
         // Always skip 'public' schema - it's a default schema that always exists in PostgreSQL.
         // Users who want to manage 'public' must include CREATE SCHEMA "public" in their SQL.
         if name == "public" {
@@ -203,8 +206,7 @@ async fn introspect_schemas(
                 PgSchema {
                     name,
                     grants: Vec::new(),
-                    // TODO: read schema comment from pg_description
-                    comment: None,
+                    comment,
                 },
             );
         }
@@ -312,7 +314,12 @@ async fn introspect_enums(
 ) -> Result<BTreeMap<String, EnumType>> {
     let rows = sqlx::query(
         r#"
-        SELECT n.nspname, t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) as labels, r.rolname AS owner
+        SELECT
+            n.nspname,
+            t.typname,
+            array_agg(e.enumlabel ORDER BY e.enumsortorder) as labels,
+            r.rolname AS owner,
+            obj_description(t.oid, 'pg_type') as comment
         FROM pg_type t
         JOIN pg_enum e ON t.oid = e.enumtypid
         JOIN pg_namespace n ON t.typnamespace = n.oid
@@ -323,7 +330,7 @@ async fn introspect_enums(
               WHERE d.objid = t.oid
               AND d.deptype = 'e'
           ))
-        GROUP BY n.nspname, t.typname, r.rolname
+        GROUP BY n.nspname, t.typname, r.rolname, t.oid
         "#,
     )
     .bind(target_schemas)
@@ -338,14 +345,14 @@ async fn introspect_enums(
         let name: String = row.get("typname");
         let labels: Vec<String> = row.get("labels");
         let owner: String = row.get("owner");
+        let comment: Option<String> = row.get("comment");
         let enum_type = EnumType {
             name: name.clone(),
             schema: schema.clone(),
             values: labels,
             owner: Some(owner),
             grants: Vec::new(),
-            // TODO: read enum type comment from pg_description
-            comment: None,
+            comment,
         };
         enums.insert(qualified_name(&schema, &name), enum_type);
     }
@@ -367,7 +374,8 @@ async fn introspect_domains(
             bt.typcategory::text AS base_category,
             t.typnotnull AS not_null,
             pg_get_expr(t.typdefaultbin, 0) AS default_expr,
-            r.rolname AS owner
+            r.rolname AS owner,
+            obj_description(t.oid, 'pg_type') AS comment
         FROM pg_type t
         JOIN pg_namespace n ON t.typnamespace = n.oid
         JOIN pg_type bt ON t.typbasetype = bt.oid
@@ -406,6 +414,7 @@ async fn introspect_domains(
             .get::<Option<String>, &str>("default_expr")
             .filter(|s| !s.is_empty());
         let owner: String = row.get("owner");
+        let comment: Option<String> = row.get("comment");
 
         let data_type = if base_category == "A" {
             let base_udt = base_type.strip_prefix('_').ok_or_else(|| {
@@ -456,8 +465,7 @@ async fn introspect_domains(
                 .unwrap_or_default(),
             owner: Some(owner),
             grants: Vec::new(),
-            // TODO: read domain comment from pg_description
-            comment: None,
+            comment,
         };
         domains.insert(qualified_name(&schema, &name), domain);
     }
@@ -538,7 +546,11 @@ async fn introspect_tables(
 ) -> Result<BTreeMap<String, Table>> {
     let rows = sqlx::query(
         r#"
-        SELECT n.nspname AS table_schema, c.relname AS table_name, r.rolname AS owner
+        SELECT
+            n.nspname AS table_schema,
+            c.relname AS table_name,
+            r.rolname AS owner,
+            obj_description(c.oid, 'pg_class') AS comment
         FROM pg_class c
         JOIN pg_namespace n ON c.relnamespace = n.oid
         JOIN pg_roles r ON c.relowner = r.oid
@@ -563,6 +575,7 @@ async fn introspect_tables(
         let schema: String = row.get("table_schema");
         let name: String = row.get("table_name");
         let owner: String = row.get("owner");
+        let comment: Option<String> = row.get("comment");
         let table = Table {
             name: name.clone(),
             schema: schema.clone(),
@@ -572,8 +585,7 @@ async fn introspect_tables(
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
             exclusion_constraints: Vec::new(),
-            // TODO: read table comment from pg_description
-            comment: None,
+            comment,
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
@@ -805,7 +817,8 @@ async fn introspect_all_columns(
             CASE WHEN a.attgenerated = 's'
                  THEN pg_catalog.pg_get_expr(ad.adbin, a.attrelid)
                  ELSE NULL
-            END AS generation_expression
+            END AS generation_expression,
+            pg_catalog.col_description(t.oid, a.attnum) AS comment
         FROM information_schema.columns c
         JOIN pg_catalog.pg_class t ON t.relname = c.table_name
         JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace AND n.nspname = c.table_schema
@@ -838,6 +851,7 @@ async fn introspect_all_columns(
         let atttypmod: i32 = row.get("atttypmod");
         let pg_format_type: String = row.get("pg_format_type");
         let generation_expression: Option<String> = row.get("generation_expression");
+        let comment: Option<String> = row.get("comment");
 
         let pg_type = match (domain_schema, domain_name) {
             (Some(schema), Some(name)) => PgType::UserDefined(format!("{schema}.{name}")),
@@ -861,8 +875,7 @@ async fn introspect_all_columns(
                     data_type: pg_type,
                     nullable: is_nullable == "YES",
                     default: column_default,
-                    // TODO: read column comment from pg_description
-                    comment: None,
+                    comment,
                     generated: generation_expression,
                 },
             );
@@ -1700,7 +1713,8 @@ async fn introspect_functions(
             p.prosecdef as security_definer,
             p.proconfig as config_params,
             r.rolname as owner,
-            p.proargmodes as arg_modes
+            p.proargmodes as arg_modes,
+            obj_description(p.oid, 'pg_proc') as comment
         FROM pg_proc p
         JOIN pg_namespace n ON p.pronamespace = n.oid
         JOIN pg_language l ON p.prolang = l.oid
@@ -1783,6 +1797,7 @@ async fn introspect_functions(
             .collect::<crate::util::Result<Vec<_>>>()?;
 
         let owner: String = row.get("owner");
+        let comment: Option<String> = row.get("comment");
 
         let func = Function {
             name: name.clone(),
@@ -1796,8 +1811,7 @@ async fn introspect_functions(
             config_params,
             owner: Some(owner),
             grants: Vec::new(),
-            // TODO: read function comment from pg_description
-            comment: None,
+            comment,
         };
 
         let key = qualified_name(&schema, &func.signature());
@@ -2045,6 +2059,7 @@ async fn fetch_views(
         let name: String = row.get(name_column);
         let definition: String = row.get("definition");
         let owner: String = row.get("owner");
+        let comment: Option<String> = row.get("comment");
 
         result.push(View {
             name,
@@ -2053,8 +2068,7 @@ async fn fetch_views(
             materialized,
             owner: Some(owner),
             grants: Vec::new(),
-            // TODO: read view comment from pg_description
-            comment: None,
+            comment,
         });
     }
     Ok(result)
@@ -2072,7 +2086,12 @@ async fn introspect_views(
         target_schemas,
         include_extension_objects,
         r#"
-        SELECT v.schemaname, v.viewname, v.definition, r.rolname AS owner
+        SELECT
+            v.schemaname,
+            v.viewname,
+            v.definition,
+            r.rolname AS owner,
+            obj_description(c.oid, 'pg_class') AS comment
         FROM pg_views v
         JOIN pg_class c ON c.relname = v.viewname
         JOIN pg_namespace n ON c.relnamespace = n.oid AND n.nspname = v.schemaname
@@ -2098,7 +2117,12 @@ async fn introspect_views(
         target_schemas,
         include_extension_objects,
         r#"
-        SELECT v.schemaname, v.matviewname, v.definition, r.rolname AS owner
+        SELECT
+            v.schemaname,
+            v.matviewname,
+            v.definition,
+            r.rolname AS owner,
+            obj_description(c.oid, 'pg_class') AS comment
         FROM pg_matviews v
         JOIN pg_class c ON c.relname = v.matviewname
         JOIN pg_namespace n ON c.relnamespace = n.oid AND n.nspname = v.schemaname
@@ -2159,7 +2183,8 @@ async fn introspect_triggers(
             t.tgnewtable AS new_table_name,
             t.tgconstraint <> 0 AS is_constraint,
             t.tgdeferrable AS is_deferrable,
-            t.tginitdeferred AS is_initially_deferred
+            t.tginitdeferred AS is_initially_deferred,
+            obj_description(t.oid, 'pg_trigger') AS comment
         FROM pg_trigger t
         JOIN pg_class c ON t.tgrelid = c.oid
         JOIN pg_namespace ns ON c.relnamespace = ns.oid
@@ -2199,6 +2224,7 @@ async fn introspect_triggers(
         let is_constraint: bool = row.get("is_constraint");
         let deferrable: bool = row.get("is_deferrable");
         let initially_deferred: bool = row.get("is_initially_deferred");
+        let comment: Option<String> = row.get("comment");
 
         let function_args = decode_trigger_args(&function_args_raw, function_nargs)?;
 
@@ -2258,8 +2284,7 @@ async fn introspect_triggers(
             is_constraint,
             deferrable,
             initially_deferred,
-            // TODO: read trigger comment from pg_description
-            comment: None,
+            comment,
         };
 
         let key = format!("{table_schema}.{table_name}.{trigger_name}");
@@ -2343,7 +2368,8 @@ async fn introspect_sequences(
             c.relname as owned_table,
             cn.nspname as owned_schema,
             a.attname as owned_column,
-            r.rolname as owner
+            r.rolname as owner,
+            obj_description(seq_class.oid, 'pg_class') as comment
         FROM pg_sequences s
         JOIN pg_namespace n ON n.nspname = s.schemaname
         LEFT JOIN pg_class seq_class ON seq_class.relname = s.sequencename
@@ -2386,6 +2412,7 @@ async fn introspect_sequences(
         let owned_schema: Option<String> = row.get("owned_schema");
         let owned_column: Option<String> = row.get("owned_column");
         let owner: Option<String> = row.get("owner");
+        let comment: Option<String> = row.get("comment");
 
         let owned_by = match (owned_schema, owned_table, owned_column) {
             (Some(ts), Some(t), Some(c)) => Some(SequenceOwner {
@@ -2419,8 +2446,7 @@ async fn introspect_sequences(
                 owned_by,
                 owner,
                 grants: Vec::new(),
-                // TODO: read sequence comment from pg_description
-                comment: None,
+                comment,
             },
         );
     }
