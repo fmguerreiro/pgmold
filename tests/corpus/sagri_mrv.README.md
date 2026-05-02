@@ -12,8 +12,9 @@ supabase fixtures.
 - PostGIS geometry typmods (`geometry(MultiPolygon, 4326)`) — pgmold-276.
 - COMMENT ON across multiple object kinds — pgmold-274/295/296/297/301.
 - RLS policies with multi-word quoted names — pgmold-238 area.
-- Dollar-quoted plpgsql function bodies (replaced with `NULL`, but the
-  delimiter form and language clause are preserved).
+- Dollar-quoted plpgsql function bodies — control flow (BEGIN/END,
+  IF/THEN, LOOP, FOREACH, EXCEPTION/WHEN), DECLARE blocks, intra-body
+  identifier references, RAISE format strings.
 - RETURNS TABLE function signatures.
 - GIST spatial indexes.
 - Inline + named CHECK constraints.
@@ -26,16 +27,23 @@ Run `scripts/sanitize_schema.py` from the project root to regenerate. The
 script:
 
 1. Concatenates all source `.sql` in a deterministic dependency order.
-2. Strips `--` line comments and `/* */` block comments.
-3. Replaces single-quoted and E-string literal contents with `_`,
-   preserving the quote prefix.
-4. Replaces dollar-quoted block contents with ` NULL `, preserving the
-   delimiter tag verbatim.
+2. Stashes dollar-quoted bodies first; inside each body, strips `--`
+   line comments and `/* */` block comments via a state-tracking lexer
+   (so an apostrophe in `-- fields we've removed` doesn't open a
+   spurious string), and replaces string-literal contents with `_`.
+3. Strips `--` and `/* */` from the rest of the file, then replaces
+   single-quoted and E-string literal contents with `_`, preserving
+   the quote prefix.
+4. Bodies are otherwise kept verbatim — only literals + comments are
+   sanitized — so plpgsql control-flow and sql function-body parser
+   surface stays in the corpus (gh#286).
 5. Replaces VIEW bodies with `SELECT 1 AS placeholder` (see *Known gaps*).
 6. Discovers every CREATE-statement-defined identifier (tables, columns,
    functions, params, types, indexes, triggers, policies, sequences,
    constraints, RETURNS TABLE columns) and rewrites each to an opaque
-   `<kind>_<n>` name via word-boundary regex.
+   `<kind>_<n>` name via word-boundary regex. The rename pass walks
+   through dollar-quoted bodies too, so a body reference to a renamed
+   table / column / function stays consistent with its definition.
 
 PG built-in type names, PostGIS types, and SQL keywords are denylisted so
 column-name collisions (`column geometry public.geometry(...)`) don't
@@ -70,10 +78,14 @@ against a pinned pgmold version, not from refreshing this snapshot.
   joins, window functions, complex projections) isn't exercised. A smarter
   scrubber that renames inside view bodies via column-aware substitution
   would lift this.
-- **Function bodies are stubbed**, so plpgsql control-flow and
-  intra-body identifier references aren't exercised. The fix in
-  pgmold-259 (skip plpgsql bodies in extract_*_references) is therefore
-  not covered by this snapshot — only by `tests/corpus/upstream_pg/`.
+- **Body-local plpgsql variable names leak through** unrenamed (e.g.,
+  a `DECLARE inviter_id uuid;` keeps `inviter_id`). The discovery pass
+  doesn't scan dollar-quoted bodies for `DECLARE`, so any name that
+  appears only as a body-local variable stays in the output. Real
+  identifiers (tables, columns, functions) are renamed everywhere,
+  including inside bodies, via the same word-boundary pass. If a future
+  source schema uses sensitive variable names, the discovery pass would
+  need scope analysis to add them to the manifest.
 - **String literals are stubbed to `'_'`**, so any normalization bug
   involving literal *content* (collation, escaping, TZ formatting in
   defaults) won't surface. Defaults that reference function calls
@@ -81,6 +93,9 @@ against a pinned pgmold version, not from refreshing this snapshot.
   aren't string literals.
 - **Comments are stripped entirely**, so COMMENT ON IS '...' tests its
   syntactic shape but never its content normalization.
-- **Inline `--` inside string literals would corrupt the file** (rare in
-  DDL; not seen in source). If a future source file triggers this, the
-  scrubber needs a proper SQL lexer.
+- **Inline `--` inside top-level string literals would corrupt the file**
+  (rare in DDL; not seen in source). The scrubber lexes inside dollar-
+  quoted bodies, but at the outer level it still uses regex-based
+  comment stripping. If a future source file triggers this, the outer
+  scrub needs the same state-tracking lexer that `_strip_body_comments`
+  already provides for body interiors.

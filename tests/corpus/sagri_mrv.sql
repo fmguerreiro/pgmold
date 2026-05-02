@@ -36,27 +36,27 @@ ALTER TABLE "auth"."t_0054" OWNER TO "supabase_auth_admin";
 
 ALTER TABLE "auth"."t_0055" OWNER TO "supabase_auth_admin";
 
+ALTER TABLE "auth"."t_0069" OWNER TO "supabase_auth_admin";
+
 ALTER TABLE "auth"."t_0070" OWNER TO "supabase_auth_admin";
 
 ALTER TABLE "auth"."t_0071" OWNER TO "supabase_auth_admin";
 
-ALTER TABLE "auth"."t_0072" OWNER TO "supabase_auth_admin";
+ALTER TABLE "auth"."t_0074" OWNER TO "supabase_auth_admin";
 
-ALTER TABLE "auth"."t_0075" OWNER TO "supabase_auth_admin";
+ALTER TABLE "auth"."t_0076" OWNER TO "supabase_auth_admin";
 
-ALTER TABLE "auth"."t_0077" OWNER TO "supabase_auth_admin";
+ALTER TABLE "auth"."t_0079" OWNER TO "supabase_auth_admin";
 
 ALTER TABLE "auth"."t_0080" OWNER TO "supabase_auth_admin";
 
-ALTER TABLE "auth"."t_0081" OWNER TO "supabase_auth_admin";
+ALTER TABLE "auth"."t_0087" OWNER TO "supabase_auth_admin";
 
 ALTER TABLE "auth"."t_0088" OWNER TO "supabase_auth_admin";
 
 ALTER TABLE "auth"."t_0089" OWNER TO "supabase_auth_admin";
 
-ALTER TABLE "auth"."t_0090" OWNER TO "supabase_auth_admin";
-
-ALTER TABLE "auth"."t_0095" OWNER TO "supabase_auth_admin";
+ALTER TABLE "auth"."t_0094" OWNER TO "supabase_auth_admin";
 
 ALTER FUNCTION "auth"."f_0028" () OWNER TO "supabase_auth_admin";
 
@@ -135,7 +135,7 @@ CREATE TYPE "auth"."ty_0035" AS ENUM ('v1', 'v2', 'v3', 'v4', 'v5', 'v6');
 
 CREATE SEQUENCE "auth"."seq_0001";
 
-CREATE TABLE "auth"."t_0087" (
+CREATE TABLE "auth"."t_0086" (
     "c_0535" VARCHAR(255) NOT NULL,
     PRIMARY KEY ("c_0535")
 );
@@ -182,7 +182,7 @@ CREATE INDEX "idx_0078" ON "auth"."t_0053" ("c_0025");
 
 CREATE INDEX "idx_0110" ON "auth"."t_0053" ("p_0123", "c_0027");
 
-CREATE TABLE "auth"."t_0090" (
+CREATE TABLE "auth"."t_0089" (
     "c_0094" TIMESTAMP WITH TIME ZONE,
     "id" UUID NOT NULL,
     "con_0136" TEXT,
@@ -190,9 +190,9 @@ CREATE TABLE "auth"."t_0090" (
     PRIMARY KEY ("id")
 );
 
-ALTER TABLE "auth"."t_0090" ADD CONSTRAINT "con_0136 not empty" CHECK (1 = 1);
+ALTER TABLE "auth"."t_0089" ADD CONSTRAINT "con_0136 not empty" CHECK (1 = 1);
 
-CREATE TABLE "auth"."t_0095" (
+CREATE TABLE "auth"."t_0094" (
     "c_0024" VARCHAR(255),
     "c_0034" TIMESTAMP WITH TIME ZONE,
     "c_0080" TIMESTAMP WITH TIME ZONE,
@@ -231,29 +231,29 @@ CREATE TABLE "auth"."t_0095" (
     PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "idx_0060" ON "auth"."t_0095" ("c_0081") WHERE ((c_0081)::text <> '_'::text);
+CREATE UNIQUE INDEX "idx_0060" ON "auth"."t_0094" ("c_0081") WHERE ((c_0081)::text <> '_'::text);
 
-CREATE UNIQUE INDEX "idx_0061" ON "auth"."t_0095" ("c_0151") WHERE ((c_0151)::text <> '_'::text);
+CREATE UNIQUE INDEX "idx_0061" ON "auth"."t_0094" ("c_0151") WHERE ((c_0151)::text <> '_'::text);
 
-CREATE UNIQUE INDEX "idx_0062" ON "auth"."t_0095" ("c_0152") WHERE ((c_0152)::text <> '_'::text);
+CREATE UNIQUE INDEX "idx_0062" ON "auth"."t_0094" ("c_0152") WHERE ((c_0152)::text <> '_'::text);
 
-CREATE UNIQUE INDEX "idx_0127" ON "auth"."t_0095" ("c_0387") WHERE ((c_0387)::text <> '_'::text);
+CREATE UNIQUE INDEX "idx_0127" ON "auth"."t_0094" ("c_0387") WHERE ((c_0387)::text <> '_'::text);
 
-CREATE UNIQUE INDEX "idx_0128" ON "auth"."t_0095" ("c_0391") WHERE ((c_0391)::text <> '_'::text);
+CREATE UNIQUE INDEX "idx_0128" ON "auth"."t_0094" ("c_0391") WHERE ((c_0391)::text <> '_'::text);
 
-CREATE UNIQUE INDEX "idx_0149" ON "auth"."t_0095" ("f_0041");
+CREATE UNIQUE INDEX "idx_0149" ON "auth"."t_0094" ("f_0041");
 
-CREATE INDEX "idx_0150" ON "auth"."t_0095" ("c_0237");
+CREATE INDEX "idx_0150" ON "auth"."t_0094" ("c_0237");
 
-CREATE INDEX "idx_0151" ON "auth"."t_0095" ("c_0237");
+CREATE INDEX "idx_0151" ON "auth"."t_0094" ("c_0237");
 
-CREATE INDEX "idx_0152" ON "auth"."t_0095" ("c_0258");
+CREATE INDEX "idx_0152" ON "auth"."t_0094" ("c_0258");
 
-CREATE UNIQUE INDEX "idx_0153" ON "auth"."t_0095" ("c_0344");
+CREATE UNIQUE INDEX "idx_0153" ON "auth"."t_0094" ("c_0344");
 
-ALTER TABLE "auth"."t_0095" ADD CONSTRAINT "con_0169" CHECK (2 = 2);
+ALTER TABLE "auth"."t_0094" ADD CONSTRAINT "con_0169" CHECK (2 = 2);
 
-CREATE TABLE "auth"."t_0089" (
+CREATE TABLE "auth"."t_0088" (
     "c_0094" TIMESTAMP WITH TIME ZONE,
     "con_0114" TEXT NOT NULL,
     "id" UUID NOT NULL,
@@ -262,13 +262,13 @@ CREATE TABLE "auth"."t_0089" (
     PRIMARY KEY ("id")
 );
 
-CREATE INDEX "idx_0143" ON "auth"."t_0089" ("c_0467");
+CREATE INDEX "idx_0143" ON "auth"."t_0088" ("c_0467");
 
-ALTER TABLE "auth"."t_0089" ADD CONSTRAINT "con_0157" FOREIGN KEY ("c_0467") REFERENCES "auth"."t_0090" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "auth"."t_0088" ADD CONSTRAINT "con_0157" FOREIGN KEY ("c_0467") REFERENCES "auth"."t_0089" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-ALTER TABLE "auth"."t_0089" ADD CONSTRAINT "con_0114 not empty" CHECK (3 = 3);
+ALTER TABLE "auth"."t_0088" ADD CONSTRAINT "con_0114 not empty" CHECK (3 = 3);
 
-CREATE TABLE "auth"."t_0081" (
+CREATE TABLE "auth"."t_0080" (
     "c_0094" TIMESTAMP WITH TIME ZONE,
     "c_0202" UUID,
     "c_0203" TEXT,
@@ -280,19 +280,19 @@ CREATE TABLE "auth"."t_0081" (
     PRIMARY KEY ("id")
 );
 
-CREATE INDEX "idx_0138" ON "auth"."t_0081" ("c_0094");
+CREATE INDEX "idx_0138" ON "auth"."t_0080" ("c_0094");
 
-CREATE INDEX "idx_0139" ON "auth"."t_0081" ("c_0203");
+CREATE INDEX "idx_0139" ON "auth"."t_0080" ("c_0203");
 
-CREATE INDEX "idx_0140" ON "auth"."t_0081" ("c_0467");
+CREATE INDEX "idx_0140" ON "auth"."t_0080" ("c_0467");
 
-ALTER TABLE "auth"."t_0081" ADD CONSTRAINT "con_0141" FOREIGN KEY ("c_0202") REFERENCES "auth"."t_0053" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "auth"."t_0080" ADD CONSTRAINT "con_0141" FOREIGN KEY ("c_0202") REFERENCES "auth"."t_0053" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-ALTER TABLE "auth"."t_0081" ADD CONSTRAINT "con_0142" FOREIGN KEY ("c_0467") REFERENCES "auth"."t_0090" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "auth"."t_0080" ADD CONSTRAINT "con_0142" FOREIGN KEY ("c_0467") REFERENCES "auth"."t_0089" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-ALTER TABLE "auth"."t_0081" ADD CONSTRAINT "con_0135 not empty" CHECK (4 = 4);
+ALTER TABLE "auth"."t_0080" ADD CONSTRAINT "con_0135 not empty" CHECK (4 = 4);
 
-CREATE TABLE "auth"."t_0080" (
+CREATE TABLE "auth"."t_0079" (
     "c_0023" JSONB,
     "c_0094" TIMESTAMP WITH TIME ZONE,
     "con_0119" TEXT NOT NULL,
@@ -305,19 +305,19 @@ CREATE TABLE "auth"."t_0080" (
     PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "idx_0136" ON "auth"."t_0080" ("con_0119");
+CREATE UNIQUE INDEX "idx_0136" ON "auth"."t_0079" ("con_0119");
 
-CREATE INDEX "idx_0137" ON "auth"."t_0080" ("c_0467");
+CREATE INDEX "idx_0137" ON "auth"."t_0079" ("c_0467");
 
-ALTER TABLE "auth"."t_0080" ADD CONSTRAINT "con_0140" FOREIGN KEY ("c_0467") REFERENCES "auth"."t_0090" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "auth"."t_0079" ADD CONSTRAINT "con_0140" FOREIGN KEY ("c_0467") REFERENCES "auth"."t_0089" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-ALTER TABLE "auth"."t_0080" ADD CONSTRAINT "con_0119 not empty" CHECK (5 = 5);
+ALTER TABLE "auth"."t_0079" ADD CONSTRAINT "con_0119 not empty" CHECK (5 = 5);
 
-ALTER TABLE "auth"."t_0080" ADD CONSTRAINT "con_0124 not empty" CHECK (6 = 6);
+ALTER TABLE "auth"."t_0079" ADD CONSTRAINT "con_0124 not empty" CHECK (6 = 6);
 
-ALTER TABLE "auth"."t_0080" ADD CONSTRAINT "con_0125 not empty" CHECK (7 = 7);
+ALTER TABLE "auth"."t_0079" ADD CONSTRAINT "con_0125 not empty" CHECK (7 = 7);
 
-CREATE TABLE "auth"."t_0075" (
+CREATE TABLE "auth"."t_0074" (
     "c_0094" TIMESTAMP NOT NULL DEFAULT now(),
     "id" UUID NOT NULL,
     "c_0398" TEXT NOT NULL,
@@ -328,15 +328,15 @@ CREATE TABLE "auth"."t_0075" (
     PRIMARY KEY ("id")
 );
 
-CREATE INDEX "one_time_tokens_relates_to_hash_idx" USING hash ON "auth"."t_0075" ("c_0398");
+CREATE INDEX "one_time_tokens_relates_to_hash_idx" USING hash ON "auth"."t_0074" ("c_0398");
 
-CREATE INDEX "one_time_tokens_token_hash_hash_idx" USING hash ON "auth"."t_0075" ("c_0502");
+CREATE INDEX "one_time_tokens_token_hash_hash_idx" USING hash ON "auth"."t_0074" ("c_0502");
 
-CREATE UNIQUE INDEX "idx_0125" ON "auth"."t_0075" ("p_0123", "c_0503");
+CREATE UNIQUE INDEX "idx_0125" ON "auth"."t_0074" ("p_0123", "c_0503");
 
-ALTER TABLE "auth"."t_0075" ADD CONSTRAINT "con_0132" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0095" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "auth"."t_0074" ADD CONSTRAINT "con_0132" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0094" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-ALTER TABLE "auth"."t_0075" ADD CONSTRAINT "con_0131" CHECK (8 = 8);
+ALTER TABLE "auth"."t_0074" ADD CONSTRAINT "con_0131" CHECK (8 = 8);
 
 CREATE TABLE "auth"."t_0054" (
     "c_0094" TIMESTAMP WITH TIME ZONE,
@@ -357,9 +357,9 @@ CREATE UNIQUE INDEX "idx_0066" ON "auth"."t_0054" ("c_0376", "c_0374");
 
 CREATE INDEX "idx_0067" ON "auth"."t_0054" ("p_0123");
 
-ALTER TABLE "auth"."t_0054" ADD CONSTRAINT "con_0121" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0095" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "auth"."t_0054" ADD CONSTRAINT "con_0121" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0094" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-CREATE TABLE "auth"."t_0088" (
+CREATE TABLE "auth"."t_0087" (
     "c_0001" "auth"."ty_0030",
     "c_0094" TIMESTAMP WITH TIME ZONE,
     "c_0184" UUID,
@@ -374,15 +374,15 @@ CREATE TABLE "auth"."t_0088" (
     PRIMARY KEY ("id")
 );
 
-CREATE INDEX "idx_0141" ON "auth"."t_0088" ("c_0324");
+CREATE INDEX "idx_0141" ON "auth"."t_0087" ("c_0324");
 
-CREATE INDEX "idx_0142" ON "auth"."t_0088" ("p_0123");
+CREATE INDEX "idx_0142" ON "auth"."t_0087" ("p_0123");
 
-CREATE INDEX "idx_0147" ON "auth"."t_0088" ("p_0123", "c_0094");
+CREATE INDEX "idx_0147" ON "auth"."t_0087" ("p_0123", "c_0094");
 
-ALTER TABLE "auth"."t_0088" ADD CONSTRAINT "con_0156" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0095" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "auth"."t_0087" ADD CONSTRAINT "con_0156" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0094" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-CREATE TABLE "auth"."t_0072" (
+CREATE TABLE "auth"."t_0071" (
     "c_0094" TIMESTAMP WITH TIME ZONE NOT NULL,
     "ty_0033" "auth"."ty_0033" NOT NULL,
     "c_0204" TEXT,
@@ -396,21 +396,21 @@ CREATE TABLE "auth"."t_0072" (
     PRIMARY KEY ("id")
 );
 
-CREATE INDEX "idx_0063" ON "auth"."t_0072" ("p_0123", "c_0094");
+CREATE INDEX "idx_0063" ON "auth"."t_0071" ("p_0123", "c_0094");
 
-CREATE UNIQUE INDEX "idx_0120" ON "auth"."t_0072" ("c_0278");
+CREATE UNIQUE INDEX "idx_0120" ON "auth"."t_0071" ("c_0278");
 
-CREATE UNIQUE INDEX "idx_0121" ON "auth"."t_0072" ("c_0344");
+CREATE UNIQUE INDEX "idx_0121" ON "auth"."t_0071" ("c_0344");
 
-CREATE UNIQUE INDEX "idx_0122" ON "auth"."t_0072" ("c_0204", "p_0123");
+CREATE UNIQUE INDEX "idx_0122" ON "auth"."t_0071" ("c_0204", "p_0123");
 
-CREATE INDEX "idx_0123" ON "auth"."t_0072" ("p_0123");
+CREATE INDEX "idx_0123" ON "auth"."t_0071" ("p_0123");
 
-CREATE UNIQUE INDEX "idx_0146" ON "auth"."t_0072" ("p_0123", "c_0344");
+CREATE UNIQUE INDEX "idx_0146" ON "auth"."t_0071" ("p_0123", "c_0344");
 
-ALTER TABLE "auth"."t_0072" ADD CONSTRAINT "con_0129" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0095" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "auth"."t_0071" ADD CONSTRAINT "con_0129" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0094" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-CREATE TABLE "auth"."t_0070" (
+CREATE TABLE "auth"."t_0069" (
     "c_0027" TEXT NOT NULL,
     "c_0094" TIMESTAMP WITH TIME ZONE NOT NULL,
     "id" UUID NOT NULL,
@@ -419,11 +419,11 @@ CREATE TABLE "auth"."t_0070" (
     PRIMARY KEY ("id")
 );
 
-ALTER TABLE "auth"."t_0070" ADD CONSTRAINT "con_0126" UNIQUE ("c_0438", "c_0027");
+ALTER TABLE "auth"."t_0069" ADD CONSTRAINT "con_0126" UNIQUE ("c_0438", "c_0027");
 
-ALTER TABLE "auth"."t_0070" ADD CONSTRAINT "con_0127" FOREIGN KEY ("c_0438") REFERENCES "auth"."t_0088" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "auth"."t_0069" ADD CONSTRAINT "con_0127" FOREIGN KEY ("c_0438") REFERENCES "auth"."t_0087" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-CREATE TABLE "auth"."t_0077" (
+CREATE TABLE "auth"."t_0076" (
     "c_0094" TIMESTAMP WITH TIME ZONE,
     "id" BIGINT NOT NULL DEFAULT nextval('auth.seq_0001'::regclass),
     "c_0237" UUID,
@@ -436,21 +436,21 @@ CREATE TABLE "auth"."t_0077" (
     PRIMARY KEY ("id")
 );
 
-CREATE INDEX "idx_0129" ON "auth"."t_0077" ("c_0237");
+CREATE INDEX "idx_0129" ON "auth"."t_0076" ("c_0237");
 
-CREATE INDEX "idx_0130" ON "auth"."t_0077" ("c_0237", "p_0123");
+CREATE INDEX "idx_0130" ON "auth"."t_0076" ("c_0237", "p_0123");
 
-CREATE INDEX "idx_0131" ON "auth"."t_0077" ("c_0338");
+CREATE INDEX "idx_0131" ON "auth"."t_0076" ("c_0338");
 
-CREATE INDEX "idx_0132" ON "auth"."t_0077" ("c_0438", "c_0412");
+CREATE INDEX "idx_0132" ON "auth"."t_0076" ("c_0438", "c_0412");
 
-CREATE UNIQUE INDEX "idx_0133" ON "auth"."t_0077" ("c_0501");
+CREATE UNIQUE INDEX "idx_0133" ON "auth"."t_0076" ("c_0501");
 
-CREATE INDEX "idx_0134" ON "auth"."t_0077" ("c_0525");
+CREATE INDEX "idx_0134" ON "auth"."t_0076" ("c_0525");
 
-ALTER TABLE "auth"."t_0077" ADD CONSTRAINT "con_0134" FOREIGN KEY ("c_0438") REFERENCES "auth"."t_0088" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "auth"."t_0076" ADD CONSTRAINT "con_0134" FOREIGN KEY ("c_0438") REFERENCES "auth"."t_0087" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-CREATE TABLE "auth"."t_0071" (
+CREATE TABLE "auth"."t_0070" (
     "c_0094" TIMESTAMP WITH TIME ZONE NOT NULL,
     "c_0184" UUID NOT NULL,
     "id" UUID NOT NULL,
@@ -460,9 +460,9 @@ CREATE TABLE "auth"."t_0071" (
     PRIMARY KEY ("id")
 );
 
-CREATE INDEX "idx_0119" ON "auth"."t_0071" ("c_0094");
+CREATE INDEX "idx_0119" ON "auth"."t_0070" ("c_0094");
 
-ALTER TABLE "auth"."t_0071" ADD CONSTRAINT "con_0128" FOREIGN KEY ("c_0184") REFERENCES "auth"."t_0072" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "auth"."t_0070" ADD CONSTRAINT "con_0128" FOREIGN KEY ("c_0184") REFERENCES "auth"."t_0071" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "auth"."t_0045" ENABLE ROW LEVEL SECURITY;
 
@@ -472,19 +472,21 @@ ALTER TABLE "auth"."t_0054" ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE "auth"."t_0055" ENABLE ROW LEVEL SECURITY;
 
+ALTER TABLE "auth"."t_0069" ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE "auth"."t_0070" ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE "auth"."t_0071" ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE "auth"."t_0072" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "auth"."t_0074" ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE "auth"."t_0075" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "auth"."t_0076" ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE "auth"."t_0077" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "auth"."t_0079" ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE "auth"."t_0080" ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE "auth"."t_0081" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "auth"."t_0086" ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE "auth"."t_0087" ENABLE ROW LEVEL SECURITY;
 
@@ -492,13 +494,11 @@ ALTER TABLE "auth"."t_0088" ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE "auth"."t_0089" ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE "auth"."t_0090" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "auth"."t_0094" ENABLE ROW LEVEL SECURITY;
 
-ALTER TABLE "auth"."t_0095" ENABLE ROW LEVEL SECURITY;
+CREATE TRIGGER "f_0069" AFTER INSERT ON "auth"."t_0094" FOR EACH ROW EXECUTE FUNCTION "auth"."f_0069"();
 
-CREATE TRIGGER "f_0069" AFTER INSERT ON "auth"."t_0095" FOR EACH ROW EXECUTE FUNCTION "auth"."f_0069"();
-
-CREATE TRIGGER "f_0070" AFTER UPDATE ON "auth"."t_0095" FOR EACH ROW EXECUTE FUNCTION "auth"."f_0070"();
+CREATE TRIGGER "f_0070" AFTER UPDATE ON "auth"."t_0094" FOR EACH ROW EXECUTE FUNCTION "auth"."f_0070"();
 
 
 
@@ -514,57 +514,57 @@ GRANT ALL PRIVILEGES ON TABLE "auth"."t_0045" TO "supabase_auth_admin";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0053" TO "supabase_auth_admin";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0054" TO "supabase_auth_admin";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0055" TO "supabase_auth_admin";
+GRANT ALL PRIVILEGES ON TABLE "auth"."t_0069" TO "supabase_auth_admin";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0070" TO "supabase_auth_admin";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0071" TO "supabase_auth_admin";
-GRANT ALL PRIVILEGES ON TABLE "auth"."t_0072" TO "supabase_auth_admin";
-GRANT ALL PRIVILEGES ON TABLE "auth"."t_0075" TO "supabase_auth_admin";
-GRANT ALL PRIVILEGES ON TABLE "auth"."t_0077" TO "supabase_auth_admin";
+GRANT ALL PRIVILEGES ON TABLE "auth"."t_0074" TO "supabase_auth_admin";
+GRANT ALL PRIVILEGES ON TABLE "auth"."t_0076" TO "supabase_auth_admin";
+GRANT ALL PRIVILEGES ON TABLE "auth"."t_0079" TO "supabase_auth_admin";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0080" TO "supabase_auth_admin";
-GRANT ALL PRIVILEGES ON TABLE "auth"."t_0081" TO "supabase_auth_admin";
+GRANT ALL PRIVILEGES ON TABLE "auth"."t_0086" TO "supabase_auth_admin";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0087" TO "supabase_auth_admin";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0088" TO "supabase_auth_admin";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0089" TO "supabase_auth_admin";
-GRANT ALL PRIVILEGES ON TABLE "auth"."t_0090" TO "supabase_auth_admin";
-GRANT ALL PRIVILEGES ON TABLE "auth"."t_0095" TO "supabase_auth_admin";
+GRANT ALL PRIVILEGES ON TABLE "auth"."t_0094" TO "supabase_auth_admin";
 
 
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0045" TO "dashboard_user";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0053" TO "dashboard_user";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0054" TO "dashboard_user";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0055" TO "dashboard_user";
+GRANT ALL PRIVILEGES ON TABLE "auth"."t_0069" TO "dashboard_user";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0070" TO "dashboard_user";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0071" TO "dashboard_user";
-GRANT ALL PRIVILEGES ON TABLE "auth"."t_0072" TO "dashboard_user";
-GRANT ALL PRIVILEGES ON TABLE "auth"."t_0075" TO "dashboard_user";
-GRANT ALL PRIVILEGES ON TABLE "auth"."t_0077" TO "dashboard_user";
+GRANT ALL PRIVILEGES ON TABLE "auth"."t_0074" TO "dashboard_user";
+GRANT ALL PRIVILEGES ON TABLE "auth"."t_0076" TO "dashboard_user";
+GRANT ALL PRIVILEGES ON TABLE "auth"."t_0079" TO "dashboard_user";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0080" TO "dashboard_user";
-GRANT ALL PRIVILEGES ON TABLE "auth"."t_0081" TO "dashboard_user";
+GRANT ALL PRIVILEGES ON TABLE "auth"."t_0086" TO "dashboard_user";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0087" TO "dashboard_user";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0088" TO "dashboard_user";
 GRANT ALL PRIVILEGES ON TABLE "auth"."t_0089" TO "dashboard_user";
-GRANT ALL PRIVILEGES ON TABLE "auth"."t_0090" TO "dashboard_user";
-GRANT ALL PRIVILEGES ON TABLE "auth"."t_0095" TO "dashboard_user";
+GRANT ALL PRIVILEGES ON TABLE "auth"."t_0094" TO "dashboard_user";
 
 
 GRANT SELECT ON TABLE "auth"."t_0045" TO "metabase_ro";
 GRANT SELECT ON TABLE "auth"."t_0053" TO "metabase_ro";
 GRANT SELECT ON TABLE "auth"."t_0054" TO "metabase_ro";
 GRANT SELECT ON TABLE "auth"."t_0055" TO "metabase_ro";
+GRANT SELECT ON TABLE "auth"."t_0069" TO "metabase_ro";
 GRANT SELECT ON TABLE "auth"."t_0070" TO "metabase_ro";
 GRANT SELECT ON TABLE "auth"."t_0071" TO "metabase_ro";
-GRANT SELECT ON TABLE "auth"."t_0072" TO "metabase_ro";
-GRANT SELECT ON TABLE "auth"."t_0075" TO "metabase_ro";
-GRANT SELECT ON TABLE "auth"."t_0077" TO "metabase_ro";
+GRANT SELECT ON TABLE "auth"."t_0074" TO "metabase_ro";
+GRANT SELECT ON TABLE "auth"."t_0076" TO "metabase_ro";
+GRANT SELECT ON TABLE "auth"."t_0079" TO "metabase_ro";
 GRANT SELECT ON TABLE "auth"."t_0080" TO "metabase_ro";
-GRANT SELECT ON TABLE "auth"."t_0081" TO "metabase_ro";
+GRANT SELECT ON TABLE "auth"."t_0086" TO "metabase_ro";
 GRANT SELECT ON TABLE "auth"."t_0087" TO "metabase_ro";
 GRANT SELECT ON TABLE "auth"."t_0088" TO "metabase_ro";
 GRANT SELECT ON TABLE "auth"."t_0089" TO "metabase_ro";
-GRANT SELECT ON TABLE "auth"."t_0090" TO "metabase_ro";
-GRANT SELECT ON TABLE "auth"."t_0095" TO "metabase_ro";
+GRANT SELECT ON TABLE "auth"."t_0094" TO "metabase_ro";
 
 
-GRANT SELECT ON TABLE "auth"."t_0095" TO "authenticated";
+GRANT SELECT ON TABLE "auth"."t_0094" TO "authenticated";
 
 
 
@@ -578,14 +578,151 @@ CREATE FUNCTION "auth"."f_0028"() RETURNS TABLE (
   p_0123 uuid,
   f_0041 text,
   c_0198 text[]
-) LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN; END; $$;
+) LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$
+DECLARE
+  user_record RECORD;
+  cleaned_meta JSONB;
+  removed_fields TEXT[];
+  template_fields TEXT[];
+  field TEXT;
+BEGIN
+  
+  
+  IF NOT (
+    session_user = '_' OR
+    session_user = '_' OR
+    COALESCE(current_setting('_', true)::jsonb->>'_', '_') = '_'
+  ) THEN
+    RAISE EXCEPTION '_';
+  END IF;
+
+  
+  template_fields := auth.f_0055();
+
+  
+  
+  PERFORM set_config('_', '_', true);
+
+  BEGIN
+    FOR user_record IN
+      SELECT u.id, u.f_0041, u.c_0384
+      FROM auth.t_0094 u
+      WHERE u.c_0384 ?| template_fields
+    LOOP
+      
+      removed_fields := ARRAY[]::TEXT[];
+      cleaned_meta := user_record.c_0384;
+
+      FOREACH field IN ARRAY template_fields LOOP
+        IF user_record.c_0384 ? field THEN
+          removed_fields := removed_fields || field;
+          cleaned_meta := cleaned_meta - field;
+        END IF;
+      END LOOP;
+
+      
+      UPDATE auth.t_0094
+      SET c_0384 = cleaned_meta
+      WHERE id = user_record.id;
+
+      
+      p_0123 := user_record.id;
+      f_0041 := user_record.f_0041;
+      c_0198 := removed_fields;
+      RETURN NEXT;
+    END LOOP;
+  EXCEPTION
+    WHEN OTHERS THEN
+      
+      PERFORM set_config('_', '_', true);
+      RAISE;
+  END;
+
+  
+  PERFORM set_config('_', '_', true);
+
+  RETURN;
+END;$$;
 
 
-CREATE FUNCTION "auth"."f_0037"("p_0003" jsonb) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "auth"."f_0037"("p_0003" jsonb) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+    p_0123 uuid;
+    claims jsonb;
+    rbac_context jsonb;
+    debug_info jsonb := 'null'::jsonb;
+BEGIN
+    BEGIN
+        claims := p_0003->'_';
+        debug_info := debug_info || jsonb_build_object('_', true);
+
+        BEGIN
+            p_0123 := (claims ->> '_')::uuid;
+        EXCEPTION WHEN OTHERS THEN
+            p_0123 := NULL;
+            debug_info := debug_info || jsonb_build_object('_', true);
+        END;
+
+        debug_info := debug_info || jsonb_build_object('_', p_0123);
+
+        IF p_0123 IS NOT NULL THEN
+            SELECT public.f_0058(p_0123) INTO rbac_context;
+
+            debug_info := debug_info || jsonb_build_object(
+                '_', true,
+                '_', rbac_context IS NOT NULL
+            );
+        END IF;
+
+        IF rbac_context IS NULL THEN
+            rbac_context := jsonb_build_object(
+                '_', jsonb_build_array(),
+                '_', jsonb_build_array(),
+                '_', jsonb_build_array(),
+                '_', jsonb_build_array(),
+                '_', jsonb_build_array(),
+                '_', jsonb_build_array(),
+                '_', NULL,
+                '_', jsonb_build_array()
+            );
+            debug_info := debug_info || jsonb_build_object('_', true);
+        END IF;
+
+        
+        claims := jsonb_set(
+            claims,
+            '_',
+            rbac_context,
+            true
+        );
+        
+        claims := claims || jsonb_build_object(
+            '_', rbac_context,
+            '_', debug_info
+        );
+
+        p_0003 := jsonb_set(p_0003, '_', claims);
+
+        RETURN p_0003;
+    EXCEPTION WHEN OTHERS THEN
+        claims := p_0003->'_';
+        claims := claims || jsonb_build_object(
+            '_', SQLERRM,
+            '_', SQLSTATE,
+            '_', debug_info
+        );
+        p_0003 := jsonb_set(p_0003, '_', claims);
+        RETURN p_0003;
+    END;
+END;$$;
 
 
 
-CREATE FUNCTION "auth"."f_0041"() RETURNS text LANGUAGE sql STABLE SECURITY INVOKER AS $$ SELECT NULL::text $$;
+CREATE FUNCTION "auth"."f_0041"() RETURNS text LANGUAGE sql STABLE SECURITY INVOKER AS $$select
+  coalesce(
+    nullif(current_setting('_', true), '_'),
+    (nullif(current_setting('_', true), '_')::jsonb ->> '_'),
+    nullif(current_setting('_', true), '_')
+  )::text$$;
 
 
 
@@ -595,14 +732,40 @@ CREATE FUNCTION "auth"."f_0041"() RETURNS text LANGUAGE sql STABLE SECURITY INVO
 
 
 
-CREATE FUNCTION "auth"."f_0055"() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$ SELECT NULL::text[] $$;
+CREATE FUNCTION "auth"."f_0055"() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$
+  SELECT ARRAY[
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_',
+    '_'
+  ];
+$$;
 
 
 CREATE OR REPLACE FUNCTION auth.f_0060() RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ SELECT NULL::boolean $$;
+AS $$
+    SELECT auth.f_0061()
+$$;
 
 
 
@@ -610,35 +773,479 @@ CREATE OR REPLACE FUNCTION auth.f_0061() RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ SELECT NULL::boolean $$;
+AS $$
+    SELECT COALESCE(
+        (
+            
+            SELECT rbac_context->'_' ? '_'
+            FROM (
+                SELECT auth.f_0065()->'_' AS rbac_context
+            ) jwt_data
+            WHERE rbac_context IS NOT NULL
+        ),
+        FALSE
+    )
+$$;
 
 
-CREATE FUNCTION "auth"."f_0064"("p_0090" text, "p_0026" uuid DEFAULT null::uuid, "p_0104" uuid DEFAULT null::uuid, "p_0037" uuid DEFAULT null::uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "auth"."f_0064"("p_0090" text, "p_0026" uuid DEFAULT null::uuid, "p_0104" uuid DEFAULT null::uuid, "p_0037" uuid DEFAULT null::uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+    v_user_id uuid := auth.f_0100 ();
+    v_result boolean;
+BEGIN
+    
+    SELECT
+        EXISTS (
+            SELECT
+                1
+            FROM
+                public.t_0093 ur
+                JOIN public.t_0078 r ON ur.c_0415 = r.id
+                JOIN public.t_0077 rp ON ur.c_0415 = rp.c_0415
+                JOIN public.t_0075 p ON rp.c_0342 = p.id
+            WHERE
+                ur.p_0123 = v_user_id
+                AND r.name = p_0090
+                AND p.c_0407 = '_'
+                AND p.c_0332 = '_'
+                AND ((p_0026 IS NULL
+                        OR ur.p_0001 = p_0026)
+                    AND (p_0104 IS NULL
+                        OR ur.p_0121 = p_0104)
+                    AND (p_0037 IS NULL
+                        OR ur.p_0005 = p_0037))) INTO v_result;
+    RETURN v_result;
+END;$$;
 
 
 
 
 
 
-CREATE FUNCTION "auth"."f_0065"() RETURNS jsonb LANGUAGE sql STABLE SECURITY INVOKER AS $$ SELECT NULL::jsonb $$;
+CREATE FUNCTION "auth"."f_0065"() RETURNS jsonb LANGUAGE sql STABLE SECURITY INVOKER AS $$SELECT
+    coalesce(
+        nullif(current_setting('_', true), '_')::jsonb,
+        nullif(current_setting('_', true), '_')::jsonb,
+        CASE WHEN nullif(current_setting('_', true), '_') IS NOT NULL
+        THEN jsonb_strip_nulls(jsonb_build_object(
+            '_', current_setting('_', true),
+            '_', current_setting('_', true),
+            '_', current_setting('_', true),
+            '_', CASE
+                WHEN nullif(current_setting('_', true), '_') IS NOT NULL
+                THEN current_setting('_', true)::jsonb
+                WHEN nullif(current_setting('_', true), '_') IS NOT NULL
+                THEN (current_setting('_', true)::jsonb) -> '_'
+            END
+        ))
+        END
+    )$$;
 
 
-CREATE OR REPLACE FUNCTION "auth"."f_0069"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$ BEGIN RETURN NULL; END; $$;
+CREATE OR REPLACE FUNCTION "auth"."f_0069"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$DECLARE
+    c_0239 text;
+    p_0120 text;
+    enterprise_id_param uuid;
+    supplier_id_param uuid;
+    farmer_id_param uuid;
+    methodology_mode_param text;
+    new_role_id uuid;
+    new_enterprise_id uuid;
+    new_supplier_id uuid;
+    new_farmer_id uuid;
+    inviter_id uuid;
+    inviter_roles text;
+    inviter_enterprise_id uuid;
+BEGIN
+    
+    
+    
+    c_0239 := NEW.c_0384 ->> '_';
+    p_0120 := NEW.c_0384 ->> '_';
+    enterprise_id_param := (NEW.c_0384 ->> '_')::uuid;
+    supplier_id_param := (NEW.c_0384 ->> '_')::uuid;
+    farmer_id_param := (NEW.c_0384 ->> '_')::uuid;
+    methodology_mode_param := NEW.c_0384 ->> '_';
+    inviter_id := (NEW.c_0384 ->> '_')::uuid;
+    
+    IF c_0239 IS NOT NULL AND p_0120 IS NOT NULL THEN
+        
+        SELECT
+            id INTO new_role_id
+        FROM
+            t_0078
+        WHERE
+            name = p_0120;
+        IF new_role_id IS NULL THEN
+            RAISE EXCEPTION '_', p_0120;
+        END IF;
+        
+        IF c_0239 = '_' THEN
+            
+            SELECT
+                string_agg(r.name || '_' || COALESCE(ur.p_0001::text, '_') || '_' || COALESCE(ur.p_0121::text, '_') || '_' || COALESCE(ur.p_0005::text, '_') || '_', '_') INTO inviter_roles
+            FROM
+                t_0093 ur
+                JOIN t_0078 r ON ur.c_0415 = r.id
+            WHERE
+                ur.p_0123 = inviter_id;
+            
+            IF supplier_id_param IS NULL AND enterprise_id_param IS NULL THEN
+                RAISE EXCEPTION '_', inviter_id, inviter_roles, NEW.c_0384;
+            END IF;
+            IF supplier_id_param IS NOT NULL THEN
+                
+                
+                
+                
+                
+                SELECT ur.p_0001 INTO inviter_enterprise_id
+                FROM t_0093 ur
+                JOIN t_0078 r ON ur.c_0415 = r.id
+                WHERE ur.p_0123 = inviter_id
+                  AND r.name IN ('v1', 'v1')
+                  AND ur.p_0001 IS NOT NULL
+                  AND EXISTS (
+                    SELECT 1 FROM public.t_0049 es2
+                    WHERE es2.p_0121 = supplier_id_param
+                      AND es2.p_0001 = ur.p_0001
+                  )
+                LIMIT 1;
+
+                IF inviter_enterprise_id IS NOT NULL THEN
+                    enterprise_id_param := inviter_enterprise_id;
+                ELSE
+                    SELECT es.p_0001 INTO enterprise_id_param
+                    FROM public.t_0049 es
+                    WHERE es.p_0121 = supplier_id_param
+                    ORDER BY es.p_0001
+                    LIMIT 1;
+                END IF;
+                
+                
+                
+                IF farmer_id_param IS NULL AND NEW.c_0384 ->> '_' IS NOT NULL THEN
+                    INSERT INTO t_0051 (name, c_0094, c_0525)
+                        VALUES (NEW.c_0384 ->> '_', NOW(), NOW())
+                    RETURNING
+                        id INTO new_farmer_id;
+                    farmer_id_param := new_farmer_id;
+                END IF;
+                
+                
+                
+                IF farmer_id_param IS NOT NULL THEN
+                    INSERT INTO public.t_0090 (p_0121, p_0005)
+                        VALUES (supplier_id_param, farmer_id_param)
+                    ON CONFLICT (p_0121, p_0005) DO NOTHING;
+                END IF;
+                
+                IF inviter_id IS NOT NULL THEN
+                    IF NOT EXISTS (
+                        SELECT
+                            1
+                        FROM
+                            t_0093 ur
+                            JOIN t_0078 r ON ur.c_0415 = r.id
+                        WHERE
+                            ur.p_0123 = inviter_id
+                            AND ur.p_0121 = supplier_id_param
+                            AND r.name IN ('v1', 'v1')) THEN
+                    RAISE EXCEPTION '_';
+                END IF;
+            END IF;
+            ELSE
+                
+                
+                IF farmer_id_param IS NULL AND NEW.c_0384 ->> '_' IS NOT NULL THEN
+                    INSERT INTO t_0051 (name, c_0094, c_0525)
+                        VALUES (NEW.c_0384 ->> '_', NOW(), NOW())
+                    RETURNING
+                        id INTO new_farmer_id;
+                    farmer_id_param := new_farmer_id;
+                END IF;
+                
+                IF farmer_id_param IS NOT NULL AND enterprise_id_param IS NOT NULL THEN
+                    INSERT INTO public.t_0048 (p_0001, p_0005)
+                        VALUES (enterprise_id_param, farmer_id_param)
+                    ON CONFLICT (p_0001, p_0005) DO NOTHING;
+                END IF;
+                
+                IF inviter_id IS NOT NULL THEN
+                    IF NOT EXISTS (
+                        SELECT
+                            1
+                        FROM
+                            t_0093 ur
+                            JOIN t_0078 r ON ur.c_0415 = r.id
+                        WHERE
+                            ur.p_0123 = inviter_id
+                            AND ur.p_0001 = enterprise_id_param
+                            AND r.name = 'v1') THEN
+                    RAISE EXCEPTION '_';
+                END IF;
+            END IF;
+            END IF;
+    ELSIF c_0239 = '_' THEN
+        
+        SELECT
+            string_agg(r.name || '_' || COALESCE(ur.p_0001::text, '_') || '_' || COALESCE(ur.p_0121::text, '_') || '_', '_') INTO inviter_roles
+        FROM
+            t_0093 ur
+            JOIN t_0078 r ON ur.c_0415 = r.id
+        WHERE
+            ur.p_0123 = inviter_id;
+        
+        
+        SELECT
+            ur.p_0001 INTO inviter_enterprise_id
+        FROM
+            t_0093 ur
+            JOIN t_0078 r ON ur.c_0415 = r.id
+        WHERE
+            ur.p_0123 = inviter_id
+            AND r.name = 'v1'
+        LIMIT 1;
+        
+        
+        IF inviter_id IS NOT NULL THEN
+            IF NOT EXISTS (
+                SELECT
+                    1
+                FROM
+                    t_0093 ur
+                    JOIN t_0078 r ON ur.c_0415 = r.id
+                WHERE
+                    ur.p_0123 = inviter_id
+                    AND (r.name IN ('v1', 'v1') OR r.level = '_')) THEN
+            RAISE EXCEPTION '_', inviter_id, inviter_roles;
+        END IF;
+    END IF;
+    
+    IF enterprise_id_param IS NULL AND methodology_mode_param IS NULL AND supplier_id_param IS NULL THEN
+        RAISE EXCEPTION '_', inviter_id, enterprise_id_param, supplier_id_param, p_0120, c_0239, inviter_roles, NEW.c_0384;
+    END IF;
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    IF supplier_id_param IS NOT NULL AND inviter_id IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT
+                1
+            FROM
+                t_0093 ur
+                JOIN t_0078 r ON ur.c_0415 = r.id
+            WHERE
+                ur.p_0123 = inviter_id
+                AND (
+                    (ur.p_0121 = supplier_id_param AND r.name = 'v1')
+                    OR r.level = '_'
+                )) THEN
+        RAISE EXCEPTION '_', inviter_id, supplier_id_param, inviter_roles;
+    END IF;
+END IF;
+    
+    IF supplier_id_param IS NOT NULL AND enterprise_id_param IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT
+                1
+            FROM
+                public.t_0049 es
+            WHERE
+                es.p_0121 = supplier_id_param
+                AND es.p_0001 = enterprise_id_param) THEN
+        RAISE EXCEPTION '_', supplier_id_param, enterprise_id_param;
+    END IF;
+END IF;
+    
+    
+    
+    
+    
+    
+    
+    IF supplier_id_param IS NULL THEN
+        IF enterprise_id_param IS NOT NULL THEN
+            
+            INSERT INTO t_0091 (name, c_0094, c_0525)
+                VALUES (NEW.c_0384 ->> '_', NOW(), NOW())
+            RETURNING
+                id INTO new_supplier_id;
+        ELSE
+            
+            
+            IF methodology_mode_param = '_' THEN
+                RAISE EXCEPTION '_';
+            END IF;
+            INSERT INTO t_0091 (name, ty_0034, c_0094, c_0525)
+                VALUES (NEW.c_0384 ->> '_', methodology_mode_param::ty_0034, NOW(), NOW())
+            RETURNING
+                id INTO new_supplier_id;
+        END IF;
+        supplier_id_param := new_supplier_id;
+    END IF;
+    
+    IF enterprise_id_param IS NOT NULL AND supplier_id_param IS NOT NULL THEN
+        INSERT INTO public.t_0049 (p_0001, p_0121)
+            VALUES (enterprise_id_param, supplier_id_param)
+        ON CONFLICT (p_0001, p_0121) DO NOTHING;
+    END IF;
+ELSIF c_0239 = '_' THEN
+    
+    IF methodology_mode_param = '_' THEN
+        RAISE EXCEPTION '_';
+    END IF;
+    
+    IF enterprise_id_param IS NULL THEN
+        INSERT INTO t_0050 (name, ty_0034, c_0094, c_0525)
+            VALUES (COALESCE(NEW.c_0384 ->> '_', split_part(NEW.f_0041, '_', 2), '_' || NEW.f_0041), COALESCE(methodology_mode_param, '_')::ty_0034, NOW(), NOW())
+        RETURNING
+            id INTO new_enterprise_id;
+        enterprise_id_param := new_enterprise_id;
+    END IF;
+    
+    
+ELSE
+    RAISE EXCEPTION '_', c_0239;
+END IF;
+    
+    PERFORM
+        set_config('_', '_', TRUE);
+    
+    INSERT INTO t_0093 (p_0123, c_0415, p_0001, p_0121, p_0005)
+        VALUES (NEW.id, new_role_id, CASE WHEN c_0239 IN ('_', '_', '_') THEN
+                enterprise_id_param
+            ELSE
+                NULL
+            END, supplier_id_param, farmer_id_param);
+    
+    PERFORM
+        set_config('_', '_', TRUE);
+END IF;
+    RETURN NEW;
+END;$$;
 
 ALTER FUNCTION auth.f_0069() OWNER TO supabase_auth_admin;
 
 
 
-CREATE OR REPLACE FUNCTION "auth"."f_0070"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$ BEGIN RETURN NULL; END; $$;
+CREATE OR REPLACE FUNCTION "auth"."f_0070"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  new_context JSONB;
+  old_context JSONB;
+  already_in_trigger TEXT;
+  cleaned_meta JSONB;
+  needs_meta_cleanup BOOLEAN;
+  template_fields TEXT[];
+  field TEXT;
+BEGIN
+  
+  already_in_trigger := current_setting('_', true);
+
+  IF already_in_trigger = '_' THEN
+    RETURN NEW;
+  END IF;
+
+  
+  PERFORM set_config('_', '_', true);
+
+  BEGIN
+    
+    new_context := public.f_0058(NEW.id);
+    old_context := COALESCE(OLD.c_0382->'_', 'null'::jsonb);
+
+    
+    template_fields := auth.f_0055();
+
+    
+    
+    
+    
+    needs_meta_cleanup := (NEW.c_0384 ?| template_fields);
+
+    
+    IF new_context IS DISTINCT FROM old_context OR needs_meta_cleanup THEN
+      
+      IF needs_meta_cleanup THEN
+        cleaned_meta := NEW.c_0384;
+        FOREACH field IN ARRAY template_fields LOOP
+          cleaned_meta := cleaned_meta - field;
+        END LOOP;
+
+        UPDATE auth.t_0094
+        SET
+          c_0384 = cleaned_meta,
+          c_0382 = jsonb_set(
+            COALESCE(c_0382, 'null'::jsonb),
+            '_',
+            new_context
+          )
+        WHERE id = NEW.id;
+      ELSE
+        UPDATE auth.t_0094
+        SET c_0382 = jsonb_set(
+          COALESCE(c_0382, 'null'::jsonb),
+          '_',
+          new_context
+        )
+        WHERE id = NEW.id;
+      END IF;
+    END IF;
+  EXCEPTION
+    WHEN OTHERS THEN
+      
+      PERFORM set_config('_', '_', true);
+      RAISE;
+  END;
+
+  
+  PERFORM set_config('_', '_', true);
+
+  RETURN NEW;
+END;$$;
 
 ALTER FUNCTION auth.f_0070() OWNER TO supabase_auth_admin;
 
 
 
-CREATE FUNCTION "auth"."role"() RETURNS text LANGUAGE sql STABLE SECURITY INVOKER AS $$ SELECT NULL::text $$;
+CREATE FUNCTION "auth"."role"() RETURNS text LANGUAGE sql STABLE SECURITY INVOKER AS $$select
+  coalesce(
+    nullif(current_setting('_', true), '_'),
+    (nullif(current_setting('_', true), '_')::jsonb ->> '_'),
+    nullif(current_setting('_', true), '_')
+  )::text$$;
 
 
-CREATE FUNCTION "auth"."f_0090"("p_0006" jsonb) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY INVOKER AS $$ BEGIN RETURN; END; $$;
+CREATE FUNCTION "auth"."f_0090"("p_0006" jsonb) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY INVOKER AS $$BEGIN
+  
+  PERFORM set_config('_', p_0006::text, true);
+  PERFORM set_config('_', p_0006->>'_', true);
+END;$$;
 
 
 
@@ -648,7 +1255,12 @@ CREATE FUNCTION "auth"."f_0090"("p_0006" jsonb) RETURNS void LANGUAGE plpgsql VO
 
 
 
-CREATE FUNCTION "auth"."f_0100"() RETURNS uuid LANGUAGE sql STABLE SECURITY INVOKER AS $$ SELECT NULL::uuid $$;
+CREATE FUNCTION "auth"."f_0100"() RETURNS uuid LANGUAGE sql STABLE SECURITY INVOKER AS $$select
+  coalesce(
+    nullif(current_setting('_', true), '_'),
+    (nullif(current_setting('_', true), '_')::jsonb ->> '_'),
+    nullif(current_setting('_', true), '_')
+  )::uuid$$;
 
 
 
@@ -668,7 +1280,30 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = '_'
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+DECLARE
+    v_rbac_context jsonb;
+BEGIN
+    IF auth.f_0060() THEN
+        RETURN TRUE;
+    END IF;
+
+    v_rbac_context := auth.f_0065()->'_';
+
+    IF v_rbac_context IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    RETURN EXISTS (
+        SELECT 1
+        FROM mrv."t_0037" vpi
+        WHERE vpi."c_0367" = p_0078
+          AND vpi."c_0482" IS NOT NULL
+          AND vpi."c_0470" <> 'v1'
+          AND v_rbac_context->'_' ? vpi."c_0482"::text
+    );
+END;
+$$;
 
 
 
@@ -692,13 +1327,54 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = '_'
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1
+        FROM mrv."t_0037" vpi
+        JOIN public.t_0049 es ON es.p_0121 = vpi."c_0482"
+        WHERE vpi."c_0367" = p_0078
+          AND vpi."c_0482" IS NOT NULL
+          AND vpi."c_0470" <> 'v1'
+          AND auth.f_0117(p_0026 => es.p_0001)
+    );
+END;
+$$;
 
 
-CREATE FUNCTION "auth"."f_0111"("p_0026" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "auth"."f_0111"("p_0026" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$DECLARE
+  v_user_id UUID := auth.f_0100();
+  v_result BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.t_0093 my_ur
+    JOIN public.t_0078 my_r ON my_ur.c_0415 = my_r.id
+    WHERE my_ur.p_0123 = v_user_id
+    AND my_r.name = 'v1'
+    AND my_ur.p_0001 = p_0026
+  ) INTO v_result;
+
+  RETURN v_result;
+END;$$;
 
 
-CREATE FUNCTION "auth"."f_0113"("p_0037" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "auth"."f_0113"("p_0037" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$DECLARE
+  v_user_id UUID := auth.f_0100();
+  v_result BOOLEAN;
+BEGIN
+  
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.t_0093 my_ur
+    JOIN public.t_0078 my_r ON my_ur.c_0415 = my_r.id
+    WHERE my_ur.p_0123 = v_user_id
+    AND my_r.level = '_'
+    AND my_ur.p_0005 = p_0037
+  ) INTO v_result;
+
+  RETURN v_result;
+END;$$;
 
 
 
@@ -713,7 +1389,20 @@ CREATE OR REPLACE FUNCTION auth.f_0114(
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ SELECT NULL::boolean $$;
+AS $$
+    
+    
+    SELECT auth.f_0115(p_0086, p_0071)
+        AND (
+            p_0026 IS NULL OR auth.f_0118(p_0026 => p_0026)
+        )
+        AND (
+            p_0104 IS NULL OR auth.f_0118(p_0104 => p_0104)
+        )
+        AND (
+            p_0037 IS NULL OR auth.f_0118(p_0037 => p_0037)
+        )
+$$;
 
 
 
@@ -724,10 +1413,36 @@ CREATE OR REPLACE FUNCTION auth.f_0115(
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ SELECT NULL::boolean $$;
+AS $$
+    SELECT COALESCE(
+        (
+            
+            SELECT rbac_context->'_' ? (p_0086 || '_' || p_0071)
+            FROM (
+                SELECT auth.f_0065()->'_' AS rbac_context
+            ) jwt_data
+            WHERE rbac_context IS NOT NULL
+        ),
+        FALSE
+    )
+$$;
 
 
-CREATE FUNCTION "auth"."f_0116"("p_0104" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "auth"."f_0116"("p_0104" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$DECLARE
+  v_user_id UUID := auth.f_0100();
+  v_result BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.t_0093 my_ur
+    JOIN public.t_0078 my_r ON my_ur.c_0415 = my_r.id
+    WHERE my_ur.p_0123 = v_user_id
+    AND my_r.name = 'v1'
+    AND my_ur.p_0121 = p_0104
+  ) INTO v_result;
+
+  RETURN v_result;
+END;$$;
 
 
 CREATE OR REPLACE FUNCTION auth.f_0117(
@@ -738,7 +1453,9 @@ CREATE OR REPLACE FUNCTION auth.f_0117(
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ SELECT NULL::boolean $$;
+AS $$
+    SELECT auth.f_0118(p_0026, p_0104, p_0037)
+$$;
 
 
 
@@ -755,10 +1472,48 @@ CREATE OR REPLACE FUNCTION auth.f_0118(
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ SELECT NULL::boolean $$;
+AS $$
+    SELECT COALESCE(
+        (
+            
+            
+            SELECT
+                (
+                    p_0026 IS NOT NULL
+                    AND rbac_context->'_' ? p_0026::text
+                    AND (
+                        rbac_context->'_' ? '_'
+                        OR rbac_context->'_' ? '_'
+                    )
+                )
+                OR
+                (p_0104 IS NOT NULL AND rbac_context->'_' ? p_0104::text)
+                OR
+                (p_0037 IS NOT NULL AND rbac_context->'_' ? p_0037::text)
+            FROM (
+                SELECT auth.f_0065()->'_' AS rbac_context
+            ) jwt_data
+            WHERE rbac_context IS NOT NULL
+        ),
+        FALSE
+    )
+$$;
 
 
-CREATE FUNCTION "auth"."f_0119"() RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "auth"."f_0119"() RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$DECLARE
+  v_user_id UUID := auth.f_0100();
+  v_result BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.t_0093 my_ur
+    JOIN public.t_0078 my_r ON my_ur.c_0415 = my_r.id
+    WHERE my_ur.p_0123 = v_user_id
+    AND my_r.name = 'v1'
+  ) INTO v_result;
+
+  RETURN v_result;
+END;$$;
 
 
 
@@ -770,12 +1525,21 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = '_'
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+BEGIN
+    RETURN auth.f_0060();
+END;
+$$;
 
 
 CREATE OR REPLACE FUNCTION auth.f_0121(p_0026 uuid)
 RETURNS boolean
-LANGUAGE sql STABLE SECURITY INVOKER AS $$ SELECT NULL::boolean $$;
+LANGUAGE sql STABLE SECURITY INVOKER AS $$
+    SELECT COALESCE(
+        auth.f_0065()->'_'->'_' ? p_0026::text,
+        FALSE
+    )
+$$;
 
 
 
@@ -786,18 +1550,74 @@ CREATE OR REPLACE FUNCTION auth.f_0122(
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-AS $$ SELECT NULL::boolean $$;
+AS $$
+    SELECT CASE p_0029
+        WHEN '_' THEN auth.f_0117(p_0026 => p_0027)
+        WHEN '_' THEN auth.f_0117(p_0104 => p_0027)
+        WHEN '_' THEN auth.f_0117(p_0037 => p_0027)
+        ELSE false  
+    END
+$$;
 
 
 
-CREATE FUNCTION "auth"."f_0124"("p_0112" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "auth"."f_0124"("p_0112" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
+DECLARE
+  v_current_user_farmer_ids uuid[];
+  v_result BOOLEAN;
+BEGIN
+  
+  
+  SELECT ARRAY(
+    SELECT (jsonb_array_elements_text(
+      COALESCE(auth.f_0065()->'_'->'_', 'null'::jsonb)
+    ))::uuid
+  ) INTO v_current_user_farmer_ids;
+
+  
+  IF v_current_user_farmer_ids IS NULL OR array_length(v_current_user_farmer_ids, 1) IS NULL THEN
+    RETURN false;
+  END IF;
+
+  
+  
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.t_0093 ur
+    WHERE ur.p_0123 = p_0112
+    AND ur.p_0005 = ANY(v_current_user_farmer_ids)
+  ) INTO v_result;
+
+  RETURN COALESCE(v_result, false);
+END;$$;
 
 
 
 
 CREATE OR REPLACE FUNCTION auth.f_0140(p_0027 uuid)
 RETURNS boolean
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '_' AS $$ BEGIN RETURN NULL; END; $$;
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '_' AS $$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 WHERE auth.f_0121(p_0027)
+        UNION ALL
+        SELECT 1 FROM public.t_0049 es
+        WHERE es.p_0121 = p_0027
+          AND auth.f_0121(es.p_0001)
+        UNION ALL
+        SELECT 1 FROM public.t_0090 sf
+        JOIN public.t_0049 es ON es.p_0121 = sf.p_0121
+        WHERE sf.p_0005 = p_0027
+          AND auth.f_0121(es.p_0001)
+        UNION ALL
+        SELECT 1 FROM public.t_0093 ur
+        JOIN public.t_0090 sf ON sf.p_0005 = ur.p_0005
+        JOIN public.t_0049 es ON es.p_0121 = sf.p_0121
+        WHERE ur.p_0123 = p_0027
+          AND auth.f_0121(es.p_0001)
+    );
+END;
+$$;
 
 
 
@@ -957,7 +1777,7 @@ ALTER TABLE "public"."t_0043" ADD CONSTRAINT "con_0102" CHECK (9 = 9);
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS "idx_0058" ON "public"."t_0043" ("c_0272");
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_0069" ON "public"."t_0043" ("p_0123");
 
-ALTER TABLE "public"."t_0043" ADD CONSTRAINT "con_0103" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0095" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "public"."t_0043" ADD CONSTRAINT "con_0103" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0094" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "public"."t_0043" ENABLE ROW LEVEL SECURITY;
 
@@ -996,7 +1816,7 @@ CREATE TABLE "public"."t_0049" (
 CREATE INDEX "idx_0083" ON "public"."t_0049" ("p_0121");
 
 ALTER TABLE "public"."t_0049" ADD CONSTRAINT "con_0117" FOREIGN KEY ("p_0001") REFERENCES "public"."t_0050" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
-ALTER TABLE "public"."t_0049" ADD CONSTRAINT "con_0118" FOREIGN KEY ("p_0121") REFERENCES "public"."t_0092" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "public"."t_0049" ADD CONSTRAINT "con_0118" FOREIGN KEY ("p_0121") REFERENCES "public"."t_0091" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "public"."t_0049" ENABLE ROW LEVEL SECURITY;
 
@@ -1033,7 +1853,7 @@ CREATE TABLE "public"."t_0051" (
     PRIMARY KEY ("id")
 );
 
-ALTER TABLE "public"."t_0051" ADD CONSTRAINT "con_0120" FOREIGN KEY ("p_0121") REFERENCES "public"."t_0092" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "public"."t_0051" ADD CONSTRAINT "con_0120" FOREIGN KEY ("p_0121") REFERENCES "public"."t_0091" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "public"."t_0051" ENABLE ROW LEVEL SECURITY;
 
@@ -1058,7 +1878,7 @@ GRANT SELECT ON TABLE "public"."t_0052" TO "anon";
 GRANT ALL ON TABLE "public"."t_0052" TO "service_role";
 
 
-CREATE TABLE "public"."t_0074" (
+CREATE TABLE "public"."t_0073" (
     "c_0077" BOOLEAN NOT NULL DEFAULT false,
     "c_0094" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
     "con_0119" UUID NOT NULL,
@@ -1068,18 +1888,18 @@ CREATE TABLE "public"."t_0074" (
     PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "idx_0124" ON "public"."t_0074" ("p_0002", "con_0119");
+CREATE UNIQUE INDEX "idx_0124" ON "public"."t_0073" ("p_0002", "con_0119");
 
-ALTER TABLE "public"."t_0074" ADD CONSTRAINT "con_0130" CHECK (10 = 10);
-
-
-GRANT SELECT ON public.t_0074 TO supabase_auth_admin;
-
-GRANT SELECT ON public.t_0074 TO authenticated;
-GRANT SELECT ON public.t_0074 TO service_role;
+ALTER TABLE "public"."t_0073" ADD CONSTRAINT "con_0130" CHECK (10 = 10);
 
 
-CREATE TABLE "public"."t_0076" (
+GRANT SELECT ON public.t_0073 TO supabase_auth_admin;
+
+GRANT SELECT ON public.t_0073 TO authenticated;
+GRANT SELECT ON public.t_0073 TO service_role;
+
+
+CREATE TABLE "public"."t_0075" (
     "c_0139" TEXT,
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "c_0332" TEXT NOT NULL,
@@ -1087,24 +1907,43 @@ CREATE TABLE "public"."t_0076" (
     PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "idx_0126" ON "public"."t_0076" ("c_0407", "c_0332");
+CREATE UNIQUE INDEX "idx_0126" ON "public"."t_0075" ("c_0407", "c_0332");
 
-ALTER TABLE "public"."t_0076" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."t_0075" ENABLE ROW LEVEL SECURITY;
 
-GRANT SELECT ON TABLE "public"."t_0076" TO "supabase_auth_admin";
-GRANT SELECT ON TABLE "public"."t_0076" TO "authenticated";
-GRANT ALL ON TABLE "public"."t_0076" TO "service_role";
+GRANT SELECT ON TABLE "public"."t_0075" TO "supabase_auth_admin";
+GRANT SELECT ON TABLE "public"."t_0075" TO "authenticated";
+GRANT ALL ON TABLE "public"."t_0075" TO "service_role";
 
 
-CREATE TABLE "public"."t_0078" (
+CREATE TABLE "public"."t_0077" (
     "c_0342" UUID NOT NULL,
     "c_0415" UUID NOT NULL,
     PRIMARY KEY ("c_0415", "c_0342")
 );
 
-ALTER TABLE "public"."t_0078" ADD CONSTRAINT "con_0137" FOREIGN KEY ("c_0342") REFERENCES "public"."t_0076" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "public"."t_0077" ADD CONSTRAINT "con_0137" FOREIGN KEY ("c_0342") REFERENCES "public"."t_0075" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-ALTER TABLE "public"."t_0078" ADD CONSTRAINT "con_0138" FOREIGN KEY ("c_0415") REFERENCES "public"."t_0079" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "public"."t_0077" ADD CONSTRAINT "con_0138" FOREIGN KEY ("c_0415") REFERENCES "public"."t_0078" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+
+ALTER TABLE "public"."t_0077" ENABLE ROW LEVEL SECURITY;
+
+GRANT SELECT ON TABLE "public"."t_0077" TO "supabase_auth_admin";
+GRANT SELECT ON TABLE "public"."t_0077" TO "authenticated";
+GRANT ALL ON TABLE "public"."t_0077" TO "service_role";
+
+
+CREATE TABLE "public"."t_0078" (
+    "c_0139" TEXT,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "level" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    PRIMARY KEY ("id")
+);
+
+CREATE UNIQUE INDEX "idx_0135" ON "public"."t_0078" ("name");
+
+ALTER TABLE "public"."t_0078" ADD CONSTRAINT "con_0139" CHECK (11 = 11);
 
 ALTER TABLE "public"."t_0078" ENABLE ROW LEVEL SECURITY;
 
@@ -1113,55 +1952,36 @@ GRANT SELECT ON TABLE "public"."t_0078" TO "authenticated";
 GRANT ALL ON TABLE "public"."t_0078" TO "service_role";
 
 
-CREATE TABLE "public"."t_0079" (
-    "c_0139" TEXT,
-    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-    "level" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
-    PRIMARY KEY ("id")
-);
-
-CREATE UNIQUE INDEX "idx_0135" ON "public"."t_0079" ("name");
-
-ALTER TABLE "public"."t_0079" ADD CONSTRAINT "con_0139" CHECK (11 = 11);
-
-ALTER TABLE "public"."t_0079" ENABLE ROW LEVEL SECURITY;
-
-GRANT SELECT ON TABLE "public"."t_0079" TO "supabase_auth_admin";
-GRANT SELECT ON TABLE "public"."t_0079" TO "authenticated";
-GRANT ALL ON TABLE "public"."t_0079" TO "service_role";
-
-
-CREATE TABLE "public"."t_0087" (
+CREATE TABLE "public"."t_0086" (
     "c_0535" VARCHAR NOT NULL,
     PRIMARY KEY ("c_0535")
 );
 
 
 
-CREATE TABLE "public"."t_0091" (
+CREATE TABLE "public"."t_0090" (
     "p_0121" UUID NOT NULL,
     "p_0005" UUID NOT NULL,
     "c_0094" TIMESTAMP WITH TIME ZONE DEFAULT now(),
     PRIMARY KEY ("p_0121", "p_0005")
 );
 
-CREATE INDEX IF NOT EXISTS "idx_0105" ON "public"."t_0091" ("p_0005");
+CREATE INDEX IF NOT EXISTS "idx_0105" ON "public"."t_0090" ("p_0005");
 
-ALTER TABLE "public"."t_0091" ADD CONSTRAINT "con_0159" FOREIGN KEY ("p_0121") REFERENCES "public"."t_0092" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
-ALTER TABLE "public"."t_0091" ADD CONSTRAINT "con_0158" FOREIGN KEY ("p_0005") REFERENCES "public"."t_0051" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "public"."t_0090" ADD CONSTRAINT "con_0159" FOREIGN KEY ("p_0121") REFERENCES "public"."t_0091" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "public"."t_0090" ADD CONSTRAINT "con_0158" FOREIGN KEY ("p_0005") REFERENCES "public"."t_0051" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-ALTER TABLE "public"."t_0091" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."t_0090" ENABLE ROW LEVEL SECURITY;
 
-GRANT SELECT, INSERT, DELETE ON public.t_0091 TO authenticated;
-GRANT ALL ON public.t_0091 TO service_role;
-GRANT ALL ON public.t_0091 TO supabase_auth_admin;
-GRANT SELECT ON public.t_0091 TO metabase_ro;
-
-
+GRANT SELECT, INSERT, DELETE ON public.t_0090 TO authenticated;
+GRANT ALL ON public.t_0090 TO service_role;
+GRANT ALL ON public.t_0090 TO supabase_auth_admin;
+GRANT SELECT ON public.t_0090 TO metabase_ro;
 
 
-CREATE TABLE "public"."t_0092" (
+
+
+CREATE TABLE "public"."t_0091" (
     "c_0094" TIMESTAMP WITH TIME ZONE DEFAULT now(),
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "c_0257" BOOLEAN NOT NULL DEFAULT true,
@@ -1171,14 +1991,14 @@ CREATE TABLE "public"."t_0092" (
     PRIMARY KEY ("id")
 );
 
-ALTER TABLE "public"."t_0092" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."t_0091" ENABLE ROW LEVEL SECURITY;
 
-GRANT SELECT, INSERT ON TABLE "public"."t_0092" TO "supabase_auth_admin";
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "public"."t_0092" TO "authenticated";
-GRANT ALL ON TABLE "public"."t_0092" TO "service_role";
+GRANT SELECT, INSERT ON TABLE "public"."t_0091" TO "supabase_auth_admin";
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "public"."t_0091" TO "authenticated";
+GRANT ALL ON TABLE "public"."t_0091" TO "service_role";
 
 
-CREATE TABLE "public"."t_0094" (
+CREATE TABLE "public"."t_0093" (
     "p_0001" UUID,
     "p_0005" UUID,
     "c_0415" UUID NOT NULL,
@@ -1187,109 +2007,700 @@ CREATE TABLE "public"."t_0094" (
     PRIMARY KEY ("p_0123", "c_0415")
 );
 
-CREATE UNIQUE INDEX "idx_0148" ON "public"."t_0094" ("p_0123", "c_0415");
+CREATE UNIQUE INDEX "idx_0148" ON "public"."t_0093" ("p_0123", "c_0415");
 
 
-CREATE INDEX "idx_0111" ON "public"."t_0094" ("p_0001");
-CREATE INDEX "idx_0113" ON "public"."t_0094" ("p_0121");
-CREATE INDEX "idx_0112" ON "public"."t_0094" ("p_0005");
+CREATE INDEX "idx_0111" ON "public"."t_0093" ("p_0001");
+CREATE INDEX "idx_0113" ON "public"."t_0093" ("p_0121");
+CREATE INDEX "idx_0112" ON "public"."t_0093" ("p_0005");
 
-ALTER TABLE "public"."t_0094" ADD CONSTRAINT "con_0164" FOREIGN KEY ("p_0001") REFERENCES "public"."t_0050" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "public"."t_0093" ADD CONSTRAINT "con_0164" FOREIGN KEY ("p_0001") REFERENCES "public"."t_0050" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-ALTER TABLE "public"."t_0094" ADD CONSTRAINT "con_0165" FOREIGN KEY ("p_0005") REFERENCES "public"."t_0051" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "public"."t_0093" ADD CONSTRAINT "con_0165" FOREIGN KEY ("p_0005") REFERENCES "public"."t_0051" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-ALTER TABLE "public"."t_0094" ADD CONSTRAINT "con_0166" FOREIGN KEY ("c_0415") REFERENCES "public"."t_0079" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "public"."t_0093" ADD CONSTRAINT "con_0166" FOREIGN KEY ("c_0415") REFERENCES "public"."t_0078" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-ALTER TABLE "public"."t_0094" ADD CONSTRAINT "con_0167" FOREIGN KEY ("p_0121") REFERENCES "public"."t_0092" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "public"."t_0093" ADD CONSTRAINT "con_0167" FOREIGN KEY ("p_0121") REFERENCES "public"."t_0091" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-ALTER TABLE "public"."t_0094" ADD CONSTRAINT "con_0168" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0095" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "public"."t_0093" ADD CONSTRAINT "con_0168" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0094" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-ALTER TABLE "public"."t_0094" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."t_0093" ENABLE ROW LEVEL SECURITY;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "public"."t_0094" TO "supabase_auth_admin";
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "public"."t_0094" TO "authenticated";
-GRANT ALL ON TABLE "public"."t_0094" TO "service_role";
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "public"."t_0093" TO "supabase_auth_admin";
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "public"."t_0093" TO "authenticated";
+GRANT ALL ON TABLE "public"."t_0093" TO "service_role";
 
 
-CREATE TABLE public.t_0096 (
+CREATE TABLE public.t_0095 (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    c_0533  UUID NOT NULL REFERENCES auth.t_0095(id),
+    c_0533  UUID NOT NULL REFERENCES auth.t_0094(id),
     p_0001     UUID NOT NULL REFERENCES public.t_0050(id) ON DELETE CASCADE,
-    c_0220        UUID NOT NULL REFERENCES auth.t_0095(id),
+    c_0220        UUID NOT NULL REFERENCES auth.t_0094(id),
     c_0219        TIMESTAMPTZ NOT NULL DEFAULT now(),
     c_0180        TIMESTAMPTZ NOT NULL DEFAULT (now() + '1 day'::interval),
     c_0413        TIMESTAMPTZ,
-    c_0414        UUID REFERENCES auth.t_0095(id),
+    c_0414        UUID REFERENCES auth.t_0094(id),
     UNIQUE (c_0533, p_0001, c_0219)
 );
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_0116 ON public.t_0096(c_0533);
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_0115 ON public.t_0096(p_0001);
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_0114 ON public.t_0096(c_0533, p_0001)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_0116 ON public.t_0095(c_0533);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_0115 ON public.t_0095(p_0001);
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_0114 ON public.t_0095(c_0533, p_0001)
     WHERE c_0413 IS NULL;
 
-ALTER TABLE public.t_0096 ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.t_0095 ENABLE ROW LEVEL SECURITY;
 
-GRANT SELECT, INSERT, UPDATE ON TABLE public.t_0096 TO authenticated;
-GRANT ALL ON TABLE public.t_0096 TO service_role;
-
-
-CREATE FUNCTION "public"."f_0004"("p_0122" uuid, "p_0010" text, "p_0009" uuid, "p_0007" text) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.t_0095 TO authenticated;
+GRANT ALL ON TABLE public.t_0095 TO service_role;
 
 
-CREATE FUNCTION "public"."f_0005"("p_0029" text, "p_0027" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0004"("p_0122" uuid, "p_0010" text, "p_0009" uuid, "p_0007" text) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  c_0409 JSONB;
+BEGIN
+  BEGIN
+    PERFORM f_0019(p_0122, p_0010, p_0009, p_0007);
+    c_0409 := jsonb_build_object(
+      '_', true,
+      '_', '_' || p_0007
+    );
+  EXCEPTION WHEN OTHERS THEN
+    c_0409 := jsonb_build_object(
+      '_', false,
+      '_', SQLERRM
+    );
+  END;
+
+  RETURN c_0409;
+END;$$;
+
+
+CREATE FUNCTION "public"."f_0005"("p_0029" text, "p_0027" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  rows_affected INTEGER;
+  entity_column TEXT;
+  admin_role TEXT;
+BEGIN
+  
+  IF auth.f_0100() IS NULL THEN
+    RAISE EXCEPTION '_';
+  END IF;
+
+  
+  CASE p_0029
+    WHEN '_' THEN
+      entity_column := '_';
+      admin_role := '_';
+    WHEN '_' THEN
+      entity_column := '_';
+      admin_role := '_';
+    WHEN '_' THEN
+      entity_column := '_';
+      admin_role := '_';
+    ELSE
+      RAISE EXCEPTION '_', p_0029;
+  END CASE;
+
+  
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.t_0093 ur
+    JOIN public.t_0078 r ON ur.c_0415 = r.id
+    WHERE ur.p_0123 = auth.f_0100()
+    AND r.name = admin_role
+  ) THEN
+    RAISE EXCEPTION '_', admin_role;
+  END IF;
+
+  
+  IF NOT f_0022(auth.f_0100(), p_0029, p_0027) THEN
+    RAISE EXCEPTION '_', p_0029;
+  END IF;
+
+  
+  INSERT INTO t_0073 (p_0002, con_0119, c_0077)
+  VALUES (p_0029, p_0027, TRUE)
+  ON CONFLICT (p_0002, con_0119)
+  DO UPDATE SET
+    c_0077 = TRUE,
+    c_0525 = NOW();
+
+  
+  GET DIAGNOSTICS rows_affected = ROW_COUNT;
+
+  
+  EXECUTE format('_', entity_column)
+  USING p_0027;
+
+  RETURN rows_affected > 0;
+END;$$;
 
 
 CREATE FUNCTION "public"."f_0006"(
   "p_0105" text,
   "p_0026" uuid
-) RETURNS uuid LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_catalog AS $$ BEGIN RETURN NULL; END; $$;
+) RETURNS uuid LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_catalog AS $$DECLARE
+  v_supplier_id UUID;
+BEGIN
+  INSERT INTO public.t_0091 (name)
+  VALUES (p_0105)
+  RETURNING id INTO v_supplier_id;
+
+  INSERT INTO public.t_0049 (p_0001, p_0121)
+  VALUES (p_0026, v_supplier_id);
+
+  RETURN v_supplier_id;
+END;$$;
 
 GRANT EXECUTE ON FUNCTION "public"."f_0006"(text, uuid) TO "service_role";
 GRANT EXECUTE ON FUNCTION "public"."f_0006"(text, uuid) TO "supabase_auth_admin";
 
 
-CREATE FUNCTION "public"."f_0007"("p_0104" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0007"("p_0104" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  c_0409 JSONB;
+  enterprise_id_val UUID;
+  caller_user_id UUID;
+  is_app_admin BOOLEAN;
+  v_row_count INTEGER;
+BEGIN
+  caller_user_id := auth.f_0100();
+
+  
+  SELECT EXISTS (
+    SELECT 1
+    FROM t_0093 ur
+    JOIN t_0078 r ON ur.c_0415 = r.id
+    WHERE ur.p_0123 = caller_user_id
+      AND r.name = 'v1'
+  ) INTO is_app_admin;
+
+  IF NOT is_app_admin THEN
+    
+    SELECT es.p_0001 INTO enterprise_id_val
+    FROM t_0049 es
+    WHERE es.p_0121 = p_0104
+    LIMIT 1;
+
+    IF enterprise_id_val IS NULL THEN
+      RETURN jsonb_build_object(
+        '_', false,
+        '_', '_'
+      );
+    END IF;
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM t_0049 es
+      JOIN t_0093 ur ON ur.p_0001 = es.p_0001
+      JOIN t_0078 r ON ur.c_0415 = r.id
+      WHERE es.p_0121 = p_0104
+        AND ur.p_0123 = caller_user_id
+        AND r.name = 'v1'
+    ) THEN
+      RETURN jsonb_build_object(
+        '_', false,
+        '_', '_'
+      );
+    END IF;
+  END IF;
+
+  BEGIN
+    UPDATE t_0091
+    SET c_0257 = false, c_0525 = now()
+    WHERE id = p_0104;
+
+    GET DIAGNOSTICS v_row_count = ROW_COUNT;
+    IF v_row_count = 0 THEN
+      RAISE EXCEPTION '_', p_0104;
+    END IF;
+
+    c_0409 := jsonb_build_object(
+      '_', true,
+      '_', '_'
+    );
+  EXCEPTION WHEN OTHERS THEN
+    c_0409 := jsonb_build_object(
+      '_', false,
+      '_', SQLERRM
+    );
+  END;
+
+  RETURN c_0409;
+END;$$;
 
 GRANT EXECUTE ON FUNCTION "public"."f_0007"(uuid) TO "authenticated";
 GRANT EXECUTE ON FUNCTION "public"."f_0007"(uuid) TO "service_role";
 
 
-CREATE FUNCTION "public"."f_0008"("p_0002" text, "con_0119" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0008"("p_0002" text, "con_0119" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  c_0409 JSONB;
+  detail_message TEXT;
+  error_context TEXT;
+BEGIN
+  BEGIN
+    
+    RAISE NOTICE '_', p_0002, con_0119;
+
+    PERFORM f_0039(p_0002, con_0119);
+
+    c_0409 := jsonb_build_object(
+      '_', true,
+      '_', p_0002 || '_'
+    );
+  EXCEPTION WHEN OTHERS THEN
+    
+    GET STACKED DIAGNOSTICS
+      detail_message = PG_EXCEPTION_DETAIL,
+      error_context = PG_EXCEPTION_CONTEXT;
+
+    c_0409 := jsonb_build_object(
+      '_', false,
+      '_', SQLERRM,
+      '_', detail_message,
+      '_', error_context,
+      '_', p_0002,
+      '_', con_0119
+    );
+  END;
+
+  RETURN c_0409;
+END;$$;
 
 
 
 CREATE FUNCTION "public"."f_0009"(
   "p_0026" uuid
-) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_catalog AS $$ BEGIN RETURN NULL; END; $$;
+) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_catalog AS $$DECLARE
+  v_caller_id UUID;
+  v_supplier_id UUID;
+  v_enterprise_count INTEGER;
+BEGIN
+  v_caller_id := auth.f_0100();
+
+  
+  SELECT ur.p_0121 INTO v_supplier_id
+  FROM t_0093 ur
+  JOIN t_0078 r ON ur.c_0415 = r.id
+  WHERE ur.p_0123 = v_caller_id
+    AND ur.p_0121 IS NOT NULL
+    AND r.name IN ('v1', 'v1')
+  ORDER BY ur.p_0121 ASC
+  LIMIT 1;
+
+  IF v_supplier_id IS NULL THEN
+    RAISE EXCEPTION '_';
+  END IF;
+
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM t_0049
+    WHERE p_0001 = p_0026
+      AND p_0121 = v_supplier_id
+  ) THEN
+    RAISE EXCEPTION '_';
+  END IF;
+
+  
+  SELECT COUNT(*) INTO v_enterprise_count
+  FROM t_0049
+  WHERE p_0121 = v_supplier_id;
+
+  IF v_enterprise_count <= 1 THEN
+    RAISE EXCEPTION '_';
+  END IF;
+
+  DELETE FROM t_0049
+  WHERE p_0001 = p_0026
+    AND p_0121 = v_supplier_id;
+
+  RETURN jsonb_build_object('_', true);
+END;$$;
 
 GRANT EXECUTE ON FUNCTION "public"."f_0009"(uuid) TO "authenticated";
 GRANT EXECUTE ON FUNCTION "public"."f_0009"(uuid) TO "service_role";
 
 
-CREATE FUNCTION "public"."f_0010"("p_0104" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0010"("p_0104" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  c_0409 JSONB;
+  enterprise_id_val UUID;
+  caller_user_id UUID;
+  is_app_admin BOOLEAN;
+  v_row_count INTEGER;
+BEGIN
+  caller_user_id := auth.f_0100();
+
+  
+  SELECT EXISTS (
+    SELECT 1
+    FROM t_0093 ur
+    JOIN t_0078 r ON ur.c_0415 = r.id
+    WHERE ur.p_0123 = caller_user_id
+      AND r.name = 'v1'
+  ) INTO is_app_admin;
+
+  IF NOT is_app_admin THEN
+    
+    SELECT es.p_0001 INTO enterprise_id_val
+    FROM t_0049 es
+    WHERE es.p_0121 = p_0104
+    LIMIT 1;
+
+    IF enterprise_id_val IS NULL THEN
+      RETURN jsonb_build_object(
+        '_', false,
+        '_', '_'
+      );
+    END IF;
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM t_0049 es
+      JOIN t_0093 ur ON ur.p_0001 = es.p_0001
+      JOIN t_0078 r ON ur.c_0415 = r.id
+      WHERE es.p_0121 = p_0104
+        AND ur.p_0123 = caller_user_id
+        AND r.name = 'v1'
+    ) THEN
+      RETURN jsonb_build_object(
+        '_', false,
+        '_', '_'
+      );
+    END IF;
+  END IF;
+
+  BEGIN
+    UPDATE t_0091
+    SET c_0257 = true, c_0525 = now()
+    WHERE id = p_0104;
+
+    GET DIAGNOSTICS v_row_count = ROW_COUNT;
+    IF v_row_count = 0 THEN
+      RAISE EXCEPTION '_', p_0104;
+    END IF;
+
+    c_0409 := jsonb_build_object(
+      '_', true,
+      '_', '_'
+    );
+  EXCEPTION WHEN OTHERS THEN
+    c_0409 := jsonb_build_object(
+      '_', false,
+      '_', SQLERRM
+    );
+  END;
+
+  RETURN c_0409;
+END;$$;
 
 GRANT EXECUTE ON FUNCTION "public"."f_0010"(uuid) TO "authenticated";
 GRANT EXECUTE ON FUNCTION "public"."f_0010"(uuid) TO "service_role";
 
 
-CREATE FUNCTION "public"."f_0011"("p_0122" uuid, "p_0010" text, "p_0009" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0011"("p_0122" uuid, "p_0010" text, "p_0009" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  c_0409 JSONB;
+  remaining_roles INTEGER;
+  is_pending BOOLEAN;
+  f_0060 BOOLEAN;
+  admin_role_id UUID;
+  admin_count INTEGER;
+  id_column TEXT;
+  total_users INTEGER;
+  bypass_last_admin_check BOOLEAN := FALSE;
+BEGIN
+  
+  SELECT (c_0153 IS NULL) INTO is_pending
+  FROM auth.t_0094
+  WHERE id = p_0122;
+
+  IF NOT is_pending THEN
+    
+    admin_role_id := (SELECT id FROM t_0078 WHERE name = p_0010 || '_');
+    id_column := p_0010 || '_';
+
+    
+    EXECUTE format('_', id_column) INTO total_users USING p_0009, p_0122;
+
+    
+    EXECUTE format('_', id_column) INTO admin_count USING p_0009, admin_role_id;
+
+    
+    IF admin_count = 1 THEN
+      
+      EXECUTE format('_', id_column) INTO f_0060 USING p_0122, p_0009, admin_role_id;
+
+      IF f_0060 THEN
+        
+        IF total_users > 0 THEN
+          RETURN jsonb_build_object(
+            '_', false,
+            '_', '_' || p_0010 || '_'
+          );
+        ELSE
+          
+          bypass_last_admin_check := TRUE;
+        END IF;
+      END IF;
+    END IF;
+  END IF;
+
+  BEGIN
+    
+    IF bypass_last_admin_check THEN
+      
+      EXECUTE format('_', id_column) USING p_0122, p_0009;
+
+      
+      PERFORM f_0103(p_0122);
+    ELSE
+      
+      PERFORM f_0083(p_0122, p_0010, p_0009);
+    END IF;
+
+    
+    IF is_pending THEN
+      
+      DELETE FROM t_0093
+      WHERE p_0123 = p_0122;
+
+      
+      DELETE FROM auth.t_0094
+      WHERE id = p_0122;
+
+      c_0409 := jsonb_build_object(
+        '_', true,
+        '_', '_'
+      );
+    ELSE
+      
+      
+      SELECT COUNT(*) INTO remaining_roles
+      FROM t_0093
+      WHERE p_0123 = p_0122;
+
+      
+      IF remaining_roles = 0 THEN
+        
+        DELETE FROM auth.t_0094
+        WHERE id = p_0122;
+
+        c_0409 := jsonb_build_object(
+          '_', true,
+          '_', '_' || p_0010 || '_'
+        );
+      ELSE
+        c_0409 := jsonb_build_object(
+          '_', true,
+          '_', '_' || p_0010 || '_' || remaining_roles || '_'
+        );
+      END IF;
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    c_0409 := jsonb_build_object(
+      '_', false,
+      '_', SQLERRM
+    );
+  END;
+
+  RETURN c_0409;
+END;$$;
 
 
 
 CREATE FUNCTION "public"."f_0012"(
   "p_0104" uuid,
   "p_0026" uuid
-) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_catalog AS $$ BEGIN RETURN NULL; END; $$;
+) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_catalog AS $$DECLARE
+  v_caller_id UUID;
+  v_enterprise_count INTEGER;
+  v_was_exclusive BOOLEAN;
+  v_remaining_enterprise_id UUID;
+BEGIN
+  v_caller_id := auth.f_0100();
+
+  
+  IF NOT EXISTS (
+    SELECT 1
+    FROM t_0093 ur
+    JOIN t_0078 r ON ur.c_0415 = r.id
+    WHERE ur.p_0123 = v_caller_id
+      AND ur.p_0001 = p_0026
+      AND r.name = 'v1'
+  ) THEN
+    RAISE EXCEPTION '_', p_0026;
+  END IF;
+
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM t_0049
+    WHERE p_0001 = p_0026
+      AND p_0121 = p_0104
+  ) THEN
+    RAISE EXCEPTION '_', p_0104, p_0026;
+  END IF;
+
+  
+  SELECT COUNT(*) INTO v_enterprise_count
+  FROM t_0049
+  WHERE p_0121 = p_0104;
+
+  v_was_exclusive := (v_enterprise_count = 1);
+
+  DELETE FROM t_0049
+  WHERE p_0001 = p_0026
+    AND p_0121 = p_0104;
+
+  IF v_was_exclusive THEN
+    
+    
+    UPDATE t_0093
+    SET p_0001 = NULL
+    WHERE p_0001 = p_0026
+      AND (
+        p_0121 = p_0104
+        OR p_0005 IN (SELECT id FROM t_0051 WHERE p_0121 = p_0104)
+      );
+  ELSE
+    
+    
+    
+    SELECT es.p_0001 INTO v_remaining_enterprise_id
+    FROM t_0049 es
+    WHERE es.p_0121 = p_0104
+    ORDER BY es.p_0001
+    LIMIT 1;
+
+    UPDATE t_0093
+    SET p_0001 = v_remaining_enterprise_id
+    WHERE p_0001 = p_0026
+      AND (
+        p_0121 = p_0104
+        OR p_0005 IN (SELECT id FROM t_0051 WHERE p_0121 = p_0104)
+      );
+  END IF;
+
+  RETURN jsonb_build_object(
+    '_', true,
+    '_', v_was_exclusive
+  );
+END;$$;
 
 GRANT EXECUTE ON FUNCTION "public"."f_0012"(uuid, uuid) TO "authenticated";
 GRANT EXECUTE ON FUNCTION "public"."f_0012"(uuid, uuid) TO "service_role";
 
 
-CREATE FUNCTION "public"."f_0013"("p_0123" uuid, "p_0120" text, "p_0001" uuid DEFAULT null::uuid, "p_0121" uuid DEFAULT null::uuid, "p_0005" uuid DEFAULT null::uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN; END; $$;
+CREATE FUNCTION "public"."f_0013"("p_0123" uuid, "p_0120" text, "p_0001" uuid DEFAULT null::uuid, "p_0121" uuid DEFAULT null::uuid, "p_0005" uuid DEFAULT null::uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  c_0415 UUID;
+  role_level TEXT;
+  has_permission BOOLEAN;
+BEGIN
+  
+  SELECT id, level INTO c_0415, role_level FROM public.t_0078 WHERE name = p_0120;
+
+  
+  SELECT EXISTS (
+    SELECT 1 FROM public.t_0093 ur
+    JOIN t_0077 rp ON ur.c_0415 = rp.c_0415
+    JOIN t_0075 p ON rp.c_0342 = p.id
+    WHERE ur.p_0123 = auth.f_0100()
+    AND p.c_0407 = '_'
+    AND p.c_0332 = '_'
+    AND (
+      
+      (p_0001 IS NULL OR ur.p_0001 = p_0001) AND
+      (p_0121 IS NULL OR ur.p_0121 = p_0121) AND
+      (p_0005 IS NULL OR ur.p_0005 = p_0005)
+    )
+  ) INTO has_permission;
+
+  IF NOT has_permission THEN
+    RAISE EXCEPTION '_';
+  END IF;
 
 
-CREATE FUNCTION "public"."f_0019"("p_0122" uuid, "p_0010" text, "p_0009" uuid, "p_0007" text) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN; END; $$;
+  SELECT id, level INTO c_0415, role_level FROM public.t_0078 WHERE name = p_0120;
+
+  
+  INSERT INTO public.t_0093 (p_0123, c_0415, p_0001, p_0121, p_0005)
+  VALUES (p_0123, c_0415, p_0001, p_0121, p_0005);
+END;$$;
+
+
+CREATE FUNCTION "public"."f_0019"("p_0122" uuid, "p_0010" text, "p_0009" uuid, "p_0007" text) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  new_role_id UUID;
+  v_enterprise_id UUID;
+  v_supplier_id UUID;
+  v_farmer_id UUID;
+BEGIN
+  SELECT id INTO new_role_id
+  FROM t_0078
+  WHERE name = p_0007;
+
+  IF new_role_id IS NULL THEN
+    RAISE EXCEPTION '_', p_0007;
+  END IF;
+
+  
+  IF p_0010 = '_' THEN
+    v_enterprise_id := p_0009;
+    v_supplier_id := NULL;
+    v_farmer_id := NULL;
+
+  ELSIF p_0010 = '_' THEN
+    
+    
+    SELECT es.p_0001 INTO v_enterprise_id
+    FROM t_0049 es
+    WHERE es.p_0121 = p_0009
+    LIMIT 1;
+
+    v_supplier_id := p_0009;
+    v_farmer_id := NULL;
+
+  ELSIF p_0010 = '_' THEN
+    
+    
+    SELECT sf.p_0121 INTO v_supplier_id
+    FROM t_0090 sf
+    WHERE sf.p_0005 = p_0009
+    LIMIT 1;
+
+    
+    SELECT es.p_0001 INTO v_enterprise_id
+    FROM t_0049 es
+    WHERE es.p_0121 = v_supplier_id
+    LIMIT 1;
+
+    v_farmer_id := p_0009;
+
+  ELSE
+    RAISE EXCEPTION '_';
+  END IF;
+
+  
+  IF p_0010 = '_' AND f_0062(p_0122, '_', v_enterprise_id) THEN
+    RAISE EXCEPTION '_';
+  ELSIF p_0010 = '_' AND f_0062(p_0122, '_', v_supplier_id) THEN
+    RAISE EXCEPTION '_';
+  ELSIF p_0010 = '_' AND f_0062(p_0122, '_', v_farmer_id) THEN
+    RAISE EXCEPTION '_';
+  END IF;
+
+  IF p_0010 = '_' THEN
+    DELETE FROM t_0093
+    WHERE p_0123 = p_0122 AND p_0001 = v_enterprise_id;
+  ELSIF p_0010 = '_' THEN
+    DELETE FROM t_0093
+    WHERE p_0123 = p_0122 AND p_0121 = v_supplier_id;
+  ELSIF p_0010 = '_' THEN
+    DELETE FROM t_0093
+    WHERE p_0123 = p_0122 AND p_0005 = v_farmer_id;
+  END IF;
+
+  
+  INSERT INTO t_0093 (p_0123, c_0415, p_0001, p_0121, p_0005)
+  VALUES (p_0122, new_role_id, v_enterprise_id, v_supplier_id, v_farmer_id);
+
+  
+  PERFORM f_0103(p_0122);
+END;$$;
 
 
 
@@ -1305,14 +2716,122 @@ CREATE FUNCTION "public"."f_0019"("p_0122" uuid, "p_0010" text, "p_0009" uuid, "
 
 CREATE FUNCTION "public"."f_0020"("p_0065" text)
 RETURNS TABLE("c_0007" boolean, "c_0537" timestamptz, "c_0122" integer, "c_0289" integer)
-LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$ BEGIN RETURN; END; $$;
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_key_id         UUID;
+  v_limit          INTEGER;
+  v_window_start   TIMESTAMPTZ;
+  v_current_count  INTEGER;
+  v_oldest_request TIMESTAMPTZ;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext(p_0065));
+
+  SELECT id, c_0380
+  INTO v_key_id, v_limit
+  FROM public.t_0043
+  WHERE c_0272 = p_0065
+    AND c_0413 IS NULL;
+
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, now(), 0, 0;
+    RETURN;
+  END IF;
+
+  v_window_start := now() - INTERVAL '1 day';
+
+  DELETE FROM public.t_0042
+  WHERE c_0273 = v_key_id
+    AND c_0389 < v_window_start;
+
+  SELECT count(*)::integer
+  INTO v_current_count
+  FROM public.t_0042
+  WHERE c_0273 = v_key_id;
+
+  IF v_current_count >= v_limit THEN
+    SELECT min(c_0389)
+    INTO v_oldest_request
+    FROM public.t_0042
+    WHERE c_0273 = v_key_id;
+
+    RETURN QUERY SELECT
+      false,
+      v_oldest_request + INTERVAL '1 day',
+      v_current_count,
+      v_limit;
+    RETURN;
+  END IF;
+
+  INSERT INTO public.t_0042 (c_0273)
+  VALUES (v_key_id);
+
+  RETURN QUERY SELECT
+    true,
+    now() + INTERVAL '1 day',
+    v_current_count + 1,
+    v_limit;
+END;$$;
 
 
 
-CREATE FUNCTION "public"."f_0021"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0021"() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM public.t_0091
+    WHERE id = NEW.p_0121
+      AND ty_0034 IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION
+      '_',
+      NEW.p_0121;
+  END IF;
+
+  RETURN NEW;
+END;$$;
 
 
-CREATE FUNCTION "public"."f_0022"("p_0112" uuid, "p_0002" text, "con_0119" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0022"("p_0112" uuid, "p_0002" text, "con_0119" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  has_access BOOLEAN;
+BEGIN
+  IF p_0002 = '_' THEN
+    SELECT EXISTS (
+      SELECT 1 FROM public.t_0093 ur
+      JOIN public.t_0078 r ON ur.c_0415 = r.id
+      WHERE ur.p_0123 = p_0112 AND
+      (r.level = '_' OR ur.p_0001 = con_0119)
+    ) INTO has_access;
+  ELSIF p_0002 = '_' THEN
+    SELECT EXISTS (
+      SELECT 1 FROM public.t_0093 ur
+      JOIN public.t_0078 r ON ur.c_0415 = r.id
+      WHERE ur.p_0123 = p_0112 AND
+      (r.level = '_' OR
+       EXISTS (SELECT 1 FROM public.t_0049 es WHERE es.p_0121 = con_0119 AND es.p_0001 = ur.p_0001) OR
+       ur.p_0121 = con_0119)
+    ) INTO has_access;
+  ELSIF p_0002 = '_' THEN
+    SELECT EXISTS (
+      SELECT 1 FROM public.t_0093 ur
+      JOIN public.t_0078 r ON ur.c_0415 = r.id
+      WHERE ur.p_0123 = p_0112 AND
+      (r.level = '_' OR
+       EXISTS (
+         SELECT 1 FROM public.t_0090 sf
+         JOIN public.t_0049 es ON es.p_0121 = sf.p_0121
+         WHERE sf.p_0005 = con_0119 AND es.p_0001 = ur.p_0001
+       ) OR
+       EXISTS (
+         SELECT 1 FROM public.t_0090 sf
+         WHERE sf.p_0005 = con_0119 AND sf.p_0121 = ur.p_0121
+       ) OR
+       ur.p_0005 = con_0119)
+    ) INTO has_access;
+  ELSE
+    has_access := FALSE;
+  END IF;
+
+  RETURN has_access;
+END;$$;
 
 
 
@@ -1335,17 +2854,65 @@ CREATE FUNCTION "public"."f_0023"() RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.t_0090 sf WHERE sf.p_0005 = NEW.id
+  ) AND NOT EXISTS (
+    SELECT 1 FROM public.t_0048 ef WHERE ef.p_0005 = NEW.id
+  ) THEN
+    RAISE EXCEPTION
+      '_',
+      NEW.id
+      USING ERRCODE = '_';
+  END IF;
+
+  RETURN NULL;
+END;
+$$;
 
 
 
 
 
 
-CREATE FUNCTION "public"."f_0024"("p_0122" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0024"("p_0122" uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
+DECLARE
+  has_role BOOLEAN;
+  has_verifier_access BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM t_0093 WHERE p_0123 = p_0122
+  ) INTO has_role;
+
+  IF has_role THEN
+    RETURN FALSE;
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1 FROM t_0095
+    WHERE c_0533 = p_0122
+    AND c_0413 IS NULL
+  ) INTO has_verifier_access;
+
+  RETURN NOT has_verifier_access;
+END;$$;
 
 
-CREATE FUNCTION "public"."f_0025"("p_0112" uuid, "p_0119" text, "p_0008" text) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0025"("p_0112" uuid, "p_0119" text, "p_0008" text) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  has_permission BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM public.t_0093 ur
+    JOIN t_0077 rp ON ur.c_0415 = rp.c_0415
+    JOIN t_0075 p ON rp.c_0342 = p.id
+    WHERE ur.p_0123 = p_0112
+    AND p.c_0407 = p_0119
+    AND p.c_0332 = p_0008
+  ) INTO has_permission;
+
+  RETURN has_permission;
+END;$$;
 
 
 
@@ -1358,23 +2925,145 @@ CREATE FUNCTION "public"."f_0025"("p_0112" uuid, "p_0119" text, "p_0008" text) R
 
 
 
-CREATE FUNCTION "public"."f_0026"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0026"() RETURNS trigger LANGUAGE plpgsql AS $$DECLARE
+  v_supplier_id UUID;
+  v_methodology_mode ty_0034;
+  v_is_enterprise_supplier BOOLEAN;
+BEGIN
+  IF TG_TABLE_NAME = 'v1' THEN
+    IF TG_OP = '_' THEN
+      v_supplier_id := NEW.p_0121;
+    ELSE
+      v_supplier_id := OLD.p_0121;
+    END IF;
+  ELSE
+    v_supplier_id := NEW.id;
+  END IF;
+
+  
+  
+  IF TG_OP = '_' AND NOT EXISTS (SELECT 1 FROM t_0091 WHERE id = v_supplier_id) THEN
+    RETURN OLD;
+  END IF;
+
+  SELECT s.ty_0034 INTO v_methodology_mode
+  FROM t_0091 s
+  WHERE s.id = v_supplier_id;
+
+  SELECT EXISTS (
+    SELECT 1 FROM t_0049 es WHERE es.p_0121 = v_supplier_id
+  ) INTO v_is_enterprise_supplier;
+
+  IF v_is_enterprise_supplier AND v_methodology_mode IS NOT NULL THEN
+    RAISE EXCEPTION '_', v_supplier_id;
+  END IF;
+
+  
+  
+  IF NOT v_is_enterprise_supplier AND v_methodology_mode IS NULL AND NOT (TG_TABLE_NAME = 'v1' AND TG_OP = '_') THEN
+    RAISE EXCEPTION '_', v_supplier_id;
+  END IF;
+
+  IF TG_OP = '_' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;$$;
 
 
-CREATE FUNCTION "public"."f_0036"() RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER AS $$ SELECT NULL::uuid $$;
+CREATE FUNCTION "public"."f_0036"() RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER AS $$
+    
+    SELECT CASE
+        WHEN current_setting('_', true) IS NOT NULL AND current_setting('_', true) != '_'
+        THEN current_setting('_', true)::uuid
+        ELSE NULL
+    END;$$;
 
 
-CREATE FUNCTION "public"."f_0039"("p_0002" text, "con_0119" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, auth AS $$ BEGIN RETURN; END; $$;
+CREATE FUNCTION "public"."f_0039"("p_0002" text, "con_0119" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, auth AS $$DECLARE
+  affected_user_ids uuid[];
+BEGIN
+  IF p_0002 = '_' THEN
+    SELECT array_agg(DISTINCT p_0123) INTO affected_user_ids
+    FROM t_0093
+    WHERE p_0001 = con_0119
+       OR p_0121 IN (SELECT es.p_0121 FROM t_0049 es WHERE es.p_0001 = con_0119)
+       OR p_0005 IN (SELECT sf.p_0005 FROM t_0090 sf JOIN t_0049 es ON es.p_0121 = sf.p_0121 WHERE es.p_0001 = con_0119);
+
+    
+    
+    
+    
+    
+    DELETE FROM t_0091 WHERE id IN (
+      SELECT es.p_0121 FROM t_0049 es
+      WHERE es.p_0001 = con_0119
+        AND NOT EXISTS (
+          SELECT 1 FROM t_0049 es2
+          WHERE es2.p_0121 = es.p_0121
+            AND es2.p_0001 != con_0119
+        )
+    );
+
+    DELETE FROM t_0050 WHERE id = con_0119;
+
+  ELSIF p_0002 = '_' THEN
+    SELECT array_agg(DISTINCT p_0123) INTO affected_user_ids
+    FROM t_0093
+    WHERE p_0121 = con_0119
+       OR p_0005 IN (SELECT p_0005 FROM t_0090 WHERE p_0121 = con_0119);
+
+    DELETE FROM t_0091 WHERE id = con_0119;
+
+  ELSIF p_0002 = '_' THEN
+    SELECT array_agg(DISTINCT p_0123) INTO affected_user_ids
+    FROM t_0093 WHERE p_0005 = con_0119;
+
+    DELETE FROM t_0051 WHERE id = con_0119;
+
+  ELSE
+    RAISE EXCEPTION '_';
+  END IF;
+
+  IF affected_user_ids IS NOT NULL THEN
+    DELETE FROM auth.t_0094 AS u
+    WHERE u.id = ANY(affected_user_ids)
+      AND NOT EXISTS (
+        SELECT 1 FROM t_0093 WHERE p_0123 = u.id
+      );
+  END IF;
+END;$$;
 
 
-CREATE FUNCTION "public"."f_0040"("p_0122" uuid, "p_0010" text, "p_0009" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN; END; $$;
+CREATE FUNCTION "public"."f_0040"("p_0122" uuid, "p_0010" text, "p_0009" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  regular_role TEXT;
+BEGIN
+  IF p_0010 = '_' THEN
+    regular_role := '_';
+  ELSIF p_0010 = '_' THEN
+    regular_role := '_';
+  ELSIF p_0010 = '_' THEN
+    regular_role := '_';
+  ELSE
+    RAISE EXCEPTION '_';
+  END IF;
+
+  PERFORM f_0019(p_0122, p_0010, p_0009, regular_role);
+END;$$;
 
 
 
 CREATE FUNCTION "public"."f_0050"(
   "p_0026" uuid,
   "p_0105" text
-) RETURNS TABLE("p_0121" uuid) LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_catalog AS $$ BEGIN RETURN; END; $$;
+) RETURNS TABLE("p_0121" uuid) LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_catalog AS $$BEGIN
+  RETURN QUERY
+    SELECT es.p_0121
+    FROM public.t_0049 es
+    JOIN public.t_0091 s ON s.id = es.p_0121
+    WHERE es.p_0001 = p_0026
+      AND s.name = p_0105;
+END;$$;
 
 GRANT EXECUTE ON FUNCTION "public"."f_0050"(uuid, text) TO "service_role";
 GRANT EXECUTE ON FUNCTION "public"."f_0050"(uuid, text) TO "supabase_auth_admin";
@@ -1402,38 +3091,554 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = '_'
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_inaccessible_count int;
+BEGIN
+    IF auth.f_0100() IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    SELECT COUNT(*)
+    INTO v_inaccessible_count
+    FROM unnest(p_0036) AS requested_id
+    WHERE NOT EXISTS (
+        SELECT 1 FROM mrv."t_0012" f
+        WHERE f.id = requested_id
+          AND (
+              f."c_0171" = auth.f_0100()
+              OR auth.f_0124(f."c_0171")
+              OR auth.f_0117(p_0104 => f."c_0171")
+              OR auth.f_0140(f."c_0171")
+              OR auth.f_0060()
+          )
+    );
+
+    IF v_inaccessible_count > 0 THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    RETURN QUERY
+    SELECT
+        l.id,
+        l.c_0389,
+        l.p_0123,
+        l.c_0487,
+        l.c_0388,
+        l.c_0332,
+        l.c_0331,
+        l.c_0321,
+        l.c_0385,
+        l.con_0119
+    FROM audit.log l
+    WHERE l.c_0487 = '_'
+      AND l.c_0388 = ANY(p_0036)
+      AND l.c_0389 >= (p_0012 || '_')::timestamptz
+      AND l.c_0389 < ((p_0012 + 1) || '_')::timestamptz
+    ORDER BY l.c_0389;
+END;
+$$;
 
 
-CREATE FUNCTION "public"."f_0058"("p_0112" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0058"("p_0112" uuid) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  c_0409 JSONB;
+  roles_array JSONB;
+  levels_array JSONB;
+  enterprises_array JSONB;
+  suppliers_array JSONB;
+  farmers_array JSONB;
+  permissions_array JSONB;
+  t_0073 JSONB;
+  methodology_mode_value TEXT;
+  verifier_enterprises_array JSONB;
+BEGIN
+  BEGIN
+    WITH user_role_context AS (
+      SELECT
+        ur.c_0415,
+        ur.p_0121,
+        ur.p_0005,
+        ur.p_0001
+      FROM public.t_0093 ur
+      WHERE ur.p_0123 = p_0112
+    ),
+    
+    farmer_suppliers AS (
+      SELECT DISTINCT sf.p_0121
+      FROM public.t_0093 ur
+      JOIN public.t_0090 sf ON ur.p_0005 = sf.p_0005
+      WHERE ur.p_0123 = p_0112 AND ur.p_0005 IS NOT NULL
+    ),
+    
+    
+    
+    junction_enterprises AS (
+      SELECT DISTINCT es.p_0001
+      FROM public.t_0049 es
+      WHERE es.p_0121 IN (
+        SELECT ur.p_0121
+        FROM public.t_0093 ur
+        WHERE ur.p_0123 = p_0112 AND ur.p_0121 IS NOT NULL
+        UNION
+        SELECT p_0121 FROM farmer_suppliers
+      )
+    ),
+    
+    
+    direct_farmer_enterprises AS (
+      SELECT DISTINCT ef.p_0001
+      FROM public.t_0048 ef
+      JOIN public.t_0093 ur ON ur.p_0005 = ef.p_0005
+      WHERE ur.p_0123 = p_0112 AND ur.p_0005 IS NOT NULL
+    ),
+    
+    all_enterprises AS (
+      SELECT p_0001 FROM user_role_context WHERE p_0001 IS NOT NULL
+      UNION
+      SELECT p_0001 FROM junction_enterprises
+      UNION
+      SELECT p_0001 FROM direct_farmer_enterprises
+    )
+    SELECT
+      jsonb_agg(DISTINCT r.name),
+      jsonb_agg(DISTINCT r.level),
+      (SELECT jsonb_agg(ae.p_0001 ORDER BY ae.p_0001) FROM (SELECT DISTINCT p_0001 FROM all_enterprises) ae),
+      (SELECT jsonb_agg(s.p_0121 ORDER BY s.p_0121) FROM (
+        SELECT DISTINCT p_0121 FROM user_role_context WHERE p_0121 IS NOT NULL
+        UNION
+        SELECT p_0121 FROM farmer_suppliers
+      ) s),
+      jsonb_agg(DISTINCT urc.p_0005) FILTER (WHERE urc.p_0005 IS NOT NULL)
+    INTO
+      roles_array,
+      levels_array,
+      enterprises_array,
+      suppliers_array,
+      farmers_array
+    FROM user_role_context urc
+    JOIN public.t_0078 r ON urc.c_0415 = r.id;
+
+    
+    
+    
+    
+    
+    SELECT COALESCE(
+      (SELECT s.ty_0034::text FROM public.t_0091 s WHERE s.id = (suppliers_array->>0)::uuid AND s.ty_0034 IS NOT NULL),
+      (SELECT e.ty_0034::text FROM public.t_0050 e WHERE e.id = (enterprises_array->>0)::uuid)
+    ) INTO methodology_mode_value;
+
+    
+    SELECT
+      jsonb_agg(DISTINCT p.c_0407 || '_' || p.c_0332)
+    INTO
+      permissions_array
+    FROM public.t_0093 ur
+    JOIN public.t_0077 rp ON ur.c_0415 = rp.c_0415
+    JOIN public.t_0075 p ON rp.c_0342 = p.id
+    WHERE ur.p_0123 = p_0112;
+
+    
+    
+    IF roles_array ? '_' THEN
+      SELECT jsonb_build_object(
+        '_', '_',
+        '_', enterprises_array->>0,
+        '_', COALESCE(os.c_0077, FALSE)
+      ) INTO t_0073
+      FROM (SELECT (enterprises_array->>0)::uuid AS id) e
+      LEFT JOIN public.t_0073 os ON os.con_0119 = e.id AND os.p_0002 = '_';
+    ELSIF roles_array ? '_' THEN
+      SELECT jsonb_build_object(
+        '_', '_',
+        '_', suppliers_array->>0,
+        '_', COALESCE(os.c_0077, FALSE)
+      ) INTO t_0073
+      FROM (SELECT (suppliers_array->>0)::uuid AS id) supplier_subq
+      LEFT JOIN public.t_0073 os ON os.con_0119 = supplier_subq.id AND os.p_0002 = '_';
+    ELSIF roles_array ? '_' THEN
+      SELECT jsonb_build_object(
+        '_', '_',
+        '_', farmers_array->>0,
+        '_', COALESCE(os.c_0077, FALSE)
+      ) INTO t_0073
+      FROM (SELECT (farmers_array->>0)::uuid AS id) farmer_subq
+      LEFT JOIN public.t_0073 os ON os.con_0119 = farmer_subq.id AND os.p_0002 = '_';
+    END IF;
+
+    SELECT (SELECT jsonb_agg(ve.p_0001 ORDER BY ve.p_0001) FROM (SELECT DISTINCT va.p_0001 FROM public.t_0095 va WHERE va.c_0533 = p_0112 AND va.c_0180 > now() AND va.c_0413 IS NULL) ve)
+    INTO verifier_enterprises_array;
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE EXCEPTION '_', p_0112, SQLERRM;
+  END;
+
+  
+  roles_array := COALESCE(roles_array, 'null'::jsonb);
+  levels_array := COALESCE(levels_array, 'null'::jsonb);
+  enterprises_array := COALESCE(enterprises_array, 'null'::jsonb);
+  suppliers_array := COALESCE(suppliers_array, 'null'::jsonb);
+  farmers_array := COALESCE(farmers_array, 'null'::jsonb);
+  permissions_array := COALESCE(permissions_array, 'null'::jsonb);
+  verifier_enterprises_array := COALESCE(verifier_enterprises_array, 'null'::jsonb);
+
+  
+  
+  
+  c_0409 := jsonb_strip_nulls(jsonb_build_object(
+    '_', roles_array,
+    '_', levels_array,
+    '_', enterprises_array,
+    '_', suppliers_array,
+    '_', farmers_array,
+    '_', permissions_array,
+    '_', t_0073,
+    '_', methodology_mode_value,
+    '_', verifier_enterprises_array
+  ));
+
+  RETURN c_0409;
+END;$$;
 
 
-CREATE FUNCTION "public"."f_0062"("p_0123" uuid, "p_0002" text, "con_0119" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0062"("p_0123" uuid, "p_0002" text, "con_0119" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  admin_role_id UUID;
+  admin_count INTEGER;
+  f_0060 BOOLEAN;
+BEGIN
+  IF p_0002 = '_' THEN
+    
+    SELECT id INTO admin_role_id FROM public.t_0078 WHERE name = 'v1';
+
+    
+    SELECT EXISTS (
+      SELECT 1 FROM public.t_0093
+      WHERE t_0093.p_0123 = f_0062.p_0123
+      AND t_0093.p_0001 = con_0119
+      AND t_0093.c_0415 = admin_role_id
+    ) INTO f_0060;
+
+    
+    IF NOT f_0060 THEN
+      RETURN FALSE;
+    END IF;
+
+    
+    SELECT COUNT(*) INTO admin_count
+    FROM public.t_0093
+    WHERE t_0093.p_0001 = con_0119
+    AND t_0093.c_0415 = admin_role_id;
+
+  ELSIF p_0002 = '_' THEN
+    
+    SELECT id INTO admin_role_id FROM public.t_0078 WHERE name = 'v1';
+
+    
+    SELECT EXISTS (
+      SELECT 1 FROM public.t_0093
+      WHERE t_0093.p_0123 = f_0062.p_0123
+      AND t_0093.p_0121 = con_0119
+      AND t_0093.c_0415 = admin_role_id
+    ) INTO f_0060;
+
+    
+    IF NOT f_0060 THEN
+      RETURN FALSE;
+    END IF;
+
+    
+    SELECT COUNT(*) INTO admin_count
+    FROM public.t_0093
+    WHERE t_0093.p_0121 = con_0119
+    AND t_0093.c_0415 = admin_role_id;
+
+  ELSIF p_0002 = '_' THEN
+    
+    SELECT id INTO admin_role_id FROM public.t_0078 WHERE name = 'v1';
+
+    
+    SELECT EXISTS (
+      SELECT 1 FROM public.t_0093
+      WHERE t_0093.p_0123 = f_0062.p_0123
+      AND t_0093.p_0005 = con_0119
+      AND t_0093.c_0415 = admin_role_id
+    ) INTO f_0060;
+
+    
+    IF NOT f_0060 THEN
+      RETURN FALSE;
+    END IF;
+
+    
+    SELECT COUNT(*) INTO admin_count
+    FROM public.t_0093
+    WHERE t_0093.p_0005 = con_0119
+    AND t_0093.c_0415 = admin_role_id;
+
+  ELSE
+    RAISE EXCEPTION '_';
+  END IF;
+
+  
+  RETURN admin_count = 1;
+END;$$;
 
 
-CREATE FUNCTION "public"."f_0063"("p_0123" uuid, "p_0002" text, "con_0119" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY INVOKER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0063"("p_0123" uuid, "p_0002" text, "con_0119" uuid) RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY INVOKER AS $$DECLARE
+  user_count INTEGER;
+  is_user BOOLEAN;
+  id_column TEXT := p_0002 || '_';
+BEGIN
+  EXECUTE format('_', id_column) INTO user_count USING con_0119;
+
+  EXECUTE format('_', id_column) INTO is_user USING p_0123, con_0119;
+
+  RETURN user_count = 1 AND is_user;
+END;$$;
 
 
-CREATE FUNCTION "public"."f_0080"("p_0122" uuid, "p_0010" text, "p_0009" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN; END; $$;
+CREATE FUNCTION "public"."f_0080"("p_0122" uuid, "p_0010" text, "p_0009" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  admin_role TEXT;
+BEGIN
+  IF p_0010 = '_' THEN
+    admin_role := '_';
+  ELSIF p_0010 = '_' THEN
+    admin_role := '_';
+  ELSIF p_0010 = '_' THEN
+    admin_role := '_';
+  ELSE
+    RAISE EXCEPTION '_';
+  END IF;
+
+  PERFORM f_0019(p_0122, p_0010, p_0009, admin_role);
+END;$$;
 
 
-CREATE FUNCTION "public"."f_0083"("p_0122" uuid, "p_0002" text, "con_0119" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN; END; $$;
+CREATE FUNCTION "public"."f_0083"("p_0122" uuid, "p_0002" text, "con_0119" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  f_0062 BOOLEAN := FALSE;
+  admin_role_id UUID;
+  admin_count INTEGER;
+BEGIN
+  
+  IF p_0002 = '_' THEN
+    
+    SELECT id INTO admin_role_id FROM t_0078 WHERE name = 'v1';
+
+    
+    SELECT COUNT(*) INTO admin_count
+    FROM t_0093
+    WHERE p_0001 = con_0119
+    AND c_0415 = admin_role_id;
+
+    
+    IF admin_count = 1 AND EXISTS (
+      SELECT 1 FROM t_0093
+      WHERE p_0123 = p_0122
+      AND p_0001 = con_0119
+      AND c_0415 = admin_role_id
+    ) THEN
+      f_0062 := TRUE;
+    END IF;
+
+  ELSIF p_0002 = '_' THEN
+    
+    SELECT id INTO admin_role_id FROM t_0078 WHERE name = 'v1';
+
+    
+    SELECT COUNT(*) INTO admin_count
+    FROM t_0093
+    WHERE p_0121 = con_0119
+    AND c_0415 = admin_role_id;
+
+    
+    IF admin_count = 1 AND EXISTS (
+      SELECT 1 FROM t_0093
+      WHERE p_0123 = p_0122
+      AND p_0121 = con_0119
+      AND c_0415 = admin_role_id
+    ) THEN
+      f_0062 := TRUE;
+    END IF;
+
+  ELSIF p_0002 = '_' THEN
+    
+    SELECT id INTO admin_role_id FROM t_0078 WHERE name = 'v1';
+
+    
+    SELECT COUNT(*) INTO admin_count
+    FROM t_0093
+    WHERE p_0005 = con_0119
+    AND c_0415 = admin_role_id;
+
+    
+    IF admin_count = 1 AND EXISTS (
+      SELECT 1 FROM t_0093
+      WHERE p_0123 = p_0122
+      AND p_0005 = con_0119
+      AND c_0415 = admin_role_id
+    ) THEN
+      f_0062 := TRUE;
+    END IF;
+
+  ELSE
+    RAISE EXCEPTION '_';
+  END IF;
+
+  
+  IF f_0062 THEN
+    RAISE EXCEPTION '_', p_0002;
+  END IF;
+
+  
+  IF p_0002 = '_' THEN
+    DELETE FROM t_0093
+    WHERE p_0123 = p_0122
+    AND p_0001 = con_0119;
+
+  ELSIF p_0002 = '_' THEN
+    DELETE FROM t_0093
+    WHERE p_0123 = p_0122
+    AND p_0121 = con_0119;
+
+  ELSIF p_0002 = '_' THEN
+    DELETE FROM t_0093
+    WHERE p_0123 = p_0122
+    AND p_0005 = con_0119;
+  END IF;
+
+  
+  PERFORM f_0103(p_0122);
+END;$$;
 
 
 
-CREATE FUNCTION "public"."f_0085"("p_0065" text) RETURNS uuid LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0085"("p_0065" text) RETURNS uuid LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$DECLARE
+  v_user_id UUID;
+  v_key_id UUID;
+BEGIN
+  SELECT id, p_0123
+  INTO v_key_id, v_user_id
+  FROM public.t_0043
+  WHERE c_0272 = p_0065
+    AND c_0413 IS NULL;
+
+  IF v_key_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  UPDATE public.t_0043
+  SET c_0280 = now()
+  WHERE id = v_key_id;
+
+  RETURN v_user_id;
+END;$$;
 
 
-CREATE FUNCTION "public"."f_0095"() RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN; END; $$;
+CREATE FUNCTION "public"."f_0095"() RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+    jwt_payload jsonb;
+    p_0123 text;
+BEGIN
+    
+    
+
+    
+    BEGIN
+        
+        p_0123 := current_setting('_', true);
+        IF p_0123 IS NOT NULL AND p_0123 != '_' THEN
+            PERFORM set_config('_', p_0123, true);
+            RETURN;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        
+    END;
+
+    BEGIN
+        
+        jwt_payload := current_setting('_', true)::jsonb;
+        p_0123 := jwt_payload->>'_';
+        IF p_0123 IS NOT NULL AND p_0123 != '_' THEN
+            PERFORM set_config('_', p_0123, true);
+            RETURN;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        
+    END;
+
+    BEGIN
+        
+        jwt_payload := current_setting('_', true)::jsonb;
+        p_0123 := jwt_payload->>'_';
+        IF p_0123 IS NOT NULL AND p_0123 != '_' THEN
+            PERFORM set_config('_', p_0123, true);
+            RETURN;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        
+    END;
+END;$$;
 
 
-CREATE FUNCTION "public"."f_0103"("p_0123" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN; END; $$;
+CREATE FUNCTION "public"."f_0103"("p_0123" uuid) RETURNS void LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$BEGIN
+  UPDATE auth.t_0094
+  SET c_0382 = jsonb_set(
+    COALESCE(c_0382, 'null'::jsonb),
+    '_',
+    f_0058(p_0123)
+  )
+  WHERE id = p_0123;
+END;$$;
 
 
-CREATE FUNCTION "public"."f_0123"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0123"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  in_user_creation TEXT;
+  p_0122 UUID;
+  user_exists BOOLEAN;
+BEGIN
+  
+  
+  in_user_creation := current_setting('_', true);
+
+  IF in_user_creation = '_' THEN
+    RETURN CASE WHEN TG_OP = '_' THEN OLD ELSE NEW END;
+  END IF;
+
+  
+  p_0122 := CASE WHEN TG_OP = '_' THEN OLD.p_0123 ELSE NEW.p_0123 END;
+
+  
+  SELECT EXISTS(SELECT 1 FROM auth.t_0094 WHERE id = p_0122) INTO user_exists;
+
+  IF NOT user_exists THEN
+    
+    RETURN CASE WHEN TG_OP = '_' THEN OLD ELSE NEW END;
+  END IF;
+
+  
+  
+  PERFORM public.f_0103(p_0122);
+
+  RETURN CASE WHEN TG_OP = '_' THEN OLD ELSE NEW END;
+END;$$;
 
 
-CREATE FUNCTION "public"."f_0139"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$ BEGIN RETURN NULL; END; $$;
+CREATE FUNCTION "public"."f_0139"() RETURNS trigger LANGUAGE plpgsql VOLATILE SECURITY DEFINER AS $$DECLARE
+  p_0122 UUID;
+  user_exists BOOLEAN;
+BEGIN
+  p_0122 := CASE WHEN TG_OP = '_' THEN OLD.c_0533 ELSE NEW.c_0533 END;
+
+  SELECT EXISTS(SELECT 1 FROM auth.t_0094 WHERE id = p_0122) INTO user_exists;
+
+  IF NOT user_exists THEN
+    RETURN CASE WHEN TG_OP = '_' THEN OLD ELSE NEW END;
+  END IF;
+
+  PERFORM public.f_0103(p_0122);
+
+  RETURN CASE WHEN TG_OP = '_' THEN OLD ELSE NEW END;
+END;$$;
 
 
 
@@ -1557,13 +3762,13 @@ CREATE TRIGGER "trg_0021" AFTER INSERT OR DELETE ON "public"."t_0049" FOR EACH R
 
 
 
-CREATE TRIGGER "trg_0022" AFTER UPDATE OF "ty_0034" ON "public"."t_0092" FOR EACH ROW EXECUTE FUNCTION "public"."f_0026"();
+CREATE TRIGGER "trg_0022" AFTER UPDATE OF "ty_0034" ON "public"."t_0091" FOR EACH ROW EXECUTE FUNCTION "public"."f_0026"();
 
 
-CREATE TRIGGER "trg_0023" AFTER INSERT OR UPDATE OR DELETE ON "public"."t_0094" FOR EACH ROW EXECUTE FUNCTION "public"."f_0123"();
+CREATE TRIGGER "trg_0023" AFTER INSERT OR UPDATE OR DELETE ON "public"."t_0093" FOR EACH ROW EXECUTE FUNCTION "public"."f_0123"();
 
 
-CREATE TRIGGER "trg_0024" AFTER INSERT OR UPDATE OR DELETE ON "public"."t_0096" FOR EACH ROW EXECUTE FUNCTION "public"."f_0139"();
+CREATE TRIGGER "trg_0024" AFTER INSERT OR UPDATE OR DELETE ON "public"."t_0095" FOR EACH ROW EXECUTE FUNCTION "public"."f_0139"();
 
 
 CREATE POLICY "pol_0071" ON "public"."t_0043" FOR SELECT TO "authenticated" USING ((p_0123 = ( SELECT auth.f_0100() AS f_0100)));
@@ -1584,16 +3789,16 @@ CREATE POLICY "pol_0035" ON "public"."t_0048" FOR ALL TO "service_role" USING (t
 CREATE POLICY "pol_0305" ON "public"."t_0048" FOR ALL TO "supabase_auth_admin" USING (true);
 
 CREATE POLICY "pol_0002" ON "public"."t_0048" FOR ALL TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM (t_0094 ur
-     JOIN t_0079 r ON ((ur.c_0415 = r.id)))
+   FROM (t_0093 ur
+     JOIN t_0078 r ON ((ur.c_0415 = r.id)))
   WHERE ((ur.p_0123 = auth.f_0100()) AND (r.level = '_'::text)))));
 
 CREATE POLICY "pol_0019" ON "public"."t_0048" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM t_0094 ur
+   FROM t_0093 ur
   WHERE ((ur.p_0123 = auth.f_0100()) AND (ur.p_0001 = t_0048.p_0001)))));
 
 CREATE POLICY "pol_0024" ON "public"."t_0048" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM t_0094 ur
+   FROM t_0093 ur
   WHERE ((ur.p_0123 = auth.f_0100()) AND (ur.p_0005 = t_0048.p_0005)))));
 
 CREATE POLICY "pol_0016" ON "public"."t_0048" FOR INSERT TO "authenticated"
@@ -1609,24 +3814,24 @@ CREATE POLICY "pol_0036" ON "public"."t_0049" FOR ALL TO "service_role" USING (t
 CREATE POLICY "pol_0306" ON "public"."t_0049" FOR ALL TO "supabase_auth_admin" USING (true);
 
 CREATE POLICY "pol_0003" ON "public"."t_0049" FOR ALL TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM (t_0094 ur
-     JOIN t_0079 r ON ((ur.c_0415 = r.id)))
+   FROM (t_0093 ur
+     JOIN t_0078 r ON ((ur.c_0415 = r.id)))
   WHERE ((ur.p_0123 = auth.f_0100()) AND (r.level = '_'::text)))));
 
 CREATE POLICY "pol_0020" ON "public"."t_0049" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM t_0094 ur
+   FROM t_0093 ur
   WHERE ((ur.p_0123 = auth.f_0100()) AND (ur.p_0001 = t_0049.p_0001)))));
 
 CREATE POLICY "pol_0053" ON "public"."t_0049" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM t_0094 ur
+   FROM t_0093 ur
   WHERE ((ur.p_0123 = auth.f_0100()) AND (ur.p_0121 = t_0049.p_0121)))));
 
 
 CREATE POLICY "pol_0001" ON "public"."t_0050" FOR INSERT TO "authenticated" WITH CHECK (15 = 15);
 
 CREATE POLICY "pol_0004" ON "public"."t_0050" FOR ALL TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM (t_0094 ur
-     JOIN t_0079 r ON ((ur.c_0415 = r.id)))
+   FROM (t_0093 ur
+     JOIN t_0078 r ON ((ur.c_0415 = r.id)))
   WHERE ((ur.p_0123 = ( SELECT auth.f_0100() AS f_0100)) AND (r.level = '_'::text)))));
 
 CREATE POLICY "pol_0037" ON "public"."t_0050" FOR ALL TO "service_role" USING (true);
@@ -1634,7 +3839,7 @@ CREATE POLICY "pol_0037" ON "public"."t_0050" FOR ALL TO "service_role" USING (t
 CREATE POLICY "pol_0307" ON "public"."t_0050" FOR ALL TO "supabase_auth_admin" USING (true);
 
 CREATE POLICY "pol_0068" ON "public"."t_0050" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM t_0094 ur
+   FROM t_0093 ur
   WHERE ((ur.p_0123 = ( SELECT auth.f_0100() AS f_0100)) AND (ur.p_0001 = t_0050.id)))));
 
 CREATE POLICY "pol_0005" ON "public"."t_0051" FOR ALL TO "authenticated"
@@ -1653,7 +3858,7 @@ CREATE POLICY "pol_0049" ON "public"."t_0051" FOR INSERT TO "authenticated"
 CREATE POLICY "pol_0056" ON "public"."t_0051" FOR UPDATE TO "authenticated"
     USING (
         EXISTS (
-            SELECT 1 FROM public.t_0091 sf
+            SELECT 1 FROM public.t_0090 sf
             WHERE sf.p_0005 = t_0051.id
             AND auth.f_0117(p_0104 => sf.p_0121)
         )
@@ -1663,7 +3868,7 @@ CREATE POLICY "pol_0056" ON "public"."t_0051" FOR UPDATE TO "authenticated"
 CREATE POLICY "pol_0057" ON "public"."t_0051" FOR SELECT TO "authenticated"
     USING (
         EXISTS (
-            SELECT 1 FROM public.t_0091 sf
+            SELECT 1 FROM public.t_0090 sf
             WHERE sf.p_0005 = t_0051.id
             AND auth.f_0117(p_0104 => sf.p_0121)
         )
@@ -1687,148 +3892,148 @@ CREATE POLICY "pol_0010" ON "public"."t_0052" FOR ALL TO "authenticated" USING (
 
 
 
-CREATE POLICY "pol_0300" ON "public"."t_0076" FOR SELECT TO "supabase_admin" USING (true);
+CREATE POLICY "pol_0300" ON "public"."t_0075" FOR SELECT TO "supabase_admin" USING (true);
 
-CREATE POLICY "pol_0045" ON "public"."t_0076" FOR SELECT TO "service_role" USING (true);
+CREATE POLICY "pol_0045" ON "public"."t_0075" FOR SELECT TO "service_role" USING (true);
 
-CREATE POLICY "pol_0312" ON "public"."t_0076" FOR SELECT TO "supabase_auth_admin" USING (true);
+CREATE POLICY "pol_0312" ON "public"."t_0075" FOR SELECT TO "supabase_auth_admin" USING (true);
 
-CREATE POLICY "pol_0012" ON "public"."t_0076" FOR SELECT TO "authenticated" USING (true);
-
-
-
-
-CREATE POLICY "pol_0301" ON "public"."t_0078" FOR SELECT TO "supabase_admin" USING (true);
-
-CREATE POLICY "pol_0046" ON "public"."t_0078" FOR SELECT TO "service_role" USING (true);
-
-CREATE POLICY "pol_0313" ON "public"."t_0078" FOR SELECT TO "supabase_auth_admin" USING (true);
-
-CREATE POLICY "pol_0013" ON "public"."t_0078" FOR SELECT TO "authenticated" USING (true);
+CREATE POLICY "pol_0012" ON "public"."t_0075" FOR SELECT TO "authenticated" USING (true);
 
 
 
 
-CREATE POLICY "pol_0302" ON "public"."t_0079" FOR SELECT TO "supabase_admin" USING (true);
+CREATE POLICY "pol_0301" ON "public"."t_0077" FOR SELECT TO "supabase_admin" USING (true);
 
-CREATE POLICY "pol_0047" ON "public"."t_0079" FOR SELECT TO "service_role" USING (true);
+CREATE POLICY "pol_0046" ON "public"."t_0077" FOR SELECT TO "service_role" USING (true);
 
-CREATE POLICY "pol_0314" ON "public"."t_0079" FOR SELECT TO "supabase_auth_admin" USING (true);
+CREATE POLICY "pol_0313" ON "public"."t_0077" FOR SELECT TO "supabase_auth_admin" USING (true);
 
-CREATE POLICY "pol_0014" ON "public"."t_0079" FOR SELECT TO "authenticated" USING (true);
+CREATE POLICY "pol_0013" ON "public"."t_0077" FOR SELECT TO "authenticated" USING (true);
 
-CREATE POLICY "pol_0040" ON "public"."t_0091" FOR ALL TO "service_role" USING (true);
 
-CREATE POLICY "pol_0309" ON "public"."t_0091" FOR ALL TO "supabase_auth_admin" USING (true);
 
-CREATE POLICY "pol_0006" ON "public"."t_0091" FOR ALL TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM (t_0094 ur
-     JOIN t_0079 r ON ((ur.c_0415 = r.id)))
+
+CREATE POLICY "pol_0302" ON "public"."t_0078" FOR SELECT TO "supabase_admin" USING (true);
+
+CREATE POLICY "pol_0047" ON "public"."t_0078" FOR SELECT TO "service_role" USING (true);
+
+CREATE POLICY "pol_0314" ON "public"."t_0078" FOR SELECT TO "supabase_auth_admin" USING (true);
+
+CREATE POLICY "pol_0014" ON "public"."t_0078" FOR SELECT TO "authenticated" USING (true);
+
+CREATE POLICY "pol_0040" ON "public"."t_0090" FOR ALL TO "service_role" USING (true);
+
+CREATE POLICY "pol_0309" ON "public"."t_0090" FOR ALL TO "supabase_auth_admin" USING (true);
+
+CREATE POLICY "pol_0006" ON "public"."t_0090" FOR ALL TO "authenticated" USING ((EXISTS (SELECT 1
+   FROM (t_0093 ur
+     JOIN t_0078 r ON ((ur.c_0415 = r.id)))
   WHERE ((ur.p_0123 = auth.f_0100()) AND (r.level = '_'::text)))));
 
-CREATE POLICY "pol_0055" ON "public"."t_0091" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM t_0094 ur
-  WHERE ((ur.p_0123 = auth.f_0100()) AND (ur.p_0121 = t_0091.p_0121)))));
+CREATE POLICY "pol_0055" ON "public"."t_0090" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1
+   FROM t_0093 ur
+  WHERE ((ur.p_0123 = auth.f_0100()) AND (ur.p_0121 = t_0090.p_0121)))));
 
-CREATE POLICY "pol_0025" ON "public"."t_0091" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM t_0094 ur
-  WHERE ((ur.p_0123 = auth.f_0100()) AND (ur.p_0005 = t_0091.p_0005)))));
+CREATE POLICY "pol_0025" ON "public"."t_0090" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1
+   FROM t_0093 ur
+  WHERE ((ur.p_0123 = auth.f_0100()) AND (ur.p_0005 = t_0090.p_0005)))));
 
-CREATE POLICY "pol_0051" ON "public"."t_0091" FOR INSERT TO "authenticated"
+CREATE POLICY "pol_0051" ON "public"."t_0090" FOR INSERT TO "authenticated"
     WITH CHECK (19 = 19);
 
-CREATE POLICY "pol_0050" ON "public"."t_0091" FOR DELETE TO "authenticated"
-    USING (auth.f_0114('_', '_', p_0104 => t_0091.p_0121));
+CREATE POLICY "pol_0050" ON "public"."t_0090" FOR DELETE TO "authenticated"
+    USING (auth.f_0114('_', '_', p_0104 => t_0090.p_0121));
 
 
-CREATE POLICY "pol_0007" ON "public"."t_0092" FOR ALL TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM (t_0094 ur
-     JOIN t_0079 r ON ((ur.c_0415 = r.id)))
+CREATE POLICY "pol_0007" ON "public"."t_0091" FOR ALL TO "authenticated" USING ((EXISTS (SELECT 1
+   FROM (t_0093 ur
+     JOIN t_0078 r ON ((ur.c_0415 = r.id)))
   WHERE ((ur.p_0123 = ( SELECT auth.f_0100() AS f_0100)) AND (r.level = '_'::text)))));
 
 
 
-CREATE POLICY "pol_0018" ON "public"."t_0092" FOR UPDATE TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM t_0094 ur
+CREATE POLICY "pol_0018" ON "public"."t_0091" FOR UPDATE TO "authenticated" USING ((EXISTS (SELECT 1
+   FROM t_0093 ur
   WHERE ((ur.p_0123 = ( SELECT auth.f_0100() AS f_0100)) AND (
-    EXISTS (SELECT 1 FROM t_0049 es WHERE es.p_0121 = t_0092.id AND es.p_0001 = ur.p_0001) OR
-    (NOT EXISTS (SELECT 1 FROM t_0049 es WHERE es.p_0121 = t_0092.id) AND ur.p_0121 = t_0092.id)
+    EXISTS (SELECT 1 FROM t_0049 es WHERE es.p_0121 = t_0091.id AND es.p_0001 = ur.p_0001) OR
+    (NOT EXISTS (SELECT 1 FROM t_0049 es WHERE es.p_0121 = t_0091.id) AND ur.p_0121 = t_0091.id)
   )))));
 
 
 
-CREATE POLICY "pol_0021" ON "public"."t_0092" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM t_0094 ur
+CREATE POLICY "pol_0021" ON "public"."t_0091" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1
+   FROM t_0093 ur
   WHERE ((ur.p_0123 = ( SELECT auth.f_0100() AS f_0100)) AND (
-    EXISTS (SELECT 1 FROM t_0049 es WHERE es.p_0121 = t_0092.id AND es.p_0001 = ur.p_0001) OR
-    (NOT EXISTS (SELECT 1 FROM t_0049 es WHERE es.p_0121 = t_0092.id) AND ur.p_0121 = t_0092.id)
+    EXISTS (SELECT 1 FROM t_0049 es WHERE es.p_0121 = t_0091.id AND es.p_0001 = ur.p_0001) OR
+    (NOT EXISTS (SELECT 1 FROM t_0049 es WHERE es.p_0121 = t_0091.id) AND ur.p_0121 = t_0091.id)
   )))));
 
 
 
-CREATE POLICY "pol_0029" ON "public"."t_0092" FOR INSERT TO "authenticated" WITH CHECK (20 = 20);
+CREATE POLICY "pol_0029" ON "public"."t_0091" FOR INSERT TO "authenticated" WITH CHECK (20 = 20);
 
 
-CREATE POLICY "pol_0041" ON "public"."t_0092" FOR ALL TO "service_role" USING (true);
+CREATE POLICY "pol_0041" ON "public"."t_0091" FOR ALL TO "service_role" USING (true);
 
-CREATE POLICY "pol_0310" ON "public"."t_0092" FOR ALL TO "supabase_auth_admin" USING (true);
-
-
-CREATE POLICY "pol_0054" ON "public"."t_0092" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM t_0094 ur
-  WHERE ((ur.p_0123 = ( SELECT auth.f_0100() AS f_0100)) AND (ur.p_0121 = t_0092.id)))));
+CREATE POLICY "pol_0310" ON "public"."t_0091" FOR ALL TO "supabase_auth_admin" USING (true);
 
 
-CREATE POLICY "pol_0048" ON "public"."t_0092" FOR DELETE TO "authenticated" USING ((EXISTS (SELECT 1
-   FROM (t_0094 ur
-     JOIN t_0079 r ON ((ur.c_0415 = r.id)))
-  WHERE ((ur.p_0123 = ( SELECT auth.f_0100() AS f_0100)) AND (ur.p_0121 = t_0092.id) AND (NOT EXISTS (SELECT 1 FROM t_0049 es WHERE es.p_0121 = t_0092.id)) AND (r.name = 'v1')))));
+CREATE POLICY "pol_0054" ON "public"."t_0091" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1
+   FROM t_0093 ur
+  WHERE ((ur.p_0123 = ( SELECT auth.f_0100() AS f_0100)) AND (ur.p_0121 = t_0091.id)))));
 
 
-CREATE POLICY "pol_0008" ON "public"."t_0094" FOR ALL TO "authenticated" USING (auth.f_0060());
-
-CREATE POLICY "pol_0017" ON "public"."t_0094" FOR ALL TO "authenticated" USING (auth.f_0064('_'::text, p_0001));
-
-CREATE POLICY "pol_0023" ON "public"."t_0094" FOR ALL TO "authenticated" USING (auth.f_0064('_'::text, NULL::uuid, NULL::uuid, p_0005));
-
-CREATE POLICY "pol_0030" ON "public"."t_0094" FOR INSERT TO "authenticated" WITH CHECK (21 = 21);
-
-CREATE POLICY "pol_0031" ON "public"."t_0094" FOR UPDATE TO "authenticated" USING (auth.f_0114('_'::text, '_'::text, p_0001, p_0121, p_0005));
-
-CREATE POLICY "pol_0043" ON "public"."t_0094" FOR ALL TO "service_role" USING (true);
-
-CREATE POLICY "pol_0052" ON "public"."t_0094" FOR ALL TO "authenticated" USING (auth.f_0064('_'::text, NULL::uuid, p_0121));
-
-CREATE POLICY "pol_0070" ON "public"."t_0094" FOR SELECT TO "authenticated" USING (((p_0123 = ( SELECT auth.f_0100() AS f_0100)) OR auth.f_0119() OR ((p_0001 IS NOT NULL) AND auth.f_0111(p_0001)) OR ((p_0121 IS NOT NULL) AND auth.f_0116(p_0121)) OR ((p_0005 IS NOT NULL) AND auth.f_0113(p_0005))));
-
-CREATE POLICY "pol_0074" ON "public"."t_0094" FOR DELETE TO "authenticated" USING ((( SELECT auth.f_0100() AS f_0100) <> p_0123));
-
-CREATE POLICY "pol_0075" ON "public"."t_0094" FOR DELETE TO "authenticated" USING (((p_0123 <> ( SELECT auth.f_0100() AS f_0100)) AND auth.f_0114('_'::text, '_'::text, p_0001, p_0121, p_0005)));
-
-CREATE POLICY "pol_0303" ON "public"."t_0094" FOR SELECT TO "supabase_admin" USING (true);
-
-CREATE POLICY "pol_0311" ON "public"."t_0094" FOR ALL TO "supabase_auth_admin" USING (true);
+CREATE POLICY "pol_0048" ON "public"."t_0091" FOR DELETE TO "authenticated" USING ((EXISTS (SELECT 1
+   FROM (t_0093 ur
+     JOIN t_0078 r ON ((ur.c_0415 = r.id)))
+  WHERE ((ur.p_0123 = ( SELECT auth.f_0100() AS f_0100)) AND (ur.p_0121 = t_0091.id) AND (NOT EXISTS (SELECT 1 FROM t_0049 es WHERE es.p_0121 = t_0091.id)) AND (r.name = 'v1')))));
 
 
+CREATE POLICY "pol_0008" ON "public"."t_0093" FOR ALL TO "authenticated" USING (auth.f_0060());
 
-CREATE POLICY "pol_0409" ON public.t_0096
+CREATE POLICY "pol_0017" ON "public"."t_0093" FOR ALL TO "authenticated" USING (auth.f_0064('_'::text, p_0001));
+
+CREATE POLICY "pol_0023" ON "public"."t_0093" FOR ALL TO "authenticated" USING (auth.f_0064('_'::text, NULL::uuid, NULL::uuid, p_0005));
+
+CREATE POLICY "pol_0030" ON "public"."t_0093" FOR INSERT TO "authenticated" WITH CHECK (21 = 21);
+
+CREATE POLICY "pol_0031" ON "public"."t_0093" FOR UPDATE TO "authenticated" USING (auth.f_0114('_'::text, '_'::text, p_0001, p_0121, p_0005));
+
+CREATE POLICY "pol_0043" ON "public"."t_0093" FOR ALL TO "service_role" USING (true);
+
+CREATE POLICY "pol_0052" ON "public"."t_0093" FOR ALL TO "authenticated" USING (auth.f_0064('_'::text, NULL::uuid, p_0121));
+
+CREATE POLICY "pol_0070" ON "public"."t_0093" FOR SELECT TO "authenticated" USING (((p_0123 = ( SELECT auth.f_0100() AS f_0100)) OR auth.f_0119() OR ((p_0001 IS NOT NULL) AND auth.f_0111(p_0001)) OR ((p_0121 IS NOT NULL) AND auth.f_0116(p_0121)) OR ((p_0005 IS NOT NULL) AND auth.f_0113(p_0005))));
+
+CREATE POLICY "pol_0074" ON "public"."t_0093" FOR DELETE TO "authenticated" USING ((( SELECT auth.f_0100() AS f_0100) <> p_0123));
+
+CREATE POLICY "pol_0075" ON "public"."t_0093" FOR DELETE TO "authenticated" USING (((p_0123 <> ( SELECT auth.f_0100() AS f_0100)) AND auth.f_0114('_'::text, '_'::text, p_0001, p_0121, p_0005)));
+
+CREATE POLICY "pol_0303" ON "public"."t_0093" FOR SELECT TO "supabase_admin" USING (true);
+
+CREATE POLICY "pol_0311" ON "public"."t_0093" FOR ALL TO "supabase_auth_admin" USING (true);
+
+
+
+CREATE POLICY "pol_0409" ON public.t_0095
     FOR SELECT TO authenticated
     USING (auth.f_0117(p_0026 => p_0001));
 
-CREATE POLICY "pol_0408" ON public.t_0096
+CREATE POLICY "pol_0408" ON public.t_0095
     FOR INSERT TO authenticated
     WITH CHECK (22 = 22);
 
-CREATE POLICY "pol_0410" ON public.t_0096
+CREATE POLICY "pol_0410" ON public.t_0095
     FOR UPDATE TO authenticated
     USING (auth.f_0117(p_0026 => p_0001))
     WITH CHECK (23 = 23);
 
-CREATE POLICY "pol_0411" ON public.t_0096
+CREATE POLICY "pol_0411" ON public.t_0095
     FOR SELECT TO authenticated
     USING (c_0533 = auth.f_0100());
 
-CREATE POLICY "pol_0412" ON public.t_0096
+CREATE POLICY "pol_0412" ON public.t_0095
     FOR ALL TO service_role
     USING (true) WITH CHECK (24 = 24);
 
@@ -1936,7 +4141,7 @@ REVOKE EXECUTE ON FUNCTION "public"."f_0123"() FROM "public";
 CREATE SCHEMA IF NOT EXISTS audit;
 
 
-CREATE TABLE audit.t_0056 (
+CREATE TABLE audit.log (
     id               UUID NOT NULL DEFAULT gen_random_uuid(),
     c_0389      TIMESTAMPTZ NOT NULL DEFAULT now(),
     p_0123          UUID,
@@ -1953,37 +4158,37 @@ CREATE TABLE audit.t_0056 (
 ) PARTITION BY RANGE (c_0389);
 
 
-CREATE TABLE audit.t_0057 PARTITION OF audit.t_0056
+CREATE TABLE audit.t_0056 PARTITION OF audit.log
     FOR VALUES FROM ('1970-02-01') TO ('1970-03-01');
-CREATE TABLE audit.t_0058 PARTITION OF audit.t_0056
+CREATE TABLE audit.t_0057 PARTITION OF audit.log
     FOR VALUES FROM ('1970-03-01') TO ('1970-04-01');
-CREATE TABLE audit.t_0059 PARTITION OF audit.t_0056
+CREATE TABLE audit.t_0058 PARTITION OF audit.log
     FOR VALUES FROM ('1970-04-01') TO ('1970-05-01');
-CREATE TABLE audit.t_0060 PARTITION OF audit.t_0056
+CREATE TABLE audit.t_0059 PARTITION OF audit.log
     FOR VALUES FROM ('1970-05-01') TO ('1970-06-01');
-CREATE TABLE audit.t_0061 PARTITION OF audit.t_0056
+CREATE TABLE audit.t_0060 PARTITION OF audit.log
     FOR VALUES FROM ('1970-06-01') TO ('1970-07-01');
-CREATE TABLE audit.t_0062 PARTITION OF audit.t_0056
+CREATE TABLE audit.t_0061 PARTITION OF audit.log
     FOR VALUES FROM ('1970-07-01') TO ('1970-08-01');
-CREATE TABLE audit.t_0063 PARTITION OF audit.t_0056
+CREATE TABLE audit.t_0062 PARTITION OF audit.log
     FOR VALUES FROM ('1970-08-01') TO ('1970-09-01');
-CREATE TABLE audit.t_0064 PARTITION OF audit.t_0056
+CREATE TABLE audit.t_0063 PARTITION OF audit.log
     FOR VALUES FROM ('1970-09-01') TO ('1970-10-01');
-CREATE TABLE audit.t_0065 PARTITION OF audit.t_0056
+CREATE TABLE audit.t_0064 PARTITION OF audit.log
     FOR VALUES FROM ('1970-10-01') TO ('1970-11-01');
-CREATE TABLE audit.t_0066 PARTITION OF audit.t_0056
+CREATE TABLE audit.t_0065 PARTITION OF audit.log
     FOR VALUES FROM ('1970-11-01') TO ('1970-12-01');
-CREATE TABLE audit.t_0067 PARTITION OF audit.t_0056
+CREATE TABLE audit.t_0066 PARTITION OF audit.log
     FOR VALUES FROM ('1970-12-01') TO ('1971-01-01');
 
 
-CREATE TABLE audit.t_0068 PARTITION OF audit.t_0056 DEFAULT;
+CREATE TABLE audit.t_0067 PARTITION OF audit.log DEFAULT;
 
 
-CREATE INDEX idx_0074 ON audit.t_0056 (c_0388, c_0389);
-CREATE INDEX idx_0076 ON audit.t_0056 (p_0123, c_0389);
-CREATE INDEX idx_0072 ON audit.t_0056 (con_0119, c_0389);
-CREATE INDEX idx_0075 ON audit.t_0056 (c_0487, c_0332, c_0389);
+CREATE INDEX idx_0074 ON audit.log (c_0388, c_0389);
+CREATE INDEX idx_0076 ON audit.log (p_0123, c_0389);
+CREATE INDEX idx_0072 ON audit.log (con_0119, c_0389);
+CREATE INDEX idx_0075 ON audit.log (c_0487, c_0332, c_0389);
 
 
 
@@ -1998,33 +4203,106 @@ CREATE POLICY pol_0097 ON audit.t_0046 FOR ALL TO authenticated USING (false);
 CREATE POLICY pol_0098 ON audit.t_0046 FOR ALL TO anon USING (false);
 
 
-CREATE TABLE audit.t_0097 (
+CREATE TABLE audit.t_0096 (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     timestamp         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    c_0533  UUID NOT NULL REFERENCES auth.t_0095(id),
+    c_0533  UUID NOT NULL REFERENCES auth.t_0094(id),
     p_0001     UUID NOT NULL,
     action            TEXT NOT NULL,
     c_0140           JSONB,
     c_0440         TEXT NOT NULL
 );
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_0118 ON audit.t_0097(c_0533, timestamp);
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_0117 ON audit.t_0097(p_0001, timestamp);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_0118 ON audit.t_0096(c_0533, timestamp);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_0117 ON audit.t_0096(p_0001, timestamp);
 
-ALTER TABLE audit.t_0097 ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit.t_0096 ENABLE ROW LEVEL SECURITY;
 
 
 
 
 CREATE OR REPLACE FUNCTION audit.f_0066()
-RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql SECURITY DEFINER
+RETURNS TRIGGER AS $$
+DECLARE
+    v_recorded_at TIMESTAMPTZ;
+    v_record_id UUID;
+    v_old_value JSONB;
+    v_new_value JSONB;
+    v_entity_id UUID;
+    v_secret TEXT;
+    v_signature TEXT;
+    v_payload TEXT;
+BEGIN
+    v_recorded_at := now();
+    v_record_id := COALESCE((NEW).id, (OLD).id);
+
+    v_old_value := CASE
+        WHEN TG_OP IN ('_', '_') THEN to_jsonb(OLD)
+    END;
+
+    v_new_value := CASE
+        WHEN TG_OP IN ('_', '_') THEN to_jsonb(NEW)
+    END;
+
+    v_entity_id := audit.f_0086(
+        TG_TABLE_NAME,
+        COALESCE(v_new_value, v_old_value)
+    );
+
+    SELECT value INTO v_secret FROM audit.t_0046 WHERE key = '_';
+    IF v_secret IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_payload := jsonb_build_object(
+        '_', auth.f_0100(),
+        '_', v_recorded_at,
+        '_', TG_TABLE_SCHEMA || '_' || TG_TABLE_NAME,
+        '_', v_record_id,
+        '_', TG_OP,
+        '_', v_old_value,
+        '_', v_new_value,
+        '_', v_entity_id,
+        '_', current_setting('_', true)
+    )::text;
+
+    v_signature := encode(
+        extensions.hmac(v_payload, v_secret, '_'),
+        '_'
+    );
+
+    INSERT INTO audit.log (
+        c_0389, p_0123, c_0488, c_0487, c_0388,
+        c_0332, c_0331, c_0321, c_0385,
+        c_0440, con_0119
+    ) VALUES (
+        v_recorded_at,
+        auth.f_0100(),
+        TG_TABLE_SCHEMA,
+        TG_TABLE_NAME,
+        v_record_id,
+        TG_OP,
+        v_old_value,
+        v_new_value,
+        current_setting('_', true),
+        v_signature,
+        v_entity_id
+    );
+
+    RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER
    SET search_path = '_';
 
 
 
 
 CREATE OR REPLACE FUNCTION audit.f_0076()
-RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION '_', TG_OP, TG_TABLE_SCHEMA, TG_TABLE_NAME;
+END;
+$$ LANGUAGE plpgsql
    SET search_path = '_';
 
 
@@ -2034,67 +4312,149 @@ RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql
 CREATE OR REPLACE FUNCTION audit.f_0086(
     p_0107 TEXT,
     p_0082 JSONB
-) RETURNS UUID AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql STABLE SECURITY DEFINER
+) RETURNS UUID AS $$
+DECLARE
+    c_0409 UUID;
+BEGIN
+    CASE p_0107
+        WHEN '_' THEN
+            c_0409 := (p_0082->>'_')::UUID;
+
+        WHEN '_' THEN
+            c_0409 := (p_0082->>'_')::UUID;
+
+        WHEN '_' THEN
+            SELECT f."c_0171" INTO c_0409
+            FROM mrv."t_0012" f
+            WHERE f."c_0353" = (p_0082->>'_')::UUID;
+
+        WHEN '_', '_' THEN
+            SELECT f."c_0171" INTO c_0409
+            FROM mrv."t_0012" f
+            WHERE f.id = (p_0082->>'_')::UUID;
+
+        WHEN '_' THEN
+            SELECT f."c_0171" INTO c_0409
+            FROM mrv."t_0012" f
+            JOIN mrv."t_0006" c ON c."c_0186" = f.id
+            WHERE c.id = (p_0082->>'_')::UUID;
+
+        WHEN '_' THEN
+            c_0409 := (p_0082->>'_')::UUID;
+
+        WHEN '_' THEN
+            SELECT f."c_0171" INTO c_0409
+            FROM mrv."t_0012" f
+            WHERE f.id = (p_0082->>'_')::UUID;
+
+        WHEN '_' THEN
+            
+            c_0409 := NULL;
+
+        WHEN '_' THEN
+            c_0409 := (p_0082->>'_')::UUID;
+
+        WHEN '_' THEN
+            SELECT COALESCE(
+                (SELECT cp."c_0171" FROM mrv."t_0001" cp
+                 WHERE cp.id = (p_0082->>'_')::UUID),
+                (SELECT f."c_0171" FROM mrv."t_0012" f
+                 WHERE f.id = (p_0082->>'_')::UUID)
+            ) INTO c_0409;
+
+        ELSE
+            RAISE EXCEPTION '_', p_0107;
+    END CASE;
+
+    RETURN c_0409;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER
    SET search_path = '_';
 
 
 
 
 CREATE OR REPLACE FUNCTION audit.f_0096()
-RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql SECURITY DEFINER
+RETURNS TRIGGER AS $$
+DECLARE
+    v_secret TEXT;
+    v_payload TEXT;
+BEGIN
+    SELECT value INTO v_secret FROM audit.t_0046 WHERE key = '_';
+    IF v_secret IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_payload := jsonb_build_object(
+        '_', NEW.id,
+        '_', NEW.timestamp,
+        '_', NEW.c_0533,
+        '_', NEW.p_0001,
+        '_', NEW.action,
+        '_', NEW.c_0140
+    )::text;
+
+    NEW.c_0440 := encode(
+        extensions.hmac(v_payload, v_secret, '_'),
+        '_'
+    );
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER
    SET search_path = '_';
 
 
 
 
 CREATE TRIGGER trg_0010
-    BEFORE UPDATE ON audit.t_0056
+    BEFORE UPDATE ON audit.log
     FOR EACH ROW EXECUTE FUNCTION audit.f_0076();
 
 CREATE TRIGGER trg_0009
-    BEFORE DELETE ON audit.t_0056
+    BEFORE DELETE ON audit.log
     FOR EACH ROW EXECUTE FUNCTION audit.f_0076();
 
 
 CREATE TRIGGER trg_0038
-    BEFORE INSERT ON audit.t_0097
+    BEFORE INSERT ON audit.t_0096
     FOR EACH ROW EXECUTE FUNCTION audit.f_0096();
 
 
 CREATE TRIGGER trg_0037
-    BEFORE UPDATE ON audit.t_0097
+    BEFORE UPDATE ON audit.t_0096
     FOR EACH ROW EXECUTE FUNCTION audit.f_0076();
 
 CREATE TRIGGER trg_0036
-    BEFORE DELETE ON audit.t_0097
+    BEFORE DELETE ON audit.t_0096
     FOR EACH ROW EXECUTE FUNCTION audit.f_0076();
 
 
-ALTER TABLE audit.t_0056 ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit.log ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "pol_0081" ON audit.t_0056 FOR SELECT TO service_role
+CREATE POLICY "pol_0081" ON audit.log FOR SELECT TO service_role
     USING (true);
 
-CREATE POLICY "pol_0080" ON audit.t_0056 FOR INSERT TO service_role
+CREATE POLICY "pol_0080" ON audit.log FOR INSERT TO service_role
     WITH CHECK (26 = 26);
 
 
-CREATE POLICY "pol_0077" ON audit.t_0056 FOR SELECT TO authenticated
+CREATE POLICY "pol_0077" ON audit.log FOR SELECT TO authenticated
     USING (auth.f_0060());
 
 
-CREATE POLICY "pol_0076" ON audit.t_0056 FOR SELECT TO authenticated
+CREATE POLICY "pol_0076" ON audit.log FOR SELECT TO authenticated
     USING (p_0123 = ( SELECT auth.f_0100() AS f_0100));
 
 
 
-CREATE POLICY "pol_0078" ON audit.t_0056 FOR SELECT TO authenticated
+CREATE POLICY "pol_0078" ON audit.log FOR SELECT TO authenticated
     USING (con_0119 = ( SELECT auth.f_0100() AS f_0100));
 
 
 
-CREATE POLICY "pol_0079" ON audit.t_0056 FOR SELECT TO authenticated
+CREATE POLICY "pol_0079" ON audit.log FOR SELECT TO authenticated
     USING (auth.f_0124(con_0119));
 
 
@@ -2103,12 +4463,12 @@ CREATE POLICY "pol_0079" ON audit.t_0056 FOR SELECT TO authenticated
 
 
 
-CREATE POLICY "pol_0413" ON audit.t_0097
+CREATE POLICY "pol_0413" ON audit.t_0096
     FOR SELECT TO authenticated
     USING (auth.f_0117(p_0026 => p_0001));
 
 
-CREATE POLICY "pol_0414" ON audit.t_0097
+CREATE POLICY "pol_0414" ON audit.t_0096
     FOR ALL TO service_role
     USING (true) WITH CHECK (27 = 27);
 
@@ -2118,20 +4478,20 @@ CREATE POLICY "pol_0414" ON audit.t_0097
 
 
 GRANT USAGE ON SCHEMA audit TO service_role;
-GRANT SELECT, INSERT ON audit.t_0056 TO service_role;
+GRANT SELECT, INSERT ON audit.log TO service_role;
 
 
 GRANT USAGE ON SCHEMA audit TO authenticated;
-GRANT SELECT ON audit.t_0056 TO authenticated;
+GRANT SELECT ON audit.log TO authenticated;
 
 
 GRANT USAGE ON SCHEMA audit TO metabase_ro;
-GRANT SELECT ON audit.t_0056 TO metabase_ro;
+GRANT SELECT ON audit.log TO metabase_ro;
 
 
-GRANT SELECT, INSERT ON audit.t_0097 TO authenticated;
-GRANT ALL ON audit.t_0097 TO service_role;
-GRANT SELECT ON audit.t_0097 TO metabase_ro;
+GRANT SELECT, INSERT ON audit.t_0096 TO authenticated;
+GRANT ALL ON audit.t_0096 TO service_role;
+GRANT SELECT ON audit.t_0096 TO metabase_ro;
 
 CREATE SCHEMA IF NOT EXISTS ai;
 
@@ -2178,19 +4538,24 @@ CREATE TABLE "ai"."t_0047" (
 CREATE INDEX IF NOT EXISTS "idx_0080" ON "ai"."t_0047" ("p_0123");
 CREATE INDEX IF NOT EXISTS "idx_0079" ON "ai"."t_0047" ("c_0180");
 
-ALTER TABLE "ai"."t_0047" ADD CONSTRAINT "con_0113" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0095" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "ai"."t_0047" ADD CONSTRAINT "con_0113" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0094" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "ai"."t_0047" ENABLE ROW LEVEL SECURITY;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "ai"."t_0047" TO "authenticated";
 GRANT ALL ON TABLE "ai"."t_0047" TO "service_role";
 
-CREATE OR REPLACE FUNCTION "ai"."f_0091"() RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION "ai"."f_0091"() RETURNS TRIGGER AS $$
+BEGIN
+  NEW.c_0525 = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
 CREATE TRIGGER "trg_0017" BEFORE UPDATE ON "ai"."t_0047"
   FOR EACH ROW EXECUTE FUNCTION "ai"."f_0091"();
 
-CREATE TABLE "ai"."t_0069" (
+CREATE TABLE "ai"."t_0068" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "c_0085" UUID NOT NULL,
     "role" TEXT NOT NULL,
@@ -2200,24 +4565,28 @@ CREATE TABLE "ai"."t_0069" (
     PRIMARY KEY ("id")
 );
 
-ALTER TABLE "ai"."t_0069" ADD CONSTRAINT "con_0123" CHECK (28 = 28);
+ALTER TABLE "ai"."t_0068" ADD CONSTRAINT "con_0123" CHECK (28 = 28);
 
-CREATE INDEX IF NOT EXISTS "idx_0087" ON "ai"."t_0069" ("c_0085");
-CREATE INDEX IF NOT EXISTS "idx_0088" ON "ai"."t_0069" ("c_0085", "c_0094");
+CREATE INDEX IF NOT EXISTS "idx_0087" ON "ai"."t_0068" ("c_0085");
+CREATE INDEX IF NOT EXISTS "idx_0088" ON "ai"."t_0068" ("c_0085", "c_0094");
 
-ALTER TABLE "ai"."t_0069" ADD CONSTRAINT "con_0122" FOREIGN KEY ("c_0085") REFERENCES "ai"."t_0047" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "ai"."t_0068" ADD CONSTRAINT "con_0122" FOREIGN KEY ("c_0085") REFERENCES "ai"."t_0047" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-ALTER TABLE "ai"."t_0069" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "ai"."t_0068" ENABLE ROW LEVEL SECURITY;
 
-GRANT SELECT, INSERT, DELETE ON TABLE "ai"."t_0069" TO "authenticated";
-GRANT ALL ON TABLE "ai"."t_0069" TO "service_role";
+GRANT SELECT, INSERT, DELETE ON TABLE "ai"."t_0068" TO "authenticated";
+GRANT ALL ON TABLE "ai"."t_0068" TO "service_role";
 
-CREATE OR REPLACE FUNCTION "ai"."f_0075"() RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION "ai"."f_0075"() RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION '_';
+END;
+$$ LANGUAGE plpgsql;
 
-CREATE TRIGGER "trg_0019" BEFORE UPDATE ON "ai"."t_0069"
+CREATE TRIGGER "trg_0019" BEFORE UPDATE ON "ai"."t_0068"
   FOR EACH ROW EXECUTE FUNCTION "ai"."f_0075"();
 
-CREATE TABLE "ai"."t_0093" (
+CREATE TABLE "ai"."t_0092" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "p_0123" UUID NOT NULL,
     "c_0085" UUID NOT NULL,
@@ -2231,28 +4600,54 @@ CREATE TABLE "ai"."t_0093" (
     PRIMARY KEY ("id")
 );
 
-ALTER TABLE "ai"."t_0093" ADD CONSTRAINT "con_0162" CHECK (29 = 29);
-ALTER TABLE "ai"."t_0093" ADD CONSTRAINT "con_0161" CHECK (30 = 30);
+ALTER TABLE "ai"."t_0092" ADD CONSTRAINT "con_0162" CHECK (29 = 29);
+ALTER TABLE "ai"."t_0092" ADD CONSTRAINT "con_0161" CHECK (30 = 30);
 
-ALTER TABLE "ai"."t_0093" ADD CONSTRAINT "con_0163" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0095" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
-ALTER TABLE "ai"."t_0093" ADD CONSTRAINT "con_0160" FOREIGN KEY ("c_0085") REFERENCES "ai"."t_0047" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "ai"."t_0092" ADD CONSTRAINT "con_0163" FOREIGN KEY ("p_0123") REFERENCES "auth"."t_0094" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+ALTER TABLE "ai"."t_0092" ADD CONSTRAINT "con_0160" FOREIGN KEY ("c_0085") REFERENCES "ai"."t_0047" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
-CREATE INDEX IF NOT EXISTS "idx_0109" ON "ai"."t_0093" ("p_0123");
-CREATE INDEX IF NOT EXISTS "idx_0106" ON "ai"."t_0093" ("c_0085");
-CREATE INDEX IF NOT EXISTS "idx_0108" ON "ai"."t_0093" ("c_0470");
-CREATE INDEX IF NOT EXISTS "idx_0107" ON "ai"."t_0093" ("c_0094");
+CREATE INDEX IF NOT EXISTS "idx_0109" ON "ai"."t_0092" ("p_0123");
+CREATE INDEX IF NOT EXISTS "idx_0106" ON "ai"."t_0092" ("c_0085");
+CREATE INDEX IF NOT EXISTS "idx_0108" ON "ai"."t_0092" ("c_0470");
+CREATE INDEX IF NOT EXISTS "idx_0107" ON "ai"."t_0092" ("c_0094");
 
-ALTER TABLE "ai"."t_0093" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "ai"."t_0092" ENABLE ROW LEVEL SECURITY;
 
-GRANT SELECT, INSERT, UPDATE ON TABLE "ai"."t_0093" TO "authenticated";
-GRANT ALL ON TABLE "ai"."t_0093" TO "service_role";
+GRANT SELECT, INSERT, UPDATE ON TABLE "ai"."t_0092" TO "authenticated";
+GRANT ALL ON TABLE "ai"."t_0092" TO "service_role";
 
-CREATE OR REPLACE FUNCTION "ai"."f_0094"() RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION "ai"."f_0094"() RETURNS TRIGGER AS $$
+BEGIN
+  NEW.c_0525 = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-CREATE TRIGGER "trg_0026" BEFORE UPDATE ON "ai"."t_0093"
+CREATE TRIGGER "trg_0026" BEFORE UPDATE ON "ai"."t_0092"
   FOR EACH ROW EXECUTE FUNCTION "ai"."f_0094"();
 
-CREATE OR REPLACE FUNCTION "ai"."f_0003"(p_0122 UUID) RETURNS INTEGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql SECURITY DEFINER;
+CREATE OR REPLACE FUNCTION "ai"."f_0003"(p_0122 UUID) RETURNS INTEGER AS $$
+DECLARE
+  affected_rows INTEGER;
+BEGIN
+  
+  
+  
+  BEGIN
+    PERFORM set_config('_', '_', true);
+    UPDATE "ai"."t_0044"
+    SET "p_0123" = '00000000-0000-0000-0000-000000000000'::uuid,
+        "c_0372"  = '_'
+    WHERE "p_0123" = p_0122;
+    GET DIAGNOSTICS affected_rows = ROW_COUNT;
+    PERFORM set_config('_', '_', true);
+    RETURN affected_rows;
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM set_config('_', '_', true);
+    RAISE;
+  END;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 REVOKE ALL ON FUNCTION "ai"."f_0003"(UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION "ai"."f_0003"(UUID) TO "service_role";
@@ -2262,7 +4657,17 @@ RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = '_'
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM "ai"."t_0047"
+    WHERE "c_0180" < now();
+
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$$;
 
 ALTER FUNCTION "ai"."f_0045"() OWNER TO "supabase_admin";
 
@@ -2270,7 +4675,18 @@ GRANT EXECUTE ON FUNCTION "ai"."f_0045"() TO "service_role";
 REVOKE EXECUTE ON FUNCTION "ai"."f_0045"() FROM "authenticated";
 REVOKE EXECUTE ON FUNCTION "ai"."f_0045"() FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION "ai"."f_0074"() RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION "ai"."f_0074"() RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('_', true) = '_' THEN
+    IF TG_OP = '_' THEN
+      RETURN OLD;
+    ELSE
+      RETURN NEW;
+    END IF;
+  END IF;
+  RAISE EXCEPTION '_';
+END;
+$$ LANGUAGE plpgsql;
 
 CREATE TRIGGER "trg_0012" BEFORE UPDATE ON "ai"."t_0044"
   FOR EACH ROW EXECUTE FUNCTION "ai"."f_0074"();
@@ -2278,9 +4694,25 @@ CREATE TRIGGER "trg_0012" BEFORE UPDATE ON "ai"."t_0044"
 CREATE TRIGGER "trg_0011" BEFORE DELETE ON "ai"."t_0044"
   FOR EACH ROW EXECUTE FUNCTION "ai"."f_0074"();
 
-CREATE OR REPLACE FUNCTION "ai"."f_0042"() RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION "ai"."f_0042"() RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.c_0470 = NEW.c_0470 THEN
+    RETURN NEW;
+  END IF;
 
-CREATE TRIGGER "trg_0027" BEFORE UPDATE OF "c_0470" ON "ai"."t_0093"
+  IF OLD.c_0470 IN ('v1', 'v1', 'v1') THEN
+    RAISE EXCEPTION '_', OLD.c_0470, NEW.c_0470;
+  END IF;
+
+  IF OLD.c_0470 = 'v1' AND NEW.c_0470 NOT IN ('v1', 'v1', 'v1') THEN
+    RAISE EXCEPTION '_', NEW.c_0470;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "trg_0027" BEFORE UPDATE OF "c_0470" ON "ai"."t_0092"
   FOR EACH ROW EXECUTE FUNCTION "ai"."f_0042"();
 
 CREATE POLICY "pol_0064" ON "ai"."t_0044" FOR INSERT TO "authenticated" WITH CHECK (31 = 31);
@@ -2297,33 +4729,33 @@ CREATE POLICY "pol_0063" ON "ai"."t_0047" FOR DELETE TO "authenticated" USING ((
 
 CREATE POLICY "pol_0034" ON "ai"."t_0047" FOR ALL TO "service_role" USING (true);
 
-CREATE POLICY "pol_0069" ON "ai"."t_0069" FOR SELECT TO "authenticated" USING (
+CREATE POLICY "pol_0069" ON "ai"."t_0068" FOR SELECT TO "authenticated" USING (
     EXISTS (
         SELECT 1 FROM "ai"."t_0047"
-        WHERE "t_0047"."id" = "t_0069"."c_0085"
+        WHERE "t_0047"."id" = "t_0068"."c_0085"
         AND "t_0047"."p_0123" = ( SELECT auth.f_0100() AS f_0100)
     )
 );
 
-CREATE POLICY "pol_0058" ON "ai"."t_0069" FOR INSERT TO "authenticated" WITH CHECK (34 = 34);
+CREATE POLICY "pol_0058" ON "ai"."t_0068" FOR INSERT TO "authenticated" WITH CHECK (34 = 34);
 
-CREATE POLICY "pol_0062" ON "ai"."t_0069" FOR DELETE TO "authenticated" USING (
+CREATE POLICY "pol_0062" ON "ai"."t_0068" FOR DELETE TO "authenticated" USING (
     EXISTS (
         SELECT 1 FROM "ai"."t_0047"
-        WHERE "t_0047"."id" = "t_0069"."c_0085"
+        WHERE "t_0047"."id" = "t_0068"."c_0085"
         AND "t_0047"."p_0123" = ( SELECT auth.f_0100() AS f_0100)
     )
 );
 
-CREATE POLICY "pol_0039" ON "ai"."t_0069" FOR ALL TO "service_role" USING (true);
+CREATE POLICY "pol_0039" ON "ai"."t_0068" FOR ALL TO "service_role" USING (true);
 
-CREATE POLICY "pol_0073" ON "ai"."t_0093" FOR SELECT TO "authenticated" USING ((p_0123 = ( SELECT auth.f_0100() AS f_0100)));
+CREATE POLICY "pol_0073" ON "ai"."t_0092" FOR SELECT TO "authenticated" USING ((p_0123 = ( SELECT auth.f_0100() AS f_0100)));
 
-CREATE POLICY "pol_0061" ON "ai"."t_0093" FOR INSERT TO "authenticated" WITH CHECK (35 = 35);
+CREATE POLICY "pol_0061" ON "ai"."t_0092" FOR INSERT TO "authenticated" WITH CHECK (35 = 35);
 
-CREATE POLICY "pol_0067" ON "ai"."t_0093" FOR UPDATE TO "authenticated" USING ((p_0123 = ( SELECT auth.f_0100() AS f_0100))) WITH CHECK (36 = 36);
+CREATE POLICY "pol_0067" ON "ai"."t_0092" FOR UPDATE TO "authenticated" USING ((p_0123 = ( SELECT auth.f_0100() AS f_0100))) WITH CHECK (36 = 36);
 
-CREATE POLICY "pol_0042" ON "ai"."t_0093" FOR ALL TO "service_role" USING (true);
+CREATE POLICY "pol_0042" ON "ai"."t_0092" FOR ALL TO "service_role" USING (true);
 
 
 
@@ -3192,7 +5624,7 @@ CREATE TABLE IF NOT EXISTS "mrv"."t_0017" (
 CREATE UNIQUE INDEX IF NOT EXISTS "idx_0018"
 ON "mrv"."t_0017"("c_0233", "c_0394");
 
-CREATE TABLE IF NOT EXISTS mrv.t_0073 (
+CREATE TABLE IF NOT EXISTS mrv.t_0072 (
     c_0230 UUID PRIMARY KEY,
     
     p_0123 UUID NOT NULL,
@@ -3202,9 +5634,9 @@ CREATE TABLE IF NOT EXISTS mrv.t_0073 (
 );
 
 CREATE INDEX IF NOT EXISTS "idx_0089"
-ON mrv.t_0073 (c_0094);
+ON mrv.t_0072 (c_0094);
 
-COMMENT ON TABLE mrv.t_0073 IS E'_';
+COMMENT ON TABLE mrv.t_0072 IS E'_';
 
 
 CREATE TABLE "mrv"."t_0023" (
@@ -3227,7 +5659,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "idx_0025" ON "mrv"."t_0023"("c_0256") WHERE "
 
 
 
-CREATE TABLE mrv.t_0082 (
+CREATE TABLE mrv.t_0081 (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     c_0423  UUID NOT NULL,
     c_0302 UUID,
@@ -3250,59 +5682,72 @@ CREATE TABLE mrv.t_0082 (
 );
 
 
-ALTER TABLE mrv.t_0082
+ALTER TABLE mrv.t_0081
     ADD CONSTRAINT con_0145
-    FOREIGN KEY (c_0423) REFERENCES mrv.t_0084(id) ON DELETE CASCADE;
+    FOREIGN KEY (c_0423) REFERENCES mrv.t_0083(id) ON DELETE CASCADE;
 
-ALTER TABLE mrv.t_0082
+ALTER TABLE mrv.t_0081
     ADD CONSTRAINT con_0144
-    FOREIGN KEY (c_0302) REFERENCES mrv.t_0083(id) ON DELETE SET NULL;
+    FOREIGN KEY (c_0302) REFERENCES mrv.t_0082(id) ON DELETE SET NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_0095
-    ON mrv.t_0082 (c_0302)
+    ON mrv.t_0081 (c_0302)
     WHERE c_0302 IS NOT NULL;
 
 
-ALTER TABLE mrv.t_0082
+ALTER TABLE mrv.t_0081
     ADD CONSTRAINT con_0143 CHECK (57 = 57);
 
 CREATE OR REPLACE FUNCTION mrv.f_0084() RETURNS TRIGGER
-LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.c_0302 IS NULL AND OLD.c_0302 IS NOT NULL THEN
+        NEW.c_0301 = '_';
+        NEW.c_0300 = NULL;
+    END IF;
+    RETURN NEW;
+END;
+$$;
 
 CREATE TRIGGER trg_0032
-    BEFORE UPDATE ON mrv.t_0082
+    BEFORE UPDATE ON mrv.t_0081
     FOR EACH ROW EXECUTE FUNCTION mrv.f_0084();
 
 
 CREATE INDEX IF NOT EXISTS idx_0093
-    ON mrv.t_0082 USING GIST (c_0293);
+    ON mrv.t_0081 USING GIST (c_0293);
 
 CREATE INDEX IF NOT EXISTS idx_0096
-    ON mrv.t_0082 (c_0423);
+    ON mrv.t_0081 (c_0423);
 
 CREATE INDEX IF NOT EXISTS idx_0094
-    ON mrv.t_0082 (c_0302)
+    ON mrv.t_0081 (c_0302)
     WHERE c_0302 IS NOT NULL;
 
 
 CREATE OR REPLACE FUNCTION mrv.f_0092() RETURNS TRIGGER
-LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
+LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.c_0525 = clock_timestamp();
+    RETURN NEW;
+END;
+$$;
 
 CREATE TRIGGER trg_0034
-    BEFORE UPDATE ON mrv.t_0082
+    BEFORE UPDATE ON mrv.t_0081
     FOR EACH ROW EXECUTE FUNCTION mrv.f_0092();
 
 
-COMMENT ON COLUMN mrv.t_0082.c_0301 IS E'_';
-COMMENT ON COLUMN mrv.t_0082.c_0302 IS E'_';
-COMMENT ON COLUMN mrv.t_0082.c_0300 IS E'_';
-COMMENT ON COLUMN mrv.t_0082.c_0094 IS E'_';
-COMMENT ON COLUMN mrv.t_0082.c_0525 IS E'_';
+COMMENT ON COLUMN mrv.t_0081.c_0301 IS E'_';
+COMMENT ON COLUMN mrv.t_0081.c_0302 IS E'_';
+COMMENT ON COLUMN mrv.t_0081.c_0300 IS E'_';
+COMMENT ON COLUMN mrv.t_0081.c_0094 IS E'_';
+COMMENT ON COLUMN mrv.t_0081.c_0525 IS E'_';
 
 
 
 
-CREATE TABLE mrv.t_0083 (
+CREATE TABLE mrv.t_0082 (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     c_0423  UUID NOT NULL,
     c_0477           UUID NOT NULL,
@@ -3316,33 +5761,44 @@ CREATE TABLE mrv.t_0083 (
 );
 
 
-ALTER TABLE mrv.t_0083
+ALTER TABLE mrv.t_0082
     ADD CONSTRAINT con_0146
-    FOREIGN KEY (c_0423) REFERENCES mrv.t_0084(id) ON DELETE CASCADE;
+    FOREIGN KEY (c_0423) REFERENCES mrv.t_0083(id) ON DELETE CASCADE;
 
-ALTER TABLE mrv.t_0083
+ALTER TABLE mrv.t_0082
     ADD CONSTRAINT con_0147
-    FOREIGN KEY (c_0477) REFERENCES mrv.t_0085(id) ON DELETE CASCADE;
+    FOREIGN KEY (c_0477) REFERENCES mrv.t_0084(id) ON DELETE CASCADE;
 
 CREATE OR REPLACE FUNCTION mrv.f_0126() RETURNS TRIGGER
-LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv.t_0084
+        WHERE id = NEW.c_0477 AND c_0423 = NEW.c_0423
+    ) THEN
+        RAISE EXCEPTION '_',
+            NEW.c_0477, NEW.c_0423;
+    END IF;
+    RETURN NEW;
+END;
+$$;
 
 CREATE TRIGGER trg_0035
-    BEFORE INSERT OR UPDATE ON mrv.t_0083
+    BEFORE INSERT OR UPDATE ON mrv.t_0082
     FOR EACH ROW EXECUTE FUNCTION mrv.f_0126();
 
 
 CREATE INDEX IF NOT EXISTS idx_0097
-    ON mrv.t_0083 USING GIST (c_0293);
+    ON mrv.t_0082 USING GIST (c_0293);
 
 CREATE INDEX IF NOT EXISTS idx_0098
-    ON mrv.t_0083 (c_0423);
+    ON mrv.t_0082 (c_0423);
 
 CREATE INDEX IF NOT EXISTS idx_0099
-    ON mrv.t_0083 (c_0477);
+    ON mrv.t_0082 (c_0477);
 
 
-COMMENT ON COLUMN mrv.t_0083.c_0094 IS E'_';
+COMMENT ON COLUMN mrv.t_0082.c_0094 IS E'_';
 
 
 
@@ -3355,7 +5811,7 @@ SELECT 1 AS placeholder;
 
 
 
-CREATE TABLE mrv.t_0084 (
+CREATE TABLE mrv.t_0083 (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     c_0531   UUID NOT NULL,
     con_0119        UUID NOT NULL,
@@ -3369,45 +5825,50 @@ CREATE TABLE mrv.t_0084 (
 );
 
 
-ALTER TABLE mrv.t_0084
+ALTER TABLE mrv.t_0083
     ADD CONSTRAINT con_0150
     FOREIGN KEY (c_0531) REFERENCES mrv."t_0032"(id) ON DELETE CASCADE;
 
 
-ALTER TABLE mrv.t_0084
+ALTER TABLE mrv.t_0083
     ADD CONSTRAINT con_0148 CHECK (58 = 58);
 
-ALTER TABLE mrv.t_0084
+ALTER TABLE mrv.t_0083
     ADD CONSTRAINT con_0149 CHECK (59 = 59);
 
 
 CREATE INDEX IF NOT EXISTS idx_0101
-    ON mrv.t_0084 (c_0531);
+    ON mrv.t_0083 (c_0531);
 
 CREATE INDEX IF NOT EXISTS idx_0100
-    ON mrv.t_0084 (con_0119);
+    ON mrv.t_0083 (con_0119);
 
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_0144
-    ON mrv.t_0084 (c_0230)
+    ON mrv.t_0083 (c_0230)
     WHERE c_0230 IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION mrv.f_0093() RETURNS TRIGGER
-LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
+LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.c_0525 = now();
+    RETURN NEW;
+END;
+$$;
 
 CREATE TRIGGER trg_0033
-    BEFORE UPDATE ON mrv.t_0084
+    BEFORE UPDATE ON mrv.t_0083
     FOR EACH ROW EXECUTE FUNCTION mrv.f_0093();
 
 
-COMMENT ON COLUMN mrv.t_0084.c_0470 IS E'_';
-COMMENT ON COLUMN mrv.t_0084.c_0094 IS E'_';
-COMMENT ON COLUMN mrv.t_0084.c_0525 IS E'_';
+COMMENT ON COLUMN mrv.t_0083.c_0470 IS E'_';
+COMMENT ON COLUMN mrv.t_0083.c_0094 IS E'_';
+COMMENT ON COLUMN mrv.t_0083.c_0525 IS E'_';
 
 
 
 
-CREATE TABLE mrv.t_0085 (
+CREATE TABLE mrv.t_0084 (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     c_0423  UUID NOT NULL,
     c_0478        INT NOT NULL,
@@ -3422,26 +5883,26 @@ CREATE TABLE mrv.t_0085 (
 );
 
 
-ALTER TABLE mrv.t_0085
+ALTER TABLE mrv.t_0084
     ADD CONSTRAINT con_0152
-    FOREIGN KEY (c_0423) REFERENCES mrv.t_0084(id) ON DELETE CASCADE;
+    FOREIGN KEY (c_0423) REFERENCES mrv.t_0083(id) ON DELETE CASCADE;
 
 
 CREATE INDEX IF NOT EXISTS idx_0102
-    ON mrv.t_0085 USING GIST (geometry);
+    ON mrv.t_0084 USING GIST (geometry);
 
 CREATE INDEX IF NOT EXISTS idx_0103
-    ON mrv.t_0085 (c_0423);
+    ON mrv.t_0084 (c_0423);
 
-ALTER TABLE mrv.t_0085
+ALTER TABLE mrv.t_0084
     ADD CONSTRAINT con_0151 UNIQUE (c_0423, c_0478);
 
 
-COMMENT ON COLUMN mrv.t_0085.c_0094 IS E'_';
+COMMENT ON COLUMN mrv.t_0084.c_0094 IS E'_';
 
 
 
-CREATE TABLE mrv.t_0086 (
+CREATE TABLE mrv.t_0085 (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     c_0423  UUID NOT NULL,
     c_0200            TEXT NOT NULL,
@@ -3455,27 +5916,27 @@ CREATE TABLE mrv.t_0086 (
 );
 
 
-ALTER TABLE mrv.t_0086
+ALTER TABLE mrv.t_0085
     ADD CONSTRAINT con_0154
-    FOREIGN KEY (c_0423) REFERENCES mrv.t_0084(id) ON DELETE CASCADE;
+    FOREIGN KEY (c_0423) REFERENCES mrv.t_0083(id) ON DELETE CASCADE;
 
 
-ALTER TABLE mrv.t_0086
+ALTER TABLE mrv.t_0085
     ADD CONSTRAINT con_0153 CHECK (60 = 60);
 
-ALTER TABLE mrv.t_0086
+ALTER TABLE mrv.t_0085
     ADD CONSTRAINT con_0155 CHECK (61 = 61);
 
 
 CREATE INDEX IF NOT EXISTS idx_0104
-    ON mrv.t_0086 (c_0423);
+    ON mrv.t_0085 (c_0423);
 
 
-COMMENT ON COLUMN mrv.t_0086.c_0470 IS E'_';
-COMMENT ON COLUMN mrv.t_0086.c_0351 IS E'_';
-COMMENT ON COLUMN mrv.t_0086.c_0352 IS E'_';
-COMMENT ON COLUMN mrv.t_0086.c_0175 IS E'_';
-COMMENT ON COLUMN mrv.t_0086.c_0526 IS E'_';
+COMMENT ON COLUMN mrv.t_0085.c_0470 IS E'_';
+COMMENT ON COLUMN mrv.t_0085.c_0351 IS E'_';
+COMMENT ON COLUMN mrv.t_0085.c_0352 IS E'_';
+COMMENT ON COLUMN mrv.t_0085.c_0175 IS E'_';
+COMMENT ON COLUMN mrv.t_0085.c_0526 IS E'_';
 
 CREATE TABLE IF NOT EXISTS "mrv"."t_0031" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -3494,7 +5955,7 @@ CREATE TABLE IF NOT EXISTS "mrv"."t_0031" (
     CONSTRAINT "con_0075"
         CHECK (62 = 62),
     CONSTRAINT "con_0077"
-        FOREIGN KEY ("c_0482") REFERENCES "public"."t_0092"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+        FOREIGN KEY ("c_0482") REFERENCES "public"."t_0091"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "con_0074"
         FOREIGN KEY ("c_0235") REFERENCES "mrv"."t_0037"("id") ON DELETE SET NULL
 );
@@ -3784,7 +6245,7 @@ ON DELETE CASCADE ON UPDATE CASCADE;
 
 ALTER TABLE "mrv"."t_0037"
 ADD CONSTRAINT "con_0090"
-FOREIGN KEY ("c_0482") REFERENCES "public"."t_0092"("id")
+FOREIGN KEY ("c_0482") REFERENCES "public"."t_0091"("id")
 ON DELETE RESTRICT ON UPDATE CASCADE;
 
 
@@ -3970,7 +6431,40 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+    v_supplier_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_supplier_id := (
+        auth.f_0065()
+        -> '_' -> '_' ->> 0
+    )::uuid;
+
+    IF v_supplier_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.t_0091 s
+        WHERE s.id = v_supplier_id
+          AND s.ty_0034 = 'v1'
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    RETURN QUERY
+    SELECT f.id
+    FROM mrv."t_0012" f
+    WHERE f."c_0171" = v_supplier_id;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0002(
     p_0027 uuid,
@@ -3983,7 +6477,78 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+    v_facility_id uuid;
+    v_link_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    BEGIN
+        PERFORM p_0029::mrv."ty_0007";
+    EXCEPTION WHEN invalid_text_representation THEN
+        RAISE EXCEPTION '_', p_0029;
+    END;
+
+    
+    IF NOT mrv.f_0112(p_0029, p_0027) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv."t_0020"
+        WHERE id = p_0076
+          AND (
+            ("c_0399" = p_0027 AND "c_0400" = p_0029::mrv."ty_0007")
+            OR
+            ("c_0454" = p_0027 AND "c_0455" = p_0029::mrv."ty_0007")
+          )
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    IF p_0033 IS NULL OR array_length(p_0033, 1) IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    FOREACH v_facility_id IN ARRAY p_0033
+    LOOP
+        
+        IF NOT EXISTS (
+            SELECT 1 FROM mrv."t_0010"
+            WHERE id = v_facility_id
+              AND "c_0171" = p_0027
+              AND "c_0172" = p_0029::mrv."ty_0007"
+        ) THEN
+            RAISE EXCEPTION '_', v_facility_id, p_0027;
+        END IF;
+
+        
+        IF EXISTS (
+            SELECT 1 FROM mrv."t_0021"
+            WHERE "c_0359" = p_0076 AND "c_0182" = v_facility_id
+        ) THEN
+            CONTINUE;
+        END IF;
+
+        
+        INSERT INTO mrv."t_0021" (id, "c_0359", "c_0182", "c_0092")
+        VALUES (gen_random_uuid(), p_0076, v_facility_id, NOW())
+        RETURNING id INTO v_link_id;
+
+        RETURN QUERY SELECT pf.id, pf."c_0359", pf."c_0182", pf."c_0092"
+                     FROM mrv."t_0021" pf WHERE pf.id = v_link_id;
+    END LOOP;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0014(
     p_0032 uuid,
@@ -3994,7 +6559,54 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+    v_facility_entity_type text;
+    v_facility_entity_id uuid;
+    v_farmer_id uuid;
+    v_result_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    SELECT "c_0172"::text, "c_0171"
+    INTO v_facility_entity_type, v_facility_entity_id
+    FROM mrv."t_0010"
+    WHERE id = p_0032;
+
+    IF v_facility_entity_type IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    IF NOT mrv.f_0112(v_facility_entity_type, v_facility_entity_id) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    IF p_0038 IS NULL OR array_length(p_0038, 1) IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    FOREACH v_farmer_id IN ARRAY p_0038
+    LOOP
+        INSERT INTO mrv."t_0011" (id, "c_0182", "c_0191", "c_0019", "c_0020", "c_0092", "c_0524")
+        VALUES (gen_random_uuid(), p_0032, v_farmer_id, NOW(), v_current_user_id, NOW(), NOW())
+        ON CONFLICT ("c_0182", "c_0191")
+        DO UPDATE SET "c_0020" = v_current_user_id, "c_0524" = NOW()
+        RETURNING id INTO v_result_id;
+
+        RETURN QUERY SELECT ff.id, ff."c_0182", ff."c_0191", ff."c_0019",
+                            ff."c_0020", ff."c_0092", ff."c_0524"
+                     FROM mrv."t_0011" ff WHERE ff.id = v_result_id;
+    END LOOP;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0015(
     p_0076 uuid,
@@ -4013,7 +6625,54 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_reporting_entity_id uuid;
+    v_reporting_entity_type text;
+    v_current_user_id uuid;
+    v_user_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    SELECT p."c_0399", p."c_0400"::text
+    INTO v_reporting_entity_id, v_reporting_entity_type
+    FROM mrv."t_0020" p
+    WHERE p.id = p_0076;
+
+    IF v_reporting_entity_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0122(v_reporting_entity_id, v_reporting_entity_type) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    FOREACH v_user_id IN ARRAY p_0113
+    LOOP
+        RETURN QUERY
+        INSERT INTO mrv."t_0022" (
+            "c_0359", "c_0191", "c_0020", "c_0019", "c_0092", "c_0524"
+        ) VALUES (
+            p_0076, v_user_id, v_current_user_id, NOW(), NOW(), NOW()
+        )
+        ON CONFLICT ("c_0359", "c_0191")
+        DO UPDATE SET
+            "c_0020" = EXCLUDED."c_0020",
+            "c_0524" = NOW()
+        RETURNING
+            "t_0022".id,
+            "t_0022"."c_0359",
+            "t_0022"."c_0191",
+            "t_0022"."c_0019",
+            "t_0022"."c_0020",
+            "t_0022"."c_0092",
+            "t_0022"."c_0524";
+    END LOOP;
+END;
+$$;
 
 
 
@@ -4031,7 +6690,49 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+BEGIN
+    IF array_length(p_0036, 1) IS NULL THEN
+        RETURN;
+    END IF;
+
+    RETURN QUERY
+    WITH dom_results AS (
+        SELECT DISTINCT ON (dcr."c_0186")
+            dcr."c_0186" AS p_0004,
+            dcr."c_0319" / 1000.0 AS c_0059,
+            dcr."c_0054" AS c_0055
+        FROM mrv."t_0007" dcr
+        WHERE dcr."c_0186" = ANY(p_0036)
+            AND dcr."c_0056" = p_0117
+            AND dcr."c_0319" > 0
+        ORDER BY dcr."c_0186", dcr."c_0051" DESC
+    ),
+    soil_metrics AS (
+        SELECT DISTINCT ON (fsm."c_0186")
+            fsm."c_0186" AS p_0004,
+            fsm.value AS c_0059,
+            NULL::jsonb AS c_0055
+        FROM mrv."t_0013" fsm
+        WHERE fsm."c_0186" = ANY(p_0036)
+            AND fsm."c_0355" = 'v1'
+            AND fsm."c_0468" <= make_date(p_0117, 12, 31)
+            AND fsm."c_0167" >= make_date(p_0117, 1, 1)
+            AND fsm.value > 0
+        ORDER BY fsm."c_0186", fsm."c_0468" DESC, fsm."c_0167" DESC
+    ),
+    all_farms AS (
+        SELECT unnest(p_0036) AS p_0004
+    )
+    SELECT
+        af.p_0004,
+        COALESCE(dr.c_0059, sm.c_0059, 0.0)::double precision,
+        COALESCE(dr.c_0055, sm.c_0055)
+    FROM all_farms af
+    LEFT JOIN dom_results dr ON dr.p_0004 = af.p_0004
+    LEFT JOIN soil_metrics sm ON sm.p_0004 = af.p_0004 AND dr.p_0004 IS NULL;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0017(
     p_0073 uuid
@@ -4068,7 +6769,123 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+    v_supplier_id uuid;
+    v_plan RECORD;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0073 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_supplier_id := (
+        auth.f_0065()
+        -> '_' -> '_' ->> 0
+    )::uuid;
+
+    IF v_supplier_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.t_0091 s
+        WHERE s.id = v_supplier_id
+          AND s.ty_0034 = 'v1'
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    SELECT cp.*
+    INTO v_plan
+    FROM mrv."t_0001" cp
+    WHERE cp.id = p_0073
+      AND cp."c_0171" = v_supplier_id;
+
+    IF v_plan IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF v_plan.c_0470 = 'v1'."ty_0002" THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF v_plan.c_0470 = 'v1'."ty_0002" THEN
+        RETURN QUERY SELECT
+            v_plan.id,
+            v_plan."c_0171",
+            v_plan."c_0270",
+            v_plan.c_0470::text,
+            v_plan."c_0217"::text,
+            v_plan."c_0490",
+            v_plan."c_0491",
+            v_plan."c_0120",
+            v_plan."c_0035",
+            v_plan."c_0249",
+            v_plan."c_0117",
+            v_plan."c_0251",
+            v_plan."c_0119",
+            v_plan."c_0250",
+            v_plan."c_0118",
+            v_plan."c_0252",
+            v_plan."c_0205",
+            v_plan."c_0254",
+            v_plan."c_0207",
+            v_plan."c_0253",
+            v_plan."c_0206",
+            v_plan."c_0174",
+            v_plan.c_0411,
+            ARRAY(SELECT cpf."c_0186" FROM mrv."t_0002" cpf WHERE cpf."c_0057" = v_plan.id AND cpf."c_0186" IS NOT NULL),
+            v_plan."c_0092",
+            v_plan."c_0524";
+        RETURN;
+    END IF;
+
+    UPDATE mrv."t_0001"
+    SET c_0470 = 'v1'."ty_0002",
+        "c_0174" = NULL,
+        "c_0524" = NOW()
+    WHERE mrv."t_0001".id = p_0073
+      AND mrv."t_0001"."c_0171" = v_supplier_id;
+
+    RETURN QUERY SELECT
+        cp.id,
+        cp."c_0171",
+        cp."c_0270",
+        cp.c_0470::text,
+        cp."c_0217"::text,
+        cp."c_0490",
+        cp."c_0491",
+        cp."c_0120",
+        cp."c_0035",
+        cp."c_0249",
+        cp."c_0117",
+        cp."c_0251",
+        cp."c_0119",
+        cp."c_0250",
+        cp."c_0118",
+        cp."c_0252",
+        cp."c_0205",
+        cp."c_0254",
+        cp."c_0207",
+        cp."c_0253",
+        cp."c_0206",
+        cp."c_0174",
+        cp.c_0411,
+        ARRAY(SELECT cpf."c_0186" FROM mrv."t_0002" cpf WHERE cpf."c_0057" = cp.id AND cpf."c_0186" IS NOT NULL),
+        cp."c_0092",
+        cp."c_0524"
+    FROM mrv."t_0001" cp
+    WHERE cp.id = p_0073
+      AND cp."c_0171" = v_supplier_id;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0027()
 RETURNS integer
@@ -4076,7 +6893,17 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+DECLARE
+    deleted_count integer;
+BEGIN
+    DELETE FROM mrv.t_0072
+    WHERE c_0094 < now() - INTERVAL '1 day';
+
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0029(
     p_0104 uuid,
@@ -4138,7 +6965,136 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_plan_id uuid;
+BEGIN
+    IF auth.f_0100() IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0104 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM public.t_0091 s
+        WHERE s.id = p_0104
+          AND s.ty_0034 = 'v1'
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0036 IS NOT NULL AND array_length(p_0036, 1) > 0 THEN
+        IF EXISTS (
+            SELECT 1 FROM unnest(p_0036) AS requested_id
+            WHERE NOT EXISTS (
+                SELECT 1 FROM mrv."t_0012" f
+                WHERE f.id = requested_id
+                  AND f."c_0171" = p_0104
+            )
+        ) THEN
+            RAISE EXCEPTION '_';
+        END IF;
+    END IF;
+
+    INSERT INTO mrv."t_0001" (
+        "c_0171",
+        "c_0292",
+        "c_0270",
+        "c_0470",
+        "c_0217",
+        "c_0490",
+        "c_0491",
+        "c_0120",
+        "c_0035",
+        "c_0249",
+        "c_0117",
+        "c_0251",
+        "c_0119",
+        "c_0250",
+        "c_0118",
+        "c_0121",
+        "c_0252",
+        "c_0205",
+        "c_0254",
+        "c_0207",
+        "c_0253",
+        "c_0206",
+        "c_0208",
+        "c_0174",
+        "c_0411"
+    ) VALUES (
+        p_0104,
+        p_0067,
+        NULL,
+        'v1'::mrv."ty_0002",
+        p_0048::mrv."ty_0001",
+        p_0108,
+        p_0109,
+        p_0021,
+        p_0011,
+        p_0057,
+        p_0018,
+        p_0059,
+        p_0020,
+        p_0058,
+        p_0019,
+        p_0022::mrv."ty_0019",
+        p_0060,
+        p_0043,
+        p_0062,
+        p_0045,
+        p_0061,
+        p_0044,
+        p_0046::mrv."ty_0019",
+        NULL,
+        NULL
+    )
+    RETURNING mrv."t_0001".id INTO v_plan_id;
+
+    IF p_0036 IS NOT NULL AND array_length(p_0036, 1) > 0 THEN
+        INSERT INTO mrv."t_0002" ("c_0057", "c_0186")
+        SELECT v_plan_id, unnest(p_0036)
+        ON CONFLICT ("c_0057", "c_0186") DO NOTHING;
+    END IF;
+
+    RETURN QUERY
+    SELECT
+        cp.id,
+        cp."c_0171",
+        cp.c_0292,
+        cp."c_0326",
+        cp."c_0270",
+        cp.c_0470::text,
+        cp."c_0217"::text,
+        cp."c_0490",
+        cp."c_0491",
+        cp."c_0120",
+        cp."c_0035",
+        cp."c_0249",
+        cp."c_0117",
+        cp."c_0251",
+        cp."c_0119",
+        cp."c_0250",
+        cp."c_0118",
+        cp."c_0121"::text,
+        cp."c_0252",
+        cp."c_0205",
+        cp."c_0254",
+        cp."c_0207",
+        cp."c_0253",
+        cp."c_0206",
+        cp."c_0208"::text,
+        cp."c_0174",
+        cp.c_0411,
+        ARRAY(SELECT cpf."c_0186" FROM mrv."t_0002" cpf WHERE cpf."c_0057" = cp.id AND cpf."c_0186" IS NOT NULL),
+        cp."c_0092",
+        cp."c_0524"
+    FROM mrv."t_0001" cp
+    WHERE cp.id = v_plan_id;
+END;
+$$;
 
 COMMENT ON FUNCTION mrv.f_0029(uuid, text, text, int, double precision, double precision, boolean[], boolean, boolean[], boolean, double precision, boolean, double precision, text, boolean, boolean[], boolean, double precision, boolean, double precision, text, uuid[]) IS E'_';
 
@@ -4158,7 +7114,81 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+    v_facility_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    BEGIN
+        PERFORM p_0029::mrv."ty_0007";
+    EXCEPTION WHEN invalid_text_representation THEN
+        RAISE EXCEPTION '_', p_0029;
+    END;
+
+    
+    IF NOT mrv.f_0112(p_0029, p_0027) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0070 IS NULL OR trim(p_0070) = '_' THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0015 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    IF EXISTS (
+        SELECT 1 FROM mrv."t_0010"
+        WHERE "c_0171" = p_0027
+          AND "c_0172" = p_0029::mrv."ty_0007"
+          AND name = p_0070
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    BEGIN
+        PERFORM upper(p_0015)::mrv."ty_0003";
+    EXCEPTION WHEN invalid_text_representation THEN
+        RAISE EXCEPTION '_', p_0015;
+    END;
+
+    
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv."t_0020"
+        WHERE id = p_0076
+          AND (
+            ("c_0399" = p_0027 AND "c_0400" = p_0029::mrv."ty_0007")
+            OR
+            ("c_0454" = p_0027 AND "c_0455" = p_0029::mrv."ty_0007")
+          )
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    INSERT INTO mrv."t_0010" (id, name, c_0479, c_0063, c_0469, "c_0540", "c_0088", "c_0171", "c_0172", "c_0092", "c_0524")
+    VALUES (gen_random_uuid(), trim(p_0070), p_0103, p_0013, p_0101, p_0118, upper(p_0015)::mrv."ty_0003", p_0027, p_0029::mrv."ty_0007", NOW(), NOW())
+    RETURNING id INTO v_facility_id;
+
+    
+    INSERT INTO mrv."t_0021" (id, "c_0359", "c_0182", "c_0092")
+    VALUES (gen_random_uuid(), p_0076, v_facility_id, NOW());
+
+    RETURN QUERY SELECT f.id, f.name, f."c_0171", f."c_0172"::text, f."c_0088"::text,
+                        f.c_0479, f.c_0063, f.c_0469, f."c_0540", f."c_0092", f."c_0524"
+                 FROM mrv."t_0010" f WHERE f.id = v_facility_id;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0031(
     p_0027 uuid,
@@ -4191,7 +7221,168 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+    v_season RECORD;
+    v_result RECORD;
+    v_new_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT (
+        auth.f_0117(p_0026 => p_0027)
+        OR auth.f_0117(p_0104 => p_0027)
+        OR auth.f_0117(p_0037 => p_0027)
+    ) THEN
+        RAISE EXCEPTION '_', p_0027;
+    END IF;
+
+    
+    p_0016 := UPPER(p_0016);
+    IF p_0110 IS NOT NULL THEN
+        p_0110 := UPPER(p_0110);
+    END IF;
+    p_0102 := UPPER(p_0102);
+
+    
+    BEGIN
+        PERFORM p_0016::mrv."ty_0004";
+    EXCEPTION WHEN invalid_text_representation THEN
+        RAISE EXCEPTION '_', p_0016;
+    END;
+
+    IF p_0110 IS NOT NULL THEN
+        BEGIN
+            PERFORM p_0110::mrv."ty_0019";
+        EXCEPTION WHEN invalid_text_representation THEN
+            RAISE EXCEPTION '_', p_0110;
+        END;
+    END IF;
+
+    BEGIN
+        PERFORM p_0102::mrv."ty_0005";
+    EXCEPTION WHEN invalid_text_representation THEN
+        RAISE EXCEPTION '_', p_0102;
+    END;
+
+    
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv."t_0012" f
+        WHERE f.id = p_0035 AND f."c_0171" = p_0027
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    SELECT s."c_0468", s."c_0167"
+    INTO v_season
+    FROM mrv."t_0024" s
+    WHERE s.id = p_0096 AND s."c_0171" = p_0027;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    IF (v_season."c_0468" IS NOT NULL AND p_0074 < v_season."c_0468")
+       OR (v_season."c_0167" IS NOT NULL AND p_0074 > v_season."c_0167") THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0050 IS NOT NULL THEN
+        
+        IF NOT EXISTS (
+            SELECT 1 FROM mrv."t_0006" c
+            WHERE c.id = p_0050 AND c."c_0186" = p_0035
+        ) THEN
+            RAISE EXCEPTION '_';
+        END IF;
+
+        
+        IF UPPER(p_0102) = '_' AND EXISTS (
+            SELECT 1 FROM mrv."t_0006" c
+            WHERE c."c_0186" = p_0035
+              AND c."c_0434" = p_0096
+              AND c.c_0470 = 'v1'."ty_0005"
+              AND c.id != p_0050
+        ) THEN
+            RAISE EXCEPTION '_';
+        END IF;
+
+        UPDATE mrv."t_0006" SET
+            "c_0101" = p_0016::mrv."ty_0004",
+            "c_0349" = p_0074,
+            "c_0221" = p_0049,
+            "c_0497" = p_0110::mrv."ty_0019",
+            "c_0248" = p_0056,
+            "c_0247" = p_0055,
+            "c_0470" = p_0102::mrv."ty_0005",
+            "c_0186" = p_0035,
+            "c_0434" = p_0096,
+            "c_0524" = NOW()
+        WHERE mrv."t_0006".id = p_0050
+        RETURNING * INTO v_result;
+    ELSE
+        
+        IF EXISTS (
+            SELECT 1 FROM mrv."t_0006" c
+            WHERE c."c_0186" = p_0035
+              AND c."c_0434" = p_0096
+              AND c.c_0470 = 'v1'."ty_0005"
+        ) THEN
+            RAISE EXCEPTION '_';
+        END IF;
+
+        v_new_id := gen_random_uuid();
+
+        INSERT INTO mrv."t_0006" (
+            id, "c_0101", "c_0349", "c_0221",
+            "c_0248", "c_0247", "c_0497", "c_0470",
+            "c_0186", "c_0434", "c_0092", "c_0524"
+        ) VALUES (
+            v_new_id,
+            p_0016::mrv."ty_0004",
+            p_0074,
+            p_0049,
+            p_0056,
+            p_0055,
+            p_0110::mrv."ty_0019",
+            p_0102::mrv."ty_0005",
+            p_0035,
+            p_0096,
+            NOW(),
+            NOW()
+        )
+        RETURNING * INTO v_result;
+    END IF;
+
+    INSERT INTO mrv."t_0018" (
+        id, "c_0520", "date", "c_0140", "c_0186", "c_0116", "c_0092", "c_0524"
+    ) VALUES (
+        gen_random_uuid(), 'v1'::mrv."ty_0014",
+        v_result."c_0349", 'null'::jsonb,
+        p_0035, v_result.id, NOW(), NOW()
+    );
+
+    RETURN QUERY SELECT
+        v_result.id,
+        v_result."c_0101"::text AS c_0104,
+        v_result."c_0349"::timestamp AS c_0350,
+        v_result."c_0221"::timestamp AS c_0223,
+        v_result."c_0248" AS c_0261,
+        v_result."c_0247" AS c_0259,
+        v_result."c_0497"::text AS c_0499,
+        v_result."c_0470"::text,
+        v_result."c_0186" AS p_0004,
+        v_result."c_0434" AS c_0435,
+        v_result."c_0092" AS c_0094,
+        v_result."c_0524" AS c_0525;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0032(
     p_0084 uuid,
@@ -4221,7 +7412,161 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_item jsonb;
+    v_procurement RECORD;
+    v_crop_type text;
+    v_country_code text;
+    v_amount float8;
+    v_unit text;
+    v_procurement_date date;
+    v_facility_id uuid;
+    v_total_yield float8;
+    v_facility_entity_id uuid;
+    v_facility_entity_type text;
+    v_current_user_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0122(p_0084, p_0085) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0077 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF jsonb_typeof(p_0077) != '_' THEN
+        RAISE EXCEPTION '_', jsonb_typeof(p_0077);
+    END IF;
+
+    BEGIN
+        PERFORM p_0085::mrv."ty_0007";
+        PERFORM p_0099::mrv."ty_0007";
+    EXCEPTION WHEN invalid_text_representation THEN
+        RAISE EXCEPTION '_',
+            p_0085, p_0099;
+    END;
+
+    IF NOT (
+        (p_0085 = '_' AND (p_0099 = '_' OR p_0099 = '_'))
+        OR (p_0085 = '_' AND p_0099 = '_')
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_0077)
+    LOOP
+        v_crop_type := v_item->>'_';
+        v_country_code := v_item->>'_';
+        v_unit := COALESCE(v_item->>'_', '_');
+
+        IF v_crop_type IS NULL OR v_country_code IS NULL THEN
+            RAISE EXCEPTION '_';
+        END IF;
+
+        BEGIN
+            v_amount := (v_item->>'_')::float8;
+            v_procurement_date := (v_item->>'_')::date;
+            v_facility_id := (v_item->>'_')::uuid;
+            PERFORM v_crop_type::mrv."ty_0004";
+            PERFORM v_country_code::mrv."ty_0003";
+            PERFORM v_unit::mrv."ty_0021";
+        EXCEPTION WHEN invalid_text_representation OR invalid_parameter_value THEN
+            RAISE EXCEPTION '_',
+                v_crop_type, v_country_code, v_unit;
+        END;
+
+        IF p_0099 = '_' AND v_amount IS NOT NULL AND v_amount > 0 THEN
+            SELECT COALESCE(SUM(hr."c_0508"), 0)
+            INTO v_total_yield
+            FROM mrv."t_0016" hr
+            JOIN mrv."t_0006" c ON c.id = hr."c_0116"
+            JOIN mrv."t_0012" f ON f.id = c."c_0186"
+            WHERE c."c_0101"::text = v_crop_type
+                AND c.c_0470 = 'v1'
+                AND f."c_0171" = p_0098;
+
+            IF v_amount > v_total_yield THEN
+                RAISE EXCEPTION '_',
+                    v_amount, v_total_yield, v_crop_type;
+            END IF;
+        END IF;
+
+        INSERT INTO mrv."t_0020" (
+            "c_0101", "c_0088", "c_0357", "c_0521",
+            "c_0358", "c_0169",
+            "c_0399", "c_0400",
+            "c_0454", "c_0455",
+            "c_0093", "c_0092", "c_0524"
+        ) VALUES (
+            v_crop_type::mrv."ty_0004",
+            v_country_code::mrv."ty_0003",
+            v_amount,
+            v_unit::mrv."ty_0021",
+            v_procurement_date,
+            p_0026,
+            p_0084,
+            p_0085::mrv."ty_0007",
+            p_0098,
+            p_0099::mrv."ty_0007",
+            v_current_user_id,
+            NOW(),
+            NOW()
+        )
+        ON CONFLICT ("c_0399", "c_0400", "c_0454", "c_0455", "c_0101", "c_0088")
+        DO UPDATE SET
+            "c_0357" = EXCLUDED."c_0357",
+            "c_0521" = EXCLUDED."c_0521",
+            "c_0358" = COALESCE(EXCLUDED."c_0358", mrv."t_0020"."c_0358"),
+            "c_0524" = NOW()
+        RETURNING * INTO v_procurement;
+
+        IF v_facility_id IS NOT NULL THEN
+            SELECT f."c_0171", f."c_0172"::text
+            INTO v_facility_entity_id, v_facility_entity_type
+            FROM mrv."t_0010" f
+            WHERE f.id = v_facility_id;
+
+            IF v_facility_entity_id IS NULL THEN
+                RAISE EXCEPTION '_',
+                    v_facility_id, v_crop_type, v_country_code;
+            END IF;
+
+            IF v_facility_entity_id != p_0084
+                OR v_facility_entity_type != p_0085 THEN
+                RAISE EXCEPTION '_',
+                    v_facility_id, v_crop_type, v_country_code;
+            END IF;
+
+            INSERT INTO mrv."t_0021" ("c_0359", "c_0182", "c_0092")
+            VALUES (v_procurement.id, v_facility_id, NOW())
+            ON CONFLICT ON CONSTRAINT "procurement_facility_unique"
+            DO NOTHING;
+        END IF;
+
+        RETURN QUERY SELECT
+            v_procurement.id,
+            v_procurement."c_0101"::text,
+            v_procurement."c_0088"::text,
+            v_procurement."c_0357"::float8,
+            v_procurement."c_0521"::text,
+            v_procurement."c_0358"::date,
+            v_procurement."c_0169"::uuid,
+            v_procurement."c_0399"::uuid,
+            v_procurement."c_0400"::text,
+            v_procurement."c_0454"::uuid,
+            v_procurement."c_0455"::text,
+            v_procurement."c_0093"::uuid,
+            v_procurement."c_0092"::timestamptz,
+            v_procurement."c_0524"::timestamptz;
+    END LOOP;
+END;
+$$;
 
 
 
@@ -4243,7 +7588,46 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0117(p_0026 => p_0026) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    EXECUTE format('_', '_', '_');
+
+    INSERT INTO mrv."t_0041" (
+        id, "c_0169", "c_0056", "c_0426",
+        "c_0417", "c_0418", "c_0185", "c_0199",
+        "c_0214", "c_0213"
+    ) VALUES (
+        p_0050, p_0026, p_0012, p_0094,
+        p_0091, p_0092, p_0034, p_0042,
+        v_current_user_id, p_0047
+    );
+
+    IF p_0063 THEN
+        INSERT INTO audit.t_0096 (c_0533, p_0001, action, c_0140)
+        VALUES (
+            v_current_user_id,
+            p_0026,
+            '_',
+            jsonb_build_object(
+                '_', p_0012,
+                '_', p_0034,
+                '_', p_0092
+            )
+        );
+    END IF;
+END;
+$$;
 
 COMMENT ON FUNCTION mrv.f_0033(uuid, uuid, int, text, text, text, int, bigint, timestamptz, boolean) IS E'_';
 
@@ -4262,7 +7646,36 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0069 NOT IN ('_', '_') THEN
+        RAISE EXCEPTION '_', p_0069;
+    END IF;
+
+    IF NOT auth.f_0061() AND NOT auth.f_0117(p_0104 => p_0104) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    EXECUTE format('_', '_', '_');
+
+    INSERT INTO mrv."t_0031" (
+        id, "c_0482", "c_0235", "c_0308",
+        "c_0417", "c_0418", "c_0199",
+        "c_0214", "c_0213"
+    ) VALUES (
+        p_0050, p_0104, p_0052, p_0069,
+        p_0091, p_0092, p_0042,
+        v_current_user_id, p_0047
+    );
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0035(
     p_0050 uuid,
@@ -4279,7 +7692,32 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0061() AND NOT auth.f_0117(p_0104 => p_0104) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    EXECUTE format('_', '_', '_');
+
+    INSERT INTO mrv."t_0041" (
+        id, "c_0482", "c_0426",
+        "c_0417", "c_0418", "c_0185", "c_0199",
+        "c_0214", "c_0213"
+    ) VALUES (
+        p_0050, p_0104, p_0094,
+        p_0091, p_0092, p_0034, p_0042,
+        v_current_user_id, p_0047
+    );
+END;
+$$;
 
 
 
@@ -4304,7 +7742,90 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT (
+        auth.f_0117(p_0037 => p_0027)
+        OR auth.f_0117(p_0104 => p_0027)
+        OR auth.f_0117(p_0026 => p_0027)
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    RETURN QUERY
+    WITH c_0195 AS (
+        SELECT f.id AS p_0004, f.name AS c_0190
+        FROM mrv."t_0012" f
+        WHERE f."c_0171" = p_0027
+    ),
+    crop_data AS (
+        SELECT DISTINCT c."c_0186" AS p_0004
+        FROM mrv."t_0006" c
+        JOIN mrv."t_0016" hr ON hr."c_0116" = c.id
+        WHERE c."c_0186" IN (SELECT p_0004 FROM c_0195)
+            AND c.c_0470 = 'v1'
+    ),
+    soil_data AS (
+        SELECT DISTINCT p_0004 FROM (
+            SELECT "c_0186" AS p_0004
+            FROM mrv."t_0007"
+            WHERE "c_0186" IN (SELECT p_0004 FROM c_0195)
+            UNION
+            SELECT "c_0186" AS p_0004
+            FROM mrv."t_0013"
+            WHERE "c_0186" IN (SELECT p_0004 FROM c_0195)
+                AND "c_0355" = 'v1'
+        ) soil_union
+    ),
+    farm_status AS (
+        SELECT
+            f.p_0004,
+            f.c_0190,
+            (cd.p_0004 IS NOT NULL) AS c_0226,
+            (sd.p_0004 IS NOT NULL) AS c_0227,
+            (cd.p_0004 IS NOT NULL AND sd.p_0004 IS NOT NULL) AS c_0260
+        FROM c_0195 f
+        LEFT JOIN crop_data cd ON cd.p_0004 = f.p_0004
+        LEFT JOIN soil_data sd ON sd.p_0004 = f.p_0004
+    ),
+    farm_crops AS (
+        SELECT DISTINCT c."c_0186" AS p_0004, c."c_0101"::text AS c_0104
+        FROM mrv."t_0006" c
+        WHERE c."c_0186" IN (SELECT p_0004 FROM c_0195)
+            AND c.c_0470 = 'v1'
+    ),
+    counts AS (
+        SELECT
+            COUNT(*) AS c_0511,
+            COUNT(*) FILTER (WHERE c_0260) AS c_0076
+        FROM farm_status
+    )
+    SELECT
+        CASE WHEN c.c_0511 > 0
+            THEN (c.c_0076::double precision / c.c_0511::double precision) * 100.0
+            ELSE 0.0
+        END AS c_0365,
+        c.c_0076::int,
+        c.c_0511::int,
+        fs.p_0004,
+        fs.c_0190,
+        fs.c_0226,
+        fs.c_0227,
+        fs.c_0260,
+        fc.c_0104
+    FROM farm_status fs
+    CROSS JOIN counts c
+    LEFT JOIN farm_crops fc ON fc.p_0004 = fs.p_0004;
+END;
+$$;
 
 
 
@@ -4326,7 +7847,242 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0117(p_0026 => p_0026) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0117 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0117 < 2000 OR p_0117 > EXTRACT(YEAR FROM NOW())::int + 5 THEN
+        RAISE EXCEPTION '_', p_0117;
+    END IF;
+
+    RETURN QUERY
+    WITH supply_volumes AS (
+        SELECT
+            sv."c_0482",
+            sv."c_0453"::text AS c_0459,
+            sv."c_0456",
+            sv."c_0101"::text AS c_0104,
+            sv."c_0379"
+        FROM mrv."t_0027" sv
+        WHERE sv."c_0169" = p_0026
+            AND sv."c_0485" >= make_date(p_0117, 1, 1)
+            AND sv."c_0485" <= make_date(p_0117, 12, 31)
+    ),
+    unique_source_ids AS (
+        SELECT DISTINCT "c_0456" FROM supply_volumes
+        WHERE c_0459 IN ('_', '_')
+    ),
+    
+    source_farms AS (
+        SELECT f.id AS p_0004, f."c_0171" AS con_0119
+        FROM mrv."t_0012" f
+        WHERE f."c_0171" IN (SELECT "c_0456" FROM unique_source_ids)
+    ),
+    source_farm_carbon AS (
+        SELECT bcd.p_0004, bcd.c_0059
+        FROM mrv.f_0016(
+            ARRAY(SELECT p_0004 FROM source_farms),
+            p_0117
+        ) bcd
+    ),
+    
+    source_yields AS (
+        SELECT
+            f."c_0171",
+            c."c_0101"::text AS c_0104,
+            SUM(COALESCE(hr."c_0508", 0)) AS c_0517
+        FROM mrv."t_0016" hr
+        JOIN mrv."t_0006" c ON c.id = hr."c_0116"
+        JOIN mrv."t_0012" f ON f.id = c."c_0186"
+        WHERE f."c_0171" IN (SELECT "c_0456" FROM unique_source_ids)
+            AND c.c_0470 = 'v1'
+            AND c."c_0221" >= make_date(p_0117, 1, 1)
+            AND c."c_0221" <= make_date(p_0117, 12, 31)
+        GROUP BY f."c_0171", c."c_0101"::text
+    ),
+    
+    facility_supplier_ids AS (
+        SELECT DISTINCT sv."c_0482"
+        FROM supply_volumes sv
+        WHERE sv.c_0459 = '_'
+    ),
+    facility_crop_types AS (
+        SELECT DISTINCT sv.c_0104
+        FROM supply_volumes sv
+        WHERE sv.c_0459 = '_'
+    ),
+    facility_procurements AS (
+        SELECT
+            p.id AS c_0362,
+            p."c_0399" AS p_0121,
+            p."c_0101"::text AS c_0104,
+            p."c_0357",
+            p."c_0454",
+            p."c_0455"::text AS c_0461,
+            pf."c_0182"
+        FROM mrv."t_0020" p
+        JOIN mrv."t_0021" pf ON pf."c_0359" = p.id
+        WHERE p."c_0399" IN (SELECT "c_0482" FROM facility_supplier_ids)
+            AND p."c_0400" = 'v1'
+            AND p."c_0101"::text IN (SELECT c_0104 FROM facility_crop_types)
+            AND p."c_0358" >= make_date(p_0117, 1, 1)
+            AND p."c_0358" <= make_date(p_0117, 12, 31)
+    ),
+    
+    facility_farmer_entity_ids AS (
+        SELECT DISTINCT fp."c_0454"
+        FROM facility_procurements fp
+        WHERE fp.c_0461 = '_'
+    ),
+    farmer_farms_for_facility AS (
+        SELECT f.id AS p_0004, f."c_0171" AS con_0119
+        FROM mrv."t_0012" f
+        WHERE f."c_0171" IN (SELECT "c_0454" FROM facility_farmer_entity_ids)
+    ),
+    farmer_carbon_for_facility AS (
+        SELECT bcd.p_0004, bcd.c_0059
+        FROM mrv.f_0016(
+            ARRAY(SELECT p_0004 FROM farmer_farms_for_facility),
+            p_0117
+        ) bcd
+    ),
+    farmer_yields_for_facility AS (
+        SELECT
+            f."c_0171",
+            c."c_0101"::text AS c_0104,
+            SUM(COALESCE(hr."c_0508", 0)) AS c_0517
+        FROM mrv."t_0016" hr
+        JOIN mrv."t_0006" c ON c.id = hr."c_0116"
+        JOIN mrv."t_0012" f ON f.id = c."c_0186"
+        WHERE f."c_0171" IN (SELECT "c_0454" FROM facility_farmer_entity_ids)
+            AND c.c_0470 = 'v1'
+            AND c."c_0221" >= make_date(p_0117, 1, 1)
+            AND c."c_0221" <= make_date(p_0117, 12, 31)
+        GROUP BY f."c_0171", c."c_0101"::text
+    ),
+    
+    procurement_carbon_per_id AS (
+        SELECT
+            fp.c_0362,
+            fp.p_0121,
+            fp.c_0104,
+            fp."c_0357",
+            fp."c_0182",
+            CASE
+                WHEN fp.c_0461 <> '_' THEN 0.0
+                WHEN fp."c_0357" IS NULL OR fp."c_0357" = 0 THEN 0.0
+                WHEN COALESCE(fy.c_0517, 0) = 0 THEN 0.0
+                ELSE LEAST(fp."c_0357" / fy.c_0517, 1.0) *
+                    COALESCE((
+                        SELECT SUM(ffc.c_0059)
+                        FROM farmer_carbon_for_facility ffc
+                        WHERE ffc.p_0004 IN (
+                            SELECT p_0004 FROM farmer_farms_for_facility
+                            WHERE con_0119 = fp."c_0454"
+                        )
+                    ), 0)
+            END AS c_0059
+        FROM facility_procurements fp
+        LEFT JOIN farmer_yields_for_facility fy
+            ON fy."c_0171" = fp."c_0454"
+            AND fy.c_0104 = fp.c_0104
+    ),
+    
+    facility_totals AS (
+        SELECT
+            fp."c_0182",
+            fp.p_0121,
+            fp.c_0104,
+            SUM(COALESCE(fp."c_0357", 0)) AS total_quantity,
+            SUM(pc.c_0059) AS total_carbon
+        FROM facility_procurements fp
+        JOIN procurement_carbon_per_id pc
+            ON pc.c_0362 = fp.c_0362
+        GROUP BY fp."c_0182", fp.p_0121, fp.c_0104
+    ),
+    
+    supply_volume_carbon AS (
+        SELECT
+            sv."c_0482",
+            sv.c_0459,
+            sv.c_0104,
+            CASE
+                WHEN sv.c_0459 IN ('_', '_') THEN
+                    CASE WHEN COALESCE(sy.c_0517, 0) > 0 THEN
+                        LEAST(sv."c_0379" / sy.c_0517, 1.0) *
+                        COALESCE((
+                            SELECT SUM(sfc.c_0059)
+                            FROM source_farm_carbon sfc
+                            WHERE sfc.p_0004 IN (
+                                SELECT p_0004 FROM source_farms WHERE con_0119 = sv."c_0456"
+                            )
+                        ), 0)
+                    ELSE 0.0
+                    END
+                WHEN sv.c_0459 = '_' THEN
+                    CASE WHEN COALESCE(ft.total_quantity, 0) > 0 THEN
+                        LEAST(sv."c_0379" / ft.total_quantity, 1.0) * COALESCE(ft.total_carbon, 0)
+                    ELSE 0.0
+                    END
+                ELSE 0.0
+            END AS c_0058
+        FROM supply_volumes sv
+        LEFT JOIN source_yields sy
+            ON sy."c_0171" = sv."c_0456"
+            AND sy.c_0104 = sv.c_0104
+            AND sv.c_0459 IN ('_', '_')
+        LEFT JOIN facility_totals ft
+            ON ft."c_0182" = sv."c_0456"
+            AND ft.p_0121 = sv."c_0482"
+            AND ft.c_0104 = sv.c_0104
+            AND sv.c_0459 = '_'
+    ),
+    totals AS (
+        SELECT SUM(c_0058) AS grand_total FROM supply_volume_carbon
+    ),
+    c_0050 AS (
+        SELECT svc."c_0482", COALESCE(s.name, svc."c_0482"::text) AS c_0484, SUM(svc.c_0058) AS c_0058
+        FROM supply_volume_carbon svc
+        LEFT JOIN public.t_0091 s ON s.id = svc."c_0482"
+        GROUP BY svc."c_0482", COALESCE(s.name, svc."c_0482"::text)
+    ),
+    by_category AS (
+        SELECT c_0459, SUM(c_0058) AS c_0058
+        FROM supply_volume_carbon
+        GROUP BY c_0459
+    ),
+    c_0048 AS (
+        SELECT c_0104, SUM(c_0058) AS c_0058
+        FROM supply_volume_carbon
+        GROUP BY c_0104
+    )
+    SELECT t.grand_total, NULL::uuid, NULL::text, NULL::double precision, NULL::text, NULL::double precision, NULL::text, NULL::double precision
+    FROM totals t
+    UNION ALL
+    SELECT NULL, bs."c_0482", bs.c_0484, bs.c_0058, NULL, NULL, NULL, NULL
+    FROM c_0050 bs
+    UNION ALL
+    SELECT NULL, NULL, NULL, NULL, bc.c_0459, bc.c_0058, NULL, NULL
+    FROM by_category bc
+    UNION ALL
+    SELECT NULL, NULL, NULL, NULL, NULL, NULL, bcp.c_0104, bcp.c_0058
+    FROM c_0048 bcp;
+END;
+$$;
 
 
 
@@ -4368,7 +8124,70 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0117(p_0026 => p_0026) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    RETURN QUERY
+    WITH enterprise_supplier_ids AS (
+        SELECT es.p_0121
+        FROM public.t_0049 es
+        WHERE es.p_0001 = p_0026
+    ),
+    latest_plans AS (
+        SELECT DISTINCT ON (cp."c_0171")
+            cp."c_0171"     AS p_0121,
+            cp.id             AS carbon_plan_id,
+            cp.c_0470::text   AS carbon_plan_status,
+            cp."c_0092"    AS carbon_plan_created_at,
+            cp.c_0411        AS carbon_plan_results
+        FROM mrv."t_0001" cp
+        WHERE cp."c_0171" IN (SELECT esi.p_0121 FROM enterprise_supplier_ids esi)
+        ORDER BY cp."c_0171", cp."c_0092" DESC, cp.id DESC
+    )
+    SELECT
+        vp.id                                  AS c_0369,
+        vp.name                                AS c_0370,
+        vp.c_0470::text                        AS c_0371,
+        vpi.id                                 AS c_0237,
+        vpi.c_0470::text                       AS c_0238,
+        vpi."c_0482"                       AS p_0121,
+        s.name                                 AS c_0484,
+        vp."c_0097"              AS c_0099,
+        vp."c_0096"                AS c_0098,
+        COALESCE((
+            SELECT COUNT(*)
+            FROM mrv."t_0036" vpf
+            WHERE vpf."c_0235" = vpi.id
+        ), 0)                                  AS c_0188,
+        CASE
+            WHEN vp."c_0146" IS NULL THEN NULL
+            ELSE ST_Area(vp."c_0146"::geography) / 10000.0
+        END                                    AS c_0042,
+        lp.carbon_plan_id                      AS c_0283,
+        lp.carbon_plan_status                  AS c_0285,
+        lp.carbon_plan_created_at              AS c_0282,
+        lp.carbon_plan_results                 AS c_0284
+    FROM mrv."t_0037" vpi
+    JOIN mrv."t_0032" vp ON vp.id = vpi."c_0367"
+    JOIN public.t_0091 s ON s.id = vpi."c_0482"
+    LEFT JOIN latest_plans lp ON lp.p_0121 = vpi."c_0482"
+    WHERE vpi."c_0482" IN (SELECT esi.p_0121 FROM enterprise_supplier_ids esi)
+      AND vpi."c_0482" IS NOT NULL
+      AND vpi."c_0470" <> 'v1'
+    ORDER BY vp.name, s.name, vpi.id;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0046(
     p_0004 uuid
@@ -4378,7 +8197,20 @@ LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+BEGIN
+    IF auth.f_0100() IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    RETURN (
+        SELECT ST_Area(p.geometry::geography) / 10000
+        FROM mrv."Polygon" p
+        JOIN mrv."t_0012" f ON f."c_0353" = p.id
+        WHERE f.id = p_0004
+    );
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0047(
     p_0035 uuid,
@@ -4397,7 +8229,51 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+    v_entity_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    SELECT f."c_0171" INTO v_entity_id
+    FROM mrv."t_0012" f
+    WHERE f.id = p_0035;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF v_entity_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT (
+        auth.f_0117(p_0026 => v_entity_id)
+        OR auth.f_0117(p_0104 => v_entity_id)
+        OR auth.f_0117(p_0037 => v_entity_id)
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    RETURN QUERY
+    SELECT
+        (dcr."c_0054"->>'_')::text,
+        (dcr."c_0054"->>'_')::text,
+        (dcr."c_0054"->>'_')::text,
+        (dcr."c_0054"->>'_')::int,
+        (dcr."c_0054"->>'_')::text,
+        dcr."c_0054"->'_',
+        (dcr."c_0054"->>'_')::text
+    FROM mrv."t_0007" dcr
+    WHERE dcr."c_0186" = p_0035
+        AND dcr."c_0056" = p_0012
+    LIMIT 1;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0048(
     p_0037 uuid,
@@ -4411,7 +8287,21 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        p_0037 AS "c_0191",
+        p_0016 AS "c_0101",
+        COALESCE(SUM(hr."c_0508"), 0)::float8 AS "c_0508"
+    FROM mrv."t_0016" hr
+    JOIN mrv."t_0006" c ON c.id = hr."c_0116"
+    JOIN mrv."t_0012" f ON f.id = c."c_0186"
+    WHERE c."c_0101"::text = p_0016
+        AND c.c_0470 = 'v1'
+        AND f."c_0171" = p_0037;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0049(
     p_0026 uuid,
@@ -4429,7 +8319,206 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0117(p_0026 => p_0026) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0117 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0117 < 2000 OR p_0117 > EXTRACT(YEAR FROM NOW())::int + 5 THEN
+        RAISE EXCEPTION '_', p_0117;
+    END IF;
+
+    RETURN QUERY
+    WITH enterprise_farms AS (
+        SELECT
+            fm.id AS p_0004,
+            fm."c_0171" AS con_0119,
+            p.geometry,
+            ST_Area(p.geometry::geography) / 10000 AS c_0017
+        FROM mrv."t_0012" fm
+        JOIN mrv."Polygon" p ON p.id = fm."c_0353"
+        WHERE fm."c_0171" IN (
+            SELECT es.p_0121 FROM public.t_0049 es WHERE es.p_0001 = p_0026
+        )
+        UNION
+        
+        SELECT
+            fm.id,
+            fm."c_0171",
+            p.geometry,
+            ST_Area(p.geometry::geography) / 10000
+        FROM mrv."t_0012" fm
+        JOIN mrv."Polygon" p ON p.id = fm."c_0353"
+        JOIN public.t_0090 sf ON sf.p_0005 = fm."c_0171"
+        JOIN public.t_0049 es ON es.p_0121 = sf.p_0121
+        WHERE es.p_0001 = p_0026
+    ),
+    farm_supplier_mapping AS (
+        SELECT ef.p_0004, ef.con_0119 AS p_0121
+        FROM enterprise_farms ef
+        WHERE ef.con_0119 IN (
+            SELECT es.p_0121 FROM public.t_0049 es WHERE es.p_0001 = p_0026
+        )
+        UNION
+        SELECT ef.p_0004, sf.p_0121
+        FROM enterprise_farms ef
+        JOIN public.t_0090 sf ON sf.p_0005 = ef.con_0119
+    ),
+    enterprise_cultivations AS (
+        SELECT
+            c.id AS cultivation_id,
+            c."c_0186" AS p_0004,
+            c."c_0434" AS c_0435
+        FROM mrv."t_0006" c
+        WHERE c."c_0186" IN (SELECT p_0004 FROM enterprise_farms)
+            AND EXTRACT(YEAR FROM c."c_0349") = p_0117
+    ),
+    fertilizer_data AS (
+        SELECT
+            fa.id AS application_id,
+            fa."c_0197"::text AS fertilizer_type,
+            fa.c_0009 AS amount_kg,
+            fa."c_0116" AS cultivation_id
+        FROM mrv."t_0014" fa
+        WHERE fa."c_0116" IN (SELECT cultivation_id FROM enterprise_cultivations)
+    ),
+    fertilizer_with_co2e AS (
+        SELECT
+            fd.application_id,
+            fd.fertilizer_type,
+            fd.amount_kg,
+            fd.cultivation_id,
+            ef."c_0067" AS co2e_per_kg
+        FROM fertilizer_data fd
+        LEFT JOIN mrv."t_0015" ef ON ef."c_0197"::text = fd.fertilizer_type
+    ),
+    harvest_data AS (
+        SELECT
+            hr."c_0116" AS cultivation_id,
+            COALESCE(hr."c_0508", 0) AS c_0517
+        FROM mrv."t_0016" hr
+        WHERE hr."c_0116" IN (SELECT cultivation_id FROM enterprise_cultivations)
+    ),
+    fertilized_cultivations AS (
+        SELECT DISTINCT cultivation_id FROM fertilizer_data
+    ),
+    farms_with_fertilizer AS (
+        SELECT DISTINCT c.p_0004
+        FROM enterprise_cultivations c
+        WHERE c.cultivation_id IN (SELECT cultivation_id FROM fertilized_cultivations)
+    ),
+    total_area AS (
+        SELECT COALESCE(SUM(ef_farm.c_0017), 0) AS total_ha
+        FROM enterprise_farms ef_farm
+        WHERE ef_farm.p_0004 IN (SELECT p_0004 FROM farms_with_fertilizer)
+    ),
+    totals AS (
+        SELECT
+            COALESCE(SUM(amount_kg), 0) AS total_n_kg,
+            SUM(amount_kg * co2e_per_kg) AS total_co2e_kg
+        FROM fertilizer_with_co2e
+    ),
+    c_0517 AS (
+        SELECT COALESCE(SUM(c_0517), 0) AS total_yield_kg
+        FROM harvest_data
+        WHERE cultivation_id IN (SELECT cultivation_id FROM fertilized_cultivations)
+    ),
+    by_type AS (
+        SELECT
+            COALESCE(jsonb_agg(
+                jsonb_build_object(
+                    '_', fertilizer_type,
+                    '_', type_amount_kg,
+                    '_', type_co2e_kg,
+                    '_', c_0188
+                )
+            ), 'null'::jsonb) AS c_0409
+        FROM (
+            SELECT
+                fwc.fertilizer_type,
+                SUM(fwc.amount_kg) AS type_amount_kg,
+                SUM(fwc.amount_kg * fwc.co2e_per_kg) AS type_co2e_kg,
+                COUNT(DISTINCT ec.p_0004) AS c_0188
+            FROM fertilizer_with_co2e fwc
+            JOIN enterprise_cultivations ec ON ec.cultivation_id = fwc.cultivation_id
+            GROUP BY fwc.fertilizer_type
+        ) typed
+    ),
+    supplier_areas AS (
+        SELECT
+            fsm.p_0121,
+            SUM(ef_farm.c_0017) AS c_0510
+        FROM farm_supplier_mapping fsm
+        JOIN enterprise_farms ef_farm ON ef_farm.p_0004 = fsm.p_0004
+        WHERE fsm.p_0004 IN (SELECT p_0004 FROM farms_with_fertilizer)
+        GROUP BY fsm.p_0121
+    ),
+    supplier_yields AS (
+        SELECT
+            fsm.p_0121,
+            COALESCE(SUM(hd.c_0517), 0) AS total_yield_kg
+        FROM farm_supplier_mapping fsm
+        JOIN enterprise_cultivations ec ON ec.p_0004 = fsm.p_0004
+        LEFT JOIN harvest_data hd ON hd.cultivation_id = ec.cultivation_id
+        WHERE ec.cultivation_id IN (SELECT cultivation_id FROM fertilized_cultivations)
+        GROUP BY fsm.p_0121
+    ),
+    by_sup AS (
+        SELECT
+            COALESCE(jsonb_agg(
+                jsonb_build_object(
+                    '_', p_0121,
+                    '_', c_0484,
+                    '_', supplier_n_per_ha,
+                    '_', supplier_co2e_per_tonne_yield
+                )
+            ), 'null'::jsonb) AS c_0409
+        FROM (
+            SELECT
+                s.id AS p_0121,
+                s.name AS c_0484,
+                SUM(fwc.amount_kg) /
+                    NULLIF(sa.c_0510, 0) AS supplier_n_per_ha,
+                SUM(fwc.amount_kg * fwc.co2e_per_kg) /
+                    NULLIF(sy.total_yield_kg / 1000, 0) AS supplier_co2e_per_tonne_yield
+            FROM fertilizer_with_co2e fwc
+            JOIN enterprise_cultivations ec ON ec.cultivation_id = fwc.cultivation_id
+            JOIN farm_supplier_mapping fsm ON fsm.p_0004 = ec.p_0004
+            JOIN public.t_0091 s ON s.id = fsm.p_0121
+            JOIN public.t_0049 es ON es.p_0121 = s.id
+            JOIN supplier_areas sa ON sa.p_0121 = s.id
+            JOIN supplier_yields sy ON sy.p_0121 = s.id
+            WHERE es.p_0001 = p_0026
+            GROUP BY s.id, s.name, sa.c_0510, sy.total_yield_kg
+        ) per_supplier
+    )
+    SELECT
+        t.total_n_kg::numeric AS c_0513,
+        (t.total_n_kg / NULLIF(ta.total_ha, 0))::numeric AS c_0317,
+        (ty.total_yield_kg / NULLIF(t.total_n_kg, 0))::numeric AS c_0539,
+        (t.total_co2e_kg / NULLIF(ty.total_yield_kg / 1000, 0))::numeric AS c_0068,
+        bt.c_0409 AS c_0049,
+        bs.c_0409 AS c_0050
+    FROM totals t
+    CROSS JOIN total_area ta
+    CROSS JOIN c_0517 ty
+    CROSS JOIN by_type bt
+    CROSS JOIN by_sup bs;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0051(
     p_0104 uuid,
@@ -4442,7 +8531,30 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+BEGIN
+    IF auth.f_0100() IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0104 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0036 IS NOT NULL AND array_length(p_0036, 1) > 0 THEN
+        RETURN QUERY
+        SELECT f.id
+        FROM mrv."t_0012" f
+        WHERE f.id = ANY(p_0036)
+          AND f."c_0171" = p_0104;
+    ELSE
+        RETURN QUERY
+        SELECT f.id
+        FROM mrv."t_0012" f
+        WHERE f."c_0171" = p_0104;
+    END IF;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0052(
     p_0073 uuid
@@ -4484,7 +8596,101 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+    v_supplier_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0073 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_supplier_id := (
+        auth.f_0065()
+        -> '_' -> '_' ->> 0
+    )::uuid;
+
+    IF v_supplier_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.t_0091 s
+        WHERE s.id = v_supplier_id
+          AND s.ty_0034 = 'v1'
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    RETURN QUERY
+    SELECT
+        cp.id,
+        cp."c_0171",
+        cp.c_0292,
+        cp."c_0326",
+        cp."c_0270",
+        cp.c_0470::text,
+        cp."c_0217"::text,
+        cp."c_0490",
+        cp."c_0491",
+        cp."c_0120",
+        cp."c_0035",
+        cp."c_0249",
+        cp."c_0117",
+        cp."c_0251",
+        cp."c_0119",
+        cp."c_0250",
+        cp."c_0118",
+        cp."c_0121"::text,
+        cp."c_0252",
+        cp."c_0205",
+        cp."c_0254",
+        cp."c_0207",
+        cp."c_0253",
+        cp."c_0206",
+        cp."c_0208"::text,
+        cp."c_0174",
+        cp.c_0411,
+        ARRAY(
+            SELECT cpf."c_0186"
+            FROM mrv."t_0002" cpf
+            WHERE cpf."c_0057" = cp.id
+              AND cpf."c_0186" IS NOT NULL
+        ),
+        cp."c_0092",
+        cp."c_0524",
+        (
+            SELECT jsonb_agg(jsonb_build_object(
+                '_', f.id,
+                '_', f.name,
+                '_', CASE WHEN f."c_0353" IS NOT NULL THEN (
+                    SELECT ST_Area(p.geometry::geography) / 10000.0
+                    FROM mrv."Polygon" p
+                    WHERE p.id = f."c_0353"
+                ) END,
+                '_', (
+                    SELECT c."c_0101"::text
+                    FROM mrv."t_0006" c
+                    WHERE c."c_0186" = f.id
+                    ORDER BY c."c_0349" DESC
+                    LIMIT 1
+                )
+            ) ORDER BY f.id)
+            FROM mrv."t_0002" cpf2
+            JOIN mrv."t_0012" f ON f.id = cpf2."c_0186"
+            WHERE cpf2."c_0057" = cp.id
+        )
+    FROM mrv."t_0001" cp
+    WHERE cp.id = p_0073
+      AND cp."c_0171" = v_supplier_id;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0053()
 RETURNS TABLE (
@@ -4523,7 +8729,77 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+    v_supplier_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_supplier_id := (
+        auth.f_0065()
+        -> '_' -> '_' ->> 0
+    )::uuid;
+
+    IF v_supplier_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.t_0091 s
+        WHERE s.id = v_supplier_id
+          AND s.ty_0034 = 'v1'
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    RETURN QUERY
+    SELECT
+        cp.id,
+        cp."c_0171",
+        cp.c_0292,
+        cp."c_0326",
+        cp."c_0270",
+        cp.c_0470::text,
+        cp."c_0217"::text,
+        cp."c_0490",
+        cp."c_0491",
+        cp."c_0120",
+        cp."c_0035",
+        cp."c_0249",
+        cp."c_0117",
+        cp."c_0251",
+        cp."c_0119",
+        cp."c_0250",
+        cp."c_0118",
+        cp."c_0121"::text,
+        cp."c_0252",
+        cp."c_0205",
+        cp."c_0254",
+        cp."c_0207",
+        cp."c_0253",
+        cp."c_0206",
+        cp."c_0208"::text,
+        cp."c_0174",
+        cp.c_0411,
+        ARRAY(
+            SELECT cpf."c_0186"
+            FROM mrv."t_0002" cpf
+            WHERE cpf."c_0057" = cp.id
+              AND cpf."c_0186" IS NOT NULL
+        ),
+        cp."c_0092",
+        cp."c_0524"
+    FROM mrv."t_0001" cp
+    WHERE cp."c_0171" = v_supplier_id
+    ORDER BY cp."c_0092" DESC
+    LIMIT 1;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0054()
 RETURNS TABLE (
@@ -4534,7 +8810,44 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+    v_supplier_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_supplier_id := (
+        auth.f_0065()
+        -> '_' -> '_' ->> 0
+    )::uuid;
+
+    IF v_supplier_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.t_0091 s
+        WHERE s.id = v_supplier_id
+          AND s.ty_0034 = 'v1'
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    RETURN QUERY
+    SELECT
+        cp.id,
+        cp.c_0470::text
+    FROM mrv."t_0001" cp
+    WHERE cp."c_0171" = v_supplier_id
+    ORDER BY cp."c_0092" DESC
+    LIMIT 1;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0057(
     p_0051 text,
@@ -4549,7 +8862,22 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        ief."c_0428" * COALESCE(p_0088, 1),
+        ief."c_0430" * COALESCE(p_0088, 1),
+        ief."c_0431" * COALESCE(p_0088, 1)
+    FROM mrv."t_0017" ief
+    WHERE ief."c_0233" = p_0051
+      AND ief."c_0394" = p_0083;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '_', p_0051, p_0083;
+    END IF;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0059(
     p_0115 uuid,
@@ -4561,7 +8889,49 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+    v_expires_at timestamptz;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0117(p_0026 => p_0026) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0031 < 1 OR p_0031 > 365 THEN
+        RAISE EXCEPTION '_', p_0031;
+    END IF;
+
+    v_expires_at := now() + make_interval(days => p_0031);
+
+    UPDATE public.t_0095
+    SET c_0413 = clock_timestamp(), c_0414 = v_current_user_id
+    WHERE c_0533 = p_0115
+      AND p_0001 = p_0026
+      AND c_0413 IS NULL;
+
+    INSERT INTO public.t_0095 (c_0533, p_0001, c_0220, c_0219, c_0180)
+    VALUES (p_0115, p_0026, v_current_user_id, clock_timestamp(), v_expires_at);
+
+    
+    INSERT INTO audit.t_0096 (c_0533, p_0001, action, c_0140)
+    VALUES (
+        p_0115,
+        p_0026,
+        '_',
+        jsonb_build_object(
+            '_', v_current_user_id,
+            '_', v_expires_at,
+            '_', p_0031
+        )
+    );
+END;
+$$;
 
 
 
@@ -4570,7 +8940,50 @@ RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+DECLARE
+    v_type text;
+    v_farm_id uuid;
+    v_date timestamp(3);
+    v_fk_column text;
+BEGIN
+    CASE TG_TABLE_NAME
+        WHEN '_' THEN
+            v_type := '_';
+            v_date := NEW."c_0016";
+            v_farm_id := (SELECT c."c_0186" FROM mrv."t_0006" c WHERE c.id = NEW."c_0116");
+            v_fk_column := '_';
+        WHEN '_' THEN
+            v_type := '_';
+            v_date := NEW."c_0221";
+            v_farm_id := (SELECT c."c_0186" FROM mrv."t_0006" c WHERE c.id = NEW."c_0116");
+            v_fk_column := '_';
+        WHEN '_' THEN
+            v_type := '_';
+            v_date := NEW."c_0420";
+            v_farm_id := NEW."c_0186";
+            v_fk_column := '_';
+        WHEN '_' THEN
+            v_type := '_';
+            v_date := NEW."c_0481";
+            v_farm_id := NEW."c_0186";
+            v_fk_column := '_';
+        ELSE
+            RAISE EXCEPTION '_', TG_TABLE_NAME;
+    END CASE;
+
+    IF v_farm_id IS NULL THEN
+        RAISE EXCEPTION '_', TG_TABLE_NAME, NEW.id;
+    END IF;
+
+    EXECUTE format(
+        '_',
+        v_fk_column
+    ) USING v_type, v_date, 'null'::jsonb, v_farm_id, NEW.id;
+
+    RETURN NEW;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0068(p_0093 UUID)
 RETURNS TABLE (
@@ -4584,7 +8997,108 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 VOLATILE
 SET search_path = mrv, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+  v_threshold_auto_meters CONSTANT FLOAT := 50.0;
+  v_threshold_warn_meters CONSTANT FLOAT := 500.0;
+BEGIN
+  
+  
+  
+  UPDATE mrv.t_0081
+  SET
+    c_0301         = '_',
+    c_0302 = NULL,
+    c_0300     = NULL
+  WHERE c_0423 = p_0093
+    AND c_0301 <> '_';
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  UPDATE mrv.t_0081 AS actual
+  SET
+    c_0301         = winner.c_0301,
+    c_0302 = winner.suggested_id,
+    c_0300     = winner.distance_m
+  FROM (
+    
+    SELECT DISTINCT ON (nearest.suggested_id)
+      nearest.actual_id,
+      nearest.suggested_id,
+      nearest.distance_m,
+      CASE
+        WHEN nearest.distance_m <= v_threshold_auto_meters THEN '_'
+        ELSE '_'
+      END AS c_0301
+    FROM (
+      
+      
+      SELECT DISTINCT ON (a.id)
+        a.id                                                       AS actual_id,
+        s.id                                                       AS suggested_id,
+        ST_Distance(a.c_0293::geography, s.c_0293::geography)  AS distance_m
+      FROM mrv.t_0081 a
+      JOIN mrv.t_0084 st_actual
+        ON st_actual.c_0423 = p_0093
+        AND ST_Within(a.c_0293, st_actual.geometry)
+      JOIN mrv.t_0082 s
+        ON s.c_0423 = p_0093
+        AND s.c_0477 = st_actual.id
+      WHERE a.c_0423 = p_0093
+        AND a.c_0301 <> '_'
+        AND ST_Distance(a.c_0293::geography, s.c_0293::geography) <= v_threshold_warn_meters
+        AND NOT EXISTS (
+          SELECT 1
+          FROM mrv.t_0081 manual
+          WHERE manual.c_0423 = p_0093
+            AND manual.c_0301 = '_'
+            AND manual.c_0302 = s.id
+        )
+      ORDER BY a.id, ST_Distance(a.c_0293::geography, s.c_0293::geography), s.id
+    ) AS nearest
+    ORDER BY nearest.suggested_id, nearest.distance_m, nearest.actual_id
+  ) AS winner
+  WHERE winner.actual_id = actual.id;
+
+  
+  RETURN QUERY
+  SELECT
+    (SELECT COUNT(*)::INT FROM mrv.t_0082   WHERE c_0423 = p_0093),
+    (SELECT COUNT(*)::INT FROM mrv.t_0081      WHERE c_0423 = p_0093),
+    (SELECT COUNT(*)::INT FROM mrv.t_0081      WHERE c_0423 = p_0093 AND c_0301 IN ('_', '_')),
+    (SELECT COUNT(*)::INT FROM mrv.t_0081      WHERE c_0423 = p_0093 AND c_0301 = '_'),
+    (
+      
+      SELECT COUNT(*)::INT
+      FROM mrv.t_0082 sug
+      WHERE sug.c_0423 = p_0093
+        AND NOT EXISTS (
+          SELECT 1
+          FROM mrv.t_0081 act
+          WHERE act.c_0302 = sug.id
+        )
+    ),
+    (
+      
+      SELECT COUNT(*)::INT
+      FROM mrv.t_0081
+      WHERE c_0423 = p_0093
+        AND c_0301 = '_'
+    );
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0071(
     p_0095 text,
@@ -4598,7 +9112,38 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+BEGIN
+    RETURN QUERY
+    WITH farm_counts AS (
+        SELECT
+            f."ty_0003"::text AS c_0089,
+            COUNT(f.id)::int AS c_0188
+        FROM mrv."t_0012" f
+        WHERE f."ty_0003" IS NOT NULL
+            AND (p_0027 IS NULL OR f."c_0171" = p_0027)
+            AND (p_0095 IS NULL OR f."ty_0016"::text = p_0095)
+        GROUP BY f."ty_0003"
+    ),
+    crop_counts AS (
+        SELECT
+            f."ty_0003"::text AS c_0089,
+            COUNT(DISTINCT c."c_0101")::int AS crop_count
+        FROM mrv."t_0012" f
+        LEFT JOIN mrv."t_0006" c ON c."c_0186" = f.id
+        WHERE f."ty_0003" IS NOT NULL
+            AND (p_0027 IS NULL OR f."c_0171" = p_0027)
+            AND (p_0095 IS NULL OR f."ty_0016"::text = p_0095)
+        GROUP BY f."ty_0003"
+    )
+    SELECT
+        fc.c_0089,
+        fc.c_0188,
+        COALESCE(cc.crop_count, 0)
+    FROM farm_counts fc
+    LEFT JOIN crop_counts cc ON cc.c_0089 = fc.c_0089;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0072(
     p_0066 float8,
@@ -4614,7 +9159,50 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_user_id uuid;
+    v_rbac jsonb;
+    v_entity_ids uuid[];
+BEGIN
+    v_user_id := auth.f_0100();
+    IF v_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_rbac := auth.f_0065()->'_';
+
+    v_entity_ids := ARRAY[v_user_id];
+    IF v_rbac IS NOT NULL THEN
+        v_entity_ids := v_entity_ids || ARRAY(
+            SELECT x::uuid FROM jsonb_array_elements_text(
+                COALESCE(v_rbac->'_', 'null'::jsonb) ||
+                COALESCE(v_rbac->'_', 'null'::jsonb) ||
+                COALESCE(v_rbac->'_', 'null'::jsonb)
+            ) x
+            WHERE x IS NOT NULL AND x <> '_'
+        );
+    END IF;
+
+    RETURN QUERY
+    SELECT
+        p.id,
+        p."c_0186" AS p_0004,
+        ST_AsGeoJSON(p.geometry)::text AS geometry
+    FROM mrv."Polygon" p
+    LEFT JOIN mrv."t_0012" f ON f.id = p."c_0186"
+    WHERE ST_DWithin(
+        p.geometry::geography,
+        ST_SetSRID(ST_MakePoint(p_0068, p_0066), 4326)::geography,
+        p_0081
+    )
+    AND (
+        auth.f_0061()
+        OR p."c_0186" IS NULL
+        OR f."c_0171" = ANY(v_entity_ids)
+    );
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0073(
     p_0026 uuid,
@@ -4632,7 +9220,103 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0117(p_0026 => p_0026) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0117 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0117 < 2000 OR p_0117 > EXTRACT(YEAR FROM NOW())::int + 5 THEN
+        RAISE EXCEPTION '_', p_0117;
+    END IF;
+
+    RETURN QUERY
+    WITH enterprise_farms AS (
+        
+        SELECT f.id AS p_0004, f."c_0353"
+        FROM mrv."t_0012" f
+        JOIN public.t_0049 es ON es.p_0121 = f."c_0171"
+        WHERE es.p_0001 = p_0026
+        UNION
+        
+        SELECT f.id AS p_0004, f."c_0353"
+        FROM mrv."t_0012" f
+        JOIN public.t_0090 sf ON sf.p_0005 = f."c_0171"
+        JOIN public.t_0049 es ON es.p_0121 = sf.p_0121
+        WHERE es.p_0001 = p_0026
+    ),
+    year_cultivations AS (
+        SELECT
+            c.id AS cultivation_id,
+            c."c_0186",
+            c."c_0101"::text AS c_0104,
+            c."c_0248",
+            c."c_0497"::text AS c_0499
+        FROM mrv."t_0006" c
+        JOIN enterprise_farms ef ON ef.p_0004 = c."c_0186"
+        WHERE c."c_0349" >= make_date(p_0117, 1, 1)
+          AND c."c_0349" < make_date(p_0117 + 1, 1, 1)
+    ),
+    farms_with_cultivations AS (
+        SELECT DISTINCT "c_0186" FROM year_cultivations
+    ),
+    farm_areas AS (
+        SELECT
+            ef.p_0004,
+            ST_Area(p.geometry::geography) / 10000 AS c_0017
+        FROM enterprise_farms ef
+        JOIN mrv."Polygon" p ON p.id = ef."c_0353"
+        WHERE ef.p_0004 IN (SELECT "c_0186" FROM farms_with_cultivations)
+    ),
+    counts AS (
+        SELECT
+            COUNT(DISTINCT "c_0186")::int                                    AS c_0512,
+            COUNT(*) FILTER (WHERE "c_0248" = true)::int               AS c_0090,
+            COUNT(*)::int                                                     AS total_cultivations,
+            COUNT(*) FILTER (WHERE c_0499 = '_')::int      AS till_conventional,
+            COUNT(*) FILTER (WHERE c_0499 = '_')::int           AS till_reduced,
+            COUNT(*) FILTER (WHERE c_0499 = '_')::int           AS till_no_till,
+            COUNT(*) FILTER (WHERE c_0499 IS NULL)::int               AS till_unknown
+        FROM year_cultivations
+    ),
+    crop_counts AS (
+        SELECT c_0104, COUNT(*)::int AS cnt
+        FROM year_cultivations
+        GROUP BY c_0104
+    )
+    SELECT
+        c.c_0512,
+        COALESCE((SELECT SUM(c_0017) FROM farm_areas), 0)::numeric        AS c_0510,
+        c.c_0090,
+        CASE
+            WHEN c.total_cultivations = 0 THEN 0
+            ELSE (c.c_0090::numeric / c.total_cultivations::numeric)
+        END                                                                  AS c_0091,
+        jsonb_build_object(
+            '_', c.till_conventional,
+            '_',      c.till_reduced,
+            '_',      c.till_no_till,
+            '_',      c.till_unknown
+        )                                                                    AS c_0498,
+        COALESCE(
+            (SELECT jsonb_object_agg(c_0104, cnt) FROM crop_counts),
+            'null'::jsonb
+        )                                                                    AS c_0105
+    FROM counts c;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0077(p_0078 UUID)
 RETURNS TABLE (
@@ -4649,7 +9333,42 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SET search_path = mrv, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_project_geometry public.geometry;
+BEGIN
+    
+    
+    
+    SELECT ST_Union(s.geometry)
+    INTO v_project_geometry
+    FROM mrv.t_0084 s
+    WHERE s.c_0423 = p_0078
+      AND s.geometry IS NOT NULL;
+
+    IF v_project_geometry IS NULL THEN
+        RETURN;
+    END IF;
+
+    RETURN QUERY
+    SELECT
+        a.id,
+        ST_AsGeoJSON(a.c_0293)::TEXT  AS c_0294,
+        a.c_0070,
+        a.c_0442,
+        a.c_0047,
+        a.c_0064,
+        a.c_0421,
+        p.id                            AS c_0464,
+        p.name                          AS c_0465
+    FROM mrv.t_0081 a
+    JOIN mrv.t_0083 p ON p.id = a.c_0423
+    WHERE a.c_0423 <> p_0078
+      AND a.c_0070 IS NOT NULL
+      AND ST_Within(a.c_0293, v_project_geometry)
+    ORDER BY a.c_0094 DESC;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0078(
     p_0084 uuid,
@@ -4667,7 +9386,42 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+BEGIN
+    RETURN QUERY
+    WITH country_crop_pairs AS (
+        SELECT
+            p."c_0088"::text,
+            p."c_0101"::text,
+            MIN(p.id::text)::uuid AS id
+        FROM mrv."t_0020" p
+        WHERE p."c_0399" = p_0084
+            AND p."c_0400"::text = p_0085
+            AND p."c_0454" = p_0098
+            AND p."c_0455"::text = p_0099
+            AND p."c_0088" IS NOT NULL
+            AND p."c_0101" IS NOT NULL
+        GROUP BY p."c_0088", p."c_0101"
+    )
+    SELECT
+        ccp.id,
+        ccp."c_0088",
+        ccp."c_0101",
+        COALESCE(SUM(fp."c_0357"), 0)::float8 AS "c_0357",
+        COUNT(DISTINCT fp."c_0454")::int AS "farmerCount"
+    FROM country_crop_pairs ccp
+    
+    
+    LEFT JOIN mrv."t_0020" fp ON
+        fp."c_0088"::text = ccp."c_0088"
+        AND fp."c_0101"::text = ccp."c_0101"
+        AND fp."c_0399" = p_0098
+        AND fp."c_0400" = 'v1'
+        AND fp."c_0455" = 'v1'
+        AND fp."c_0454" IS NOT NULL
+    GROUP BY ccp.id, ccp."c_0088", ccp."c_0101";
+END;
+$$;
 
 
 
@@ -4686,7 +9440,98 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+    v_source_entity_type text;
+    v_source_entity_id uuid;
+    v_procurement_amount double precision;
+    v_procurement_date date;
+    v_crop_type text;
+    v_procurement_year int;
+    v_farmer_total_yield double precision;
+    v_proportion double precision;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    SELECT p."c_0455", p."c_0454", p."c_0357",
+           p."c_0358", p."c_0101"
+    INTO v_source_entity_type, v_source_entity_id, v_procurement_amount,
+         v_procurement_date, v_crop_type
+    FROM mrv."t_0020" p
+    WHERE p.id = p_0076
+        AND (
+            auth.f_0117(p_0104 => p."c_0399")
+            OR EXISTS (
+                SELECT 1
+                FROM public.t_0049 es
+                WHERE es.p_0121 = p."c_0399"
+                    AND auth.f_0117(p_0026 => es.p_0001)
+            )
+        );
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF v_source_entity_type <> '_' THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF v_procurement_amount IS NULL OR v_procurement_amount = 0 THEN
+        RETURN;
+    END IF;
+
+    IF v_procurement_date IS NULL THEN
+        RAISE EXCEPTION '_', p_0076;
+    END IF;
+
+    v_procurement_year := EXTRACT(YEAR FROM v_procurement_date)::int;
+
+    SELECT COALESCE(SUM(hr."c_0508"), 0) INTO v_farmer_total_yield
+    FROM mrv."t_0016" hr
+    JOIN mrv."t_0006" c ON c.id = hr."c_0116"
+    JOIN mrv."t_0012" f ON f.id = c."c_0186"
+    WHERE f."c_0171" = v_source_entity_id
+        AND c."c_0101"::text = v_crop_type
+        AND c.c_0470 = 'v1'
+        AND c."c_0221" >= make_date(v_procurement_year, 1, 1)
+        AND c."c_0221" <= make_date(v_procurement_year, 12, 31);
+
+    IF v_farmer_total_yield = 0 THEN
+        RETURN;
+    END IF;
+
+    v_proportion := LEAST(v_procurement_amount / v_farmer_total_yield, 1.0);
+
+    RETURN QUERY
+    WITH c_0189 AS (
+        SELECT f.id AS fid, f.name AS fname
+        FROM mrv."t_0012" f
+        WHERE f."c_0171" = v_source_entity_id
+    ),
+    carbon_data AS (
+        SELECT bcd.p_0004, bcd.c_0059, bcd.c_0055
+        FROM mrv.f_0016(
+            ARRAY(SELECT fid FROM c_0189),
+            v_procurement_year
+        ) bcd
+        WHERE bcd.c_0059 > 0
+    )
+    SELECT
+        p_0076,
+        SUM(v_proportion * cd.c_0059) OVER () AS c_0058,
+        fi.fid AS p_0004,
+        fi.fname AS c_0190,
+        (v_proportion * cd.c_0059)::double precision AS c_0187,
+        cd.c_0055 AS f_0047
+    FROM c_0189 fi
+    JOIN carbon_data cd ON cd.p_0004 = fi.fid;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0081(
     p_0035 uuid
@@ -4700,7 +9545,56 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+    v_farm RECORD;
+    v_polygon RECORD;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0035 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    SELECT f.id, f."name", f."c_0353", f."c_0171"
+    INTO v_farm
+    FROM mrv."t_0012" f
+    WHERE f.id = p_0035;
+
+    IF v_farm IS NULL THEN
+        RAISE EXCEPTION '_', p_0035;
+    END IF;
+
+    IF NOT (
+        auth.f_0117(p_0026 => v_farm."c_0171")
+        OR auth.f_0117(p_0104 => v_farm."c_0171")
+        OR auth.f_0117(p_0037 => v_farm."c_0171")
+    ) THEN
+        RAISE EXCEPTION '_', p_0035;
+    END IF;
+
+    DELETE FROM mrv."t_0012" WHERE mrv."t_0012".id = p_0035;
+
+    SELECT p."c_0458"
+    INTO v_polygon
+    FROM mrv."Polygon" p
+    WHERE p.id = v_farm."c_0353";
+
+    IF v_polygon IS NOT NULL AND v_polygon."c_0458" IS NULL THEN
+        DELETE FROM mrv."Polygon" WHERE mrv."Polygon".id = v_farm."c_0353";
+    END IF;
+
+    RETURN QUERY SELECT
+        v_farm.id,
+        v_farm."name",
+        v_farm."c_0353";
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0082(
     p_0027 uuid,
@@ -4711,7 +9605,36 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT (
+        auth.f_0117(p_0026 => p_0027)
+        OR auth.f_0117(p_0104 => p_0027)
+        OR auth.f_0117(p_0037 => p_0027)
+    ) THEN
+        RAISE EXCEPTION '_', p_0027;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv."t_0014" fa
+        JOIN mrv."t_0006" c ON c.id = fa."c_0116"
+        JOIN mrv."t_0012" f ON f.id = c."c_0186"
+        WHERE fa.id = p_0040 AND f."c_0171" = p_0027
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    DELETE FROM mrv."t_0014" WHERE id = p_0040;
+    RETURN true;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0087(
     p_0050 uuid,
@@ -4724,7 +9647,131 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+    v_existing RECORD;
+    v_farm RECORD;
+    v_available float8 := 0;
+    v_already_supplied float8;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    PERFORM pg_advisory_xact_lock(hashtext('_' || p_0050::text));
+
+    SELECT id, "c_0482", "c_0169", "c_0453", "c_0456", "c_0101"
+    INTO v_existing
+    FROM mrv."t_0027"
+    WHERE id = p_0050;
+
+    IF v_existing IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0117(p_0104 => v_existing."c_0482") THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0080 <= 0 OR p_0080 > 1000000 THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv."t_0020"
+        WHERE "c_0399" = v_existing."c_0482"
+          AND "c_0400" = 'v1'
+          AND "c_0169" = p_0026
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF v_existing."c_0453"::text = '_' THEN
+        SELECT id, "c_0171"
+        INTO v_farm
+        FROM mrv."t_0012"
+        WHERE id = v_existing."c_0456"
+        LIMIT 1;
+
+        IF v_farm IS NULL OR v_farm."c_0171" != v_existing."c_0482" THEN
+            RAISE EXCEPTION '_',
+                v_existing."c_0456", v_existing."c_0482";
+        END IF;
+
+        SELECT COALESCE(SUM(hr."c_0508"), 0)
+        INTO v_available
+        FROM mrv."t_0016" hr
+        JOIN mrv."t_0006" c ON c.id = hr."c_0116"
+        WHERE c."c_0101"::text = v_existing."c_0101"::text
+          AND c.c_0470 = 'v1'
+          AND c."c_0186" = v_farm.id;
+
+    ELSIF v_existing."c_0453"::text = '_' THEN
+        SELECT COALESCE(SUM("c_0357"), 0)
+        INTO v_available
+        FROM mrv."t_0020"
+        WHERE "c_0399" = v_existing."c_0482"
+          AND "c_0400" = 'v1'
+          AND "c_0454" = v_existing."c_0456"
+          AND "c_0455" = 'v1'
+          AND "c_0101"::text = v_existing."c_0101"::text;
+
+    ELSIF v_existing."c_0453"::text = '_' THEN
+        SELECT COALESCE(SUM(pr."c_0357"), 0)
+        INTO v_available
+        FROM mrv."t_0020" pr
+        JOIN mrv."t_0021" pf ON pf."c_0359" = pr.id
+        WHERE pr."c_0399" = v_existing."c_0482"
+          AND pr."c_0400" = 'v1'
+          AND pf."c_0182" = v_existing."c_0456"
+          AND pr."c_0101"::text = v_existing."c_0101"::text;
+
+    ELSE
+        RAISE EXCEPTION '_', v_existing."c_0453"::text;
+    END IF;
+
+    SELECT COALESCE(SUM("c_0379"), 0)
+    INTO v_already_supplied
+    FROM mrv."t_0027"
+    WHERE "c_0482" = v_existing."c_0482"
+      AND "c_0453"::text = v_existing."c_0453"::text
+      AND "c_0456" = v_existing."c_0456"
+      AND "c_0101"::text = v_existing."c_0101"::text
+      AND id != p_0050;
+
+    IF p_0080 > (v_available - v_already_supplied) THEN
+        RAISE EXCEPTION '_',
+            p_0080, (v_available - v_already_supplied),
+            v_existing."c_0453"::text, v_existing."c_0456", v_existing."c_0101"::text;
+    END IF;
+
+    BEGIN
+        UPDATE mrv."t_0027"
+        SET
+            "c_0169" = p_0026,
+            "c_0379" = p_0080,
+            "c_0485" = p_0106,
+            "c_0524" = NOW()
+        WHERE id = p_0050;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION '_', p_0050;
+        END IF;
+    EXCEPTION WHEN unique_violation THEN
+        RAISE EXCEPTION '_';
+    END;
+
+    RETURN QUERY
+        SELECT sv.id, sv."c_0482", sv."c_0169", sv."c_0453"::text, sv."c_0456",
+               sv."c_0101"::text, sv."c_0379", sv."c_0485", sv."c_0093",
+               sv."c_0092", sv."c_0524"
+        FROM mrv."t_0027" sv WHERE sv.id = p_0050;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0088(
     p_0114 uuid
@@ -4734,7 +9781,54 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+    v_enterprise_id uuid;
+    v_verifier_user_id uuid;
+    v_updated_rows int;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    SELECT p_0001, c_0533
+    INTO v_enterprise_id, v_verifier_user_id
+    FROM public.t_0095
+    WHERE id = p_0114;
+
+    IF v_enterprise_id IS NULL THEN
+        RAISE EXCEPTION '_', p_0114;
+    END IF;
+
+    IF NOT auth.f_0117(p_0026 => v_enterprise_id) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    UPDATE public.t_0095
+    SET c_0413 = now(), c_0414 = v_current_user_id
+    WHERE id = p_0114
+      AND c_0413 IS NULL;
+
+    GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
+    IF v_updated_rows = 0 THEN
+        RAISE EXCEPTION '_', p_0114;
+    END IF;
+
+    
+    INSERT INTO audit.t_0096 (c_0533, p_0001, action, c_0140)
+    VALUES (
+        v_verifier_user_id,
+        v_enterprise_id,
+        '_',
+        jsonb_build_object(
+            '_', v_current_user_id,
+            '_', p_0114
+        )
+    );
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0089(
     p_0035 uuid
@@ -4747,7 +9841,45 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+    v_entity_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    SELECT f."c_0171" INTO v_entity_id
+    FROM mrv."t_0012" f
+    WHERE f.id = p_0035;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF v_entity_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT (
+        auth.f_0117(p_0026 => v_entity_id)
+        OR auth.f_0117(p_0104 => v_entity_id)
+        OR auth.f_0117(p_0037 => v_entity_id)
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    RETURN QUERY
+    SELECT sp.id, sp.name
+    FROM mrv."t_0036" vpf
+    JOIN mrv."t_0032" vp ON vp.id = vpf."c_0367"
+    JOIN mrv.t_0083 sp ON sp.c_0531 = vp.id
+    WHERE vpf."c_0186" = p_0035
+    LIMIT 1;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0097(
     p_0104 uuid,
@@ -4763,7 +9895,152 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+    v_farm RECORD;
+    v_available float8 := 0;
+    v_already_supplied float8;
+    v_new_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0117(p_0104 => p_0104) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    
+    PERFORM pg_advisory_xact_lock(
+        hashtext(p_0104::text || p_0097 || p_0100::text || p_0016)
+    );
+
+    BEGIN
+        PERFORM p_0097::mrv."ty_0018";
+    EXCEPTION WHEN invalid_text_representation THEN
+        RAISE EXCEPTION '_', p_0097;
+    END;
+
+    BEGIN
+        PERFORM p_0016::mrv."ty_0004";
+    EXCEPTION WHEN invalid_text_representation THEN
+        RAISE EXCEPTION '_', p_0016;
+    END;
+
+    IF p_0080 <= 0 OR p_0080 > 1000000 THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv."t_0020"
+        WHERE "c_0399" = p_0104
+          AND "c_0400" = 'v1'
+          AND "c_0169" = p_0026
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0097 = '_' THEN
+        SELECT id, "c_0171"
+        INTO v_farm
+        FROM mrv."t_0012"
+        WHERE id = p_0100
+        LIMIT 1;
+
+        IF v_farm IS NULL OR v_farm."c_0171" != p_0104 THEN
+            RAISE EXCEPTION '_',
+                p_0100, p_0104;
+        END IF;
+
+        SELECT COALESCE(SUM(hr."c_0508"), 0)
+        INTO v_available
+        FROM mrv."t_0016" hr
+        JOIN mrv."t_0006" c ON c.id = hr."c_0116"
+        WHERE c."c_0101"::text = p_0016
+          AND c.c_0470 = 'v1'
+          AND c."c_0186" = v_farm.id;
+
+    ELSIF p_0097 = '_' THEN
+        SELECT COALESCE(SUM("c_0357"), 0)
+        INTO v_available
+        FROM mrv."t_0020"
+        WHERE "c_0399" = p_0104
+          AND "c_0400" = 'v1'
+          AND "c_0454" = p_0100
+          AND "c_0455" = 'v1'
+          AND "c_0101"::text = p_0016;
+
+    ELSIF p_0097 = '_' THEN
+        SELECT COALESCE(SUM(pr."c_0357"), 0)
+        INTO v_available
+        FROM mrv."t_0020" pr
+        JOIN mrv."t_0021" pf ON pf."c_0359" = pr.id
+        WHERE pr."c_0399" = p_0104
+          AND pr."c_0400" = 'v1'
+          AND pf."c_0182" = p_0100
+          AND pr."c_0101"::text = p_0016;
+
+    ELSE
+        RAISE EXCEPTION '_', p_0097;
+    END IF;
+
+    SELECT COALESCE(SUM("c_0379"), 0)
+    INTO v_already_supplied
+    FROM mrv."t_0027"
+    WHERE "c_0482" = p_0104
+      AND "c_0453"::text = p_0097
+      AND "c_0456" = p_0100
+      AND "c_0101"::text = p_0016;
+
+    IF p_0080 > (v_available - v_already_supplied) THEN
+        RAISE EXCEPTION '_',
+            p_0080, (v_available - v_already_supplied),
+            p_0097, p_0100, p_0016;
+    END IF;
+
+    v_new_id := gen_random_uuid();
+
+    BEGIN
+        INSERT INTO mrv."t_0027" (
+            id,
+            "c_0482",
+            "c_0169",
+            "c_0453",
+            "c_0456",
+            "c_0101",
+            "c_0379",
+            "c_0485",
+            "c_0093",
+            "c_0092",
+            "c_0524"
+        ) VALUES (
+            v_new_id,
+            p_0104,
+            p_0026,
+            p_0097::mrv."ty_0018",
+            p_0100,
+            p_0016::mrv."ty_0004",
+            p_0080,
+            p_0106,
+            v_current_user_id,
+            NOW(),
+            NOW()
+        );
+    EXCEPTION WHEN unique_violation THEN
+        RAISE EXCEPTION '_';
+    END;
+
+    RETURN QUERY
+        SELECT sv.id, sv."c_0482", sv."c_0169", sv."c_0453"::text, sv."c_0456",
+               sv."c_0101"::text, sv."c_0379", sv."c_0485", sv."c_0093",
+               sv."c_0092", sv."c_0524"
+        FROM mrv."t_0027" sv WHERE sv.id = v_new_id;
+END;
+$$;
 
 
 
@@ -4784,13 +10061,281 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT (
+        auth.f_0117(p_0104 => p_0104)
+        OR EXISTS (
+            SELECT 1
+            FROM public.t_0049 es
+            WHERE es.p_0121 = p_0104
+              AND auth.f_0117(p_0026 => es.p_0001)
+        )
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0026 IS NOT NULL AND NOT auth.f_0117(p_0026 => p_0026) THEN
+        RAISE EXCEPTION '_', p_0026;
+    END IF;
+
+    IF p_0117 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0117 < 2000 OR p_0117 > EXTRACT(YEAR FROM NOW())::int + 5 THEN
+        RAISE EXCEPTION '_', p_0117;
+    END IF;
+
+    RETURN QUERY
+    WITH scope1_farms AS (
+        SELECT f.id AS p_0004
+        FROM mrv."t_0012" f
+        WHERE f."c_0171" = p_0104
+            AND f."ty_0016" = 'v1'
+    ),
+    scope3_farms AS (
+        SELECT f.id AS p_0004
+        FROM mrv."t_0012" f
+        WHERE f."c_0171" = p_0104
+            AND f."ty_0016" = 'v1'
+    ),
+    all_supplier_farm_ids AS (
+        SELECT p_0004 FROM scope1_farms
+        UNION ALL
+        SELECT p_0004 FROM scope3_farms
+    ),
+    
+    supplier_farm_carbon AS (
+        SELECT bcd.p_0004, bcd.c_0059
+        FROM mrv.f_0016(
+            ARRAY(SELECT p_0004 FROM all_supplier_farm_ids),
+            p_0117
+        ) bcd
+    ),
+    
+    supplier_farm_cultivations AS (
+        SELECT c."c_0186" AS p_0004, c."c_0101"::text AS c_0104
+        FROM mrv."t_0006" c
+        WHERE c."c_0186" IN (SELECT p_0004 FROM all_supplier_farm_ids)
+            AND c.c_0470 = 'v1'
+            AND c."c_0221" >= make_date(p_0117, 1, 1)
+            AND c."c_0221" <= make_date(p_0117, 12, 31)
+    ),
+    
+    scope1_by_crop AS (
+        SELECT
+            sfc.c_0104,
+            SUM(
+                COALESCE(sfc2.c_0059, 0) / NULLIF(cnt.cultivation_count, 0)
+            ) AS c_0058
+        FROM supplier_farm_cultivations sfc
+        JOIN scope1_farms sf ON sf.p_0004 = sfc.p_0004
+        JOIN supplier_farm_carbon sfc2 ON sfc2.p_0004 = sfc.p_0004
+        JOIN (
+            SELECT p_0004, COUNT(*) AS cultivation_count
+            FROM supplier_farm_cultivations
+            GROUP BY p_0004
+        ) cnt ON cnt.p_0004 = sfc.p_0004
+        GROUP BY sfc.c_0104
+    ),
+    
+    scope3_by_crop AS (
+        SELECT
+            sfc.c_0104,
+            SUM(
+                COALESCE(sfc2.c_0059, 0) / NULLIF(cnt.cultivation_count, 0)
+            ) AS c_0058
+        FROM supplier_farm_cultivations sfc
+        JOIN scope3_farms sf ON sf.p_0004 = sfc.p_0004
+        JOIN supplier_farm_carbon sfc2 ON sfc2.p_0004 = sfc.p_0004
+        JOIN (
+            SELECT p_0004, COUNT(*) AS cultivation_count
+            FROM supplier_farm_cultivations
+            GROUP BY p_0004
+        ) cnt ON cnt.p_0004 = sfc.p_0004
+        GROUP BY sfc.c_0104
+    ),
+    
+    scope1_total AS (
+        SELECT COALESCE(SUM(c_0059), 0) AS total
+        FROM supplier_farm_carbon sfc
+        WHERE sfc.p_0004 IN (SELECT p_0004 FROM scope1_farms)
+    ),
+    scope3_total AS (
+        SELECT COALESCE(SUM(c_0059), 0) AS total
+        FROM supplier_farm_carbon sfc
+        WHERE sfc.p_0004 IN (SELECT p_0004 FROM scope3_farms)
+    ),
+    
+    procurements AS (
+        SELECT
+            p.id,
+            p."c_0101"::text AS c_0104,
+            p."c_0454",
+            p."c_0357"
+        FROM mrv."t_0020" p
+        WHERE p."c_0399" = p_0104
+            AND p."c_0400" = 'v1'
+            AND p."c_0455" = 'v1'
+            AND p."c_0358" >= make_date(p_0117, 1, 1)
+            AND p."c_0358" <= make_date(p_0117, 12, 31)
+            AND p."c_0357" IS NOT NULL
+            AND p."c_0357" > 0
+            AND (p_0026 IS NULL OR p."c_0169" = p_0026)
+    ),
+    
+    farmer_farms AS (
+        SELECT f.id AS p_0004, f."c_0171" AS con_0119
+        FROM mrv."t_0012" f
+        WHERE f."c_0171" IN (SELECT DISTINCT "c_0454" FROM procurements)
+    ),
+    farmer_farm_carbon AS (
+        SELECT bcd.p_0004, bcd.c_0059
+        FROM mrv.f_0016(
+            ARRAY(SELECT p_0004 FROM farmer_farms),
+            p_0117
+        ) bcd
+    ),
+    
+    farmer_yields AS (
+        SELECT
+            f."c_0171",
+            c."c_0101"::text AS c_0104,
+            SUM(COALESCE(hr."c_0508", 0)) AS c_0517
+        FROM mrv."t_0016" hr
+        JOIN mrv."t_0006" c ON c.id = hr."c_0116"
+        JOIN mrv."t_0012" f ON f.id = c."c_0186"
+        WHERE f."c_0171" IN (SELECT DISTINCT "c_0454" FROM procurements)
+            AND c.c_0470 = 'v1'
+            AND c."c_0221" >= make_date(p_0117, 1, 1)
+            AND c."c_0221" <= make_date(p_0117, 12, 31)
+        GROUP BY f."c_0171", c."c_0101"::text
+    ),
+    
+    procurement_carbon AS (
+        SELECT
+            proc.c_0104,
+            SUM(
+                CASE WHEN fy.c_0517 > 0 THEN
+                    LEAST(proc."c_0357" / fy.c_0517, 1.0) *
+                    COALESCE((
+                        SELECT SUM(ffc.c_0059)
+                        FROM farmer_farm_carbon ffc
+                        WHERE ffc.p_0004 IN (
+                            SELECT p_0004 FROM farmer_farms WHERE con_0119 = proc."c_0454"
+                        )
+                    ), 0)
+                ELSE 0
+                END
+            ) AS c_0058
+        FROM procurements proc
+        LEFT JOIN farmer_yields fy
+            ON fy."c_0171" = proc."c_0454"
+            AND fy.c_0104 = proc.c_0104
+        GROUP BY proc.c_0104
+    ),
+    
+    all_by_crop AS (
+        SELECT c_0104, c_0058 FROM scope1_by_crop
+        UNION ALL
+        SELECT c_0104, c_0058 FROM scope3_by_crop
+        UNION ALL
+        SELECT c_0104, c_0058 FROM procurement_carbon
+    ),
+    merged_by_crop AS (
+        SELECT c_0104, SUM(c_0058) AS c_0058
+        FROM all_by_crop
+        GROUP BY c_0104
+    )
+    SELECT
+        (SELECT total FROM scope1_total) + (SELECT total FROM scope3_total) +
+            COALESCE((SELECT SUM(c_0058) FROM procurement_carbon), 0) AS c_0514,
+        (SELECT total FROM scope1_total) AS c_0429,
+        (SELECT total FROM scope3_total) AS c_0432,
+        COALESCE((SELECT SUM(c_0058) FROM procurement_carbon), 0) AS c_0363,
+        mbc.c_0104,
+        mbc.c_0058 AS c_0102
+    FROM merged_by_crop mbc
+    UNION ALL
+    
+    SELECT
+        (SELECT total FROM scope1_total) + (SELECT total FROM scope3_total) +
+            COALESCE((SELECT SUM(c_0058) FROM procurement_carbon), 0),
+        (SELECT total FROM scope1_total),
+        (SELECT total FROM scope3_total),
+        COALESCE((SELECT SUM(c_0058) FROM procurement_carbon), 0),
+        NULL,
+        NULL
+    WHERE NOT EXISTS (SELECT 1 FROM merged_by_crop);
+END;
+$$;
 
 
 
 
 CREATE OR REPLACE FUNCTION mrv.f_0099()
-RETURNS TRIGGER AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql SECURITY DEFINER;
+RETURNS TRIGGER AS $$
+DECLARE
+  existing_farm_id UUID;
+  existing_polygon_id UUID;
+BEGIN
+  
+  IF pg_trigger_depth() > 1 THEN
+    RETURN NEW;
+  END IF;
+
+  
+  IF TG_TABLE_NAME = 'v1' THEN
+    IF NEW."c_0353" IS NOT NULL AND (TG_OP = '_' OR NEW."c_0353" IS DISTINCT FROM OLD."c_0353") THEN
+      SELECT "c_0186" INTO existing_farm_id
+      FROM mrv."Polygon"
+      WHERE id = NEW."c_0353";
+
+      IF existing_farm_id IS NOT NULL AND existing_farm_id <> NEW.id THEN
+        RAISE EXCEPTION '_', NEW."c_0353", existing_farm_id;
+      END IF;
+
+      IF TG_OP = '_' AND OLD."c_0353" IS NOT NULL AND OLD."c_0353" <> NEW."c_0353" THEN
+        UPDATE mrv."Polygon" SET "c_0186" = NULL, "c_0524" = NOW() WHERE id = OLD."c_0353";
+      END IF;
+
+      UPDATE mrv."Polygon"
+      SET "c_0186" = NEW.id, "c_0524" = NOW()
+      WHERE id = NEW."c_0353";
+    END IF;
+
+  ELSIF TG_TABLE_NAME = 'v1' THEN
+    IF NEW."c_0186" IS NOT NULL AND (TG_OP = '_' OR NEW."c_0186" IS DISTINCT FROM OLD."c_0186") THEN
+      SELECT "c_0353" INTO existing_polygon_id
+      FROM mrv."t_0012"
+      WHERE id = NEW."c_0186";
+
+      IF existing_polygon_id IS NOT NULL AND existing_polygon_id <> NEW.id THEN
+        RAISE EXCEPTION '_', NEW."c_0186", existing_polygon_id;
+      END IF;
+
+      IF TG_OP = '_' AND OLD."c_0186" IS NOT NULL AND OLD."c_0186" <> NEW."c_0186" THEN
+        RAISE EXCEPTION '_', NEW.id, OLD."c_0186";
+      END IF;
+
+      UPDATE mrv."t_0012"
+      SET "c_0353" = NEW.id, "c_0524" = NOW()
+      WHERE id = NEW."c_0186";
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION mrv.f_0101(
     p_0073 uuid,
@@ -4801,7 +10346,33 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_supplier_id uuid;
+    v_updated_rows int;
+BEGIN
+    IF auth.f_0100() IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_supplier_id := (auth.f_0065() -> '_' -> '_' ->> 0)::uuid;
+    IF v_supplier_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    UPDATE mrv."t_0001"
+    SET
+        c_0411 = p_0087,
+        "c_0524" = NOW()
+    WHERE mrv."t_0001".id = p_0073
+      AND mrv."t_0001"."c_0171" = v_supplier_id;
+
+    GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
+    IF v_updated_rows = 0 THEN
+        RAISE EXCEPTION '_', p_0073;
+    END IF;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0102(
     p_0073 uuid,
@@ -4845,7 +10416,70 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_supplier_id uuid;
+    v_updated_rows int;
+BEGIN
+    IF auth.f_0100() IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_supplier_id := (auth.f_0065() -> '_' -> '_' ->> 0)::uuid;
+    IF v_supplier_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    UPDATE mrv."t_0001"
+    SET
+        c_0470 = p_0102::mrv."ty_0002",
+        "c_0270" = COALESCE(p_0064, "c_0270"),
+        "c_0174" = p_0030,
+        "c_0524" = NOW()
+    WHERE mrv."t_0001".id = p_0073
+      AND mrv."t_0001"."c_0171" = v_supplier_id;
+
+    GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
+    IF v_updated_rows = 0 THEN
+        RAISE EXCEPTION '_', p_0073;
+    END IF;
+
+    RETURN QUERY
+    SELECT
+        cp.id,
+        cp."c_0171",
+        cp.c_0292,
+        cp."c_0326",
+        cp."c_0270",
+        cp.c_0470::text,
+        cp."c_0217"::text,
+        cp."c_0490",
+        cp."c_0491",
+        cp."c_0120",
+        cp."c_0035",
+        cp."c_0249",
+        cp."c_0117",
+        cp."c_0251",
+        cp."c_0119",
+        cp."c_0250",
+        cp."c_0118",
+        cp."c_0121"::text,
+        cp."c_0252",
+        cp."c_0205",
+        cp."c_0254",
+        cp."c_0207",
+        cp."c_0253",
+        cp."c_0206",
+        cp."c_0208"::text,
+        cp."c_0174",
+        cp.c_0411,
+        ARRAY(SELECT cpf."c_0186" FROM mrv."t_0002" cpf WHERE cpf."c_0057" = cp.id AND cpf."c_0186" IS NOT NULL),
+        cp."c_0092",
+        cp."c_0524"
+    FROM mrv."t_0001" cp
+    WHERE cp.id = p_0073;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0104(p_0023 jsonb)
 RETURNS TABLE (
@@ -4863,7 +10497,146 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+    v_entity_id uuid;
+    v_farm_id uuid;
+    v_calendar_year int;
+    v_has_trees boolean;
+    v_has_tree_mortality boolean;
+    v_live_tree_area_ha float8;
+    v_tree_species_inventories jsonb;
+    v_survey_id uuid;
+    v_item jsonb;
+    v_result RECORD;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_entity_id := (p_0023->>'_')::uuid;
+
+    IF v_entity_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_farm_id := (p_0023->>'_')::uuid;
+    v_calendar_year := (p_0023->>'_')::int;
+    v_has_trees := (p_0023->>'_')::boolean;
+    v_has_tree_mortality := (p_0023->>'_')::boolean;
+    v_live_tree_area_ha := (p_0023->>'_')::float8;
+    v_tree_species_inventories := p_0023->'_';
+
+    
+    
+    IF NOT (
+        auth.f_0117(p_0026 => v_entity_id)
+        OR auth.f_0117(p_0104 => v_entity_id)
+        OR auth.f_0117(p_0037 => v_entity_id)
+    ) THEN
+        RAISE EXCEPTION '_', v_entity_id;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv."t_0012"
+        WHERE id = v_farm_id AND "c_0171" = v_entity_id
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    SELECT id INTO v_survey_id
+    FROM mrv."t_0008"
+    WHERE "c_0186" = v_farm_id AND "c_0056" = v_calendar_year;
+
+    IF v_survey_id IS NOT NULL THEN
+        UPDATE mrv."t_0008"
+        SET "c_0225" = v_has_trees,
+            "c_0224" = v_has_tree_mortality,
+            "c_0290" = v_live_tree_area_ha,
+            "c_0481" = NOW(),
+            "c_0524" = NOW()
+        WHERE mrv."t_0008".id = v_survey_id
+        RETURNING * INTO v_result;
+    ELSE
+        INSERT INTO mrv."t_0008" (
+            id, "c_0186", "c_0056",
+            "c_0225", "c_0224", "c_0290",
+            "c_0481", "c_0092", "c_0524"
+        ) VALUES (
+            gen_random_uuid(),
+            v_farm_id,
+            v_calendar_year,
+            v_has_trees,
+            v_has_tree_mortality,
+            v_live_tree_area_ha,
+            NOW(), NOW(), NOW()
+        )
+        RETURNING * INTO v_result;
+
+        v_survey_id := v_result.id;
+    END IF;
+
+    IF v_tree_species_inventories IS NOT NULL
+        AND jsonb_typeof(v_tree_species_inventories) = '_'
+        AND jsonb_array_length(v_tree_species_inventories) > 0
+    THEN
+        DELETE FROM mrv."t_0029"
+        WHERE "c_0486" = v_survey_id;
+
+        FOR v_item IN SELECT * FROM jsonb_array_elements(v_tree_species_inventories)
+        LOOP
+            INSERT INTO mrv."t_0029" (
+                id, "c_0186", "c_0056", "c_0486",
+                "c_0466", "c_0029", "c_0030",
+                "c_0291", "c_0132",
+                "c_0518", "c_0133",
+                "c_0092", "c_0524"
+            ) VALUES (
+                gen_random_uuid(),
+                v_farm_id,
+                v_calendar_year,
+                v_survey_id,
+                (v_item->>'_')::mrv."ty_0020",
+                (v_item->>'_')::float8,
+                (v_item->>'_')::float8,
+                (v_item->>'_')::int,
+                (v_item->>'_')::int,
+                (v_item->>'_')::float8,
+                (v_item->>'_')::float8,
+                NOW(), NOW()
+            );
+        END LOOP;
+    END IF;
+
+    
+    IF v_has_trees AND v_tree_species_inventories IS NOT NULL AND jsonb_array_length(v_tree_species_inventories) = 0 THEN
+        DELETE FROM mrv."t_0029"
+        WHERE "c_0186" = v_farm_id
+        AND "c_0056" = v_calendar_year;
+    END IF;
+
+    
+    IF NOT v_has_trees THEN
+        DELETE FROM mrv."t_0029"
+        WHERE "c_0186" = v_farm_id
+        AND "c_0056" = v_calendar_year;
+    END IF;
+
+    RETURN QUERY SELECT
+        v_result.id,
+        v_result."c_0186"::uuid,
+        v_result."c_0056"::int,
+        v_result."c_0225"::boolean,
+        v_result."c_0224"::boolean,
+        v_result."c_0290"::float8,
+        v_result."c_0481"::timestamptz,
+        v_result."c_0092"::timestamptz,
+        v_result."c_0524"::timestamptz;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0105(
     p_0039 jsonb
@@ -4880,7 +10653,244 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+    v_item jsonb;
+    v_farm_id uuid;
+    v_polygon_id uuid;
+    v_entity_id uuid;
+    v_name text;
+    v_country_code text;
+    v_scope text;
+    v_land_ownership text;
+    v_geometry jsonb;
+    v_new_geometry geometry;
+    v_existing_polygon RECORD;
+    v_overlapping_farm RECORD;
+    v_farm RECORD;
+    v_crop_plan_id uuid;
+    v_crop_histories jsonb;
+    v_crop_item jsonb;
+    v_crop_records jsonb;
+    v_crop_type text;
+    v_crop_types text[];
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0039 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF jsonb_typeof(p_0039) != '_' THEN
+        RAISE EXCEPTION '_', jsonb_typeof(p_0039);
+    END IF;
+
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_0039)
+    LOOP
+        v_name := v_item->>'_';
+        v_country_code := v_item->>'_';
+        v_scope := v_item->>'_';
+        v_land_ownership := v_item->>'_';
+        v_geometry := v_item->'_'->'_';
+        v_crop_histories := v_item->'_';
+
+        v_entity_id := (v_item->>'_')::uuid;
+        IF NOT (
+            auth.f_0117(p_0026 => v_entity_id)
+            OR auth.f_0117(p_0104 => v_entity_id)
+            OR auth.f_0117(p_0037 => v_entity_id)
+        ) THEN
+            RAISE EXCEPTION '_', v_entity_id;
+        END IF;
+
+        IF v_name IS NULL OR v_name = 'v1' THEN
+            RAISE EXCEPTION '_';
+        END IF;
+
+        
+        BEGIN
+            v_farm_id := (v_item->>'_')::uuid;
+        EXCEPTION WHEN invalid_text_representation THEN
+            v_farm_id := NULL;
+        END;
+
+        IF v_farm_id IS NULL THEN
+            
+            SELECT f.id INTO v_farm_id
+            FROM mrv."t_0012" f
+            WHERE f."c_0171" = v_entity_id AND f."name" = v_name;
+        END IF;
+
+        IF v_farm_id IS NULL THEN
+            v_farm_id := gen_random_uuid();
+        END IF;
+
+        
+        BEGIN
+            v_polygon_id := COALESCE(
+                (v_item->>'_')::uuid,
+                (v_item->'_'->>'_')::uuid
+            );
+        EXCEPTION WHEN invalid_text_representation THEN
+            v_polygon_id := NULL;
+        END;
+
+        IF v_polygon_id IS NULL THEN
+            v_polygon_id := gen_random_uuid();
+        END IF;
+
+        
+        IF v_geometry IS NOT NULL AND v_geometry::text != '_' THEN
+            v_new_geometry := ST_SetSRID(ST_GeomFromGeoJSON(v_geometry::text), 4326);
+
+            SELECT f.id, f."name" INTO v_overlapping_farm
+            FROM mrv."t_0012" f
+            JOIN mrv."Polygon" p ON p.id = f."c_0353"
+            WHERE f."c_0171" = v_entity_id
+              AND f.id != v_farm_id
+              AND ST_Intersects(p.geometry::geography, v_new_geometry::geography)
+              AND NOT ST_Touches(p.geometry, v_new_geometry)
+            LIMIT 1;
+
+            IF FOUND THEN
+                RAISE EXCEPTION '_', v_overlapping_farm."name", v_overlapping_farm.id;
+            END IF;
+
+            INSERT INTO mrv."Polygon" (id, geometry, "c_0092", "c_0524")
+            VALUES (
+                v_polygon_id,
+                v_new_geometry,
+                NOW(),
+                NOW()
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                geometry = v_new_geometry,
+                "c_0524" = NOW();
+        ELSE
+            SELECT p.id, p."c_0186"
+            INTO v_existing_polygon
+            FROM mrv."Polygon" p
+            WHERE p.id = v_polygon_id;
+
+            IF v_existing_polygon IS NULL THEN
+                RAISE EXCEPTION '_', v_polygon_id;
+            END IF;
+
+            IF v_existing_polygon."c_0186" IS NOT NULL AND v_existing_polygon."c_0186" != v_farm_id THEN
+                RAISE EXCEPTION '_', v_polygon_id;
+            END IF;
+        END IF;
+
+        
+        IF v_country_code IS NOT NULL THEN
+            BEGIN
+                PERFORM v_country_code::mrv."ty_0003";
+            EXCEPTION WHEN invalid_text_representation THEN
+                RAISE EXCEPTION '_', v_country_code;
+            END;
+        END IF;
+
+        IF v_scope IS NOT NULL THEN
+            BEGIN
+                PERFORM v_scope::mrv."ty_0016";
+            EXCEPTION WHEN invalid_text_representation THEN
+                RAISE EXCEPTION '_', v_scope;
+            END;
+        END IF;
+
+        IF v_land_ownership IS NOT NULL THEN
+            BEGIN
+                PERFORM v_land_ownership::mrv."ty_0013";
+            EXCEPTION WHEN invalid_text_representation THEN
+                RAISE EXCEPTION '_', v_land_ownership;
+            END;
+        END IF;
+
+        
+        INSERT INTO mrv."t_0012" (
+            id, "name", "c_0353", "c_0171",
+            "ty_0003", "ty_0016", "ty_0013",
+            "c_0092", "c_0524"
+        ) VALUES (
+            v_farm_id,
+            v_name,
+            v_polygon_id,
+            v_entity_id,
+            v_country_code::mrv."ty_0003",
+            v_scope::mrv."ty_0016",
+            v_land_ownership::mrv."ty_0013",
+            NOW(),
+            NOW()
+        )
+        ON CONFLICT (id) DO UPDATE SET
+            "name" = EXCLUDED."name",
+            "c_0353" = EXCLUDED."c_0353",
+            "ty_0003" = COALESCE(EXCLUDED."ty_0003", mrv."t_0012"."ty_0003"),
+            "ty_0016" = COALESCE(EXCLUDED."ty_0016", mrv."t_0012"."ty_0016"),
+            "ty_0013" = COALESCE(EXCLUDED."ty_0013", mrv."t_0012"."ty_0013"),
+            "c_0524" = NOW()
+        RETURNING * INTO v_farm;
+
+        
+        v_crop_plan_id := NULL;
+        v_crop_types := ARRAY[]::text[];
+
+        IF v_crop_histories IS NOT NULL AND jsonb_array_length(v_crop_histories) > 0 THEN
+            v_crop_item := v_crop_histories->0;
+            v_crop_records := v_crop_item->'_';
+
+            
+            SELECT cp.id INTO v_crop_plan_id
+            FROM mrv."t_0005" cp
+            WHERE cp."c_0186" = v_farm.id
+            LIMIT 1;
+
+            IF v_crop_plan_id IS NULL THEN
+                v_crop_plan_id := gen_random_uuid();
+                INSERT INTO mrv."t_0005" (id, "c_0186", "c_0468")
+                VALUES (v_crop_plan_id, v_farm.id, NOW());
+            END IF;
+
+            
+            DELETE FROM mrv."t_0004" WHERE "c_0100" = v_crop_plan_id;
+
+            
+            IF v_crop_records IS NOT NULL AND jsonb_array_length(v_crop_records) > 0 THEN
+                FOR v_crop_item IN SELECT * FROM jsonb_array_elements(v_crop_records)
+                LOOP
+                    v_crop_type := v_crop_item->>'_';
+
+                    IF v_crop_type IS NOT NULL THEN
+                        BEGIN
+                            PERFORM v_crop_type::mrv."ty_0004";
+                        EXCEPTION WHEN invalid_text_representation THEN
+                            RAISE EXCEPTION '_', v_crop_type;
+                        END;
+
+                        INSERT INTO mrv."t_0004" (id, "c_0101", "c_0100", "c_0349")
+                        VALUES (gen_random_uuid(), v_crop_type::mrv."ty_0004", v_crop_plan_id, NOW());
+
+                        v_crop_types := array_append(v_crop_types, v_crop_type);
+                    END IF;
+                END LOOP;
+            END IF;
+        END IF;
+
+        RETURN QUERY SELECT
+            v_farm.id,
+            v_farm."name",
+            v_farm."c_0353",
+            v_farm."ty_0013"::text,
+            v_crop_plan_id,
+            v_crop_types;
+    END LOOP;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0106(
     p_0027 uuid,
@@ -4901,7 +10911,111 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_current_user_id uuid;
+    v_cultivation RECORD;
+    v_item jsonb;
+    v_fertilizer_id uuid;
+    v_fertilizer_type text;
+    v_amount float8;
+    v_application_date timestamptz;
+    v_compound_unit_id uuid;
+    v_result RECORD;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT (
+        auth.f_0117(p_0026 => p_0027)
+        OR auth.f_0117(p_0104 => p_0027)
+        OR auth.f_0117(p_0037 => p_0027)
+    ) THEN
+        RAISE EXCEPTION '_', p_0027;
+    END IF;
+
+    IF p_0041 IS NULL OR jsonb_typeof(p_0041) != '_' THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    SELECT c.id, c."c_0186"
+    INTO v_cultivation
+    FROM mrv."t_0006" c
+    JOIN mrv."t_0012" f ON f.id = c."c_0186"
+    WHERE c.id = p_0017 AND f."c_0171" = p_0027;
+
+    IF v_cultivation IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM jsonb_array_elements(p_0041) AS fert
+        WHERE NOT EXISTS (
+            SELECT 1 FROM mrv."t_0003" cu
+            WHERE cu.id = (fert->>'_')::uuid
+        )
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_0041)
+    LOOP
+        v_fertilizer_id := (v_item->>'_')::uuid;
+        v_fertilizer_type := v_item->>'_';
+        v_amount := (v_item->>'_')::float8;
+        v_application_date := (v_item->>'_')::timestamptz;
+        v_compound_unit_id := (v_item->>'_')::uuid;
+
+        BEGIN
+            PERFORM v_fertilizer_type::mrv."ty_0010";
+        EXCEPTION WHEN invalid_text_representation THEN
+            RAISE EXCEPTION '_', v_fertilizer_type;
+        END;
+
+        IF v_fertilizer_id IS NOT NULL THEN
+            IF NOT EXISTS (
+                SELECT 1 FROM mrv."t_0014" fa
+                JOIN mrv."t_0006" c ON c.id = fa."c_0116"
+                JOIN mrv."t_0012" f ON f.id = c."c_0186"
+                WHERE fa.id = v_fertilizer_id AND f."c_0171" = p_0027
+            ) THEN
+                RAISE EXCEPTION '_', v_fertilizer_id;
+            END IF;
+
+            UPDATE mrv."t_0014"
+            SET "c_0197" = v_fertilizer_type::mrv."ty_0010",
+                c_0009 = v_amount,
+                "c_0016" = v_application_date,
+                "c_0078" = v_compound_unit_id,
+                "c_0116" = p_0017,
+                "c_0524" = NOW()
+            WHERE mrv."t_0014".id = v_fertilizer_id
+            RETURNING * INTO v_result;
+        ELSE
+            INSERT INTO mrv."t_0014" (
+                id, "c_0197", c_0009, "c_0016", "c_0078", "c_0116",
+                "c_0092", "c_0524"
+            ) VALUES (
+                gen_random_uuid(), v_fertilizer_type::mrv."ty_0010", v_amount, v_application_date,
+                v_compound_unit_id, p_0017, NOW(), NOW()
+            )
+            RETURNING * INTO v_result;
+        END IF;
+
+        RETURN QUERY SELECT
+            v_result.id,
+            v_result."c_0197"::text,
+            v_result.c_0009::float8,
+            v_result."c_0016"::timestamptz,
+            v_result."c_0078"::uuid,
+            v_result."c_0116"::uuid,
+            v_result."c_0092"::timestamptz,
+            v_result."c_0524"::timestamptz;
+    END LOOP;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0107(p_0023 jsonb)
 RETURNS TABLE (
@@ -4921,7 +11035,112 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+    v_entity_id uuid;
+    v_cultivation_id uuid;
+    v_total_yield float8;
+    v_harvest_date timestamptz;
+    v_residue_burned int;
+    v_residue_incorporated int;
+    v_residue_removed int;
+    v_residue_other int;
+    v_soil_report_id uuid;
+    v_farm_id uuid;
+    v_result RECORD;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_entity_id := (p_0023->>'_')::uuid;
+
+    
+    
+    IF NOT (
+        auth.f_0117(p_0026 => v_entity_id)
+        OR auth.f_0117(p_0104 => v_entity_id)
+        OR auth.f_0117(p_0037 => v_entity_id)
+    ) THEN
+        RAISE EXCEPTION '_', v_entity_id;
+    END IF;
+
+    v_cultivation_id := (p_0023->>'_')::uuid;
+    v_total_yield := (p_0023->>'_')::float8;
+    v_harvest_date := (p_0023->>'_')::timestamptz;
+    v_residue_burned := (p_0023->>'_')::int;
+    v_residue_incorporated := (p_0023->>'_')::int;
+    v_residue_removed := (p_0023->>'_')::int;
+    v_residue_other := (p_0023->>'_')::int;
+    v_soil_report_id := (p_0023->>'_')::uuid;
+
+    SELECT c."c_0186" INTO v_farm_id
+    FROM mrv."t_0006" c
+    JOIN mrv."t_0012" f ON f.id = c."c_0186"
+    WHERE c.id = v_cultivation_id AND f."c_0171" = v_entity_id;
+
+    IF v_farm_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF v_soil_report_id IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM mrv."t_0026"
+            WHERE id = v_soil_report_id
+            AND "c_0186" = v_farm_id
+        ) THEN
+            RAISE EXCEPTION '_';
+        END IF;
+    END IF;
+
+    IF v_residue_burned + v_residue_incorporated + v_residue_removed + v_residue_other != 100 THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    UPDATE mrv."t_0006"
+    SET c_0470 = 'v1'."ty_0005",
+        "c_0221" = v_harvest_date,
+        "c_0524" = NOW()
+    WHERE mrv."t_0006".id = v_cultivation_id;
+
+    INSERT INTO mrv."t_0016" (
+        id, "c_0508", "c_0221", "c_0403", "c_0404",
+        "c_0406", "c_0405", "c_0116", "c_0450",
+        "c_0092", "c_0524"
+    ) VALUES (
+        gen_random_uuid(), v_total_yield, v_harvest_date, v_residue_burned, v_residue_incorporated,
+        v_residue_removed, v_residue_other, v_cultivation_id, v_soil_report_id,
+        NOW(), NOW()
+    )
+    ON CONFLICT ("c_0116")
+    DO UPDATE SET
+        "c_0508" = EXCLUDED."c_0508",
+        "c_0221" = EXCLUDED."c_0221",
+        "c_0403" = EXCLUDED."c_0403",
+        "c_0404" = EXCLUDED."c_0404",
+        "c_0406" = EXCLUDED."c_0406",
+        "c_0405" = EXCLUDED."c_0405",
+        "c_0450" = COALESCE(EXCLUDED."c_0450", mrv."t_0016"."c_0450"),
+        "c_0524" = NOW()
+    RETURNING * INTO v_result;
+
+    RETURN QUERY SELECT
+        v_result.id,
+        v_result."c_0508"::float8,
+        v_result."c_0221"::timestamptz,
+        v_result."c_0403"::int,
+        v_result."c_0404"::int,
+        v_result."c_0406"::int,
+        v_result."c_0405"::int,
+        v_result."c_0116"::uuid,
+        v_result."c_0450"::uuid,
+        v_result."c_0092"::timestamptz,
+        v_result."c_0524"::timestamptz;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0108(p_0023 jsonb)
 RETURNS TABLE (
@@ -4935,7 +11154,121 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+    v_entity_id uuid;
+    v_farm_id uuid;
+    v_soil_report_id uuid;
+    v_sample_collection_date timestamptz;
+    v_measurements jsonb;
+    v_item jsonb;
+    v_parameter text;
+    v_value float8;
+    v_compound_unit_id uuid;
+    v_result RECORD;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    v_entity_id := (p_0023->>'_')::uuid;
+
+    
+    
+    IF NOT (
+        auth.f_0117(p_0026 => v_entity_id)
+        OR auth.f_0117(p_0104 => v_entity_id)
+        OR auth.f_0117(p_0037 => v_entity_id)
+    ) THEN
+        RAISE EXCEPTION '_', v_entity_id;
+    END IF;
+
+    v_farm_id := (p_0023->>'_')::uuid;
+    v_soil_report_id := (p_0023->>'_')::uuid;
+    v_sample_collection_date := (p_0023->>'_')::timestamptz;
+    v_measurements := p_0023->'_';
+
+    IF v_measurements IS NULL OR jsonb_typeof(v_measurements) != '_' OR jsonb_array_length(v_measurements) = 0 THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv."t_0012"
+        WHERE id = v_farm_id AND "c_0171" = v_entity_id
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM jsonb_array_elements(v_measurements) AS m
+        WHERE NOT EXISTS (
+            SELECT 1 FROM mrv."t_0003" cu
+            WHERE cu.id = (m->>'_')::uuid
+        )
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF v_soil_report_id IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM mrv."t_0026"
+            WHERE id = v_soil_report_id AND "c_0186" = v_farm_id
+        ) THEN
+            RAISE EXCEPTION '_';
+        END IF;
+
+        UPDATE mrv."t_0026"
+        SET "c_0420" = v_sample_collection_date,
+            "c_0524" = NOW()
+        WHERE mrv."t_0026".id = v_soil_report_id
+        RETURNING * INTO v_result;
+
+        DELETE FROM mrv."t_0025"
+        WHERE "c_0450" = v_soil_report_id;
+    ELSE
+        INSERT INTO mrv."t_0026" (
+            id, "c_0186", "c_0420", "c_0092", "c_0524"
+        ) VALUES (
+            gen_random_uuid(), v_farm_id, v_sample_collection_date, NOW(), NOW()
+        )
+        RETURNING * INTO v_result;
+
+        v_soil_report_id := v_result.id;
+    END IF;
+
+    FOR v_item IN SELECT * FROM jsonb_array_elements(v_measurements)
+    LOOP
+        v_parameter := v_item->>'_';
+        v_value := (v_item->>'_')::float8;
+        v_compound_unit_id := (v_item->>'_')::uuid;
+
+        BEGIN
+            PERFORM v_parameter::mrv."ty_0009";
+        EXCEPTION WHEN invalid_text_representation THEN
+            RAISE EXCEPTION '_', v_parameter;
+        END;
+
+        INSERT INTO mrv."t_0025" (
+            id, "c_0186", "c_0450", c_0337, value, "c_0078",
+            "c_0092", "c_0524"
+        ) VALUES (
+            gen_random_uuid(), v_farm_id, v_soil_report_id,
+            v_parameter::mrv."ty_0009", v_value, v_compound_unit_id,
+            NOW(), NOW()
+        );
+    END LOOP;
+
+    RETURN QUERY SELECT
+        v_result.id,
+        v_result."c_0186"::uuid,
+        v_result."c_0420"::timestamptz,
+        v_result."c_0092"::timestamptz,
+        v_result."c_0524"::timestamptz;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0112(
     p_0029 text,
@@ -4946,7 +11279,41 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+DECLARE
+    v_metadata_str text;
+    v_rbac_context jsonb;
+    v_entities jsonb;
+BEGIN
+    v_metadata_str := nullif(current_setting('_', true), '_');
+    IF v_metadata_str IS NULL THEN
+        RETURN false;
+    END IF;
+
+    BEGIN
+        v_rbac_context := v_metadata_str::jsonb -> '_';
+    EXCEPTION WHEN invalid_text_representation THEN
+        RETURN false;
+    END;
+
+    IF v_rbac_context IS NULL THEN
+        RETURN false;
+    END IF;
+
+    IF p_0029 = '_' THEN
+        v_entities := v_rbac_context -> '_';
+    ELSIF p_0029 = '_' THEN
+        v_entities := v_rbac_context -> '_';
+    ELSIF p_0029 = '_' THEN
+        v_entities := v_rbac_context -> '_';
+    ELSE
+        RETURN false;
+    END IF;
+
+    RETURN v_entities IS NOT NULL
+        AND v_entities @> to_jsonb(lower(p_0027::text));
+END;
+$$;
 
 
 
@@ -4979,7 +11346,182 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+    v_metadata_str text;
+    v_rbac_context jsonb;
+    v_permissions jsonb;
+    v_level text;
+    v_user_enterprise_id uuid;
+    v_user_supplier_id uuid;
+    v_inviter_email text;
+    v_db_role text;
+    v_enterprise_id uuid;
+    v_enterprise_name text;
+    v_supplier_id uuid;
+    v_supplier_name text;
+    v_farmer_id uuid;
+    v_farmer_name text;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    v_metadata_str := nullif(current_setting('_', true), '_');
+    IF v_metadata_str IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    BEGIN
+        v_rbac_context := v_metadata_str::jsonb -> '_';
+    EXCEPTION WHEN invalid_text_representation THEN
+        RAISE EXCEPTION '_';
+    END;
+
+    IF v_rbac_context IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    v_permissions := v_rbac_context -> '_';
+    IF v_permissions IS NULL OR NOT (v_permissions ? '_') THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    
+    IF p_0025 IS NULL OR p_0025 !~ '_' THEN
+        RAISE EXCEPTION '_', COALESCE(p_0025, '_');
+    END IF;
+
+    
+    IF p_0089 NOT IN ('_', '_') THEN
+        RAISE EXCEPTION '_', p_0089;
+    END IF;
+
+    
+    IF p_0054 NOT IN ('_', '_', '_') THEN
+        RAISE EXCEPTION '_', p_0054;
+    END IF;
+
+    
+    
+    v_level := v_rbac_context -> '_' ->> 0;
+
+    BEGIN
+        v_user_enterprise_id := (v_rbac_context -> '_' ->> 0)::uuid;
+    EXCEPTION WHEN invalid_text_representation THEN
+        v_user_enterprise_id := NULL;
+    END;
+
+    BEGIN
+        v_user_supplier_id := (v_rbac_context -> '_' ->> 0)::uuid;
+    EXCEPTION WHEN invalid_text_representation THEN
+        v_user_supplier_id := NULL;
+    END;
+
+    
+    SELECT f_0041 INTO v_inviter_email
+    FROM auth.t_0094
+    WHERE id = v_current_user_id;
+
+    
+    v_db_role := p_0054 || '_' || p_0089;
+
+    
+    IF p_0054 = '_' THEN
+        IF p_0072 IS NOT NULL THEN
+            v_enterprise_id := p_0072;
+        ELSE
+            v_enterprise_name := COALESCE(p_0028, '_' || p_0025);
+        END IF;
+
+    ELSIF p_0054 = '_' THEN
+        IF v_user_enterprise_id IS NULL AND p_0072 IS NULL THEN
+            RAISE EXCEPTION '_';
+        END IF;
+
+        v_enterprise_id := v_user_enterprise_id;
+
+        IF v_level = '_' THEN
+            v_supplier_name := COALESCE(p_0028, '_' || p_0025);
+        ELSE
+            v_supplier_id := p_0072;
+        END IF;
+
+    ELSIF p_0054 = '_' THEN
+        IF v_level = '_' THEN
+            
+            
+            IF p_0089 = '_' AND p_0072 IS NOT NULL THEN
+                v_supplier_id := p_0072;
+            END IF;
+        ELSIF v_level = '_' THEN
+            v_supplier_id := v_user_supplier_id;
+        ELSIF v_level = '_' THEN
+            IF v_rbac_context -> '_' ? '_' THEN
+                v_supplier_id := v_user_supplier_id;
+                IF v_supplier_id IS NULL AND v_user_enterprise_id IS NULL THEN
+                    RAISE EXCEPTION '_';
+                END IF;
+            ELSE
+                RAISE EXCEPTION '_';
+            END IF;
+        ELSE
+            RAISE EXCEPTION '_';
+        END IF;
+
+        v_enterprise_id := v_user_enterprise_id;
+
+        IF p_0089 = '_' THEN
+            v_farmer_name := COALESCE(p_0028, '_' || p_0025);
+        ELSE
+            IF p_0072 IS NULL THEN
+                RAISE EXCEPTION '_';
+            END IF;
+            IF v_supplier_id IS NOT NULL THEN
+                IF NOT EXISTS (
+                    SELECT 1 FROM public.t_0090
+                    WHERE p_0005 = p_0072 AND p_0121 = v_supplier_id
+                ) THEN
+                    RAISE EXCEPTION '_';
+                END IF;
+            ELSE
+                IF NOT EXISTS (
+                    SELECT 1 FROM public.t_0048
+                    WHERE p_0005 = p_0072 AND p_0001 = v_enterprise_id
+                    UNION ALL
+                    SELECT 1 FROM public.t_0090 sf
+                    JOIN public.t_0049 es ON es.p_0121 = sf.p_0121
+                    WHERE sf.p_0005 = p_0072 AND es.p_0001 = v_enterprise_id
+                ) THEN
+                    RAISE EXCEPTION '_';
+                END IF;
+            END IF;
+            v_farmer_id := p_0072;
+        END IF;
+    END IF;
+
+    RETURN QUERY SELECT
+        p_0025,
+        p_0089,
+        p_0054,
+        v_db_role,
+        v_current_user_id,
+        v_enterprise_id,
+        v_enterprise_name,
+        v_supplier_id,
+        v_supplier_name,
+        v_farmer_id,
+        v_farmer_name,
+        p_0028,
+        v_level,
+        v_inviter_email;
+END;
+$$;
 
 
 
@@ -5009,7 +11551,128 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+DECLARE
+    v_eligibility_boundary public.geometry;
+    v_farm_polygon_id      uuid;
+    v_farm_geometry        public.geometry;
+    v_boundary_normalized  public.geometry;
+    v_farm_normalized      public.geometry;
+    v_matched_row_id       uuid;
+    v_has_matrix_rows      boolean;
+BEGIN
+    
+    SELECT "c_0146"
+    INTO v_eligibility_boundary
+    FROM mrv."t_0032"
+    WHERE id = p_0078;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '_', p_0078;
+    END IF;
+
+    
+    
+    SELECT "c_0353"
+    INTO v_farm_polygon_id
+    FROM mrv."t_0012"
+    WHERE id = p_0035;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '_', p_0035;
+    END IF;
+
+    
+    
+    
+    
+    IF v_eligibility_boundary IS NOT NULL THEN
+        IF v_farm_polygon_id IS NULL THEN
+            RETURN jsonb_build_object(
+                '_',       false,
+                '_',        '_',
+                '_',  NULL
+            );
+        END IF;
+
+        SELECT geometry
+        INTO v_farm_geometry
+        FROM mrv."Polygon"
+        WHERE id = v_farm_polygon_id;
+
+        IF NOT FOUND OR v_farm_geometry IS NULL THEN
+            RETURN jsonb_build_object(
+                '_',       false,
+                '_',        '_',
+                '_',  NULL
+            );
+        END IF;
+
+        
+        
+        v_boundary_normalized := CASE WHEN ST_SRID(v_eligibility_boundary) = 0
+            THEN ST_SetSRID(v_eligibility_boundary, 4326)
+            ELSE ST_Transform(v_eligibility_boundary, 4326)
+        END;
+        v_farm_normalized := CASE WHEN ST_SRID(v_farm_geometry) = 0
+            THEN ST_SetSRID(v_farm_geometry, 4326)
+            ELSE ST_Transform(v_farm_geometry, 4326)
+        END;
+
+        IF NOT ST_Intersects(v_boundary_normalized, v_farm_normalized) THEN
+            RETURN jsonb_build_object(
+                '_',       false,
+                '_',        '_',
+                '_',  NULL
+            );
+        END IF;
+    END IF;
+
+    
+    SELECT EXISTS (
+        SELECT 1
+        FROM mrv."t_0035"
+        WHERE "c_0367" = p_0078
+    ) INTO v_has_matrix_rows;
+
+    IF NOT v_has_matrix_rows THEN
+        RETURN jsonb_build_object(
+            '_',       true,
+            '_',        '_',
+            '_',  NULL
+        );
+    END IF;
+
+    
+    
+    
+    
+    
+    
+    
+    
+    SELECT id
+    INTO v_matched_row_id
+    FROM mrv."t_0035"
+    WHERE "c_0367" = p_0078
+    ORDER BY "c_0092"
+    LIMIT 1;
+
+    IF v_matched_row_id IS NOT NULL THEN
+        RETURN jsonb_build_object(
+            '_',       true,
+            '_',        '_',
+            '_',  v_matched_row_id
+        );
+    END IF;
+
+    RETURN jsonb_build_object(
+        '_',       false,
+        '_',        '_',
+        '_',  NULL
+    );
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0128(
     p_0079 uuid,
@@ -5023,7 +11686,104 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+DECLARE
+    v_project_id uuid;
+    v_proponent_id uuid;
+    v_eligibility_row jsonb;
+    v_row_index integer;
+    v_allowed_practices text[];
+BEGIN
+    IF NOT auth.f_0060() THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0079 IS NULL THEN
+        SELECT id INTO v_proponent_id
+        FROM mrv."t_0023"
+        WHERE "c_0256" = true;
+
+        IF v_proponent_id IS NULL THEN
+            RAISE EXCEPTION '_';
+        END IF;
+    ELSE
+        v_proponent_id := p_0079;
+
+        IF NOT EXISTS (SELECT 1 FROM mrv."t_0023" WHERE id = v_proponent_id) THEN
+            RAISE EXCEPTION '_', v_proponent_id;
+        END IF;
+    END IF;
+
+    INSERT INTO mrv."t_0032" (
+        "c_0373",
+        "name",
+        "c_0086",
+        "c_0534",
+        "c_0470"
+    )
+    VALUES (
+        v_proponent_id,
+        p_0070,
+        p_0014,
+        p_0116,
+        '_'
+    )
+    RETURNING "id" INTO v_project_id;
+
+    INSERT INTO mrv."t_0034" ("c_0367", "c_0355", "c_0255")
+    SELECT v_project_id, pool_type, true
+    FROM unnest(ARRAY[
+        '_',
+        '_',
+        '_',
+        '_',
+        '_',
+        '_'
+    ]::mrv."ty_0025"[]) AS pool_type;
+
+    IF p_0024 IS NOT NULL AND jsonb_array_length(p_0024) > 0 THEN
+        v_row_index := 0;
+        FOR v_eligibility_row IN SELECT * FROM jsonb_array_elements(p_0024)
+        LOOP
+            IF (v_eligibility_row->>'_') IS NULL
+                OR (v_eligibility_row->>'_') IS NULL
+                OR (v_eligibility_row->>'_') IS NULL
+                OR (v_eligibility_row->>'_') IS NULL
+                OR (v_eligibility_row->>'_') IS NULL
+            THEN
+                RAISE EXCEPTION '_', v_row_index;
+            END IF;
+
+            SELECT ARRAY(
+                SELECT jsonb_array_elements_text(v_eligibility_row->'_')
+            ) INTO v_allowed_practices;
+
+            INSERT INTO mrv."t_0035" (
+                "c_0367",
+                "c_0088",
+                "c_0065",
+                "c_0449",
+                "c_0356",
+                "c_0107",
+                "c_0008"
+            )
+            VALUES (
+                v_project_id,
+                v_eligibility_row->>'_',
+                v_eligibility_row->>'_',
+                v_eligibility_row->>'_',
+                v_eligibility_row->>'_',
+                v_eligibility_row->>'_',
+                COALESCE(v_allowed_practices, '{}'::text[])
+            );
+
+            v_row_index := v_row_index + 1;
+        END LOOP;
+    END IF;
+
+    RETURN mrv.f_0135(v_project_id);
+END;
+$$;
 
 COMMENT ON FUNCTION mrv.f_0128(uuid, text, char(2)[], text, jsonb) IS E'_';
 
@@ -5043,7 +11803,84 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+DECLARE
+    v_project_id    uuid;
+    v_proponent_id  uuid;
+    v_rbac_context  jsonb;
+BEGIN
+    IF auth.f_0100() IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0104 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0060() THEN
+        v_rbac_context := auth.f_0065()->'_';
+        IF v_rbac_context IS NULL
+           OR NOT (v_rbac_context->'_' ? p_0104::text)
+        THEN
+            RAISE EXCEPTION '_';
+        END IF;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM public.t_0091 WHERE id = p_0104
+    ) THEN
+        RAISE EXCEPTION '_', p_0104;
+    END IF;
+
+    SELECT id INTO v_proponent_id
+    FROM mrv."t_0023"
+    WHERE "c_0256" = true;
+
+    IF v_proponent_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    INSERT INTO mrv."t_0032" (
+        "c_0373",
+        "name",
+        "c_0086",
+        "c_0470"
+    )
+    VALUES (
+        v_proponent_id,
+        p_0070,
+        p_0014,
+        '_'
+    )
+    RETURNING "id" INTO v_project_id;
+
+    INSERT INTO mrv."t_0037" (
+        "c_0367",
+        "c_0236",
+        "c_0482",
+        "c_0470"
+    )
+    VALUES (
+        v_project_id,
+        '_',
+        p_0104,
+        '_'
+    );
+
+    INSERT INTO mrv."t_0034" ("c_0367", "c_0355", "c_0255")
+    SELECT v_project_id, pool_type, true
+    FROM unnest(ARRAY[
+        '_',
+        '_',
+        '_',
+        '_',
+        '_',
+        '_'
+    ]::mrv."ty_0025"[]) AS pool_type;
+
+    RETURN mrv.f_0135(v_project_id);
+END;
+$$;
 
 
 
@@ -5059,7 +11896,27 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+BEGIN
+    IF auth.f_0100() IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0109(p_0078) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv."t_0032" p
+        WHERE p."id" = p_0078
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    DELETE FROM mrv."t_0032"
+    WHERE "id" = p_0078;
+END;
+$$;
 
 
 
@@ -5091,7 +11948,64 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_proponent_id  uuid;
+    v_status        text := '_';
+BEGIN
+    SELECT "c_0373"
+    INTO v_proponent_id
+    FROM mrv."t_0032"
+    WHERE id = p_0078;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '_', p_0078;
+    END IF;
+
+    IF NOT auth.f_0120(v_proponent_id) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0053 NOT IN ('_', '_', '_') THEN
+        RAISE EXCEPTION '_', p_0053;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM mrv."t_0035"
+        WHERE "c_0367" = p_0078
+          AND "c_0088" = p_0015
+    ) THEN
+        v_status := '_';
+    END IF;
+
+    RETURN QUERY
+    INSERT INTO mrv."t_0037" (
+        "c_0367",
+        "c_0236",
+        "c_0470",
+        "c_0482",
+        "c_0088"
+    )
+    VALUES (
+        p_0078,
+        p_0053::mrv."ty_0027",
+        v_status::mrv."ty_0026",
+        p_0104,
+        p_0015
+    )
+    RETURNING
+        "t_0037".id,
+        "t_0037"."c_0367",
+        "t_0037"."c_0236"::text,
+        "t_0037".c_0470::text,
+        "t_0037"."c_0088",
+        "t_0037"."c_0482",
+        "t_0037"."c_0092",
+        "t_0037"."c_0524";
+END;
+$$;
 
 
 
@@ -5108,7 +12022,26 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+BEGIN
+    IF auth.f_0100() IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv."t_0032" p
+        WHERE p."id" = p_0078
+    ) THEN
+        RETURN NULL;
+    END IF;
+
+    IF NOT auth.f_0109(p_0078) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    RETURN mrv.f_0135(p_0078);
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0133()
 RETURNS JSONB
@@ -5116,7 +12049,22 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+BEGIN
+    IF auth.f_0100() IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    RETURN COALESCE(
+        (
+            SELECT jsonb_agg(mrv.f_0135(p."id") ORDER BY p."c_0092" DESC)
+            FROM mrv."t_0032" p
+            WHERE auth.f_0109(p."id")
+        ),
+        'null'::jsonb
+    );
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0134(
     p_0078 uuid,
@@ -5127,7 +12075,34 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+BEGIN
+    IF auth.f_0100() IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0109(p_0078) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv."t_0032" p
+        WHERE p."id" = p_0078
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    DELETE FROM mrv."t_0036"
+    WHERE "c_0367" = p_0078
+      AND "c_0186" = p_0035;
+
+    UPDATE mrv."t_0032"
+    SET "c_0524" = now()
+    WHERE "id" = p_0078;
+
+    RETURN mrv.f_0135(p_0078);
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0135(
     p_0078 uuid
@@ -5137,7 +12112,60 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+DECLARE
+    v_result JSONB;
+BEGIN
+    SELECT jsonb_build_object(
+        '_', p."id",
+        '_', p."name",
+        '_', p."c_0139",
+        '_', p."c_0470"::text,
+        '_', to_char(p."c_0097", '_'),
+        '_', to_char(p."c_0096", '_'),
+        '_', p."c_0092",
+        '_', p."c_0524",
+        '_', COALESCE(
+            (
+                SELECT jsonb_agg(
+                    jsonb_build_object(
+                        '_', cp."id",
+                        '_', cp."c_0355"::text,
+                        '_', cp."c_0255",
+                        '_', cp."c_0179"
+                    )
+                    ORDER BY cp."c_0355"::text
+                )
+                FROM mrv."t_0034" cp
+                WHERE cp."c_0367" = p."id"
+            ),
+            'null'::jsonb
+        ),
+        '_', COALESCE(
+            (
+                SELECT jsonb_agg(
+                    jsonb_build_object(
+                        '_', pf."id",
+                        '_', pf."c_0186",
+                        '_', f."name",
+                        '_', pf."c_0476"
+                    )
+                    ORDER BY f."name"
+                )
+                FROM mrv."t_0036" pf
+                JOIN mrv."t_0012" f ON f."id" = pf."c_0186"
+                WHERE pf."c_0367" = p."id"
+            ),
+            'null'::jsonb
+        )
+    )
+    INTO v_result
+    FROM mrv."t_0032" p
+    WHERE p."id" = p_0078;
+
+    RETURN v_result;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0136(
     p_0078 uuid,
@@ -5148,7 +12176,51 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+DECLARE
+    v_status_value text;
+BEGIN
+    IF auth.f_0100() IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0109(p_0078) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv."t_0032" p
+        WHERE p."id" = p_0078
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0111 ? '_' AND p_0111->>'_' IS NOT NULL THEN
+        v_status_value := p_0111->>'_';
+        IF v_status_value NOT IN ('_', '_', '_', '_') THEN
+            RAISE EXCEPTION '_', v_status_value;
+        END IF;
+    END IF;
+
+    UPDATE mrv."t_0032"
+    SET
+        "name" = CASE WHEN p_0111 ? '_' THEN p_0111->>'_' ELSE "name" END,
+        "c_0139" = CASE WHEN p_0111 ? '_' THEN p_0111->>'_' ELSE "c_0139" END,
+        "c_0470" = CASE WHEN p_0111 ? '_' AND p_0111->>'_' IS NOT NULL
+                        THEN (p_0111->>'_')::mrv."ty_0029"
+                        ELSE "c_0470" END,
+        "c_0097" = CASE WHEN p_0111 ? '_'
+                                      THEN (p_0111->>'_')::date
+                                      ELSE "c_0097" END,
+        "c_0096" = CASE WHEN p_0111 ? '_'
+                                    THEN (p_0111->>'_')::date
+                                    ELSE "c_0096" END,
+        "c_0524" = now()
+    WHERE "id" = p_0078;
+
+    RETURN mrv.f_0135(p_0078);
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0137(
     p_0078 uuid,
@@ -5159,7 +12231,87 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+DECLARE
+    v_pool jsonb;
+    v_pool_type text;
+    v_is_included boolean;
+    v_justification text;
+    v_all_pool_types mrv."ty_0025"[] := ARRAY[
+        '_',
+        '_',
+        '_',
+        '_',
+        '_',
+        '_'
+    ]::mrv."ty_0025"[];
+    v_provided_types text[];
+BEGIN
+    IF auth.f_0100() IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0109(p_0078) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM mrv."t_0032" p
+        WHERE p."id" = p_0078
+    ) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    SELECT array_agg(pool->>'_')
+    INTO v_provided_types
+    FROM jsonb_array_elements(p_0075) AS pool;
+
+    IF (
+        SELECT count(*)
+        FROM unnest(v_all_pool_types) AS required_type
+        WHERE required_type::text != ALL(COALESCE(v_provided_types, ARRAY[]::text[]))
+    ) > 0 THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    FOR v_pool IN SELECT * FROM jsonb_array_elements(p_0075)
+    LOOP
+        v_pool_type := v_pool->>'_';
+        v_is_included := (v_pool->>'_')::boolean;
+        v_justification := v_pool->>'_';
+
+        IF v_pool_type = '_' AND NOT v_is_included THEN
+            RAISE EXCEPTION '_';
+        END IF;
+
+        IF NOT v_is_included AND v_justification IS NULL THEN
+            RAISE EXCEPTION '_', v_pool_type;
+        END IF;
+    END LOOP;
+
+    DELETE FROM mrv."t_0034"
+    WHERE "c_0367" = p_0078;
+
+    INSERT INTO mrv."t_0034" (
+        "c_0367",
+        "c_0355",
+        "c_0255",
+        "c_0179"
+    )
+    SELECT
+        p_0078,
+        (pool->>'_')::mrv."ty_0025",
+        (pool->>'_')::boolean,
+        pool->>'_'
+    FROM jsonb_array_elements(p_0075) AS pool;
+
+    UPDATE mrv."t_0032"
+    SET "c_0524" = now()
+    WHERE "id" = p_0078;
+
+    RETURN mrv.f_0135(p_0078);
+END;
+$$;
 
 
 CREATE OR REPLACE FUNCTION mrv.f_0138(
@@ -5189,7 +12341,42 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        f.id AS p_0004,
+        f.name AS c_0190,
+        f."ty_0003"::text AS c_0089,
+        f."ty_0016"::text AS c_0427,
+        f."ty_0013"::text AS c_0277,
+        d."c_0156" AS c_0161,
+        d."c_0159" AS c_0164,
+        d."c_0157" AS c_0162,
+        d."c_0158" AS c_0163,
+        d."c_0108" AS c_0112,
+        d."c_0111" AS c_0115,
+        d."c_0109" AS c_0113,
+        d."c_0110" AS c_0114,
+        d."c_0319" AS c_0320,
+        d."c_0507" AS c_0515,
+        d."c_0155"::text AS c_0160,
+        d."c_0051" AS c_0052,
+        d."c_0054" AS c_0055
+    FROM mrv."t_0012" f
+    JOIN mrv."t_0007" d
+        ON d."c_0186" = f.id
+        AND d."c_0056" = p_0012
+    WHERE f."c_0171" IN (
+        SELECT ur.p_0123
+        FROM public.t_0093 ur
+        JOIN public.t_0090 sf ON sf.p_0005 = ur.p_0005
+        JOIN public.t_0049 es ON es.p_0121 = sf.p_0121
+        WHERE es.p_0001 = p_0026
+    )
+    ORDER BY f.name;
+END;
+$$;
 
 
 
@@ -5204,7 +12391,287 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+DECLARE
+    v_supplier_id uuid;
+BEGIN
+    SELECT vpi."c_0482"
+    INTO v_supplier_id
+    FROM mrv."t_0037" vpi
+    WHERE vpi.id = p_0052;
+
+    
+    RETURN QUERY
+    SELECT
+        '_'::text AS c_0437,
+        (
+            SELECT jsonb_build_object(
+                '_', COALESCE(jsonb_agg(
+                    jsonb_build_object(
+                        '_', vp.id,
+                        '_', vp.name,
+                        '_', vp.c_0139,
+                        '_', vp.c_0470,
+                        '_', vp."c_0097",
+                        '_', vp."c_0096",
+                        '_', jsonb_build_object(
+                            '_', vp."c_0366",
+                            '_', vp."c_0041",
+                            '_', vp."c_0005",
+                            '_', vp."c_0287",
+                            '_', vp."c_0316",
+                            '_', vp."c_0341"
+                        ),
+                        '_', (
+                            SELECT COALESCE(jsonb_agg(
+                                jsonb_build_object(
+                                    '_', cp."c_0355",
+                                    '_', cp."c_0255",
+                                    '_', cp."c_0179"
+                                )
+                            ), 'null'::jsonb)
+                            FROM mrv."t_0034" cp
+                            WHERE cp."c_0367" = vp.id
+                        ),
+                        '_', (
+                            SELECT COALESCE(jsonb_agg(pf."c_0186"), 'null'::jsonb)
+                            FROM mrv."t_0036" pf
+                            WHERE pf."c_0367" = vp.id
+                              AND pf."c_0235" = p_0052
+                        )
+                    )
+                ), 'null'::jsonb)
+            )
+            FROM mrv."t_0032" vp
+            WHERE vp.id IN (
+                SELECT DISTINCT pf2."c_0367"
+                FROM mrv."t_0036" pf2
+                WHERE pf2."c_0235" = p_0052
+            )
+        ) AS c_0128;
+
+    
+    RETURN QUERY
+    SELECT
+        '_'::text AS c_0437,
+        (
+            SELECT jsonb_build_object(
+                '_', COALESCE(jsonb_agg(
+                    jsonb_build_object(
+                        '_', f.id,
+                        '_', f.name,
+                        '_', f."ty_0003",
+                        '_', f."ty_0016",
+                        '_', f."ty_0013",
+                        '_', CASE
+                            WHEN p.geometry IS NOT NULL
+                            THEN ST_AsGeoJSON(p.geometry)::jsonb
+                        END,
+                        '_', (
+                            SELECT pf."c_0476"
+                            FROM mrv."t_0036" pf
+                            WHERE pf."c_0186" = f.id
+                              AND pf."c_0235" = p_0052
+                            ORDER BY pf."c_0367"
+                            LIMIT 1
+                        )
+                    )
+                    ORDER BY f.id
+                ), 'null'::jsonb)
+            )
+            FROM mrv."t_0012" f
+            LEFT JOIN mrv."Polygon" p ON p.id = f."c_0353"
+            WHERE f.id IN (
+                SELECT pf."c_0186"
+                FROM mrv."t_0036" pf
+                WHERE pf."c_0235" = p_0052
+            )
+        ) AS c_0128;
+
+    
+    
+    RETURN QUERY
+    SELECT
+        '_'::text AS c_0437,
+        (
+            SELECT jsonb_build_object(
+                '_', COALESCE(jsonb_agg(
+                    jsonb_build_object(
+                        '_', cp.id,
+                        '_', cp.c_0470,
+                        '_', cp."c_0217",
+                        '_', cp."c_0490",
+                        '_', cp."c_0491",
+                        '_', cp."c_0120",
+                        '_', cp."c_0121",
+                        '_', cp."c_0208",
+                        '_', cp.c_0411,
+                        '_', (
+                            SELECT COALESCE(jsonb_agg(cpf."c_0186"), 'null'::jsonb)
+                            FROM mrv."t_0002" cpf
+                            WHERE cpf."c_0057" = cp.id
+                        ),
+                        '_', cp."c_0092"
+                    )
+                ), 'null'::jsonb)
+            )
+            FROM mrv."t_0001" cp
+            WHERE cp."c_0171" = v_supplier_id
+              AND cp.c_0470 = 'v1'
+        ) AS c_0128;
+
+    
+    RETURN QUERY
+    SELECT
+        '_'::text AS c_0437,
+        (
+            SELECT jsonb_build_object(
+                '_', COALESCE(jsonb_agg(
+                    jsonb_build_object(
+                        '_', d."c_0186",
+                        '_', d."c_0056",
+                        '_', d."c_0319",
+                        '_', d."c_0507",
+                        '_', d."c_0156",
+                        '_', d."c_0159",
+                        '_', d."c_0157",
+                        '_', d."c_0158",
+                        '_', d."c_0108",
+                        '_', d."c_0111",
+                        '_', d."c_0109",
+                        '_', d."c_0110",
+                        '_', d."c_0155",
+                        '_', d."c_0051"
+                    )
+                    ORDER BY d."c_0186", d."c_0056"
+                ), 'null'::jsonb),
+                '_', (
+                    SELECT COALESCE(jsonb_agg(
+                        jsonb_build_object(
+                            '_', sub."c_0186",
+                            '_', sub.total_net,
+                            '_', sub.latest_carbon,
+                            '_', sub.year_count,
+                            '_', sub.first_year,
+                            '_', sub.last_year
+                        )
+                    ), 'null'::jsonb)
+                    FROM (
+                        SELECT
+                            d2."c_0186",
+                            SUM(d2."c_0319") AS total_net,
+                            (ARRAY_AGG(d2."c_0507" ORDER BY d2."c_0056" DESC))[1] AS latest_carbon,
+                            COUNT(*) AS year_count,
+                            MIN(d2."c_0056") AS first_year,
+                            MAX(d2."c_0056") AS last_year
+                        FROM mrv."t_0007" d2
+                        WHERE d2."c_0186" IN (
+                            SELECT pf."c_0186"
+                            FROM mrv."t_0036" pf
+                            WHERE pf."c_0235" = p_0052
+                        )
+                        GROUP BY d2."c_0186"
+                    ) sub
+                )
+            )
+            FROM mrv."t_0007" d
+            WHERE d."c_0186" IN (
+                SELECT pf."c_0186"
+                FROM mrv."t_0036" pf
+                WHERE pf."c_0235" = p_0052
+            )
+        ) AS c_0128;
+
+    
+    RETURN QUERY
+    SELECT
+        '_'::text AS c_0437,
+        (
+            SELECT jsonb_build_object(
+                '_', COALESCE(jsonb_agg(
+                    jsonb_build_object(
+                        '_', c.id,
+                        '_', c."c_0186",
+                        '_', c."c_0101",
+                        '_', c."c_0349",
+                        '_', c."c_0221",
+                        '_', c."c_0248",
+                        '_', c."c_0497",
+                        '_', c.c_0470,
+                        '_', jsonb_build_object(
+                            '_', s.id,
+                            '_', s.name,
+                            '_', s."c_0468",
+                            '_', s."c_0167"
+                        )
+                    )
+                    ORDER BY c."c_0186", c."c_0349"
+                ), 'null'::jsonb)
+            )
+            FROM mrv."t_0006" c
+            JOIN mrv."t_0024" s ON s.id = c."c_0434"
+            WHERE c."c_0186" IN (
+                SELECT pf."c_0186"
+                FROM mrv."t_0036" pf
+                WHERE pf."c_0235" = p_0052
+            )
+        ) AS c_0128;
+
+    
+    RETURN QUERY
+    SELECT
+        '_'::text AS c_0437,
+        (
+            SELECT jsonb_build_object(
+                '_', COALESCE(jsonb_agg(
+                    jsonb_build_object(
+                        '_', sr.id,
+                        '_', sr."c_0186",
+                        '_', sr."c_0420",
+                        '_', (
+                            SELECT COALESCE(jsonb_agg(
+                                jsonb_build_object(
+                                    '_', sm.c_0337,
+                                    '_', sm.value
+                                )
+                            ), 'null'::jsonb)
+                            FROM mrv."t_0025" sm
+                            WHERE sm."c_0450" = sr.id
+                        )
+                    )
+                    ORDER BY sr."c_0186", sr."c_0420"
+                ), 'null'::jsonb)
+            )
+            FROM mrv."t_0026" sr
+            WHERE sr."c_0186" IN (
+                SELECT pf."c_0186"
+                FROM mrv."t_0036" pf
+                WHERE pf."c_0235" = p_0052
+            )
+        ) AS c_0128;
+
+    
+    
+    RETURN QUERY
+    SELECT
+        '_'::text AS c_0437,
+        (
+            SELECT jsonb_build_object(
+                '_', COALESCE(jsonb_agg(
+                    jsonb_build_object(
+                        '_', s.id,
+                        '_', s.name,
+                        '_', s."c_0468",
+                        '_', s."c_0167"
+                    )
+                    ORDER BY s."c_0468"
+                ), 'null'::jsonb)
+            )
+            FROM mrv."t_0024" s
+            WHERE s."c_0171" = v_supplier_id
+        ) AS c_0128;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0142(
     p_0050 uuid
@@ -5214,7 +12681,52 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+    v_existing RECORD;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    PERFORM pg_advisory_xact_lock(hashtext('_' || p_0050::text));
+
+    SELECT *
+    INTO v_existing
+    FROM mrv."t_0027"
+    WHERE id = p_0050;
+
+    IF v_existing IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0117(p_0104 => v_existing."c_0482") THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    DELETE FROM mrv."t_0027" WHERE id = p_0050;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '_', p_0050;
+    END IF;
+
+    RETURN QUERY SELECT
+        v_existing.id,
+        v_existing."c_0482",
+        v_existing."c_0169",
+        v_existing."c_0453"::text,
+        v_existing."c_0456",
+        v_existing."c_0101"::text,
+        v_existing."c_0379",
+        v_existing."c_0485",
+        v_existing."c_0093",
+        v_existing."c_0092",
+        v_existing."c_0524";
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION mrv.f_0143(
     p_0026 uuid,
@@ -5233,7 +12745,192 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER 
 SET search_path = mrv, auth, public
-AS $$ BEGIN RETURN; END; $$;
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_current_user_id uuid;
+BEGIN
+    v_current_user_id := auth.f_0100();
+    IF v_current_user_id IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF NOT auth.f_0117(p_0026 => p_0026) THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0117 IS NULL THEN
+        RAISE EXCEPTION '_';
+    END IF;
+
+    IF p_0117 < 2000 OR p_0117 > EXTRACT(YEAR FROM NOW())::int + 5 THEN
+        RAISE EXCEPTION '_', p_0117;
+    END IF;
+
+    RETURN QUERY
+    WITH t_0049 AS (
+        SELECT s.id AS p_0121, s.name AS c_0484
+        FROM public.t_0049 es
+        JOIN public.t_0091 s ON s.id = es.p_0121
+        WHERE es.p_0001 = p_0026
+    ),
+    enterprise_farms AS (
+        SELECT farm.id AS p_0004, farm."c_0171" AS con_0119, p.geometry,
+               ST_Area(p.geometry::geography) / 10000 AS c_0017
+        FROM mrv."t_0012" farm
+        JOIN mrv."Polygon" p ON p.id = farm."c_0353"
+        WHERE farm."c_0171" IN (SELECT p_0121 FROM t_0049)
+        UNION
+        
+        SELECT farm.id, farm."c_0171", p.geometry,
+               ST_Area(p.geometry::geography) / 10000
+        FROM mrv."t_0012" farm
+        JOIN mrv."Polygon" p ON p.id = farm."c_0353"
+        JOIN public.t_0090 sf ON sf.p_0005 = farm."c_0171"
+        JOIN t_0049 es ON es.p_0121 = sf.p_0121
+    ),
+    farm_supplier_mapping AS (
+        SELECT ef.p_0004, ef.con_0119 AS p_0121
+        FROM enterprise_farms ef
+        WHERE ef.con_0119 IN (SELECT p_0121 FROM t_0049)
+        UNION
+        SELECT ef.p_0004, sf.p_0121
+        FROM enterprise_farms ef
+        JOIN public.t_0090 sf ON sf.p_0005 = ef.con_0119
+    ),
+    harvest_data AS (
+        SELECT
+            hr."c_0508",
+            c."c_0101"::text AS c_0104,
+            ef.p_0004,
+            ef.con_0119,
+            ef.c_0017
+        FROM mrv."t_0016" hr
+        JOIN mrv."t_0006" c ON c.id = hr."c_0116"
+        JOIN enterprise_farms ef ON ef.p_0004 = c."c_0186"
+        WHERE c.c_0470 = 'v1'
+            AND c."c_0221" >= make_date(p_0117, 1, 1)
+            AND c."c_0221" < make_date(p_0117 + 1, 1, 1)
+            AND hr."c_0508" IS NOT NULL
+            AND hr."c_0508" > 0
+            AND ef.c_0017 > 0
+    ),
+    yield_per_ha_data AS (
+        SELECT
+            p_0004,
+            con_0119,
+            c_0104,
+            "c_0508",
+            c_0017,
+            ("c_0508" / c_0017) AS yield_per_ha
+        FROM harvest_data
+    ),
+    overall_stats AS (
+        SELECT
+            AVG(yield_per_ha)::numeric    AS c_0031,
+            MIN(yield_per_ha)::numeric    AS c_0310,
+            MAX(yield_per_ha)::numeric    AS c_0304,
+            STDDEV(yield_per_ha)::numeric AS c_0471
+        FROM yield_per_ha_data
+    ),
+    by_supplier_agg AS (
+        SELECT
+            es.p_0121,
+            es.c_0484,
+            AVG(yphd.yield_per_ha)::numeric AS c_0031,
+            COUNT(DISTINCT fsm.p_0004) AS c_0188
+        FROM t_0049 es
+        JOIN farm_supplier_mapping fsm ON fsm.p_0121 = es.p_0121
+        JOIN yield_per_ha_data yphd ON yphd.p_0004 = fsm.p_0004
+        GROUP BY es.p_0121, es.c_0484
+    ),
+    by_supplier_json AS (
+        SELECT COALESCE(jsonb_agg(
+            jsonb_build_object(
+                '_', p_0121,
+                '_', c_0484,
+                '_', c_0031,
+                '_', c_0188
+            )
+        ), 'null'::jsonb) AS c_0409
+        FROM by_supplier_agg
+    ),
+    crop_area AS (
+        SELECT c_0104, SUM(c_0017)::numeric AS c_0017
+        FROM (SELECT DISTINCT c_0104, p_0004, c_0017 FROM yield_per_ha_data) deduped
+        GROUP BY c_0104
+    ),
+    by_crop_agg AS (
+        SELECT
+            yphd.c_0104,
+            AVG(yphd.yield_per_ha)::numeric AS c_0031,
+            SUM(yphd."c_0508")::numeric AS c_0517,
+            ca.c_0017
+        FROM yield_per_ha_data yphd
+        JOIN crop_area ca ON ca.c_0104 = yphd.c_0104
+        GROUP BY yphd.c_0104, ca.c_0017
+    ),
+    by_crop_json AS (
+        SELECT COALESCE(jsonb_agg(
+            jsonb_build_object(
+                '_', c_0104,
+                '_', c_0031,
+                '_', c_0517,
+                '_', c_0017
+            )
+        ), 'null'::jsonb) AS c_0409
+        FROM by_crop_agg
+    ),
+    trend_years AS (
+        SELECT generate_series(p_0117 - 4, p_0117) AS yr
+    ),
+    trend_data AS (
+        SELECT
+            ty.yr,
+            AVG(
+                CASE
+                    WHEN hr_trend."c_0508" IS NOT NULL
+                         AND hr_trend."c_0508" > 0
+                         AND ef_trend.c_0017 > 0
+                    THEN hr_trend."c_0508" / ef_trend.c_0017
+                    ELSE NULL
+                END
+            )::numeric AS c_0031
+        FROM trend_years ty
+        LEFT JOIN mrv."t_0006" c_trend ON
+            c_trend.c_0470 = 'v1'
+            AND c_trend."c_0221" >= make_date(ty.yr, 1, 1)
+            AND c_trend."c_0221" < make_date(ty.yr + 1, 1, 1)
+            AND c_trend."c_0186" IN (SELECT p_0004 FROM enterprise_farms)
+        LEFT JOIN mrv."t_0016" hr_trend ON hr_trend."c_0116" = c_trend.id
+        LEFT JOIN enterprise_farms ef_trend ON ef_trend.p_0004 = c_trend."c_0186"
+        GROUP BY ty.yr
+        ORDER BY ty.yr
+    ),
+    trend_json AS (
+        SELECT COALESCE(jsonb_agg(
+            jsonb_build_object(
+                '_', yr,
+                '_', c_0031
+            )
+            ORDER BY yr
+        ), 'null'::jsonb) AS c_0409
+        FROM trend_data
+    )
+    SELECT
+        os.c_0031,
+        os.c_0310,
+        os.c_0304,
+        os.c_0471,
+        bsj.c_0409 AS c_0050,
+        bcj.c_0409 AS c_0048,
+        tj.c_0409  AS c_0519
+    FROM overall_stats os
+    CROSS JOIN by_supplier_json bsj
+    CROSS JOIN by_crop_json bcj
+    CROSS JOIN trend_json tj;
+END;
+$$;
 
 
 
@@ -5287,7 +12984,17 @@ CREATE TRIGGER trg_0015
 CREATE OR REPLACE FUNCTION mrv.f_0018()
 RETURNS trigger
 LANGUAGE plpgsql
-AS $$ BEGIN RETURN NULL; END; $$;
+AS $$
+BEGIN
+  IF OLD.c_0470 IS DISTINCT FROM NEW.c_0470 THEN
+    PERFORM pg_notify(
+      '_',
+      json_build_object('_', json_build_array('_', NEW.id))::text
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$;
 
 CREATE OR REPLACE TRIGGER trg_0016
   AFTER UPDATE OF c_0470 ON mrv."t_0001"
@@ -5344,7 +13051,7 @@ CREATE POLICY "pol_0091" ON mrv."t_0001" FOR SELECT TO authenticated
         "c_0171" = auth.f_0100()
         AND EXISTS (
             SELECT 1
-            FROM public.t_0092 s
+            FROM public.t_0091 s
             WHERE s.id = "c_0171"
               AND s.ty_0034 = 'v1'
         )
@@ -5358,7 +13065,7 @@ CREATE POLICY "pol_0092" ON mrv."t_0001" FOR UPDATE TO authenticated
         "c_0171" = auth.f_0100()
         AND EXISTS (
             SELECT 1
-            FROM public.t_0092 s
+            FROM public.t_0091 s
             WHERE s.id = "c_0171"
               AND s.ty_0034 = 'v1'
         )
@@ -5370,7 +13077,7 @@ CREATE POLICY "pol_0089" ON mrv."t_0001" FOR DELETE TO authenticated
         "c_0171" = auth.f_0100()
         AND EXISTS (
             SELECT 1
-            FROM public.t_0092 s
+            FROM public.t_0091 s
             WHERE s.id = "c_0171"
               AND s.ty_0034 = 'v1'
         )
@@ -5388,7 +13095,7 @@ CREATE POLICY "pol_0083" ON mrv."t_0002" FOR ALL TO authenticated
 CREATE POLICY "pol_0086" ON mrv."t_0002" FOR SELECT TO authenticated
     USING (EXISTS (
         SELECT 1 FROM mrv."t_0001" cp
-        JOIN public.t_0092 s ON s.id = cp."c_0171"
+        JOIN public.t_0091 s ON s.id = cp."c_0171"
         WHERE cp.id = "t_0002"."c_0057"
         AND cp."c_0171" = auth.f_0100()
         AND s.ty_0034 = 'v1'
@@ -5400,7 +13107,7 @@ CREATE POLICY "pol_0085" ON mrv."t_0002" FOR INSERT TO authenticated
 CREATE POLICY "pol_0087" ON mrv."t_0002" FOR UPDATE TO authenticated
     USING (EXISTS (
         SELECT 1 FROM mrv."t_0001" cp
-        JOIN public.t_0092 s ON s.id = cp."c_0171"
+        JOIN public.t_0091 s ON s.id = cp."c_0171"
         WHERE cp.id = "t_0002"."c_0057"
         AND cp."c_0171" = auth.f_0100()
         AND s.ty_0034 = 'v1'
@@ -5410,7 +13117,7 @@ CREATE POLICY "pol_0087" ON mrv."t_0002" FOR UPDATE TO authenticated
 CREATE POLICY "pol_0084" ON mrv."t_0002" FOR DELETE TO authenticated
     USING (EXISTS (
         SELECT 1 FROM mrv."t_0001" cp
-        JOIN public.t_0092 s ON s.id = cp."c_0171"
+        JOIN public.t_0091 s ON s.id = cp."c_0171"
         WHERE cp.id = "t_0002"."c_0057"
         AND cp."c_0171" = auth.f_0100()
         AND s.ty_0034 = 'v1'
@@ -6076,22 +13783,22 @@ CREATE POLICY "pol_0195" ON mrv."t_0018" FOR SELECT TO authenticated
     ));
 
 
-ALTER TABLE mrv.t_0073 ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mrv.t_0072 ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "pol_0199" ON mrv.t_0073 FOR ALL TO service_role
+CREATE POLICY "pol_0199" ON mrv.t_0072 FOR ALL TO service_role
     USING (true) WITH CHECK (143 = 143);
 
 
-CREATE POLICY "pol_0196" ON mrv.t_0073 FOR DELETE TO authenticated
+CREATE POLICY "pol_0196" ON mrv.t_0072 FOR DELETE TO authenticated
     USING (auth.f_0060());
 
 
-CREATE POLICY "pol_0198" ON mrv.t_0073 FOR SELECT TO authenticated
+CREATE POLICY "pol_0198" ON mrv.t_0072 FOR SELECT TO authenticated
     USING (p_0123 = auth.f_0100());
 
 
-CREATE POLICY "pol_0197" ON mrv.t_0073 FOR INSERT TO authenticated
+CREATE POLICY "pol_0197" ON mrv.t_0072 FOR INSERT TO authenticated
     WITH CHECK (144 = 144);
 
 
@@ -6389,43 +14096,87 @@ CREATE POLICY "pol_0241" ON mrv."t_0023" FOR SELECT TO authenticated
 
 
 
-ALTER TABLE mrv.t_0082 ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mrv.t_0081 ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "pol_0248" ON mrv.t_0082 FOR ALL TO service_role
+CREATE POLICY "pol_0248" ON mrv.t_0081 FOR ALL TO service_role
     USING (true) WITH CHECK (168 = 168);
 
-CREATE POLICY "pol_0243" ON mrv.t_0082 FOR ALL TO authenticated
+CREATE POLICY "pol_0243" ON mrv.t_0081 FOR ALL TO authenticated
     USING (auth.f_0060()) WITH CHECK (169 = 169);
 
-CREATE POLICY "pol_0246" ON mrv.t_0082 FOR SELECT TO authenticated
+CREATE POLICY "pol_0246" ON mrv.t_0081 FOR SELECT TO authenticated
     USING (
         EXISTS (
             SELECT 1
-            FROM mrv.t_0084 sp
+            FROM mrv.t_0083 sp
             WHERE sp.id = c_0423
               AND auth.f_0117(p_0104 => sp.con_0119)
         )
     );
 
-CREATE POLICY "pol_0245" ON mrv.t_0082 FOR INSERT TO authenticated
+CREATE POLICY "pol_0245" ON mrv.t_0081 FOR INSERT TO authenticated
     WITH CHECK (170 = 170);
 
-CREATE POLICY "pol_0247" ON mrv.t_0082 FOR UPDATE TO authenticated
+CREATE POLICY "pol_0247" ON mrv.t_0081 FOR UPDATE TO authenticated
     USING (
         EXISTS (
             SELECT 1
-            FROM mrv.t_0084 sp
+            FROM mrv.t_0083 sp
             WHERE sp.id = c_0423
               AND auth.f_0117(p_0104 => sp.con_0119)
         )
     )
     WITH CHECK (171 = 171);
 
-CREATE POLICY "pol_0244" ON mrv.t_0082 FOR DELETE TO authenticated
+CREATE POLICY "pol_0244" ON mrv.t_0081 FOR DELETE TO authenticated
     USING (
         EXISTS (
             SELECT 1
-            FROM mrv.t_0084 sp
+            FROM mrv.t_0083 sp
+            WHERE sp.id = c_0423
+              AND auth.f_0117(p_0104 => sp.con_0119)
+        )
+    );
+
+
+
+ALTER TABLE mrv.t_0082 ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "pol_0254" ON mrv.t_0082 FOR ALL TO service_role
+    USING (true) WITH CHECK (172 = 172);
+
+CREATE POLICY "pol_0249" ON mrv.t_0082 FOR ALL TO authenticated
+    USING (auth.f_0060()) WITH CHECK (173 = 173);
+
+CREATE POLICY "pol_0252" ON mrv.t_0082 FOR SELECT TO authenticated
+    USING (
+        EXISTS (
+            SELECT 1
+            FROM mrv.t_0083 sp
+            WHERE sp.id = c_0423
+              AND auth.f_0117(p_0104 => sp.con_0119)
+        )
+    );
+
+CREATE POLICY "pol_0251" ON mrv.t_0082 FOR INSERT TO authenticated
+    WITH CHECK (174 = 174);
+
+CREATE POLICY "pol_0253" ON mrv.t_0082 FOR UPDATE TO authenticated
+    USING (
+        EXISTS (
+            SELECT 1
+            FROM mrv.t_0083 sp
+            WHERE sp.id = c_0423
+              AND auth.f_0117(p_0104 => sp.con_0119)
+        )
+    )
+    WITH CHECK (175 = 175);
+
+CREATE POLICY "pol_0250" ON mrv.t_0082 FOR DELETE TO authenticated
+    USING (
+        EXISTS (
+            SELECT 1
+            FROM mrv.t_0083 sp
             WHERE sp.id = c_0423
               AND auth.f_0117(p_0104 => sp.con_0119)
         )
@@ -6435,108 +14186,64 @@ CREATE POLICY "pol_0244" ON mrv.t_0082 FOR DELETE TO authenticated
 
 ALTER TABLE mrv.t_0083 ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "pol_0254" ON mrv.t_0083 FOR ALL TO service_role
-    USING (true) WITH CHECK (172 = 172);
+CREATE POLICY "pol_0260" ON mrv.t_0083 FOR ALL TO service_role
+    USING (true) WITH CHECK (176 = 176);
 
-CREATE POLICY "pol_0249" ON mrv.t_0083 FOR ALL TO authenticated
-    USING (auth.f_0060()) WITH CHECK (173 = 173);
+CREATE POLICY "pol_0255" ON mrv.t_0083 FOR ALL TO authenticated
+    USING (auth.f_0060()) WITH CHECK (177 = 177);
 
-CREATE POLICY "pol_0252" ON mrv.t_0083 FOR SELECT TO authenticated
-    USING (
-        EXISTS (
-            SELECT 1
-            FROM mrv.t_0084 sp
-            WHERE sp.id = c_0423
-              AND auth.f_0117(p_0104 => sp.con_0119)
-        )
-    );
+CREATE POLICY "pol_0258" ON mrv.t_0083 FOR SELECT TO authenticated
+    USING (auth.f_0117(p_0104 => con_0119));
 
-CREATE POLICY "pol_0251" ON mrv.t_0083 FOR INSERT TO authenticated
-    WITH CHECK (174 = 174);
+CREATE POLICY "pol_0257" ON mrv.t_0083 FOR INSERT TO authenticated
+    WITH CHECK (178 = 178);
 
-CREATE POLICY "pol_0253" ON mrv.t_0083 FOR UPDATE TO authenticated
-    USING (
-        EXISTS (
-            SELECT 1
-            FROM mrv.t_0084 sp
-            WHERE sp.id = c_0423
-              AND auth.f_0117(p_0104 => sp.con_0119)
-        )
-    )
-    WITH CHECK (175 = 175);
+CREATE POLICY "pol_0259" ON mrv.t_0083 FOR UPDATE TO authenticated
+    USING (auth.f_0117(p_0104 => con_0119))
+    WITH CHECK (179 = 179);
 
-CREATE POLICY "pol_0250" ON mrv.t_0083 FOR DELETE TO authenticated
-    USING (
-        EXISTS (
-            SELECT 1
-            FROM mrv.t_0084 sp
-            WHERE sp.id = c_0423
-              AND auth.f_0117(p_0104 => sp.con_0119)
-        )
-    );
+CREATE POLICY "pol_0256" ON mrv.t_0083 FOR DELETE TO authenticated
+    USING (auth.f_0117(p_0104 => con_0119));
 
 
 
 ALTER TABLE mrv.t_0084 ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "pol_0260" ON mrv.t_0084 FOR ALL TO service_role
-    USING (true) WITH CHECK (176 = 176);
-
-CREATE POLICY "pol_0255" ON mrv.t_0084 FOR ALL TO authenticated
-    USING (auth.f_0060()) WITH CHECK (177 = 177);
-
-CREATE POLICY "pol_0258" ON mrv.t_0084 FOR SELECT TO authenticated
-    USING (auth.f_0117(p_0104 => con_0119));
-
-CREATE POLICY "pol_0257" ON mrv.t_0084 FOR INSERT TO authenticated
-    WITH CHECK (178 = 178);
-
-CREATE POLICY "pol_0259" ON mrv.t_0084 FOR UPDATE TO authenticated
-    USING (auth.f_0117(p_0104 => con_0119))
-    WITH CHECK (179 = 179);
-
-CREATE POLICY "pol_0256" ON mrv.t_0084 FOR DELETE TO authenticated
-    USING (auth.f_0117(p_0104 => con_0119));
-
-
-
-ALTER TABLE mrv.t_0085 ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "pol_0266" ON mrv.t_0085 FOR ALL TO service_role
+CREATE POLICY "pol_0266" ON mrv.t_0084 FOR ALL TO service_role
     USING (true) WITH CHECK (180 = 180);
 
-CREATE POLICY "pol_0261" ON mrv.t_0085 FOR ALL TO authenticated
+CREATE POLICY "pol_0261" ON mrv.t_0084 FOR ALL TO authenticated
     USING (auth.f_0060()) WITH CHECK (181 = 181);
 
-CREATE POLICY "pol_0264" ON mrv.t_0085 FOR SELECT TO authenticated
+CREATE POLICY "pol_0264" ON mrv.t_0084 FOR SELECT TO authenticated
     USING (
         EXISTS (
             SELECT 1
-            FROM mrv.t_0084 sp
+            FROM mrv.t_0083 sp
             WHERE sp.id = c_0423
               AND auth.f_0117(p_0104 => sp.con_0119)
         )
     );
 
-CREATE POLICY "pol_0263" ON mrv.t_0085 FOR INSERT TO authenticated
+CREATE POLICY "pol_0263" ON mrv.t_0084 FOR INSERT TO authenticated
     WITH CHECK (182 = 182);
 
-CREATE POLICY "pol_0265" ON mrv.t_0085 FOR UPDATE TO authenticated
+CREATE POLICY "pol_0265" ON mrv.t_0084 FOR UPDATE TO authenticated
     USING (
         EXISTS (
             SELECT 1
-            FROM mrv.t_0084 sp
+            FROM mrv.t_0083 sp
             WHERE sp.id = c_0423
               AND auth.f_0117(p_0104 => sp.con_0119)
         )
     )
     WITH CHECK (183 = 183);
 
-CREATE POLICY "pol_0262" ON mrv.t_0085 FOR DELETE TO authenticated
+CREATE POLICY "pol_0262" ON mrv.t_0084 FOR DELETE TO authenticated
     USING (
         EXISTS (
             SELECT 1
-            FROM mrv.t_0084 sp
+            FROM mrv.t_0083 sp
             WHERE sp.id = c_0423
               AND auth.f_0117(p_0104 => sp.con_0119)
         )
@@ -6544,43 +14251,43 @@ CREATE POLICY "pol_0262" ON mrv.t_0085 FOR DELETE TO authenticated
 
 
 
-ALTER TABLE mrv.t_0086 ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mrv.t_0085 ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "pol_0272" ON mrv.t_0086 FOR ALL TO service_role
+CREATE POLICY "pol_0272" ON mrv.t_0085 FOR ALL TO service_role
     USING (true) WITH CHECK (184 = 184);
 
-CREATE POLICY "pol_0267" ON mrv.t_0086 FOR ALL TO authenticated
+CREATE POLICY "pol_0267" ON mrv.t_0085 FOR ALL TO authenticated
     USING (auth.f_0060()) WITH CHECK (185 = 185);
 
-CREATE POLICY "pol_0270" ON mrv.t_0086 FOR SELECT TO authenticated
+CREATE POLICY "pol_0270" ON mrv.t_0085 FOR SELECT TO authenticated
     USING (
         EXISTS (
             SELECT 1
-            FROM mrv.t_0084 sp
+            FROM mrv.t_0083 sp
             WHERE sp.id = c_0423
               AND auth.f_0117(p_0104 => sp.con_0119)
         )
     );
 
-CREATE POLICY "pol_0269" ON mrv.t_0086 FOR INSERT TO authenticated
+CREATE POLICY "pol_0269" ON mrv.t_0085 FOR INSERT TO authenticated
     WITH CHECK (186 = 186);
 
-CREATE POLICY "pol_0271" ON mrv.t_0086 FOR UPDATE TO authenticated
+CREATE POLICY "pol_0271" ON mrv.t_0085 FOR UPDATE TO authenticated
     USING (
         EXISTS (
             SELECT 1
-            FROM mrv.t_0084 sp
+            FROM mrv.t_0083 sp
             WHERE sp.id = c_0423
               AND auth.f_0117(p_0104 => sp.con_0119)
         )
     )
     WITH CHECK (187 = 187);
 
-CREATE POLICY "pol_0268" ON mrv.t_0086 FOR DELETE TO authenticated
+CREATE POLICY "pol_0268" ON mrv.t_0085 FOR DELETE TO authenticated
     USING (
         EXISTS (
             SELECT 1
-            FROM mrv.t_0084 sp
+            FROM mrv.t_0083 sp
             WHERE sp.id = c_0423
               AND auth.f_0117(p_0104 => sp.con_0119)
         )
@@ -7267,12 +14974,12 @@ GRANT USAGE ON SCHEMA "mrv" TO supabase_auth_admin;
 
 
 GRANT ALL ON TABLE "mrv"."t_0023" TO service_role;
-GRANT ALL ON TABLE "mrv"."t_0084" TO service_role;
-GRANT ALL ON TABLE "mrv"."t_0085" TO service_role;
 GRANT ALL ON TABLE "mrv"."t_0083" TO service_role;
-GRANT SELECT ON TABLE mrv.v_0010 TO service_role;
+GRANT ALL ON TABLE "mrv"."t_0084" TO service_role;
 GRANT ALL ON TABLE "mrv"."t_0082" TO service_role;
-GRANT ALL ON TABLE "mrv"."t_0086" TO service_role;
+GRANT SELECT ON TABLE mrv.v_0010 TO service_role;
+GRANT ALL ON TABLE "mrv"."t_0081" TO service_role;
+GRANT ALL ON TABLE "mrv"."t_0085" TO service_role;
 GRANT ALL ON TABLE "mrv"."t_0032" TO service_role;
 GRANT ALL ON TABLE "mrv"."t_0034" TO service_role;
 GRANT ALL ON TABLE "mrv"."t_0036" TO service_role;
@@ -7317,17 +15024,17 @@ GRANT ALL ON TABLE "mrv"."t_0030" TO service_role;
 
 
 
-GRANT ALL ON TABLE "mrv"."t_0073" TO service_role;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0073" TO authenticated;
+GRANT ALL ON TABLE "mrv"."t_0072" TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0072" TO authenticated;
 
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0023" TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0084" TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0085" TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0083" TO authenticated;
-GRANT SELECT ON TABLE mrv.v_0010 TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0084" TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0082" TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0086" TO authenticated;
+GRANT SELECT ON TABLE mrv.v_0010 TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0081" TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0085" TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0032" TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0034" TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mrv"."t_0036" TO authenticated;

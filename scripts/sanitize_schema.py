@@ -17,11 +17,14 @@ Operations performed (in order):
 
   3. Replace single-quoted string literal *contents* with '_', preserving
      E-string ('E'...') and standard quoting. Two-character escape '' is
-     handled.
+     handled. The scrub reaches inside dollar-quoted bodies, so RAISE
+     messages and similar in-body literals are sanitized too.
 
-  4. Replace dollar-quoted block *contents* with a placeholder (the
-     delimiter and tag are preserved verbatim, since dollar-quote tags
-     have been a parser-bug source).
+  4. Dollar-quoted blocks (function bodies) are *not* stubbed; only the
+     string literals inside them get scrubbed. The delimiter and tag are
+     preserved verbatim. Identifier rename (step 5) then runs through
+     the bodies via word-boundary regex, so references to renamed tables
+     / columns / functions stay consistent.
 
   5. Discover user-defined identifier definitions (tables, functions,
      views, types, domains, indexes, triggers, policies, sequences,
@@ -136,9 +139,9 @@ def _typed_cast_replacement(cast_target: str) -> str:
     is the case CI surfaced), so the literal content has to be valid for
     the target type, not just any old `'_'`.
 
-    Scalar `regclass` is intentionally NOT handled here — see `repl_cast`,
-    which preserves the original literal so the identifier-rename pass
-    can rewrite the inner object name (gh#301).
+    Scalar `regclass` is intentionally NOT handled here — see
+    `_replace_typed_cast`, which preserves the original literal so the
+    identifier-rename pass can rewrite the inner object name (gh#301).
     """
     target = cast_target.strip().lower()
     is_array = target.endswith("[]")
@@ -170,34 +173,181 @@ def _typed_cast_replacement(cast_target: str) -> str:
     return f"'_'::{cast_target}"
 
 
-def scrub_text(sql: str) -> str:
-    """Strip comments + scrub string-literal contents.
+def _replace_typed_cast(m: re.Match[str]) -> str:
+    """Replace ``'X'::TYPE`` with a type-compatible literal.
 
-    Order matters because comments may contain apostrophes (e.g. `don't`)
-    that the string regex would otherwise treat as opening quotes,
-    swallowing arbitrary downstream SQL. So:
-
-      1. Strip line comments first.
-      2. Stash ENUM literal lists with positionally-unique labels — the
-         blanket single-quoted scrub later in this function would
-         otherwise collapse every label to `'_'` and apply-time fails
-         on the pg_enum_typid_label_index uniqueness constraint.
-      3. Stash dollar-quoted blocks and string literals.
-      4. Strip block comments outside the stashed regions.
-      5. Restore stashes.
-
-    This still mishandles a string literal that contains a literal `--`
-    (the line-comment strip would eat from `--` to end-of-line). That is
-    rare in DDL; accept it for the spike.
+    Scalar ``regclass`` is preserved so the identifier-rename pass can
+    rewrite the inner object name (gh#301). Shared between the outer
+    scrub and the per-body scrub via stashing wrappers in each.
     """
-    sql = RE_LINE_COMMENT.sub("", sql)
+    cast_target = m.group(1)
+    if cast_target.strip().lower() == "regclass":
+        return m.group(0)
+    return _typed_cast_replacement(cast_target)
+
+
+def _scan_quoted(body: str, start: int, *, escaped: bool) -> int:
+    """Return the index of the closing ``'`` for a string opened at
+    ``start - 1``. ``start`` is the first char *after* the opening quote.
+
+    Handles the SQL doubled-quote escape (`''`) and, when ``escaped`` is
+    set (E-strings), the backslash escape `\\<char>`. Raises ValueError
+    if the string is unterminated — silent truncation in a sanitizer
+    would emit garbage that looks valid downstream.
+    """
+    j = start
+    n = len(body)
+    while j < n:
+        c = body[j]
+        if escaped and c == "\\" and j + 1 < n:
+            j += 2
+            continue
+        if c == "'":
+            if j + 1 < n and body[j + 1] == "'":
+                j += 2
+                continue
+            return j
+        j += 1
+    raise ValueError(
+        f"unterminated string literal starting at offset {start - 1}"
+    )
+
+
+def _strip_body_comments(body: str) -> str:
+    """Strip ``--`` line and ``/* */`` block comments from a body, while
+    leaving string-literal content (single-quoted and E-string) verbatim.
+
+    A regex-based strip would consume code across newlines whenever a
+    body comment contains an apostrophe (e.g. ``-- track which fields
+    we've removed``), because the downstream string regex would then
+    run from that apostrophe to the next quote it finds — which is
+    typically inside the next real ``set_config('...', '...')`` call,
+    eating real code along with it. State-tracking avoids that.
+
+    Unterminated comments and strings raise rather than silently
+    truncating: this is a sanitizer, and producing a shorter-than-input
+    body would mean the corpus quietly loses real code.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(body)
+    while i < n:
+        c = body[i]
+
+        is_estring_open = (
+            (c == "E" or c == "e")
+            and i + 1 < n
+            and body[i + 1] == "'"
+            and not (i > 0 and (body[i - 1].isalnum() or body[i - 1] == "_"))
+        )
+        if is_estring_open:
+            close = _scan_quoted(body, i + 2, escaped=True)
+            out.append(body[i : close + 1])
+            i = close + 1
+            continue
+
+        if c == "'":
+            close = _scan_quoted(body, i + 1, escaped=False)
+            out.append(body[i : close + 1])
+            i = close + 1
+            continue
+
+        if c == "-" and i + 1 < n and body[i + 1] == "-":
+            j = body.find("\n", i)
+            if j < 0:
+                raise ValueError(
+                    f"unterminated `--` line comment at offset {i}"
+                )
+            i = j
+            continue
+
+        if c == "/" and i + 1 < n and body[i + 1] == "*":
+            j = body.find("*/", i + 2)
+            if j < 0:
+                raise ValueError(
+                    f"unterminated `/* */` block comment at offset {i}"
+                )
+            i = j + 2
+            continue
+
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _scrub_body(body: str) -> str:
+    """Strip comments + scrub literals inside a dollar-quoted body.
+
+    Bodies survive into the output so the corpus exercises plpgsql
+    control flow and intra-body identifier references (gh#286). Only
+    sensitive content (string contents, comments) is sanitized; the
+    structural shell is preserved for the parser/diff/sqlgen pipeline
+    to walk. Identifier rename runs over the body in a later pass.
+
+    Uses the same stash-then-scrub approach as ``scrub_text`` so that
+    keyword-typed and typed-cast replacements (``INTERVAL '1 day'``,
+    ``'null'::jsonb`` etc.) survive the blanket ``'_'`` substitution
+    that runs afterwards.
+    """
+    body = _strip_body_comments(body)
 
     placeholders: list[str] = []
 
     def stash(s: str) -> str:
         idx = len(placeholders)
         placeholders.append(s)
+        return f"\0ph{idx}\0"
+
+    body = RE_KEYWORD_TYPED_LITERAL.sub(
+        lambda m: stash(_keyword_typed_replacement(m.group(1))), body
+    )
+    body = RE_TYPED_CAST.sub(lambda m: stash(_replace_typed_cast(m)), body)
+    body = RE_E_STRING.sub(lambda _m: "E'_'", body)
+    body = RE_SINGLE_QUOTED.sub(lambda _m: "'_'", body)
+    body = re.sub(r"\0ph(\d+)\0", lambda m: placeholders[int(m.group(1))], body)
+    return body
+
+
+def scrub_text(sql: str) -> str:
+    """Strip comments + scrub string-literal contents.
+
+    Order matters: dollar-quoted bodies are stashed *first* so that
+    line/block-comment strippers and the blanket single-quote scrub
+    don't reach inside them. A function body may legitimately contain
+    `--`, `/* */`, or apostrophe-laden strings that the comment / string
+    regexes would otherwise corrupt — eg a regex string-strip running
+    over an in-body comment like `-- fields we've removed` swallows
+    code through to the next quote, dropping ~80 functions from the
+    output on a fresh corpus regen. `_scrub_body` does the body scrub
+    with a state-tracking lexer for that reason.
+
+    Stages:
+
+      1. Stash dollar-quoted blocks (with internal string scrub applied).
+      2. Strip line comments, then ENUM defs, keyword-typed literals,
+         typed casts, E-strings, single-quotes (each stashed in turn).
+      3. Strip block comments outside the stashed regions.
+      4. Restore stashes — bodies emerge intact, with renamed-friendly
+         text for the downstream identifier-rename pass to walk.
+    """
+    placeholders: list[str] = []
+
+    def stash(s: str) -> str:
+        idx = len(placeholders)
+        placeholders.append(s)
         return f"\0PH{idx}\0"
+
+    def repl_dollar(m: re.Match[str]) -> str:
+        if m.group(1) is not None:
+            body = _scrub_body(m.group(1))
+            return stash(f"$${body}$$")
+        tag = m.group(2)
+        body = _scrub_body(m.group(3))
+        return stash(f"${tag}${body}${tag}$")
+
+    sql = RE_DOLLAR_QUOTED.sub(repl_dollar, sql)
+
+    sql = RE_LINE_COMMENT.sub("", sql)
 
     def repl_enum(m: re.Match[str]) -> str:
         head, body, tail = m.group(1), m.group(2), m.group(3)
@@ -223,66 +373,7 @@ def scrub_text(sql: str) -> str:
     # real PG object (sequence / table / function) and the later
     # identifier-rename pass rewrites the inner name to its opaque form
     # (gh#301). Array `regclass[]` falls through and gets `'{}'::regclass[]`.
-    def repl_cast(m: re.Match[str]) -> str:
-        cast_target = m.group(1)
-        if cast_target.strip().lower() == "regclass":
-            return stash(m.group(0))
-        return stash(_typed_cast_replacement(cast_target))
-
-    sql = RE_TYPED_CAST.sub(repl_cast, sql)
-
-    # Dollar-quoted blocks are function bodies. We need a body that the
-    # PG parser accepts for the function's LANGUAGE — `NULL` alone is
-    # valid in neither plpgsql nor sql. Pick by lookback:
-    #
-    #   - sql                          → SELECT NULL
-    #   - plpgsql, set-returning       → BEGIN RETURN; END;
-    #     (RETURNS TABLE / RETURNS SETOF can't take RETURN NULL)
-    #   - plpgsql, scalar / trigger    → BEGIN RETURN NULL; END;
-    #
-    # We take the LAST LANGUAGE / RETURNS in the lookback, since
-    # re.search would return the FIRST and consecutive function
-    # definitions would mismatch.
-    def repl_dollar(m: re.Match[str]) -> str:
-        lookback = sql[max(0, m.start() - 1500) : m.start()]
-        langs = re.findall(r"LANGUAGE\s+(sql|plpgsql)\b", lookback, re.IGNORECASE)
-        lang = langs[-1].lower() if langs else "plpgsql"
-        # Extract the LAST RETURNS clause's full type token. Patterns we
-        # need to handle: `RETURNS uuid`, `RETURNS text[]`, `RETURNS
-        # jsonb`, `RETURNS TABLE(...)`, `RETURNS SETOF type`. The type
-        # token is everything up to the next whitespace before LANGUAGE
-        # (which always follows in this codebase).
-        returns_all = re.findall(
-            r"RETURNS\s+(TABLE|SETOF|[A-Za-z_][\w\[\]]*)",
-            lookback,
-            re.IGNORECASE,
-        )
-        ret_kind = returns_all[-1].upper() if returns_all else "VOID"
-        if lang == "sql":
-            if ret_kind in ("TABLE", "SETOF"):
-                # No sql TABLE/SETOF functions in the current corpus, but
-                # if one appears the safest stub is an empty result set.
-                body = "SELECT NULL WHERE FALSE"
-            else:
-                # Cast NULL to the declared scalar type. PG's sql function
-                # body must match the return type exactly; bare NULL is
-                # `unknown` and rejected.
-                body = f"SELECT NULL::{returns_all[-1]}" if returns_all else "SELECT NULL"
-        else:
-            # plpgsql:
-            #   - set-returning (TABLE/SETOF): RETURN takes no parameter
-            #   - void: RETURN takes no parameter
-            #   - scalar / trigger / record: RETURN NULL is fine
-            if ret_kind in ("TABLE", "SETOF", "VOID"):
-                body = "BEGIN RETURN; END;"
-            else:
-                body = "BEGIN RETURN NULL; END;"
-        if m.group(1) is not None:
-            return stash(f"$$ {body} $$")
-        tag = m.group(2)
-        return stash(f"${tag}$ {body} ${tag}$")
-
-    sql = RE_DOLLAR_QUOTED.sub(repl_dollar, sql)
+    sql = RE_TYPED_CAST.sub(lambda m: stash(_replace_typed_cast(m)), sql)
 
     def repl_estring(_m: re.Match[str]) -> str:
         return stash("E'_'")
@@ -421,6 +512,22 @@ NEVER_RENAME = {s.lower() for s in KEPT_SCHEMAS} | {
     # Verb-y words that show up in identifiers but also in DDL
     "level", "value", "values", "row", "rows", "all", "any", "some",
     "in", "is", "case", "when", "then", "else", "end", "if", "exists",
+    # plpgsql control-flow / context keywords. Function bodies are no
+    # longer stubbed (gh#286), so a column or function named after one
+    # of these would otherwise be rewritten inside the body and break
+    # the body's syntax.
+    "begin", "declare", "loop", "foreach", "while", "exit", "continue",
+    "for", "return", "next", "query", "execute", "perform",
+    "exception", "raise", "notice", "info", "warning", "debug", "log",
+    "assert", "into", "using", "strict", "by", "get", "diagnostics",
+    "others", "language", "volatile", "stable", "immutable",
+    "security", "definer", "invoker", "setof", "out", "inout",
+    "variadic",
+    "new", "old", "found",
+    "tg_op", "tg_name", "tg_table_name", "tg_table_schema",
+    "tg_argv", "tg_nargs", "tg_relid", "tg_when", "tg_level",
+    "tg_relname",
+    "sqlstate", "sqlerrm",
 }
 
 
