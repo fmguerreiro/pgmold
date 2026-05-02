@@ -15,7 +15,7 @@ pub use pgmold::pg::introspect::introspect_schema;
 pub use pgmold::pg::sqlgen::generate_sql;
 pub use serde_json;
 pub use sqlx::Executor;
-pub use std::collections::BTreeMap;
+pub use std::collections::{BTreeMap, BTreeSet};
 pub use std::io::Write;
 pub use tempfile;
 pub use tempfile::NamedTempFile;
@@ -28,6 +28,29 @@ pub fn write_sql_temp_file(sql: &str) -> NamedTempFile {
     let mut file = tempfile::Builder::new().suffix(".sql").tempfile().unwrap();
     writeln!(file, "{sql}").unwrap();
     file
+}
+
+/// Find every `CREATE SCHEMA [IF NOT EXISTS] "name"` declaration in `sql`
+/// and return the lowercased names plus `public`. Used by corpus tests to
+/// pre-create schemas before applying generated DDL.
+pub fn extract_schema_names(sql: &str) -> BTreeSet<String> {
+    let mut schemas = BTreeSet::new();
+    schemas.insert("public".to_string());
+
+    for line in sql.lines() {
+        let normalized = line.trim().to_uppercase();
+        let rest = normalized
+            .strip_prefix("CREATE SCHEMA IF NOT EXISTS ")
+            .or_else(|| normalized.strip_prefix("CREATE SCHEMA "));
+        if let Some(rest) = rest {
+            let name = rest.trim_end_matches(';').trim().trim_matches('"');
+            if !name.is_empty() && name != "PUBLIC" {
+                schemas.insert(name.to_lowercase());
+            }
+        }
+    }
+
+    schemas
 }
 
 #[allow(deprecated)]

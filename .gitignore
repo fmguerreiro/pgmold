@@ -10,3 +10,6 @@ CLAUDE.md
 .worktrees/
 notes/
 .DS_Store
+
+# Python (scripts/sanitize_schema.py)
+__pycache__/
