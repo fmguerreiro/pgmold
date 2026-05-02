@@ -617,9 +617,13 @@ mod tests {
 
     #[test]
     fn parse_function_signature_handles_nested_parens_in_types() {
+        // The split-on-commas walker must not split inside the `(10,2)`
+        // typmod, and normalize_pg_type must then strip the typmod so the
+        // grant key matches what `Function::signature()` produces from an
+        // introspect-side `numeric` arg.
         assert_eq!(
             parse_function_signature("public.trunc(numeric(10,2))"),
-            "public.trunc(numeric(10,2))"
+            "public.trunc(numeric)"
         );
     }
 }
