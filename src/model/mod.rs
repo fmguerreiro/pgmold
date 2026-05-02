@@ -2551,6 +2551,9 @@ mod tests {
         assert!(make("'_'").semantically_equals(&make("_")));
         assert!(make("'public'").semantically_equals(&make("public")));
         assert!(make("'pg_temp, public'").semantically_equals(&make("'pg_temp, public'")));
+        // Asymmetric multi-element: defends against future introspect changes
+        // that could return the bareword form for values containing commas.
+        assert!(make("'pg_temp, public'").semantically_equals(&make("pg_temp, public")));
         assert!(!make("foo").semantically_equals(&make("bar")));
     }
 

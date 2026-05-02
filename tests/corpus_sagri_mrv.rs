@@ -124,8 +124,8 @@ async fn sagri_mrv_snapshot_converges() {
     // Convergence ratchet: pgmold currently emits some no-op ops in the
     // second diff for object kinds that pgmold doesn't fully model yet.
     // The 30-op baseline is fully attributed:
-    //   - 22 COMMENT ON   — introspect doesn't read pg_description (gh#298)
-    //   -  5 DROP+CREATE  — char(N)[] vs character[] in func sig key (gh#299)
+    //   - 23 COMMENT ON   — introspect doesn't read pg_description (gh#298)
+    //   -  4 DROP+CREATE  — char(N)[] vs character[] in func sig key (gh#299)
     //   -  2 CreateExt    — ALTER EXTENSION SET SCHEMA missing      (gh#300)
     //   -  1 ALTER TABLE  — scrubber rewrote default to pg_catalog  (gh#301)
     // Drop the baseline by the corresponding op count as each issue lands.
