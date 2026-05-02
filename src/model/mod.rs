@@ -1608,22 +1608,25 @@ pub fn normalize_pg_type(type_name: &str) -> Cow<'_, str> {
         return Cow::Owned(format!("setof {inner}"));
     }
 
-    // Array types in function signatures lose element-level typmod at storage
-    // time: pg_proc.proargtypes stores element OID only, so `char(2)[]`
-    // (parser) and `character[]` (introspect) must canonicalize identically.
-    // Strip a single `(...)` typmod from the element, then recursively normalize
-    // for alias canonicalization (`char` → `character`, `varchar` → `character
-    // varying`).
+    // Recurse so element-level typmod and aliases are normalized via the
+    // scalar branch below — `char(2)[]` and `character[]` must canonicalize
+    // identically, and the recursion picks up `char` → `character` too.
     if let Some(element) = trimmed.strip_suffix("[]") {
-        let element = element.trim_end();
-        let base = strip_outer_typmod(element).unwrap_or(element);
-        let normalized = normalize_pg_type(base);
+        let normalized = normalize_pg_type(element.trim_end());
         return Cow::Owned(format!("{normalized}[]"));
     }
 
     // Strip public. schema prefix — PostgreSQL qualifies user-defined types
     // in function signatures but SQL declarations typically omit it
     let trimmed = trimmed.strip_prefix("public.").unwrap_or(trimmed);
+
+    // Function-signature contexts (args, return, aggregate stype, and the
+    // recursed array element above) lose typmod at storage time: pg_proc
+    // .{proargtypes,prorettype} and pg_aggregate.aggtranstype are bare OIDs.
+    // Strip a trailing `(...)` so parser-side `numeric(10,2)` and introspect-
+    // side `numeric` canonicalize identically. Column types never reach this
+    // function (they use the `PgType` enum), so column typmod is unaffected.
+    let trimmed = strip_outer_typmod(trimmed).unwrap_or(trimmed);
 
     if !trimmed.bytes().any(|b| b.is_ascii_uppercase()) {
         return match canonical_alias(trimmed) {
@@ -2325,13 +2328,19 @@ mod tests {
             normalize_pg_type("time without time zone"),
             "time without time zone"
         );
-        // precision-qualified variants pass through unchanged
-        assert_eq!(normalize_pg_type("timestamp(6)"), "timestamp(6)");
+        // Trailing typmod is stripped because pg_proc / pg_aggregate store
+        // arg, return, and stype OIDs with no typmod.
+        assert_eq!(
+            normalize_pg_type("timestamp(6)"),
+            "timestamp without time zone"
+        );
+        assert_eq!(normalize_pg_type("time(6)"), "time without time zone");
+        // Precision embedded before a `with time zone` suffix is left alone:
+        // the input does not end with `)` so the typmod-strip is a no-op.
         assert_eq!(
             normalize_pg_type("timestamp(3) with time zone"),
             "timestamp(3) with time zone"
         );
-        assert_eq!(normalize_pg_type("time(6)"), "time(6)");
         assert_eq!(
             normalize_pg_type("time(3) with time zone"),
             "time(3) with time zone"
@@ -3766,15 +3775,8 @@ fn function_signature_strips_numeric_array_typmod() {
 }
 
 #[test]
-fn function_signature_preserves_scalar_typmod() {
-    // Scope marker for gh#299: this PR strips typmod only from array argument
-    // types because that is what the sagri/mrv canary surfaced. Scalar typmod
-    // (e.g. `numeric(10,2)` arg) almost certainly has the same divergence —
-    // pg_proc.proargtypes is an oidvector, no typmod for scalars either —
-    // but no observed regression today. Tracked as gh#303. When that lands
-    // this test should be replaced with a parser-vs-introspect equality
-    // assertion analogous to function_signature_strips_array_element_typmod.
-    let func = Function {
+fn function_signature_strips_scalar_typmod() {
+    let from_schema = Function {
         name: "f".to_string(),
         schema: "public".to_string(),
         arguments: vec![FunctionArg {
@@ -3793,7 +3795,37 @@ fn function_signature_preserves_scalar_typmod() {
         grants: Vec::new(),
         comment: None,
     };
-    assert_eq!(func.signature(), "f(numeric(10,2))");
+
+    let from_db = Function {
+        arguments: vec![FunctionArg {
+            name: None,
+            data_type: "numeric".to_string(),
+            mode: ArgMode::In,
+            default: None,
+        }],
+        ..from_schema.clone()
+    };
+
+    assert_eq!(from_schema.signature(), from_db.signature());
+}
+
+#[test]
+fn function_arg_semantically_equals_scalar_typmod_alias() {
+    // Sentinel for the convergence pair: parser-side `numeric(10,2)` vs
+    // introspect-side `numeric` (pg_proc.proargtypes is OID-only).
+    let parser_arg = FunctionArg {
+        name: Some("amount".to_string()),
+        data_type: "numeric(10,2)".to_string(),
+        mode: ArgMode::In,
+        default: None,
+    };
+    let introspect_arg = FunctionArg {
+        name: Some("amount".to_string()),
+        data_type: "numeric".to_string(),
+        mode: ArgMode::In,
+        default: None,
+    };
+    assert!(parser_arg.semantically_equals(&introspect_arg));
 }
 
 #[test]
@@ -3814,7 +3846,7 @@ fn function_arg_semantically_equals_array_typmod_alias() {
 }
 
 #[test]
-fn normalize_pg_type_strips_array_element_typmod() {
+fn normalize_pg_type_strips_typmod() {
     assert_eq!(normalize_pg_type("char(2)[]"), "character[]");
     assert_eq!(normalize_pg_type("varchar(10)[]"), "character varying[]");
     assert_eq!(normalize_pg_type("numeric(10,2)[]"), "numeric[]");
@@ -3826,7 +3858,10 @@ fn normalize_pg_type_strips_array_element_typmod() {
     );
     // Aliases without typmod still canonicalize.
     assert_eq!(normalize_pg_type("varchar[]"), "character varying[]");
-    // Scalar typmod is preserved (only array element typmod is stripped).
-    assert_eq!(normalize_pg_type("char(2)"), "char(2)");
-    assert_eq!(normalize_pg_type("numeric(10,2)"), "numeric(10,2)");
+    // Scalar typmod is also stripped: pg_proc.proargtypes / prorettype and
+    // pg_aggregate.aggtranstype are OIDs with no typmod, so introspect-side
+    // returns the bare type. Strip on the parser side so keys converge.
+    assert_eq!(normalize_pg_type("char(2)"), "character");
+    assert_eq!(normalize_pg_type("numeric(10,2)"), "numeric");
+    assert_eq!(normalize_pg_type("varchar(255)"), "character varying");
 }

@@ -363,10 +363,12 @@ mod tests {
     }
 
     #[test]
-    fn canonical_args_with_numeric_precision() {
+    fn canonical_args_strips_numeric_precision() {
         let args = vec![DataType::Numeric(ExactNumberInfo::PrecisionAndScale(10, 2))];
-        // numeric(10,2) is left as-is by normalize_pg_type
-        assert_eq!(canonical_args(Some(&args)), "numeric(10,2)");
+        // pg_proc.proargtypes is an OID vector with no typmod, so introspect
+        // emits `numeric` for `numeric(10,2)`. canonical_args mirrors that
+        // by stripping the trailing typmod via normalize_pg_type.
+        assert_eq!(canonical_args(Some(&args)), "numeric");
     }
 
     #[test]

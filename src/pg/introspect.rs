@@ -2852,7 +2852,10 @@ mod tests {
         let args = parse_function_arguments("p_amount numeric(10,2), p_name text");
         assert_eq!(args.len(), 2);
         assert_eq!(args[0].name, Some("p_amount".to_string()));
-        assert_eq!(args[0].data_type, "numeric(10,2)");
+        // Trailing typmod is stripped: pg_proc.proargtypes stores OIDs only,
+        // so the introspect-side type must match the bare-form that the
+        // parser side normalizes to.
+        assert_eq!(args[0].data_type, "numeric");
         assert_eq!(args[1].name, Some("p_name".to_string()));
     }
 
