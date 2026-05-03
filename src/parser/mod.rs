@@ -1397,7 +1397,7 @@ fn parse_create_aggregate(stmt: CreateAggregate, schema: &mut Schema) -> Result<
     let args: Vec<String> = stmt
         .args
         .iter()
-        .map(|dt| crate::model::normalize_pg_type(&dt.to_string()).into_owned())
+        .map(|dt| crate::model::canonicalize_pg_type(&dt.to_string()).into_owned())
         .collect();
 
     let mut sfunc_schema: Option<String> = None;
@@ -1416,7 +1416,8 @@ fn parse_create_aggregate(stmt: CreateAggregate, schema: &mut Schema) -> Result<
                 sfunc_name = Some(n);
             }
             CreateAggregateOption::Stype(data_type) => {
-                stype = Some(crate::model::normalize_pg_type(&data_type.to_string()).into_owned());
+                stype =
+                    Some(crate::model::canonicalize_pg_type(&data_type.to_string()).into_owned());
             }
             CreateAggregateOption::Finalfunc(name) => {
                 let (s, n) = extract_qualified_name(&name);

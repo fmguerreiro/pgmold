@@ -5298,3 +5298,62 @@ ALTER AGGREGATE public.group_concat(text) OWNER TO postgres;
 
     assert_eq!(agg.owner.as_deref(), Some("postgres"));
 }
+
+#[test]
+fn function_arg_data_type_preserves_typmod() {
+    let sql = r#"
+        CREATE FUNCTION public.fmt(amount numeric(10,2)) RETURNS text
+        LANGUAGE sql AS $$ SELECT amount::text $$;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema
+        .functions
+        .get("public.fmt(numeric)")
+        .expect("Function indexed under normalized signature key");
+    assert_eq!(func.arguments[0].data_type, "numeric(10,2)");
+}
+
+#[test]
+fn function_arg_data_type_preserves_array_typmod() {
+    let sql = r#"
+        CREATE FUNCTION public.with_codes(codes char(2)[]) RETURNS integer
+        LANGUAGE sql AS $$ SELECT array_length(codes, 1) $$;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema
+        .functions
+        .get("public.with_codes(character[])")
+        .expect("Function indexed under normalized signature key");
+    assert_eq!(func.arguments[0].data_type, "character(2)[]");
+}
+
+#[test]
+fn function_return_type_preserves_typmod() {
+    let sql = r#"
+        CREATE FUNCTION public.tax_rate() RETURNS numeric(5,4)
+        LANGUAGE sql AS $$ SELECT 0.0825::numeric(5,4) $$;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let func = schema
+        .functions
+        .get("public.tax_rate()")
+        .expect("Function exists under empty-args signature");
+    assert_eq!(func.return_type, "numeric(5,4)");
+}
+
+#[test]
+fn aggregate_args_and_stype_preserve_typmod() {
+    let sql = r#"
+        CREATE AGGREGATE public.scale_avg(numeric(12,4)) (
+            SFUNC = public._scale_avg_step,
+            STYPE = numeric(12,4)
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let agg = schema
+        .aggregates
+        .get("public.scale_avg(numeric)")
+        .expect("Aggregate indexed under normalized signature key");
+    assert_eq!(agg.args, vec!["numeric(12,4)".to_string()]);
+    assert_eq!(agg.stype, "numeric(12,4)");
+}
