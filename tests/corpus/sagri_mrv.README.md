@@ -15,6 +15,9 @@ supabase fixtures.
 - Dollar-quoted plpgsql function bodies — control flow (BEGIN/END,
   IF/THEN, LOOP, FOREACH, EXCEPTION/WHEN), DECLARE blocks, intra-body
   identifier references, RAISE format strings.
+- View bodies — CTEs (`WITH ... AS`), LATERAL joins, `UNION ALL`,
+  `DISTINCT ON`, complex projections, intra-body column / function
+  references.
 - RETURNS TABLE function signatures.
 - GIST spatial indexes.
 - Inline + named CHECK constraints.
@@ -35,15 +38,16 @@ script:
    single-quoted and E-string literal contents with `_`, preserving
    the quote prefix.
 4. Bodies are otherwise kept verbatim — only literals + comments are
-   sanitized — so plpgsql control-flow and sql function-body parser
-   surface stays in the corpus (gh#286).
-5. Replaces VIEW bodies with `SELECT 1 AS placeholder` (see *Known gaps*).
-6. Discovers every CREATE-statement-defined identifier (tables, columns,
+   sanitized — so plpgsql control-flow (gh#286) and view-body parser
+   surface (gh#285: CTEs, LATERAL, set ops, complex projections) stay
+   in the corpus.
+5. Discovers every CREATE-statement-defined identifier (tables, columns,
    functions, params, types, indexes, triggers, policies, sequences,
    constraints, RETURNS TABLE columns) and rewrites each to an opaque
    `<kind>_<n>` name via word-boundary regex. The rename pass walks
-   through dollar-quoted bodies too, so a body reference to a renamed
-   table / column / function stays consistent with its definition.
+   through dollar-quoted bodies and view bodies too, so a body
+   reference to a renamed table / column / function stays consistent
+   with its definition.
 
 PG built-in type names, PostGIS types, and SQL keywords are denylisted so
 column-name collisions (`column geometry public.geometry(...)`) don't
@@ -74,10 +78,6 @@ against a pinned pgmold version, not from refreshing this snapshot.
   needed because CHECK expressions on enum-typed columns compare to
   string literals (`<col> <op> 'X'`) which the blanket scrub turns
   into `'_'`, an invalid enum label that fails at apply.
-- **View bodies are stubbed**, so view-body parser surface (CTEs, LATERAL
-  joins, window functions, complex projections) isn't exercised. A smarter
-  scrubber that renames inside view bodies via column-aware substitution
-  would lift this.
 - **Body-local plpgsql variable names leak through** unrenamed (e.g.,
   a `DECLARE inviter_id uuid;` keeps `inviter_id`). The discovery pass
   doesn't scan dollar-quoted bodies for `DECLARE`, so any name that
