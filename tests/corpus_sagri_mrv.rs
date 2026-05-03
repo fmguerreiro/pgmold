@@ -124,7 +124,8 @@ async fn sagri_mrv_snapshot_converges() {
     // Exact match. On failure:
     //   actual < baseline → ratchet this constant down to actual
     //   actual > baseline → open a follow-up issue and attribute the new ops
-    const CONVERGENCE_BASELINE: usize = 2;
+    // TODO(gh#315): temporarily 0 to surface the residual op list in CI.
+    const CONVERGENCE_BASELINE: usize = 0;
     if second_diff.len() != CONVERGENCE_BASELINE {
         let remaining_sql = generate_sql(&plan_migration(second_diff.clone()));
         panic!(
