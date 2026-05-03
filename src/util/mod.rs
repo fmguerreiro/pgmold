@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use sqlparser::ast::{
     BinaryOperator, CastKind, DataType, Expr, GroupByExpr, OrderBy, OrderByExpr, OrderByKind,
-    Query, Select, SetExpr, Statement,
+    OrderByOptions, Query, Select, SetExpr, Statement,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -575,7 +575,7 @@ fn normalize_order_by(order_by: &OrderBy) -> OrderBy {
                     .iter()
                     .map(|e| OrderByExpr {
                         expr: normalize_expr(&e.expr),
-                        options: e.options,
+                        options: normalize_order_by_options(e.options),
                         with_fill: e.with_fill.clone(),
                     })
                     .collect(),
@@ -584,6 +584,29 @@ fn normalize_order_by(order_by: &OrderBy) -> OrderBy {
         },
         interpolate: order_by.interpolate.clone(),
     }
+}
+
+/// Strips PostgreSQL-default sort options so that explicit forms compare equal
+/// to the implicit ones returned by `pg_get_viewdef`.
+///
+/// PostgreSQL defaults: `ASC` direction, `NULLS LAST` for ASC, `NULLS FIRST` for DESC.
+/// `pg_get_viewdef` omits whichever side matches the default, so a parsed
+/// `ORDER BY x ASC` round-trips to `ORDER BY x` from the database.
+///
+/// `OrderByOptions.nulls_first` encoding: `Some(true)` = NULLS FIRST,
+/// `Some(false)` = NULLS LAST, `None` = direction's default.
+fn normalize_order_by_options(opts: OrderByOptions) -> OrderByOptions {
+    let direction_is_desc = matches!(opts.asc, Some(false));
+    let asc = match opts.asc {
+        Some(true) => None,
+        other => other,
+    };
+    let nulls_first = match opts.nulls_first {
+        Some(false) if !direction_is_desc => None,
+        Some(true) if direction_is_desc => None,
+        other => other,
+    };
+    OrderByOptions { asc, nulls_first }
 }
 
 /// Normalizes a set expression (SELECT, UNION, etc).
@@ -747,7 +770,7 @@ fn normalize_window_spec(spec: &sqlparser::ast::WindowSpec) -> sqlparser::ast::W
             .iter()
             .map(|e| sqlparser::ast::OrderByExpr {
                 expr: normalize_expr(&e.expr),
-                options: e.options,
+                options: normalize_order_by_options(e.options),
                 with_fill: e.with_fill.clone(),
             })
             .collect(),
@@ -2642,6 +2665,93 @@ fn view_with_order_by_extra_parens() {
     assert!(
         views_semantically_equal(schema_form, db_form),
         "ORDER BY with extra parens should be equal"
+    );
+}
+
+#[test]
+fn view_with_order_by_explicit_asc_stripped() {
+    // PostgreSQL strips explicit ASC since ASC is the default direction.
+    let schema_form = "SELECT id FROM t ORDER BY name ASC";
+    let db_form = "SELECT id FROM t ORDER BY name";
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "Explicit ASC should compare equal to implicit default"
+    );
+}
+
+#[test]
+fn view_with_order_by_explicit_desc_kept() {
+    // DESC is non-default and must remain distinct from ASC.
+    let with_desc = "SELECT id FROM t ORDER BY name DESC";
+    let without = "SELECT id FROM t ORDER BY name";
+    assert!(
+        !views_semantically_equal(with_desc, without),
+        "Explicit DESC must NOT compare equal to default ASC"
+    );
+}
+
+#[test]
+fn view_with_order_by_default_nulls_stripped() {
+    // ASC defaults to NULLS LAST; DESC defaults to NULLS FIRST.
+    // PostgreSQL strips whichever NULLS option matches the direction's default.
+    let asc_explicit = "SELECT id FROM t ORDER BY name ASC NULLS LAST";
+    let asc_implicit = "SELECT id FROM t ORDER BY name";
+    assert!(
+        views_semantically_equal(asc_explicit, asc_implicit),
+        "ASC NULLS LAST should equal implicit default"
+    );
+
+    let desc_explicit = "SELECT id FROM t ORDER BY name DESC NULLS FIRST";
+    let desc_implicit = "SELECT id FROM t ORDER BY name DESC";
+    assert!(
+        views_semantically_equal(desc_explicit, desc_implicit),
+        "DESC NULLS FIRST should equal implicit DESC"
+    );
+}
+
+#[test]
+fn view_with_order_by_nondefault_nulls_kept() {
+    // Non-default NULLS placements must remain meaningful.
+    let asc_nulls_first = "SELECT id FROM t ORDER BY name NULLS FIRST";
+    let asc_default = "SELECT id FROM t ORDER BY name";
+    assert!(
+        !views_semantically_equal(asc_nulls_first, asc_default),
+        "ASC NULLS FIRST must NOT compare equal to default ASC NULLS LAST"
+    );
+}
+
+#[test]
+fn view_with_lateral_left_join_and_explicit_asc() {
+    // Regression for gh#311: a LEFT JOIN LATERAL view body with explicit ASC
+    // in the inner ORDER BY should converge after introspection. The `db_form`
+    // here is a hand-approximated `pg_get_viewdef` shape; the corpus test
+    // (tests/corpus_sagri_mrv.rs) is the authoritative round-trip check.
+    // PostgreSQL's pg_get_viewdef strips the explicit ASC, drops trailing
+    // semicolons, lowercases function names, and adds extra parens around
+    // join expressions.
+    let schema_form = r#"SELECT sps.id, f."name" AS field_name
+        FROM mrv.t_0083 sps
+        LEFT JOIN LATERAL (
+            SELECT f2."name"
+            FROM mrv."Polygon" p
+            JOIN mrv."t_0012" f2 ON f2."c_0355" = p.id
+            WHERE ST_Within(sps.c_0295, p.geometry)
+            ORDER BY ST_Area(p.geometry) ASC
+            LIMIT 1
+        ) f ON true"#;
+    let db_form = r#"SELECT sps.id, f."name" AS field_name
+        FROM (mrv.t_0083 sps
+        LEFT JOIN LATERAL (
+            SELECT f2."name"
+            FROM (mrv."Polygon" p
+            JOIN mrv."t_0012" f2 ON ((f2."c_0355" = p.id)))
+            WHERE st_within(sps.c_0295, p.geometry)
+            ORDER BY (st_area(p.geometry))
+            LIMIT 1
+        ) f ON ((true)))"#;
+    assert!(
+        views_semantically_equal(schema_form, db_form),
+        "LATERAL view body with explicit ASC should converge.\nschema: {schema_form}\ndb: {db_form}"
     );
 }
 
