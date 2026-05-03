@@ -110,7 +110,13 @@ RE_EXTENSION_TARGET_SCHEMA = re.compile(
 
 
 RE_CREATE_SCHEMA = re.compile(
-    r"CREATE\s+SCHEMA(?:\s+IF\s+NOT\s+EXISTS)?\s+(?:\"([^\"]+)\"|(\w+))",
+    r"CREATE\s+SCHEMA(?:\s+IF\s+NOT\s+EXISTS)?\s+"
+    # Negative lookahead: `CREATE SCHEMA AUTHORIZATION <role>` declares an
+    # implicit schema named after the role, with no explicit name token in
+    # this position. Without this guard the regex would treat the literal
+    # `AUTHORIZATION` keyword as a declared schema name.
+    r"(?!AUTHORIZATION\b)"
+    r"(?:\"([^\"]+)\"|(\w+))",
     re.IGNORECASE,
 )
 
@@ -1051,13 +1057,12 @@ def ensure_extension_target_schemas_declared(sql: str) -> str:
     for m in RE_CREATE_SCHEMA.finditer(sql):
         declared.add((m.group(1) or m.group(2)).lower())
     needed: list[str] = []
-    seen: set[str] = set()
     for m in RE_EXTENSION_TARGET_SCHEMA.finditer(sql):
         name = m.group(1) or m.group(2)
         lower = name.lower()
-        if lower in SYSTEM_SCHEMAS or lower in declared or lower in seen:
+        if lower in SYSTEM_SCHEMAS or lower in declared:
             continue
-        seen.add(lower)
+        declared.add(lower)
         needed.append(name)
     if not needed:
         return sql

@@ -75,10 +75,7 @@ async fn sagri_mrv_snapshot_converges() {
         }
     }
 
-    // Supabase pre-creates the `extensions` schema; the snapshot relies on
-    // it and never issues `CREATE SCHEMA "extensions"`.
     let mut schemas = extract_schema_names(SNAPSHOT);
-    schemas.insert("extensions".to_string());
     schemas.remove("public");
     let mut schema_names: Vec<String> = schemas.into_iter().collect();
     for schema in &schema_names {

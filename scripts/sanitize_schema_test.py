@@ -139,6 +139,23 @@ def system_schemas_are_never_declared() -> None:
     assert out == sql, out
 
 
+def create_schema_authorization_form_does_not_count_as_declaration() -> None:
+    """`CREATE SCHEMA AUTHORIZATION <role>` declares a schema named after the
+    role, with no explicit name token. The regex must not treat the literal
+    `AUTHORIZATION` keyword as a declared schema name — otherwise an extension
+    targeting a real `AUTHORIZATION` schema (or any schema, when the corpus
+    is the only declarer) could be silently suppressed.
+    """
+    sql = (
+        'CREATE SCHEMA AUTHORIZATION some_role;\n'
+        'CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA extensions;\n'
+    )
+    out = ensure_extension_target_schemas_declared(sql)
+    assert out.startswith('CREATE SCHEMA IF NOT EXISTS "extensions";\n'), out
+    assert 'CREATE SCHEMA IF NOT EXISTS "AUTHORIZATION"' not in out, out
+    assert 'CREATE SCHEMA IF NOT EXISTS "authorization"' not in out, out
+
+
 def multiple_extensions_in_same_schema_yield_one_create_schema() -> None:
     """Two extensions in the same schema produce a single `CREATE SCHEMA` line."""
     sql = (
@@ -160,6 +177,7 @@ def main() -> int:
         extension_target_schema_is_auto_declared_when_missing,
         existing_create_schema_suppresses_auto_declare,
         system_schemas_are_never_declared,
+        create_schema_authorization_form_does_not_count_as_declaration,
         multiple_extensions_in_same_schema_yield_one_create_schema,
     ]
     for case in cases:
