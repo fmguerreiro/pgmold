@@ -20,11 +20,13 @@ pub(super) fn parse_create_function(
     security: Option<&FunctionSecurity>,
     set_params: &[FunctionDefinitionSetParam],
 ) -> Result<Function> {
-    let return_type_str = return_type.map(|rt| rt.to_string()).ok_or_else(|| {
-        SchemaError::ParseError(format!(
-            "Function {schema}.{name} is missing RETURNS clause"
-        ))
-    })?;
+    let return_type_str = return_type
+        .map(|rt| canonicalize_pg_type(&rt.to_string()).into_owned())
+        .ok_or_else(|| {
+            SchemaError::ParseError(format!(
+                "Function {schema}.{name} is missing RETURNS clause"
+            ))
+        })?;
 
     let language_str = language
         .map(|l| l.to_string().to_lowercase())
@@ -73,7 +75,7 @@ pub(super) fn parse_create_function(
                     };
                     FunctionArg {
                         name: arg.name.as_ref().map(|n| strip_ident_quotes(&n.value)),
-                        data_type: arg.data_type.to_string(),
+                        data_type: canonicalize_pg_type(&arg.data_type.to_string()).into_owned(),
                         mode,
                         default: arg.default_expr.as_ref().map(|e| e.to_string()),
                     }

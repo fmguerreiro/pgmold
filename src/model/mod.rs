@@ -1568,8 +1568,11 @@ impl Function {
     }
 }
 
-/// Normalizes PostgreSQL type aliases to their canonical forms.
-/// This ensures consistent comparison between parsed SQL and introspected schemas.
+/// Normalizes PostgreSQL type aliases to their canonical forms, **stripping
+/// trailing typmod**. Use this at comparison sites (`Function::signature`,
+/// `Function::semantically_equals`, etc.) where parser-side `numeric(10,2)`
+/// must converge with introspect-side `numeric` (pg_proc.proargtypes /
+/// prorettype and pg_aggregate.aggtranstype are bare OIDs).
 ///
 /// For `TABLE(...)` return types, quoted column names are preserved verbatim
 /// (they are case-sensitive in PostgreSQL), while type keywords are normalized.
@@ -1579,13 +1582,20 @@ impl Function {
 /// `'static` canonical target. Uppercase alias inputs still allocate transiently
 /// for case folding, but the returned `Cow` does not own that buffer. Uppercase
 /// non-alias and `TABLE(...)` expansion return `Cow::Owned`.
-///
-/// The main perf win is at comparison sites (`Function::semantically_equals`,
-/// `FunctionArg::semantically_equals`), which compare two `Cow`s via `PartialEq`
-/// without ever owning: canonical-on-both-sides comparisons allocate zero times
-/// vs. two times previously. Introspect-side struct field assignments in
-/// `pg/introspect.rs` immediately `.into_owned()` and see no net change.
 pub fn normalize_pg_type(type_name: &str) -> Cow<'_, str> {
+    normalize_pg_type_inner(type_name, true)
+}
+
+/// Like `normalize_pg_type`, but **preserves** trailing typmod. Use this at
+/// parser-side storage sites for function/aggregate argument and return types
+/// so the typmod a user wrote in `schema.sql` survives `dump` / migration
+/// emission. Convergence with introspect-side bare forms still happens at
+/// comparison time via `normalize_pg_type`. See gh#305.
+pub fn canonicalize_pg_type(type_name: &str) -> Cow<'_, str> {
+    normalize_pg_type_inner(type_name, false)
+}
+
+fn normalize_pg_type_inner(type_name: &str, strip_typmod: bool) -> Cow<'_, str> {
     let trimmed = type_name.trim();
 
     if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("table(") && trimmed.ends_with(')') {
@@ -1593,7 +1603,7 @@ pub fn normalize_pg_type(type_name: &str) -> Cow<'_, str> {
         let normalized_cols: Vec<String> = split_top_level_commas(inner)
             .iter()
             .map(|col| {
-                normalize_table_column(col.trim())
+                normalize_table_column(col.trim(), strip_typmod)
                     .expect("BUG: unclosed quote in TABLE column definition")
             })
             .collect();
@@ -1604,7 +1614,7 @@ pub fn normalize_pg_type(type_name: &str) -> Cow<'_, str> {
     // alias canonicalization) applies uniformly between parsed and introspected
     // return types (e.g. `SETOF public.customer` vs `SETOF customer`).
     if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("setof ") {
-        let inner = normalize_pg_type(trimmed[6..].trim());
+        let inner = normalize_pg_type_inner(trimmed[6..].trim(), strip_typmod);
         return Cow::Owned(format!("setof {inner}"));
     }
 
@@ -1612,7 +1622,7 @@ pub fn normalize_pg_type(type_name: &str) -> Cow<'_, str> {
     // scalar branch below — `char(2)[]` and `character[]` must canonicalize
     // identically, and the recursion picks up `char` → `character` too.
     if let Some(element) = trimmed.strip_suffix("[]") {
-        let normalized = normalize_pg_type(element.trim_end());
+        let normalized = normalize_pg_type_inner(element.trim_end(), strip_typmod);
         return Cow::Owned(format!("{normalized}[]"));
     }
 
@@ -1620,25 +1630,29 @@ pub fn normalize_pg_type(type_name: &str) -> Cow<'_, str> {
     // in function signatures but SQL declarations typically omit it
     let trimmed = trimmed.strip_prefix("public.").unwrap_or(trimmed);
 
-    // Function-signature contexts (args, return, aggregate stype, and the
-    // recursed array element above) lose typmod at storage time: pg_proc
-    // .{proargtypes,prorettype} and pg_aggregate.aggtranstype are bare OIDs.
-    // Strip a trailing `(...)` so parser-side `numeric(10,2)` and introspect-
-    // side `numeric` canonicalize identically. Column types never reach this
-    // function (they use the `PgType` enum), so column typmod is unaffected.
-    let trimmed = strip_outer_typmod(trimmed).unwrap_or(trimmed);
+    let (head, typmod) = if strip_typmod {
+        (strip_outer_typmod(trimmed).unwrap_or(trimmed), "")
+    } else {
+        match strip_outer_typmod(trimmed) {
+            Some(head) => (head, &trimmed[head.len()..]),
+            None => (trimmed, ""),
+        }
+    };
 
-    if !trimmed.bytes().any(|b| b.is_ascii_uppercase()) {
-        return match canonical_alias(trimmed) {
-            Some(canon) => Cow::Borrowed(canon),
-            None => Cow::Borrowed(trimmed),
+    if !head.bytes().any(|b| b.is_ascii_uppercase()) {
+        return match canonical_alias(head) {
+            Some(canon) if typmod.is_empty() => Cow::Borrowed(canon),
+            Some(canon) => Cow::Owned(format!("{canon}{typmod}")),
+            None if typmod.is_empty() => Cow::Borrowed(head),
+            None => Cow::Owned(format!("{head}{typmod}")),
         };
     }
 
-    let lower = trimmed.to_lowercase();
+    let lower = head.to_lowercase();
     match canonical_alias(&lower) {
-        Some(canon) => Cow::Borrowed(canon),
-        None => Cow::Owned(lower),
+        Some(canon) if typmod.is_empty() => Cow::Borrowed(canon),
+        Some(canon) => Cow::Owned(format!("{canon}{typmod}")),
+        None => Cow::Owned(format!("{lower}{typmod}")),
     }
 }
 
@@ -1678,8 +1692,8 @@ fn strip_outer_typmod(s: &str) -> Option<&str> {
 
 /// Normalizes a single column definition within a `TABLE(...)` return type.
 /// Quoted names (e.g. `"userId"`) are preserved verbatim; unquoted names are lowercased.
-/// The type portion is recursively normalized via `normalize_pg_type`.
-fn normalize_table_column(col: &str) -> Result<String, String> {
+/// The type portion is recursively normalized via `normalize_pg_type_inner`.
+fn normalize_table_column(col: &str, strip_typmod: bool) -> Result<String, String> {
     let (name, rest) = if let Some(stripped) = col.strip_prefix('"') {
         match stripped.find('"') {
             Some(closing) => {
@@ -1709,7 +1723,11 @@ fn normalize_table_column(col: &str) -> Result<String, String> {
     if rest.is_empty() {
         Ok(name)
     } else {
-        Ok(format!("{} {}", name, normalize_pg_type(rest)))
+        Ok(format!(
+            "{} {}",
+            name,
+            normalize_pg_type_inner(rest, strip_typmod)
+        ))
     }
 }
 

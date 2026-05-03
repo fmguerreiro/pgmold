@@ -1394,7 +1394,11 @@ fn is_pg_catalog_trigger_function(name: &str) -> bool {
 
 fn parse_create_aggregate(stmt: CreateAggregate, schema: &mut Schema) -> Result<()> {
     let (agg_schema, agg_name) = extract_qualified_name(&stmt.name);
-    let args: Vec<String> = stmt.args.iter().map(|dt| dt.to_string()).collect();
+    let args: Vec<String> = stmt
+        .args
+        .iter()
+        .map(|dt| crate::model::canonicalize_pg_type(&dt.to_string()).into_owned())
+        .collect();
 
     let mut sfunc_schema: Option<String> = None;
     let mut sfunc_name: Option<String> = None;
@@ -1412,7 +1416,8 @@ fn parse_create_aggregate(stmt: CreateAggregate, schema: &mut Schema) -> Result<
                 sfunc_name = Some(n);
             }
             CreateAggregateOption::Stype(data_type) => {
-                stype = Some(data_type.to_string());
+                stype =
+                    Some(crate::model::canonicalize_pg_type(&data_type.to_string()).into_owned());
             }
             CreateAggregateOption::Finalfunc(name) => {
                 let (s, n) = extract_qualified_name(&name);

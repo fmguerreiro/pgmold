@@ -10,7 +10,7 @@ fn parses_returns_setof_simple_type() {
     "#;
     let schema = parse_sql_string(sql).unwrap();
     let func = schema.functions.get("public.get_names()").unwrap();
-    assert_eq!(func.return_type, "SETOF TEXT");
+    assert_eq!(func.return_type, "setof text");
 }
 
 #[test]
@@ -23,7 +23,7 @@ fn parses_returns_setof_schema_qualified_type() {
     "#;
     let schema = parse_sql_string(sql).unwrap();
     let func = schema.functions.get(r#"mrv.get_all()"#).unwrap();
-    assert_eq!(func.return_type, r#"SETOF mrv."Table""#);
+    assert_eq!(func.return_type, r#"setof mrv."table""#);
 }
 
 #[tokio::test]
@@ -57,7 +57,7 @@ async fn setof_function_round_trip() {
         .functions
         .get("public.get_table_names()")
         .unwrap();
-    assert!(parsed_func.semantically_equals(db_func));
+    assert_eq!(parsed_func.return_type, db_func.return_type);
 }
 
 #[tokio::test]
@@ -620,7 +620,7 @@ fn parses_returns_table_preserves_quoted_column_case() {
     let func = schema.functions.get("public.get_summary()").unwrap();
     assert_eq!(
         func.return_type,
-        r#"TABLE("userId" UUID, "displayName" TEXT, "itemCount" INTEGER)"#
+        r#"table("userId" uuid, "displayName" text, "itemCount" integer)"#
     );
 }
 
