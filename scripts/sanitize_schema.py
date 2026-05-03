@@ -98,6 +98,33 @@ RE_ENUM_DEF = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+
+RE_EXTENSION_TARGET_SCHEMA = re.compile(
+    r"CREATE\s+EXTENSION"
+    r"(?:\s+IF\s+NOT\s+EXISTS)?"
+    r"\s+(?:\"[^\"]+\"|\w+)"
+    r"\s+WITH\s+SCHEMA\s+"
+    r"(?:\"([^\"]+)\"|(\w+))",
+    re.IGNORECASE,
+)
+
+
+RE_CREATE_SCHEMA = re.compile(
+    r"CREATE\s+SCHEMA(?:\s+IF\s+NOT\s+EXISTS)?\s+"
+    # Negative lookahead: `CREATE SCHEMA AUTHORIZATION <role>` declares an
+    # implicit schema named after the role, with no explicit name token in
+    # this position. Without this guard the regex would treat the literal
+    # `AUTHORIZATION` keyword as a declared schema name.
+    r"(?!AUTHORIZATION\b)"
+    r"(?:\"([^\"]+)\"|(\w+))",
+    re.IGNORECASE,
+)
+
+
+SYSTEM_SCHEMAS = frozenset(
+    {"pg_catalog", "information_schema", "public", "pg_temp", "pg_toast"}
+)
+
 # Match a single-quoted string immediately followed by `::TYPE` cast.
 # Type can be: bare ident, schema.ident, schema."Ident", "Ident", with
 # optional `(n)` / `(n,m)` typmod and optional `[]` array suffix.
@@ -1007,6 +1034,43 @@ def apply_rename(sql: str, manifest: dict[str, str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Convergence-safety post-processing
+# ---------------------------------------------------------------------------
+
+
+def ensure_extension_target_schemas_declared(sql: str) -> str:
+    """Prepend `CREATE SCHEMA IF NOT EXISTS "<name>";` for every extension
+    target schema not already declared in `sql`.
+
+    The corpus convergence test pre-creates schemas listed in `target_schemas`
+    before applying the snapshot. Without an explicit `CREATE SCHEMA <X>` in
+    the snapshot for a schema `X` referenced by `CREATE EXTENSION ... WITH
+    SCHEMA X`, the first diff emits `DropSchema(X)` (X is in `from.schemas`
+    but not `to.schemas`) and sqlgen executes it as `DROP SCHEMA X CASCADE`,
+    which removes the extensions placed in `X`. The convergence loop then
+    never settles. See gh#315.
+
+    System schemas (`pg_catalog`, `public`, etc.) are always implicit and
+    skipped.
+    """
+    declared: set[str] = set()
+    for m in RE_CREATE_SCHEMA.finditer(sql):
+        declared.add((m.group(1) or m.group(2)).lower())
+    needed: list[str] = []
+    for m in RE_EXTENSION_TARGET_SCHEMA.finditer(sql):
+        name = m.group(1) or m.group(2)
+        lower = name.lower()
+        if lower in SYSTEM_SCHEMAS or lower in declared:
+            continue
+        declared.add(lower)
+        needed.append(name)
+    if not needed:
+        return sql
+    prefix = "".join(f'CREATE SCHEMA IF NOT EXISTS "{n}";\n' for n in needed)
+    return prefix + sql
+
+
+# ---------------------------------------------------------------------------
 # File walking + ordering
 # ---------------------------------------------------------------------------
 
@@ -1109,6 +1173,7 @@ def main() -> int:
     renamed = fix_default_literals(renamed)
     renamed = fix_partition_bounds(renamed)
     renamed = stub_check_expressions(renamed)
+    renamed = ensure_extension_target_schemas_declared(renamed)
 
     args.output_file.parent.mkdir(parents=True, exist_ok=True)
     args.output_file.write_text(

@@ -19,6 +19,7 @@ from sanitize_schema import (
     apply_rename,
     build_manifest,
     discover_identifiers,
+    ensure_extension_target_schemas_declared,
     scrub_text,
 )
 
@@ -99,6 +100,73 @@ def view_body_keyword_collision_does_not_break_order_by() -> None:
     assert expected_view_body in out, out
 
 
+def extension_target_schema_is_auto_declared_when_missing() -> None:
+    """gh#315: a `CREATE EXTENSION ... WITH SCHEMA X` clause without a matching
+    `CREATE SCHEMA X` causes the corpus convergence test to emit `DropSchema(X)`
+    on the first diff (the test pre-creates X, the snapshot doesn't declare it),
+    and sqlgen runs it as `DROP SCHEMA X CASCADE` — cascading the extension out.
+    The scrubber must inject the missing `CREATE SCHEMA` so the corpus is
+    self-contained.
+    """
+    sql = 'CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA extensions;\n'
+    out = ensure_extension_target_schemas_declared(sql)
+    assert (
+        out
+        == 'CREATE SCHEMA IF NOT EXISTS "extensions";\n'
+        + 'CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA extensions;\n'
+    ), out
+
+
+def existing_create_schema_suppresses_auto_declare() -> None:
+    """If the input already declares the target schema, do not duplicate."""
+    sql = (
+        'CREATE SCHEMA IF NOT EXISTS extensions;\n'
+        'CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA extensions;\n'
+    )
+    out = ensure_extension_target_schemas_declared(sql)
+    assert out == sql, out
+
+
+def system_schemas_are_never_declared() -> None:
+    """`pg_catalog`, `public` etc. are always implicit; never inject `CREATE
+    SCHEMA` for them.
+    """
+    sql = (
+        'CREATE EXTENSION IF NOT EXISTS plpgsql WITH SCHEMA pg_catalog;\n'
+        'CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;\n'
+    )
+    out = ensure_extension_target_schemas_declared(sql)
+    assert out == sql, out
+
+
+def create_schema_authorization_form_does_not_count_as_declaration() -> None:
+    """`CREATE SCHEMA AUTHORIZATION <role>` declares a schema named after the
+    role, with no explicit name token. The regex must not treat the literal
+    `AUTHORIZATION` keyword as a declared schema name — otherwise an extension
+    targeting a real `AUTHORIZATION` schema (or any schema, when the corpus
+    is the only declarer) could be silently suppressed.
+    """
+    sql = (
+        'CREATE SCHEMA AUTHORIZATION some_role;\n'
+        'CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA extensions;\n'
+    )
+    out = ensure_extension_target_schemas_declared(sql)
+    assert out.startswith('CREATE SCHEMA IF NOT EXISTS "extensions";\n'), out
+    assert 'CREATE SCHEMA IF NOT EXISTS "AUTHORIZATION"' not in out, out
+    assert 'CREATE SCHEMA IF NOT EXISTS "authorization"' not in out, out
+
+
+def multiple_extensions_in_same_schema_yield_one_create_schema() -> None:
+    """Two extensions in the same schema produce a single `CREATE SCHEMA` line."""
+    sql = (
+        'CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA extensions;\n'
+        'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;\n'
+    )
+    out = ensure_extension_target_schemas_declared(sql)
+    assert out.count('CREATE SCHEMA IF NOT EXISTS "extensions"') == 1, out
+    assert out.startswith('CREATE SCHEMA IF NOT EXISTS "extensions";\n'), out
+
+
 def main() -> int:
     cases = [
         regclass_cast_preserves_inner_identifier_through_full_pipeline,
@@ -106,6 +174,11 @@ def main() -> int:
         jsonb_cast_replaced_with_valid_literal,
         view_body_survives_with_renamed_column_references,
         view_body_keyword_collision_does_not_break_order_by,
+        extension_target_schema_is_auto_declared_when_missing,
+        existing_create_schema_suppresses_auto_declare,
+        system_schemas_are_never_declared,
+        create_schema_authorization_form_does_not_count_as_declaration,
+        multiple_extensions_in_same_schema_yield_one_create_schema,
     ]
     for case in cases:
         case()

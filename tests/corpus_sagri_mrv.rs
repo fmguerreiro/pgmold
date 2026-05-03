@@ -75,10 +75,7 @@ async fn sagri_mrv_snapshot_converges() {
         }
     }
 
-    // Supabase pre-creates the `extensions` schema; the snapshot relies on
-    // it and never issues `CREATE SCHEMA "extensions"`.
     let mut schemas = extract_schema_names(SNAPSHOT);
-    schemas.insert("extensions".to_string());
     schemas.remove("public");
     let mut schema_names: Vec<String> = schemas.into_iter().collect();
     for schema in &schema_names {
@@ -121,18 +118,16 @@ async fn sagri_mrv_snapshot_converges() {
         .expect("introspect after apply");
     let second_diff = diff_modulo_drop_ext(&after, &target);
 
-    // Exact match. On failure:
-    //   actual < baseline → ratchet this constant down to actual
-    //   actual > baseline → open a follow-up issue and attribute the new ops
-    const CONVERGENCE_BASELINE: usize = 2;
-    if second_diff.len() != CONVERGENCE_BASELINE {
+    // Full convergence: snapshot apply → introspect → diff must reach zero.
+    // If a new convergence bug appears, file a follow-up issue, attribute the
+    // residual ops to it, and ratchet this back to a non-zero baseline.
+    if !second_diff.is_empty() {
         let remaining_sql = generate_sql(&plan_migration(second_diff.clone()));
         panic!(
-            "sagri_mrv convergence baseline drift: actual={} expected={}.\n\
+            "sagri_mrv convergence regressed: {} op(s) remain.\n\
              remaining ops: {:#?}\n\
              remaining SQL:\n{}",
             second_diff.len(),
-            CONVERGENCE_BASELINE,
             second_diff,
             remaining_sql.join("\n"),
         );
