@@ -121,17 +121,18 @@ async fn sagri_mrv_snapshot_converges() {
         .expect("introspect after apply");
     let second_diff = diff_modulo_drop_ext(&after, &target);
 
-    // Convergence ratchet: pgmold currently emits some no-op ops in the
-    // second diff for object kinds that pgmold doesn't fully model yet.
-    // The 2-op baseline is fully attributed:
-    //   -  2 CreateExt    — ALTER EXTENSION SET SCHEMA missing      (gh#300)
-    // Drop the baseline by the corresponding op count as each issue lands.
+    // Convergence baseline asserted exactly: any deviation (regression OR
+    // unannounced improvement) prints the full residual op list and SQL so we
+    // can either ratchet down or open a follow-up. The previous `>` form let
+    // silent improvements hide — gh#300's fix in #307 closed the issue but
+    // never ratcheted, leaving 2-op slack of unknown attribution.
     const CONVERGENCE_BASELINE: usize = 2;
-    if second_diff.len() > CONVERGENCE_BASELINE {
+    if second_diff.len() != CONVERGENCE_BASELINE {
         let remaining_sql = generate_sql(&plan_migration(second_diff.clone()));
         panic!(
-            "sagri_mrv convergence regressed: {} op(s) remain (baseline {}). \
-             A new convergence bug appeared — see gh#300 for tracked classes.\n\
+            "sagri_mrv convergence baseline drift: {} op(s) remain (baseline {}). \
+             If fewer than baseline, ratchet the baseline down. If more, a new \
+             convergence bug appeared — open a follow-up.\n\
              remaining ops: {:#?}\n\
              remaining SQL:\n{}",
             second_diff.len(),
