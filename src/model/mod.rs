@@ -1583,8 +1583,8 @@ impl Function {
 /// The main perf win is at comparison sites (`Function::semantically_equals`,
 /// `FunctionArg::semantically_equals`), which compare two `Cow`s via `PartialEq`
 /// without ever owning: canonical-on-both-sides comparisons allocate zero times
-/// vs. two times previously. Sites that immediately `.into_owned()` (struct field
-/// assignments in `pg/introspect.rs`, `parser/functions.rs`) see no net change.
+/// vs. two times previously. Introspect-side struct field assignments in
+/// `pg/introspect.rs` immediately `.into_owned()` and see no net change.
 pub fn normalize_pg_type(type_name: &str) -> Cow<'_, str> {
     let trimmed = type_name.trim();
 
