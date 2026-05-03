@@ -121,16 +121,9 @@ async fn sagri_mrv_snapshot_converges() {
         .expect("introspect after apply");
     let second_diff = diff_modulo_drop_ext(&after, &target);
 
-    // Convergence baseline asserted exactly. The `>` form historically let
-    // silent improvements hide: gh#300's fix in #307 closed the issue but
-    // never ratcheted this constant, leaving 2-op slack of unknown
-    // attribution today. With `!=`, the next CI run prints the actual
-    // residual op list. Action on failure:
-    //   - actual < baseline → ratchet the constant down to actual
-    //   - actual > baseline → open a follow-up issue, attribute the new ops
-    //
-    // Attribution unverified pending CI output (see commit history if you
-    // are revisiting this).
+    // Exact match. On failure:
+    //   actual < baseline → ratchet this constant down to actual
+    //   actual > baseline → open a follow-up issue and attribute the new ops
     const CONVERGENCE_BASELINE: usize = 2;
     if second_diff.len() != CONVERGENCE_BASELINE {
         let remaining_sql = generate_sql(&plan_migration(second_diff.clone()));
