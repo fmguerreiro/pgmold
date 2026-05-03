@@ -123,11 +123,10 @@ async fn sagri_mrv_snapshot_converges() {
 
     // Convergence ratchet: pgmold currently emits some no-op ops in the
     // second diff for object kinds that pgmold doesn't fully model yet.
-    // The 3-op baseline is fully attributed:
+    // The 2-op baseline is fully attributed:
     //   -  2 CreateExt    — ALTER EXTENSION SET SCHEMA missing      (gh#300)
-    //   -  1 AlterView    — LATERAL body round-trip drift           (gh#311)
     // Drop the baseline by the corresponding op count as each issue lands.
-    const CONVERGENCE_BASELINE: usize = 3;
+    const CONVERGENCE_BASELINE: usize = 2;
     if second_diff.len() > CONVERGENCE_BASELINE {
         let remaining_sql = generate_sql(&plan_migration(second_diff.clone()));
         panic!(
