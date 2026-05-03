@@ -20,11 +20,13 @@ Operations performed (in order):
      handled. The scrub reaches inside dollar-quoted bodies, so RAISE
      messages and similar in-body literals are sanitized too.
 
-  4. Dollar-quoted blocks (function bodies) are *not* stubbed; only the
-     string literals inside them get scrubbed. The delimiter and tag are
+  4. Dollar-quoted blocks (function bodies) and view bodies (the SELECT
+     after `CREATE VIEW ... AS`) are *not* stubbed; only the string
+     literals inside them get scrubbed by the same passes that handle
+     the rest of the file. Function-body delimiters and tags are
      preserved verbatim. Identifier rename (step 5) then runs through
-     the bodies via word-boundary regex, so references to renamed tables
-     / columns / functions stay consistent.
+     bodies via word-boundary regex, so references to renamed tables /
+     columns / functions stay consistent.
 
   5. Discover user-defined identifier definitions (tables, functions,
      views, types, domains, indexes, triggers, policies, sequences,
@@ -560,6 +562,20 @@ NEVER_RENAME = {s.lower() for s in KEPT_SCHEMAS} | {
     "tg_argv", "tg_nargs", "tg_relid", "tg_when", "tg_level",
     "tg_relname",
     "sqlstate", "sqlerrm",
+    # SQL grammar tokens that view bodies expose (gh#285): CTE, JOIN
+    # variants, set ops, ORDER/GROUP/HAVING, window functions, LIMIT,
+    # aggregate FILTER, ARRAY constructor, frame RANGE/GROUPS.
+    # If the source defined a column or alias named after one of these
+    # the textual rename would clobber its keyword usage inside the
+    # body and break parsing.
+    "recursive", "lateral",
+    "join", "inner", "outer", "left", "right", "full", "cross", "natural",
+    "union", "intersect", "except",
+    "order", "group", "having", "limit", "offset", "fetch",
+    "distinct", "asc", "desc", "nulls", "first", "last",
+    "over", "partition", "window", "groups",
+    "preceding", "following", "current", "unbounded", "ties", "only",
+    "filter", "array", "range",
 }
 
 
@@ -648,26 +664,6 @@ def discover_returns_table_names(all_sql: str) -> list[str]:
         for p in RE_PARAM_NAME.finditer(m.group(1)):
             names.append(p.group(1))
     return names
-
-
-# View body scrub: CREATE VIEW ... AS <body>; — replace body with SELECT 1.
-# We preserve the CREATE/MATERIALIZED/OR REPLACE prefix and the view name so
-# the parser sees a real view definition; only the body is destroyed. This
-# loses view-body parser surface (CTEs, LATERAL, window functions) but
-# views inevitably reference table aliases that defy textual rename. A
-# follow-up issue should restore view-body coverage via a smarter scrubber.
-RE_VIEW_DEF = re.compile(
-    r"(CREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW\s+"
-    r"(?:IF\s+NOT\s+EXISTS\s+)?(?:\"?\w+\"?\.)?\"?\w+\"?"
-    r"(?:\s*\([^)]*\))?"  # optional column list
-    r"\s+AS\s+)"
-    r"(.*?)(?=;\s*(?:\n|\Z|CREATE|ALTER|GRANT|REVOKE|COMMENT))",
-    re.IGNORECASE | re.DOTALL,
-)
-
-
-def scrub_view_bodies(sql: str) -> str:
-    return RE_VIEW_DEF.sub(lambda m: m.group(1) + "SELECT 1 AS placeholder", sql)
 
 
 # Column line in a CREATE TABLE body, anchored to line-start so the
@@ -1101,10 +1097,12 @@ def main() -> int:
             print(f"{original}\t{opaque}", file=sys.stderr)
 
     # Scrub strings/comments first so identifier rename doesn't have to
-    # tip-toe around them. View bodies get nuked because they reference
-    # aliases and unqualified columns that defeat textual rename.
-    scrubbed = scrub_view_bodies(raw)
-    scrubbed = scrub_text(scrubbed)
+    # tip-toe around them. View bodies are NOT stubbed (gh#285): the
+    # same string / comment / typed-cast passes that handle the rest of
+    # the file run over them, and the identifier rename rewrites table
+    # / column / function references inside the body consistently with
+    # their definitions.
+    scrubbed = scrub_text(raw)
     renamed = apply_rename(scrubbed, manifest)
     enum_cols = find_enum_columns(renamed)
     renamed = rewrite_enum_predicates(renamed, enum_cols)
