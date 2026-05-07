@@ -90,6 +90,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Pre-pull postgres image via ECR Public mirror
+        run: |
+          docker pull public.ecr.aws/docker/library/postgres:16.12
+          docker tag  public.ecr.aws/docker/library/postgres:16.12 postgres:16
+      - name: Pre-pull postgis image
+        run: docker pull postgis/postgis:16-3.4
       - name: Run integration tests
         run: cargo test --all-features --test '*' -- --test-threads=4
 
@@ -100,6 +106,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Pre-pull postgres image via ECR Public mirror
+        run: |
+          docker pull public.ecr.aws/docker/library/postgres:16.12
+          docker tag  public.ecr.aws/docker/library/postgres:16.12 postgres:16
       - name: Run corpus convergence tests
         run: cargo test --all-features --test corpus -- --ignored --test-threads=1
 
@@ -110,6 +120,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Pre-pull postgis image
+        run: docker pull postgis/postgis:16-3.4
       - name: Run sagri/mrv snapshot convergence
         run: cargo test --all-features --test corpus_sagri_mrv -- --ignored --test-threads=1 --nocapture
 
@@ -129,11 +141,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg-version: ["13-alpine", "14-alpine", "15-alpine", "16-alpine", "17-alpine"]
+        include:
+          - pg-version: "13.23"
+          - pg-version: "14.20"
+          - pg-version: "15.17"
+          - pg-version: "16.12"
+          - pg-version: "17.9"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Pre-pull postgres image via ECR Public mirror
+        run: |
+          docker pull public.ecr.aws/docker/library/postgres:${{ matrix.pg-version }}
+          docker tag  public.ecr.aws/docker/library/postgres:${{ matrix.pg-version }} postgres:${{ matrix.pg-version }}
       - name: Run integration tests against PostgreSQL ${{ matrix.pg-version }}
         env:
           PGMOLD_TEST_PG_VERSION: ${{ matrix.pg-version }}
