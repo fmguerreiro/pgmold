@@ -141,7 +141,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg-version: ["13-alpine", "14-alpine", "15-alpine", "16-alpine", "17-alpine"]
+        include:
+          - pg-version: "13.23"
+          - pg-version: "14.20"
+          - pg-version: "15.17"
+          - pg-version: "16.12"
+          - pg-version: "17.9"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
