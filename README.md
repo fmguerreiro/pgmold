@@ -399,20 +399,29 @@ Set `PGMOLD_PROD=1` for production mode, which blocks table drops entirely.
 
 These tools share pgmold's approach: define desired state, compute diffs automatically.
 
-| Feature | pgmold | [Atlas](https://atlasgo.io/) | [pg-schema-diff](https://github.com/stripe/pg-schema-diff) | [pgschema](https://www.pgschema.com/) |
-|---------|--------|-------|----------------|----------|
-| **Language** | Rust | Go | Go | Go |
-| **Schema Format** | Native SQL | HCL, SQL, ORM | Native SQL | SQL |
-| **Multi-DB Support** | PostgreSQL | ✅ Many | PostgreSQL | PostgreSQL |
-| **Drift Detection** | ✅ | ✅ | ❌ | ❌ |
-| **Lock Hazard Warnings** | ✅ | ✅ | ✅ | ❌ |
-| **Safety Linting** | ✅ | ✅ | ❌ | ❌ |
-| **RLS Policies** | ✅ | ✅ | ❌ | ✅ |
-| **Partitioned Tables** | ✅ | ✅ | ✅ | ⚠️ parent only[^pgschema-partitions] |
-| **Cloud Service** | ❌ | Atlas Cloud | ❌ | ❌ |
-| **Library Mode** | ❌ | ❌ | ✅ | ❌ |
+| Feature | pgmold | [Atlas](https://atlasgo.io/) | [pg-schema-diff](https://github.com/stripe/pg-schema-diff) | [pgschema](https://www.pgschema.com/) | [pg-delta](https://github.com/supabase/pg-toolbelt/tree/main/packages/pg-delta) |
+|---------|--------|-------|----------------|----------|----------|
+| **Language** | Rust | Go | Go | Go | TypeScript |
+| **Schema Format** | Native SQL | HCL, SQL, ORM | Native SQL | SQL | Native SQL |
+| **Multi-DB Support** | PostgreSQL | ✅ Many | PostgreSQL | PostgreSQL | PostgreSQL |
+| **Drift Detection** | ✅ | ✅ | ❌ | ❌ | ❌[^pgdelta-drift] |
+| **Lock Hazard Warnings** | ✅ | ✅ | ✅ | ❌ | ❌ |
+| **Safety Linting** | ✅ | ✅ | ❌ | ❌ | ⚠️ data-loss only[^pgdelta-safety] |
+| **RLS Policies** | ✅ | ✅ | ❌ | ✅ | ✅ |
+| **Partitioned Tables** | ✅ | ✅ | ✅ | ⚠️ parent only[^pgschema-partitions] | ✅ |
+| **Cloud Service** | ❌ | Atlas Cloud | ❌ | ❌ | Supabase Cloud[^pgdelta-cloud] |
+| **Library Mode** | ❌ | ❌ | ✅ | ❌ | ✅ |
+| **Stability** | ✅ stable | ✅ stable | ✅ stable | ✅ stable | ⚠️ alpha[^pgdelta-alpha] |
 
 [^pgschema-partitions]: pgschema v1.9.0 dumps the parent's `PARTITION BY` clause correctly but emits children as standalone `CREATE TABLE` statements without `PARTITION OF`, so re-applying a dump loses the partition hierarchy.
+
+[^pgdelta-drift]: pg-delta has no dedicated `drift` command. An empty `pgdelta plan` between schema source and live database is functionally equivalent, but there is no fingerprint-based drift report or CI exit-code contract.
+
+[^pgdelta-safety]: pg-delta classifies plans as `safe` or `data-loss (N)` and gates `apply`/`sync` behind `--unsafe` for `DROP TABLE`, `DROP COLUMN`, and `DROP SEQUENCE`. It does not warn on lock-class hazards (e.g. `ALTER TABLE ... SET NOT NULL` on a large table) or type-narrowing risks.
+
+[^pgdelta-cloud]: pg-delta is the diffing engine behind Supabase's dashboard branching since the [May 2026 announcement](https://supabase.com/blog/branching-without-git-is-now-the-default), but it is also published as a standalone CLI/library on npm.
+
+[^pgdelta-alpha]: As of `1.0.0-alpha.24` (May 2026), the package is still pre-1.0 and its maintainers explicitly solicit bug reports. The npm `latest` tag points to a `0.0.0` placeholder; real releases ship under the `alpha` dist-tag.
 
 ### vs Migration-Based Tools
 
@@ -441,6 +450,8 @@ Traditional tools where you write numbered migration files manually.
 - **Multi-database support** → [Atlas](https://atlasgo.io/), [Flyway](https://flywaydb.org), [Liquibase](https://www.liquibase.org/)
 - **HCL/Terraform-style syntax** → [Atlas](https://atlasgo.io/)
 - **Embeddable Go library** → [pg-schema-diff](https://github.com/stripe/pg-schema-diff)
+- **Embeddable TypeScript library** → [pg-delta](https://github.com/supabase/pg-toolbelt/tree/main/packages/pg-delta)
+- **Supabase-native projects** with dashboard branching → [pg-delta](https://github.com/supabase/pg-toolbelt/tree/main/packages/pg-delta)
 - **Zero-downtime migrations** → [pgroll](https://github.com/xataio/pgroll), [Reshape](https://github.com/fabianlindfors/reshape)
 - **Enterprise compliance/audit** → [Liquibase](https://www.liquibase.org/), [Bytebase](https://www.bytebase.com/)
 - **Managed cloud service** → [Atlas Cloud](https://atlasgo.io/cloud/getting-started)
