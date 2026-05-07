@@ -92,8 +92,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Pre-pull postgres image via ECR Public mirror
         run: |
-          docker pull public.ecr.aws/docker/library/postgres:16
-          docker tag  public.ecr.aws/docker/library/postgres:16 postgres:16
+          docker pull public.ecr.aws/docker/library/postgres:16.12
+          docker tag  public.ecr.aws/docker/library/postgres:16.12 postgres:16
       - name: Pre-pull postgis image
         run: docker pull postgis/postgis:16-3.4
       - name: Run integration tests
@@ -108,8 +108,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Pre-pull postgres image via ECR Public mirror
         run: |
-          docker pull public.ecr.aws/docker/library/postgres:16
-          docker tag  public.ecr.aws/docker/library/postgres:16 postgres:16
+          docker pull public.ecr.aws/docker/library/postgres:16.12
+          docker tag  public.ecr.aws/docker/library/postgres:16.12 postgres:16
       - name: Run corpus convergence tests
         run: cargo test --all-features --test corpus -- --ignored --test-threads=1
 
