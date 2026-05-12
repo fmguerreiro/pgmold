@@ -5357,3 +5357,218 @@ fn aggregate_args_and_stype_preserve_typmod() {
     assert_eq!(agg.args, vec!["numeric(12,4)".to_string()]);
     assert_eq!(agg.stype, "numeric(12,4)");
 }
+
+#[test]
+fn standalone_create_index_name_is_truncated_to_63_bytes() {
+    let long_name = "i".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL, val TEXT);
+        CREATE INDEX "{long_name}" ON t (val);
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+    assert_eq!(table.indexes.len(), 1);
+    let name = &table.indexes[0].name;
+    assert!(
+        name.len() <= 63,
+        "standalone CREATE INDEX name must be truncated to 63 bytes; got {} bytes: {name}",
+        name.len()
+    );
+}
+
+#[test]
+fn create_trigger_name_is_truncated_to_63_bytes() {
+    let long_name = "t".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE users (id BIGINT PRIMARY KEY);
+        CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+        CREATE TRIGGER "{long_name}"
+        AFTER INSERT ON users
+        FOR EACH ROW
+        EXECUTE FUNCTION audit_fn();
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    assert_eq!(schema.triggers.len(), 1);
+    let (key, trigger) = schema.triggers.iter().next().unwrap();
+    assert!(
+        trigger.name.len() <= 63,
+        "Trigger.name must be truncated to 63 bytes; got {} bytes: {}",
+        trigger.name.len(),
+        trigger.name
+    );
+    let trigger_part = key.rsplit('.').next().unwrap();
+    assert!(
+        trigger_part.len() <= 63,
+        "Trigger map key trailing name must be truncated to 63 bytes; got {} bytes: {key}",
+        trigger_part.len()
+    );
+}
+
+#[test]
+fn create_sequence_name_is_truncated_to_63_bytes() {
+    let long_name = "s".repeat(64);
+    let sql = format!(r#"CREATE SEQUENCE "{long_name}";"#);
+    let schema = parse_sql_string(&sql).unwrap();
+    assert_eq!(schema.sequences.len(), 1);
+    let (key, seq) = schema.sequences.iter().next().unwrap();
+    assert!(
+        seq.name.len() <= 63,
+        "Sequence.name must be truncated to 63 bytes; got {} bytes: {}",
+        seq.name.len(),
+        seq.name
+    );
+    let seq_part = key.split_once('.').map(|(_, n)| n).unwrap_or(key.as_str());
+    assert!(
+        seq_part.len() <= 63,
+        "Sequence map key trailing name must be truncated to 63 bytes; got: {key}"
+    );
+}
+
+#[test]
+fn alter_table_add_unique_constraint_name_is_truncated_to_63_bytes() {
+    let long_name = "u".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL, val TEXT NOT NULL);
+        ALTER TABLE t ADD CONSTRAINT "{long_name}" UNIQUE (val);
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+    assert_eq!(table.indexes.len(), 1);
+    let name = &table.indexes[0].name;
+    assert!(
+        name.len() <= 63,
+        "ALTER TABLE ADD CONSTRAINT UNIQUE name must be truncated to 63 bytes; got {} bytes: {name}",
+        name.len()
+    );
+}
+
+#[test]
+fn drop_trigger_with_64_byte_name_removes_trigger() {
+    let long_name = "t".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE users (id BIGINT PRIMARY KEY);
+        CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+        CREATE TRIGGER "{long_name}"
+        AFTER INSERT ON users
+        FOR EACH ROW
+        EXECUTE FUNCTION audit_fn();
+        DROP TRIGGER "{long_name}" ON users;
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    assert_eq!(
+        schema.triggers.len(),
+        0,
+        "DROP TRIGGER with overlong name must remove the trigger; remaining: {:?}",
+        schema.triggers.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn alter_table_disable_trigger_with_64_byte_name_updates_state() {
+    let long_name = "t".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE users (id BIGINT PRIMARY KEY);
+        CREATE FUNCTION audit_fn() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+        CREATE TRIGGER "{long_name}"
+        AFTER INSERT ON users
+        FOR EACH ROW
+        EXECUTE FUNCTION audit_fn();
+        ALTER TABLE users DISABLE TRIGGER "{long_name}";
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    assert_eq!(schema.triggers.len(), 1);
+    let trigger = schema.triggers.values().next().unwrap();
+    assert_eq!(trigger.enabled, TriggerEnabled::Disabled);
+}
+
+#[test]
+fn drop_index_with_64_byte_name_removes_index() {
+    let long_name = "i".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL, val TEXT);
+        CREATE INDEX "{long_name}" ON t (val);
+        DROP INDEX "{long_name}";
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+    assert_eq!(
+        table.indexes.len(),
+        0,
+        "DROP INDEX with overlong name must remove the index; remaining: {:?}",
+        table.indexes.iter().map(|i| &i.name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn drop_sequence_with_64_byte_name_removes_sequence() {
+    let long_name = "s".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE SEQUENCE "{long_name}";
+        DROP SEQUENCE "{long_name}";
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    assert_eq!(
+        schema.sequences.len(),
+        0,
+        "DROP SEQUENCE with overlong name must remove the sequence; remaining: {:?}",
+        schema.sequences.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn drop_policy_with_64_byte_name_removes_policy() {
+    let long_name = "p".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL, val TEXT);
+        ALTER TABLE t ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "{long_name}" ON t FOR SELECT USING (true);
+        DROP POLICY "{long_name}" ON t;
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+    assert_eq!(
+        table.policies.len(),
+        0,
+        "DROP POLICY with overlong name must remove the policy; remaining: {:?}",
+        table.policies.iter().map(|p| &p.name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn alter_index_rename_with_64_byte_names_applies_truncation() {
+    let long_old = "o".repeat(64);
+    let long_new = "n".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL, val TEXT);
+        CREATE INDEX "{long_old}" ON t (val);
+        ALTER INDEX "{long_old}" RENAME TO "{long_new}";
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+    assert_eq!(table.indexes.len(), 1);
+    let renamed = &table.indexes[0].name;
+    assert!(
+        renamed.len() <= 63,
+        "ALTER INDEX RENAME target name must be truncated to 63 bytes; got {} bytes: {renamed}",
+        renamed.len()
+    );
+    assert_eq!(renamed, &"n".repeat(63));
+}

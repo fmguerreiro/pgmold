@@ -378,7 +378,7 @@ pub(super) fn parse_column_with_serial(
     }
 
     if let Some(seq_data_type) = detect_serial_type(&col_def.data_type) {
-        let seq_name = format!("{table_name}_{col_name}_seq");
+        let seq_name = truncate_identifier(&format!("{table_name}_{col_name}_seq"));
         let seq_qualified = qualified_name(table_schema, &seq_name);
 
         let pg_type = match seq_data_type {

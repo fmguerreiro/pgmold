@@ -15,10 +15,17 @@ pub(super) const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
 
 pub(super) fn truncate_identifier(s: &str) -> String {
     if s.len() <= PG_MAX_IDENTIFIER_LENGTH {
-        s.to_string()
-    } else {
-        s[..PG_MAX_IDENTIFIER_LENGTH].to_string()
+        return s.to_string();
     }
+    // PG's truncate_identifier uses pg_mbcliplen and stops at a character
+    // boundary, never mid-codepoint. Mirror that to match the live-DB
+    // identifier byte-for-byte and to avoid panicking on a UTF-8 slice that
+    // would otherwise split a multibyte sequence.
+    let mut end = PG_MAX_IDENTIFIER_LENGTH;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
 }
 
 pub(super) fn unquote_ident(s: &str) -> &str {
