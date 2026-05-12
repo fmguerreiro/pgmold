@@ -155,7 +155,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 let idx_name = ci
                     .name
                     .as_ref()
-                    .map(truncated_ident)
+                    .map(|n| truncated_ident(n))
                     .ok_or_else(|| SchemaError::ParseError("Index must have name".into()))?;
                 let (tbl_schema, tbl_name) = extract_qualified_name(&ci.table_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);

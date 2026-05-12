@@ -29,7 +29,7 @@ pub(super) fn unquote_ident(s: &str) -> &str {
     s.trim_matches('"')
 }
 
-pub(super) fn truncated_ident(name: &ObjectName) -> String {
+pub(super) fn truncated_ident(name: &impl std::fmt::Display) -> String {
     truncate_identifier(unquote_ident(&name.to_string()))
 }
 
