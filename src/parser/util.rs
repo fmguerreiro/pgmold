@@ -17,10 +17,7 @@ pub(super) fn truncate_identifier(s: &str) -> String {
     if s.len() <= PG_MAX_IDENTIFIER_LENGTH {
         return s.to_string();
     }
-    // PG's truncate_identifier uses pg_mbcliplen and stops at a character
-    // boundary, never mid-codepoint. Mirror that to match the live-DB
-    // identifier byte-for-byte and to avoid panicking on a UTF-8 slice that
-    // would otherwise split a multibyte sequence.
+    // Match PG's pg_mbcliplen: stop at a UTF-8 char boundary, not mid-codepoint.
     let mut end = PG_MAX_IDENTIFIER_LENGTH;
     while end > 0 && !s.is_char_boundary(end) {
         end -= 1;
@@ -30,6 +27,10 @@ pub(super) fn truncate_identifier(s: &str) -> String {
 
 pub(super) fn unquote_ident(s: &str) -> &str {
     s.trim_matches('"')
+}
+
+pub(super) fn truncated_ident(name: &ObjectName) -> String {
+    truncate_identifier(unquote_ident(&name.to_string()))
 }
 
 pub(super) fn normalize_expr(expr: &str) -> String {

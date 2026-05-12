@@ -61,7 +61,8 @@ use tables::{
 };
 use util::{
     extract_qualified_name, normalize_expr, parse_data_type, parse_for_values,
-    parse_for_values_required, parse_policy_command, truncate_identifier, unquote_ident,
+    parse_for_values_required, parse_policy_command, truncate_identifier, truncated_ident,
+    unquote_ident,
 };
 
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
@@ -153,7 +154,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             Statement::CreateIndex(ci) => {
                 let idx_name = ci
                     .name
-                    .map(|n| truncate_identifier(unquote_ident(&n.to_string())))
+                    .as_ref()
+                    .map(truncated_ident)
                     .ok_or_else(|| SchemaError::ParseError("Index must have name".into()))?;
                 let (tbl_schema, tbl_name) = extract_qualified_name(&ci.table_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
@@ -212,7 +214,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             }) => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
                 let policy = Policy {
-                    name: truncate_identifier(unquote_ident(&name.to_string())),
+                    name: truncated_ident(&name),
                     table_schema: tbl_schema,
                     table: tbl_name,
                     command: parse_policy_command(&command),
@@ -833,7 +835,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 ..
             }) => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
-                let trigger_name = truncate_identifier(unquote_ident(&name.to_string()));
+                let trigger_name = truncated_ident(&name);
                 let exec = exec_body.as_ref().ok_or_else(|| {
                     SchemaError::ParseError(format!(
                         "Trigger '{trigger_name}' missing EXECUTE clause"
@@ -1010,8 +1012,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 owned_by,
                 ..
             } => {
-                let (seq_schema, raw_seq_name) = extract_qualified_name(&name);
-                let seq_name = truncate_identifier(&raw_seq_name);
+                let (seq_schema, seq_name) = extract_qualified_name(&name);
+                let seq_name = truncate_identifier(&seq_name);
                 let sequence = parse_create_sequence(
                     &seq_schema,
                     &seq_name,
@@ -1116,7 +1118,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             }) => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
-                let policy_name = truncate_identifier(unquote_ident(&name.to_string()));
+                let policy_name = truncated_ident(&name);
 
                 if let Some(table) = schema.tables.get_mut(&tbl_key) {
                     table.policies.retain(|p| p.name != policy_name);
@@ -1244,12 +1246,12 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             | Statement::CreateUserMapping(_)
             | Statement::CreateTablespace(_) => {}
             Statement::AlterIndex { name, operation } => {
-                let (idx_schema, raw_idx_name) = extract_qualified_name(&name);
-                let idx_name = truncate_identifier(&raw_idx_name);
+                let (idx_schema, idx_name) = extract_qualified_name(&name);
+                let idx_name = truncate_identifier(&idx_name);
                 match operation {
                     AlterIndexOperation::RenameIndex { index_name } => {
-                        let (_, raw_new_name) = extract_qualified_name(&index_name);
-                        let new_name = truncate_identifier(&raw_new_name);
+                        let (_, new_name) = extract_qualified_name(&index_name);
+                        let new_name = truncate_identifier(&new_name);
                         let mut found = false;
                         for table in schema.tables.values_mut() {
                             for idx in &mut table.indexes {
