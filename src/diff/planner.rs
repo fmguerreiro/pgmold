@@ -48,6 +48,7 @@ struct NodeSets {
     enable_rls: Vec<NodeIndex>,
     force_rls: Vec<NodeIndex>,
     policies: Vec<NodeIndex>,
+    alter_policies: Vec<NodeIndex>,
     triggers: Vec<NodeIndex>,
     views: Vec<NodeIndex>,
     version_views: Vec<NodeIndex>,
@@ -107,6 +108,7 @@ impl NodeSets {
             force_rls: graph
                 .nodes_matching(|k| matches!(k, OpKey::ForceRls { .. } | OpKey::NoForceRls { .. })),
             policies: graph.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. })),
+            alter_policies: graph.nodes_matching(|k| matches!(k, OpKey::AlterPolicy { .. })),
             triggers: graph.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. })),
             views: graph.nodes_matching(|k| matches!(k, OpKey::CreateView(_))),
             version_views: graph.nodes_matching(|k| matches!(k, OpKey::CreateVersionView { .. })),
@@ -375,6 +377,8 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.add_columns, &ns.views);
         self.edges_all_to_all(&ns.add_columns, &ns.alter_views);
         self.edges_all_to_all(&ns.add_columns, &ns.policies);
+        // gh#327: AlterPolicy USING/CHECK may reference an AddColumn on another table.
+        self.edges_all_to_all(&ns.add_columns, &ns.alter_policies);
         self.edges_all_to_all(&ns.add_columns, &ns.triggers);
     }
 
@@ -433,6 +437,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.alter_columns, &ns.add_fks);
         self.edges_all_to_all(&ns.alter_columns, &ns.add_indexes);
         self.edges_all_to_all(&ns.alter_columns, &ns.policies);
+        self.edges_all_to_all(&ns.alter_columns, &ns.alter_policies);
         self.edges_all_to_all(&ns.alter_columns, &ns.triggers);
         self.edges_all_to_all(&ns.alter_columns, &ns.views);
         self.edges_all_to_all(&ns.alter_columns, &ns.alter_views);
@@ -445,6 +450,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.drop_views, &ns.drop_columns);
 
         self.edges_all_to_all(&ns.drop_columns, &ns.policies);
+        self.edges_all_to_all(&ns.drop_columns, &ns.alter_policies);
         self.edges_all_to_all(&ns.drop_columns, &ns.triggers);
         self.edges_all_to_all(&ns.drop_columns, &ns.views);
         self.edges_all_to_all(&ns.drop_columns, &ns.alter_views);
@@ -5942,6 +5948,71 @@ mod tests {
         assert!(
             create_table_pos < alter_policy_pos,
             "CreateTable(enterprise_suppliers) at {create_table_pos} must come before AlterPolicy at {alter_policy_pos}"
+        );
+    }
+
+    // gh#327: AddColumn must come before any cross-table AlterPolicy whose
+    // USING/CHECK references the new column. The four child tables bracketing
+    // the AddColumn force the alphabetical-emission shape from the real bug
+    // (sagri/mrv gh#5053), where AlterPolicy nodes get inserted before the
+    // AddColumn and would otherwise surface first under toposort.
+    #[test]
+    fn add_column_before_alter_policy_referencing_new_column_on_other_table() {
+        let make_cross_table_policy = |table: &str| {
+            MigrationOp::AlterPolicy {
+            table: QualifiedName::new("public", table),
+            name: format!("{table}_owner_select"),
+            changes: PolicyChanges {
+                roles: None,
+                using_expr: Some(Some(
+                    "(EXISTS (SELECT 1 FROM public.parent p WHERE p.id = parent_id AND p.new_col IS NOT NULL))"
+                        .to_string(),
+                )),
+                check_expr: None,
+            },
+        }
+        };
+        let ops = vec![
+            make_cross_table_policy("child_a"),
+            make_cross_table_policy("child_b"),
+            MigrationOp::DropColumn {
+                table: QualifiedName::new("public", "parent"),
+                column: "old_col".to_string(),
+            },
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "parent"),
+                column: Column {
+                    name: "new_col".to_string(),
+                    data_type: PgType::Uuid,
+                    nullable: false,
+                    default: None,
+                    comment: None,
+                    generated: None,
+                },
+            },
+            make_cross_table_policy("child_c"),
+            make_cross_table_policy("child_d"),
+        ];
+        let planned = plan_migration(ops);
+
+        let add_column_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddColumn { .. }))
+            .expect("AddColumn not found");
+        let alter_policy_positions: Vec<usize> = planned
+            .iter()
+            .enumerate()
+            .filter_map(|(i, op)| matches!(op, MigrationOp::AlterPolicy { .. }).then_some(i))
+            .collect();
+
+        assert_eq!(
+            alter_policy_positions.len(),
+            4,
+            "expected 4 AlterPolicy ops"
+        );
+        assert!(
+            alter_policy_positions.iter().all(|&p| add_column_pos < p),
+            "AddColumn(parent.new_col) at {add_column_pos} must come before every cross-table AlterPolicy; AlterPolicy positions: {alter_policy_positions:?}"
         );
     }
 
