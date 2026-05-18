@@ -1055,8 +1055,12 @@ mod tests {
         assert!(is_plpgsql_body(
             "#variable_conflict use_column\nDECLARE\n    v uuid;\nBEGIN\n    NULL;\nEND"
         ));
-        assert!(is_plpgsql_body("#print_strict_params on\nBEGIN\n    NULL;\nEND"));
-        assert!(is_plpgsql_body("  \n#variable_conflict use_column\nDECLARE\nBEGIN\nEND"));
+        assert!(is_plpgsql_body(
+            "#print_strict_params on\nBEGIN\n    NULL;\nEND"
+        ));
+        assert!(is_plpgsql_body(
+            "  \n#variable_conflict use_column\nDECLARE\nBEGIN\nEND"
+        ));
     }
 
     #[test]
