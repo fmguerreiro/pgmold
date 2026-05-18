@@ -355,105 +355,136 @@ phase-0 spike measures how often this fallback fires on the real corpus.
 | Reimplements pgroll | no | yes | yes | no |
 | Convergence guarantee | unaffected | must hold per phase | must hold per phase | must hold per phase |
 
+## Spike result (resolved 2026-05-18)
+
+The phase-0 spike was run locally and is closed. It did not measure what
+the RFC originally framed; it surfaced a more fundamental blocker.
+
+- **pgroll v0.16.0 vocabulary (the pinned version, prod + stage): not the
+  bottleneck.** Confirmed from the v0.16.0 tag: structured `rename_column`,
+  `rename_table`, `rename_constraint`, `drop_table`, and `alter_column`
+  sub-ops (`change_type`, `add/drop_not_null_constraint`, etc.). pgroll can
+  express every structural op in the sagri corpus.
+- **pgmold cannot represent a rename. Proven by execution.** `MigrationOp`
+  has no `Rename*` variant; column diff is name-keyed
+  (`src/diff/mod.rs:477`); `ColumnChanges` carries only
+  `data_type/nullable/default`. For the exact v5.4.0 rename
+  (`entity_id`->`supplier_id`), `pgmold plan` emits `DROP INDEX; ADD COLUMN
+  supplier_id UUID NOT NULL; CREATE INDEX; DROP COLUMN entity_id CASCADE`.
+  Applied to a 2-row table on a real PG16 it **fails atomically**
+  (`column "supplier_id" contains null values`); rollback left the old
+  column and rows intact. Forced nullable it would silently lose the
+  column's data and CASCADE-drop dependents.
+- **Corpus composition:** 15/20 sagri pgroll migrations are
+  data/seed/backfill (outside pgmold's domain forever); ~5 are structural
+  DDL. The structural ones are hand-written raw `sql` partly because
+  pgmold structurally cannot express them (renames especially).
+
+Consequence: the "coverage %" question is moot. pgroll having a perfect
+`rename_column` is irrelevant because pgmold never emits a rename to hand
+it. B, C, and E all require a prerequisite pgmold does not have: the
+ability to represent a rename. Only Option A is unaffected, because under
+A renames stay in pgroll's hand-written `sql` and pgmold never expresses
+them.
+
 ## Recommendation
 
-Adopt **Option A now**. Target **Option E** as the long-term design.
-Treat **B/C as the fallback only if E's coverage spike fails**. Do not
-start any of B/C/E blind.
+Decouple three things that have been conflated. They are on different
+timescales and confidence levels; bundling them is the mistake.
 
-Reasoning against the constraints:
+**1. Ship Option A now.** It discharges the only hard, present pain (the
+v5.4.0 class), is fully reversible, and needs none of the rename work.
+The v5.4.0 failure was order plus ownership, not capability: pgmold ran
+before pgroll against a pre-rename DB. Fix = reorder the sagri pipeline
+(pgroll start, app deploy, pgroll complete, then pgmold, against the
+final shape), declare the ownership boundary (pgroll owns column-level
+structural DDL including renames; pgmold owns the declarative rest),
+restore the validation gate PR #5300 removed. Weeks, high confidence.
 
-- Option A discharges the only hard, present pain (the v5.4.0 failure
-  class) within soft-capacity limits and is fully reversible. Per the
-  decision-reversibility constraint, a reversible fix that solves the
-  observed problem should ship before any larger commitment.
-- B and C are both "rebuild pgroll in Rust." The size of the test matrix
-  (appendix) is the direct measure of that cost. Both cost multi-month
-  against single-maintainer capacity and carry an unproven core
-  assumption (B: stateless inference; C: an irreversible ADR-level state
-  table contradicting pgmold's stateless principle).
-- Option E eliminates the same coupling root cause as B/C at a fraction
-  of the cost, dissolves both B/C forks (state stays in pgroll; version
-  views come free), needs no ADR, no apply refactor, and kills the
-  v5.4.0 class by construction. It does not reimplement a mature tool.
-  Its only material risk is concrete and measurable, not existential.
+**2. Add an explicit rename mechanism to pgmold — justified on pgmold's
+own correctness, not on E.** Today pgmold silently turns every rename
+into data-destroying drop+add (proven above). That is a latent footgun
+for every pgmold user, independent of pgroll. Key reframe: a column
+rename in postgres is metadata-only, instant, no rewrite, no meaningful
+lock. The zero-downtime difficulty of a rename is the *application*
+transition (old code reads old name, new code reads new name), not the
+DB operation. So an explicit `-- pgmold:rename old -> new` directive lets
+pgmold emit the safe instant rename directly and removes the v5.4.0 root
+cause from pgmold's side. Heuristic drop/add matching is rejected:
+a wrong guess silently destroys data, unacceptable for a migration tool.
+This is its own small RFC/issue, decided on "pgmold must not destroy
+data on rename," not gated on the pgroll story.
 
-The decisive question is the spike's only job: **what fraction of real
-pgmold diffs (on the sagri corpus) map onto pgroll's structured op
-vocabulary, versus fall back to pgroll's `sql` operation (which loses
-zero-downtime)?** If coverage is high, E is unambiguously the best
-option and B/C are abandoned. If coverage is low, E degrades to A for
-the uncovered ops and the B/C tradeoff (and its forks) re-opens with
-spike data in hand.
+**3. Demote Option E. Revisit only if the managed coupling tax proves
+painful in practice, and only after (2) ships.** E's primary
+justification was the v5.4.0 case, which (1) already handles. E's
+prerequisite (a rename mechanism) is justified independently by (2). So
+E is no longer a committed target; it is a de-risked future option that
+becomes a small decision once (2) exists. Do not pay for E speculatively.
+B and C remain rejected (they rebuild pgroll and inherit the same rename
+prerequisite plus their original forks).
 
-Concrete next step: A ships. In parallel, the time-boxed spike (Rollout
-phase 0) measures pgroll op-vocab coverage. E vs fallback-to-B/C is
-decided with that number, before any production code.
+Main tradeoff: this leaves the pgmold/pgroll coupling permanent but
+*managed* (correct order, explicit ownership boundary) rather than
+*exploding* (v5.4.0). The bet is that the managed tax is cheaper than
+building E, which needs a user-facing schema-authoring contract change
+anyway and serves a corpus that is 75% data migrations pgmold will never
+own. Revisit only if real deploys keep hitting the ownership boundary.
 
 ## Open questions
 
-- **(decides E)** What fraction of real pgmold diffs on the sagri corpus
-  map onto pgroll's structured op vocabulary versus fall back to pgroll's
-  `sql` operation? — spike (Rollout phase 0). This is the single number
-  that decides E.
-- Is pgroll's migration-file format stable/versioned enough to be a codegen
-  target across pgroll releases? — read pgroll source/docs. Needed for E.
-- Is pgmold's `apply` hard-wired to a single transaction? — pgmold
-  maintainers / read `apply/exec.rs`. Blocks B and C only (E delegates
-  phase execution to pgroll).
-- Can a half-expanded DB state be unambiguously mapped to "remaining
-  phases" by introspection alone, for every op in the matrix? — only
-  relevant if E fails and B is reconsidered.
-- What is pgroll's exact, version-stable naming convention for transient
-  objects? — read pgroll source. Needed for Option A's filter axis.
+Resolved by the spike (no longer open): pgroll vocab coverage; pgroll
+op set for v0.16.0; whether pgmold can emit a rename (it cannot). Still
+open:
+
 - Does Option A's "pgroll owns columns, pgmold owns rest" boundary have
   un-decomposable cases (a policy whose correctness is inseparable from a
   column rename in the same release)? — sagri db team; informs whether A
   is a stable end state or only a stopgap.
-- If C: where does the migration-log table live (dedicated schema?
-  naming?) and what is its upgrade story across pgmold versions? — ADR.
+- For the rename directive (item 2): what is the authoring surface — an
+  inline SQL comment, a sidecar file, a CLI flag? — pgmold maintainers,
+  in the standalone rename RFC.
+- Does Option A need pgmold to run inside the expand window at all, or is
+  strictly-post-`complete` sufficient for the declarative remainder
+  (policies/grants/views)? If post-complete suffices, the
+  pgroll-object-ignore filter is not needed day one. — sagri db team.
+- If E is ever revisited: is pgroll's migration-file format stable across
+  releases enough to be a codegen target? — deferred until E is live.
 
 ## Rollout
 
-Phase 0 (prerequisite spike, ~1 week, blocks B/C/E):
+Phase 0 (spike): **done**, see "Spike result". Closed Beads
+`pgmold-e5bj`. Outcome: rename-representation gap, not coverage.
 
-- Take the real sagri schema deltas (the corpus) and run pgmold's diff to
-  produce the op set. For each op, attempt to map it onto a pgroll
-  structured operation; record covered / covered-with-caveat / falls-to-`sql`.
-  The resulting coverage percentage is the E decision input.
-- Read pgroll source/docs: confirm migration-file format stability and the
-  transient-object naming convention (the latter also unblocks Option A).
-- Only if E coverage is low: read `apply/exec.rs`, determine the
-  transaction model, and run the half-expand inference harness (per-op
-  inferable / heuristic / not-inferable) as the B/C decision input.
+Phase 1 (Option A — committed, ships now, weeks):
 
-Phase 1 (Option A, ships independently of the spike):
+- Reorder sagri `migrations-deploy.yml`: pgroll start, app deploy, pgroll
+  complete, then pgmold against the final shape. (Pipeline change, not
+  pgmold code.)
+- Document and enforce the ownership boundary: pgroll owns column-level
+  structural DDL (renames, drops, type-narrowing) via its `sql`
+  migrations; pgmold owns the declarative rest (policies, views,
+  functions, grants, indexes, new tables, new nullable columns).
+- Restore the pgmold validation gate removed by PR #5300.
+- Only if Phase 1 finds pgmold must run mid-window: add the opt-in
+  pgroll-managed-object ignore filter to `filter/` + `introspect.rs`,
+  default off.
 
-- Add the pgroll-managed-object filter axis to `filter/` + `introspect.rs`.
-- Reorder sagri `migrations-deploy.yml`: pgmold after `pgroll start`,
-  before `pgroll complete`.
-- Document the pgroll-owns-columns / pgmold-owns-rest contract.
-- Feature-gated: the filter axis is opt-in (`--exclude-pgroll-managed` or
-  config), default off, so existing users are unaffected.
+Phase 2 (rename mechanism — independent pgmold-correctness item, own RFC;
+tracked Beads `pgmold-3po5`):
 
-Phase 2 (Option E, if coverage spike passes):
+- Standalone RFC: explicit rename directive (authoring surface TBD —
+  inline comment vs sidecar vs flag). Emits the safe instant
+  `ALTER TABLE ... RENAME`. Heuristic inference explicitly rejected.
+- Justified by "pgmold must not silently destroy data on rename,"
+  decided on its own merits, not gated on the pgroll story.
 
-- diff-to-pgroll-JSON codegen for the covered op classes, behind a new
-  flag (`--emit-pgroll` or similar). Old `--zero-downtime` behavior
-  preserved (public-API constraint).
-- Op classifier (safe-direct vs needs-pgroll) and phase sequencer that
-  orders pgmold's direct ops around pgroll's start/complete.
-- Uncovered ops: explicit, loud fallback to Option A handling for that
-  op subset (documented, not silent).
+Phase 3 (Option E — deferred, not committed):
 
-Phase 2-alt (only if E coverage fails and B/C is revived):
-
-- `apply` non-transactional phase support; op-decomposition engine behind
-  `--zero-downtime` v2. C additionally requires an accepted state-table
-  ADR before any code.
-
-Switch owner: pgmold maintainer flips the `--zero-downtime` v2 default
-only after the full test matrix (L0-L8) passes on the real sagri corpus.
+- Revisit only if the managed coupling tax (Phase 1) proves painful in
+  practice, and only after Phase 2 ships (E's prerequisite). At that
+  point E is a small, de-risked decision: diff-to-pgroll-JSON codegen
+  over the now-expressible op set, behind a new flag. No work until then.
 
 ## Rollback
 
