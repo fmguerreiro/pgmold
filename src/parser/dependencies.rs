@@ -194,6 +194,9 @@ fn format_extract_table_references_failure(
 /// sqlparser cannot and should not parse as raw SQL.
 fn is_plpgsql_body(body: &str) -> bool {
     let trimmed = body.trim_start();
+    if trimmed.starts_with('#') {
+        return true;
+    }
     ["DECLARE", "BEGIN"].iter().any(|keyword| {
         trimmed
             .get(..keyword.len())
@@ -1045,6 +1048,15 @@ mod tests {
         assert!(!is_plpgsql_body("  SELECT 1  "));
         assert!(!is_plpgsql_body(""));
         assert!(!is_plpgsql_body("   \n\t  "));
+    }
+
+    #[test]
+    fn is_plpgsql_body_detects_hash_directives() {
+        assert!(is_plpgsql_body(
+            "#variable_conflict use_column\nDECLARE\n    v uuid;\nBEGIN\n    NULL;\nEND"
+        ));
+        assert!(is_plpgsql_body("#print_strict_params on\nBEGIN\n    NULL;\nEND"));
+        assert!(is_plpgsql_body("  \n#variable_conflict use_column\nDECLARE\nBEGIN\nEND"));
     }
 
     #[test]
