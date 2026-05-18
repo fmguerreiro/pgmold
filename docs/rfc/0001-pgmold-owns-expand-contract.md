@@ -230,6 +230,115 @@ means inferring which version views to tear down from introspection alone
 pays for a state table but still dumps the dual-shape burden on app
 authors. Neither is a coherent design point.
 
+## Option E: integration model (operational contract)
+
+This section pins how pgmold and pgroll are used together under E. It is
+load-bearing: E's value depends on this contract, not just on codegen.
+
+### How pgroll-aware is pgmold
+
+Two senses, each kept as thin as possible.
+
+1. **Static (unavoidable, the core of E):** pgmold knows pgroll's
+   migration-file format and op vocabulary, in order to generate the JSON.
+   One-directional: pgmold writes files pgroll reads. pgroll never knows
+   pgmold exists.
+2. **Runtime, object-level (needed):** pgmold must not fight pgroll's
+   transient objects. Mid-window the live DB has pgroll's version views and
+   dual-write triggers, absent from schema.sql, and today's diff emits DROP
+   for them (`diff/objects.rs:150-154`). E requires the Option A filter
+   axis: ignore pgroll-managed objects, by ownership/name pattern.
+3. **Runtime, state-level (explicitly avoided):** pgmold does NOT read
+   `pgroll.migrations`, does NOT track which migration is in-flight, does
+   NOT know pgroll's phase. Reading pgroll's state log would couple pgmold
+   to pgroll's internal schema and break pgmold's stateless principle.
+   pgmold stays stateless: diff the live DB, ignore pgroll's objects by
+   pattern, full stop.
+
+Net: pgmold is aware of pgroll's file format (to write) and pgroll's
+objects (to ignore). It is not aware of pgroll's runtime state.
+
+### Who orchestrates
+
+Neither binary calls the other. The CI/CD pipeline is the orchestrator and
+consumes pgmold's output. pgmold does not shell out to pgroll; pgroll does
+not know pgmold ran.
+
+Orchestration fork (decide before building E):
+
+- **E-loose (recommended):** pipeline-orchestrated. pgmold and pgroll are
+  independently versioned binaries; the deploy workflow sequences them.
+- **E-tight:** `pgmold migrate` internally invokes the pgroll binary. One
+  command, but a hard runtime dependency on a pinned pgroll version and
+  pgroll-on-PATH. Couples release cycles.
+
+E-loose is recommended: it preserves independent versioning and keeps the
+static-awareness coupling (file format) as the only coupling. E-tight is a
+reversible later optimization if the pipeline glue proves painful.
+
+### The deploy sequence
+
+Pipeline-enforced ordering, not tool-enforced:
+
+1. **pgmold codegen.** `pgmold plan` diffs the target DB. Each op is
+   classified: safe (pgmold applies directly) or unsafe/structural
+   (emit a pgroll migration file). Output: a pgmold direct-apply plan plus
+   one or more generated pgroll migration files. Direct ops that depend on
+   an unsafe op are flagged "apply after expand".
+2. **pgroll start** on the generated migration. Expand window opens: new
+   physical columns, dual-write triggers, version views.
+3. **pgmold direct-apply, inside the expand window.** pgmold
+   re-introspects (now sees the post-expand shape), applies the safe ops
+   (including the "after expand" ones, targeting the new names), and
+   ignores pgroll's transient objects via the object filter.
+4. **app deploy.** App rolls onto the new schema through pgroll's version
+   views. Old pods keep working on the old version view.
+5. **pgroll complete.** Old columns, dual-write triggers, old version view
+   dropped.
+6. **pgmold convergence check.** `pgmold plan` must emit zero ops. This is
+   the proof the two tools agree on the final shape.
+
+One-line contract: pgmold-codegen, pgroll start, pgmold direct-apply
+(in-window), app deploy, pgroll complete, pgmold convergence check.
+
+### Why this kills the v5.4.0 class by construction
+
+Worked example: rename `mrv.sampling_project.entity_id` to `supplier_id`,
+plus a policy `sampling_upload` that references it.
+
+- schema.sql updated: column is `supplier_id`, policy references
+  `supplier_id`.
+- `pgmold plan` diffs against prod (still `entity_id`). Classifies: column
+  rename = unsafe (emit pgroll `rename_column`); policy change =
+  pgmold-direct, flagged "after expand" because it depends on the rename.
+- pipeline runs `pgroll start` on the generated rename migration. prod now
+  has `supplier_id`, a version view, a dual-write trigger.
+- pipeline runs pgmold direct-apply. pgmold re-introspects, applies the
+  policy targeting `supplier_id`, ignores pgroll's view and trigger.
+- app deploys, reads through the version view; old pods still work.
+- `pgroll complete` drops the old column, trigger, old view.
+- `pgmold plan` emits zero ops. Converged.
+
+The v5.4.0 failure (pgmold emitting a policy referencing a column pgroll
+had not yet renamed) is structurally impossible here: the rename op and the
+policy change come out of the **same diff computation**. pgmold can never
+emit a dependent change referencing a rename it did not also generate. That
+is E's core advantage over the current two-tools-racing pipeline.
+
+### Coverage fallback within E
+
+An op with no clean pgroll structured-op mapping has two fallbacks, both
+loud and documented, never silent:
+
+- fall to pgroll's `sql` operation (loses pgroll's auto version-view and
+  trigger generation, so loses zero-downtime for that op), or
+- fall to pgmold direct-apply outside the expand window (also loses
+  zero-downtime for that op).
+
+Either way the op degrades to Option-A-grade handling, surfaced in the plan
+output so a reviewer sees exactly which ops are not zero-downtime. The
+phase-0 spike measures how often this fallback fires on the real corpus.
+
 ## Tradeoffs
 
 | Dimension | A: fix seams | B: stateless / app-tolerates | C: stateful / version-views | E: pgmold plans, pgroll executes |
