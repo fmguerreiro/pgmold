@@ -9,10 +9,10 @@ pgmold compares two snapshots (your SQL schema files as desired state, the live 
 
 pgmold cannot detect renames of columns, tables, indexes, or constraints. After a rename, the schema file contains no evidence that one identifier used to be another. The old name is simply absent and the new name is simply present.
 
-For a column rename like `entity_id → supplier_id`, pgmold emits:
+For a column rename from `entity_id` to `supplier_id`, pgmold emits:
 
 ```sql
-ALTER TABLE orders ADD COLUMN supplier_id <type>;
+ALTER TABLE orders ADD COLUMN supplier_id UUID;
 ALTER TABLE orders DROP COLUMN entity_id CASCADE;
 ```
 
@@ -24,17 +24,21 @@ Heuristic matching ("this dropped column looks like that added column") was cons
 
 ### Workaround
 
-Apply the rename directly to the database before running pgmold:
+1. Apply the rename directly to the database:
 
-```sql
-ALTER TABLE orders RENAME COLUMN entity_id TO supplier_id;
-```
+   ```sql
+   ALTER TABLE orders RENAME COLUMN entity_id TO supplier_id;
+   ```
 
-Then update the schema file to use the new name and run `pgmold plan`. The column diff will be empty.
+2. Update any function bodies that reference the old column name. Function source is stored as plain text in `pg_proc.prosrc` and is not rewritten by `RENAME COLUMN`. Functions referencing the old name will fail at next call or return wrong results.
+
+3. Update the schema file to use the new column name.
+
+4. Run `pgmold plan`. The column diff will be empty.
 
 `ALTER TABLE ... RENAME COLUMN` is instant in PostgreSQL: a catalog-only operation with no data movement. The same approach works for `RENAME TABLE`, `RENAME INDEX`, and `RENAME CONSTRAINT`.
 
-If a view or function references the renamed column, it may need updating. PostgreSQL tracks view dependencies by OID so views stay valid after a column rename, but pgmold's view introspection may still surface a diff until the schema file matches the regenerated definition. Function bodies are stored as plain text and are not rewritten; they must be edited explicitly.
+Views are usually safe to leave alone. PostgreSQL tracks view dependencies by OID, so a view that selected the old column keeps working after the rename. pgmold's view introspection may surface a transient diff in the view's definition text until you align the schema file with the regenerated form; that diff is cosmetic, not a correctness issue.
 
 ### Catching unintended renames in CI
 

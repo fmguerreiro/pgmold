@@ -400,9 +400,9 @@ Set `PGMOLD_PROD=1` for production mode, which blocks table drops entirely.
 pgmold compares two snapshots (schema files vs. live database), so a rename of a column, table, index, or constraint looks identical to a drop + add. pgmold will emit the destructive form, which **destroys the column data and cascades to dependent objects**.
 
 ```sql
--- Schema file change: rename entity_id → supplier_id
+-- Schema file change: rename entity_id to supplier_id
 -- pgmold emits:
-ALTER TABLE orders ADD COLUMN supplier_id <type>;
+ALTER TABLE orders ADD COLUMN supplier_id UUID;
 ALTER TABLE orders DROP COLUMN entity_id CASCADE;
 ```
 
