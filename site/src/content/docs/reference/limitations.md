@@ -34,7 +34,7 @@ Then update the schema file to use the new name and run `pgmold plan`. The colum
 
 `ALTER TABLE ... RENAME COLUMN` is instant in PostgreSQL: a catalog-only operation with no data movement. The same approach works for `RENAME TABLE`, `RENAME INDEX`, and `RENAME CONSTRAINT`.
 
-If a view or function references the renamed column by name in its body, recreate or replace it after the rename. PostgreSQL resolves view column dependencies by OID, so most views stay valid, but pgmold's view introspection may still surface a diff until the schema file matches the regenerated definition text. Function bodies are stored as text and are not rewritten; they must be edited explicitly.
+If a view or function references the renamed column, it may need updating. PostgreSQL tracks view dependencies by OID so views stay valid after a column rename, but pgmold's view introspection may still surface a diff until the schema file matches the regenerated definition. Function bodies are stored as plain text and are not rewritten; they must be edited explicitly.
 
 ### Catching unintended renames in CI
 
