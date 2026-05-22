@@ -24,7 +24,7 @@ Heuristic matching ("this dropped column looks like that added column") was cons
 
 ### How other tools handle this
 
-pgmold's behavior is the dominant pattern in declarative schema-diff tools. Stripe's [pg-schema-diff](https://github.com/stripe/pg-schema-diff) documents it directly: "If you rename an object, it will be treated as a drop and an add". Supabase's declarative schemas inherit the same limitation through their use of [migra](https://github.com/djrobstep/migra) under the hood; the [Supabase docs](https://supabase.com/docs/guides/local-development/declarative-database-schemas) list rename-relevant gaps in a "Known caveats" section, and an open CLI bug ([supabase/cli#1721](https://github.com/supabase/cli/issues/1721), "On table rename `supabase db pull` creates migration to DROP table, not RENAME") tracks the same drop-instead-of-rename behavior at the dump layer. [pgschema](https://www.pgschema.com/) behaves the same.
+pgmold's behavior is the dominant pattern in declarative schema-diff tools. Stripe's [pg-schema-diff](https://github.com/stripe/pg-schema-diff) documents it directly: "If you rename an object, it will be treated as a drop and an add". Supabase's declarative schemas inherit the same limitation through their use of [migra](https://github.com/djrobstep/migra) under the hood; the [Supabase docs](https://supabase.com/docs/guides/local-development/declarative-database-schemas) list rename-relevant gaps in a "Known caveats" section, and an open CLI bug ([supabase/cli#1721](https://github.com/supabase/cli/issues/1721)) is tracked as "On table rename `supabase db pull` creates migration to DROP table, not RENAME". [pgschema](https://www.pgschema.com/) behaves the same.
 
 Two alternatives exist in shipping tools:
 
