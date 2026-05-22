@@ -393,6 +393,29 @@ By default, pgmold blocks destructive operations:
 
 Set `PGMOLD_PROD=1` for production mode, which blocks table drops entirely.
 
+## Known Limitations
+
+### Renames are not detected
+
+pgmold compares two snapshots — schema files vs. live database — so a rename of a column, table, index, or constraint looks identical to a drop + add. pgmold will emit the destructive form, which **destroys the column data and cascades to dependent objects**.
+
+```sql
+-- Schema file change: rename entity_id → supplier_id
+-- pgmold emits:
+ALTER TABLE orders ADD COLUMN supplier_id <type>;
+ALTER TABLE orders DROP COLUMN entity_id CASCADE;
+```
+
+Heuristic detection was rejected: a wrong guess silently destroys data.
+
+**Workaround**: apply the rename directly to the database first, then update the schema file:
+
+```sql
+ALTER TABLE orders RENAME COLUMN entity_id TO supplier_id;
+```
+
+`pgmold plan` will then show no changes. An explicit rename directive is under design — see [Known Limitations](https://pgmold.dev/docs/reference/limitations/) for details.
+
 ## Comparison with Other Tools
 
 ### vs Declarative Schema-as-Code Tools
