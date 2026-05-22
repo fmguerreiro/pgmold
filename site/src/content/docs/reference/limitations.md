@@ -24,11 +24,11 @@ Heuristic matching ("this dropped column looks like that added column") was cons
 
 ### How other tools handle this
 
-pgmold's behavior is the dominant pattern in declarative schema-diff tools. Stripe's [pg-schema-diff](https://github.com/stripe/pg-schema-diff) documents it directly: "If you rename an object, it will be treated as a drop and an add." Supabase's [declarative-schemas guide](https://supabase.com/docs/guides/local-development/declarative-database-schemas) frames the constraint identically: "you can't differentiate between renaming a column and dropping + creating a column with a different name." [migra](https://github.com/djrobstep/migra) and [pgschema](https://www.pgschema.com/) behave the same.
+pgmold's behavior is the dominant pattern in declarative schema-diff tools. Stripe's [pg-schema-diff](https://github.com/stripe/pg-schema-diff) documents it directly: "If you rename an object, it will be treated as a drop and an add". Supabase's declarative schemas inherit the same limitation through their use of [migra](https://github.com/djrobstep/migra) under the hood; the [Supabase docs](https://supabase.com/docs/guides/local-development/declarative-database-schemas) list rename-relevant gaps in a "Known caveats" section, and an open CLI bug ([supabase/cli#1721](https://github.com/supabase/cli/issues/1721), "On table rename `supabase db pull` creates migration to DROP table, not RENAME") tracks the same drop-instead-of-rename behavior at the dump layer. [pgschema](https://www.pgschema.com/) behaves the same.
 
 Two alternatives exist in shipping tools:
 
-- **Interactive detection** ([Atlas](https://atlasgo.io)): the tool prompts at diff time, "did you rename column X to Y?". Works for local dev, less useful for CI and automated workflows.
+- **Interactive detection** ([Atlas](https://atlasgo.io)): in the versioned migration workflow, `atlas migrate diff` prompts at diff time ("Did you rename column X to Y?"). Works for local dev, less useful for CI and automated workflows.
 - **Explicit annotation** ([sqldef](https://github.com/sqldef/sqldef)): the author writes `-- @renamed from=old_name` inline in the SQL. The author carries the intent; the tool emits a safe `RENAME`.
 
 pgmold has not picked one. See [Future direction](#future-direction).
