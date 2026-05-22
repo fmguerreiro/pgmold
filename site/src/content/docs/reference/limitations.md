@@ -22,6 +22,17 @@ ALTER TABLE orders DROP COLUMN entity_id CASCADE;
 
 Heuristic matching ("this dropped column looks like that added column") was considered and rejected. A wrong guess silently destroys data: strictly worse than failing loudly. Until pgmold has an explicit way for you to declare "this is a rename," the safe behavior is to emit drop + add and require `--allow-destructive`.
 
+### How other tools handle this
+
+pgmold's behavior is the dominant pattern in declarative schema-diff tools. Stripe's [pg-schema-diff](https://github.com/stripe/pg-schema-diff) documents it directly: "If you rename an object, it will be treated as a drop and an add." Supabase's [declarative-schemas guide](https://supabase.com/docs/guides/local-development/declarative-database-schemas) frames the constraint identically: "you can't differentiate between renaming a column and dropping + creating a column with a different name." [migra](https://github.com/djrobstep/migra) and [pgschema](https://www.pgschema.com/) behave the same.
+
+Two alternatives exist in shipping tools:
+
+- **Interactive detection** ([Atlas](https://atlasgo.io)): the tool prompts at diff time, "did you rename column X to Y?". Works for local dev, less useful for CI and automated workflows.
+- **Explicit annotation** ([sqldef](https://github.com/sqldef/sqldef)): the author writes `-- @renamed from=old_name` inline in the SQL. The author carries the intent; the tool emits a safe `RENAME`.
+
+pgmold has not picked one. See [Future direction](#future-direction).
+
 ### Workaround
 
 1. Apply the rename directly to the database:
