@@ -5597,3 +5597,38 @@ fn dedup_check_constraint_name_does_not_panic_on_multibyte_collision() {
     assert!(chosen.len() <= 63);
     assert!(chosen.is_char_boundary(chosen.len()));
 }
+
+#[test]
+fn alter_table_rename_constraint_truncates_new_name_to_63_bytes() {
+    let long_new = "n".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE users (id BIGINT NOT NULL, email TEXT NOT NULL);
+        CREATE INDEX users_email_idx ON users (email);
+        ALTER TABLE users RENAME CONSTRAINT users_email_idx TO "{long_new}";
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.users").unwrap();
+    assert_eq!(table.indexes.len(), 1);
+    assert_eq!(table.indexes[0].name, "n".repeat(63));
+}
+
+#[test]
+fn alter_table_rename_constraint_matches_already_truncated_old_name() {
+    // A 64-char constraint name is stored truncated to 63 bytes at creation time. Renaming
+    // from the 64-char form must match the stored 63-byte name, so the old name needs the
+    // same truncation before lookup.
+    let long_old = "o".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE users (id BIGINT NOT NULL, email TEXT NOT NULL);
+        CREATE INDEX "{long_old}" ON users (email);
+        ALTER TABLE users RENAME CONSTRAINT "{long_old}" TO users_email_index;
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.users").unwrap();
+    assert_eq!(table.indexes.len(), 1);
+    assert_eq!(table.indexes[0].name, "users_email_index");
+}

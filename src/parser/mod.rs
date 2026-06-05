@@ -465,8 +465,10 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             }
                         }
                         AlterTableOperation::RenameConstraint { old_name, new_name } => {
-                            let old_constraint_name = unquote_ident(&old_name.value).to_string();
-                            let new_constraint_name = unquote_ident(&new_name.value).to_string();
+                            let old_constraint_name =
+                                truncate_identifier(unquote_ident(&old_name.value));
+                            let new_constraint_name =
+                                truncate_identifier(unquote_ident(&new_name.value));
 
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 for idx in &mut table.indexes {
