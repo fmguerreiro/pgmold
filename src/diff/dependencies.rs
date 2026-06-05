@@ -104,7 +104,6 @@ pub(super) fn tables_with_dropped_columns(ops: &[MigrationOp]) -> HashSet<String
         .collect()
 }
 
-/// Extract (table_qualified_name, column) pairs for columns being dropped.
 pub(super) fn dropped_columns(ops: &[MigrationOp]) -> HashSet<(String, String)> {
     ops.iter()
         .filter_map(|op| {
