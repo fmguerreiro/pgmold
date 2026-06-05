@@ -16,9 +16,10 @@ pub use types::{
 };
 
 use dependencies::{
-    generate_fk_ops_for_type_changes, generate_policy_ops_for_affected_tables,
-    generate_policy_ops_for_function_changes, generate_trigger_ops_for_affected_tables,
-    generate_view_ops_for_affected_tables, tables_with_dropped_columns, type_changed_columns,
+    dropped_columns, generate_fk_ops_for_type_changes, generate_policy_ops_for_affected_tables,
+    generate_policy_ops_for_cross_table_column_drops, generate_policy_ops_for_function_changes,
+    generate_trigger_ops_for_affected_tables, generate_view_ops_for_affected_tables,
+    tables_with_dropped_columns, type_changed_columns,
 };
 use grants::diff_default_privileges;
 use objects::{
@@ -162,6 +163,23 @@ pub fn compute_diff_with_flags(
         });
     }
     ops.extend(column_drop_view_ops);
+
+    // Drop/recreate policies on OTHER tables that reference a dropped column
+    // through a subquery join (gh#332). A DropColumn ... CASCADE destroys these
+    // policies, so an AlterPolicy against them fails; rebuild them instead.
+    let dropped_column_pairs = dropped_columns(&ops);
+    let (cross_table_policy_ops, cross_table_policies_to_filter) =
+        generate_policy_ops_for_cross_table_column_drops(&ops, from, to, &dropped_column_pairs);
+    if !cross_table_policies_to_filter.is_empty() {
+        ops.retain(|op| {
+            if let MigrationOp::AlterPolicy { table, name, .. } = op {
+                !cross_table_policies_to_filter.contains(&(table.to_string(), name.clone()))
+            } else {
+                true
+            }
+        });
+    }
+    ops.extend(cross_table_policy_ops);
 
     // Drop/recreate policies that reference functions being dropped
     let (policy_ops, policies_to_filter) = generate_policy_ops_for_function_changes(&ops, from, to);
@@ -4514,6 +4532,121 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         assert_eq!(drop_col_count, 1, "should have exactly 1 DropColumn");
         assert_eq!(alter_policy_count, 0, "AlterPolicy should be filtered out");
         assert_eq!(alter_view_count, 0, "AlterView should be filtered out");
+    }
+
+    #[test]
+    fn drop_column_rebuilds_cross_table_policy_referencing_dropped_column() {
+        // gh#332: a policy on `sampling_upload` references
+        // `sampling_project.entity_id` via a subquery join. Dropping
+        // `entity_id` from `sampling_project` cascade-drops that policy.
+        // The planner must rebuild the cross-table policy (DropPolicy +
+        // CreatePolicy) rather than emit an AlterPolicy that lands after the
+        // cascading DropColumn.
+        use crate::diff::planner::plan_migration;
+        use crate::model::{Policy, PolicyCommand};
+
+        let using_old = "EXISTS (SELECT 1 FROM mrv.sampling_project sp \
+            WHERE sp.id = sampling_project_id AND sp.entity_id IS NOT NULL)";
+        let using_new = "EXISTS (SELECT 1 FROM mrv.sampling_project sp \
+            WHERE sp.id = sampling_project_id AND sp.supplier_id IS NOT NULL)";
+
+        let build_schema = |project_col: &str, upload_using: &str| {
+            let mut schema = empty_schema();
+
+            let mut project = simple_table_with_schema("sampling_project", "mrv");
+            project
+                .columns
+                .insert("id".to_string(), simple_column("id", PgType::Uuid));
+            project.columns.insert(
+                project_col.to_string(),
+                simple_column(project_col, PgType::Uuid),
+            );
+            schema
+                .tables
+                .insert("mrv.sampling_project".to_string(), project);
+
+            let mut upload = simple_table_with_schema("sampling_upload", "mrv");
+            upload
+                .columns
+                .insert("id".to_string(), simple_column("id", PgType::Uuid));
+            upload.columns.insert(
+                "sampling_project_id".to_string(),
+                simple_column("sampling_project_id", PgType::Uuid),
+            );
+            upload.row_level_security = true;
+            upload.policies.push(Policy {
+                name: "sampling_upload_owner_select".to_string(),
+                table_schema: "mrv".to_string(),
+                table: "sampling_upload".to_string(),
+                command: PolicyCommand::Select,
+                roles: vec!["public".to_string()],
+                using_expr: Some(upload_using.to_string()),
+                check_expr: None,
+                comment: None,
+            });
+            schema
+                .tables
+                .insert("mrv.sampling_upload".to_string(), upload);
+
+            schema
+        };
+
+        let from = build_schema("entity_id", using_old);
+        let to = build_schema("supplier_id", using_new);
+
+        let ops = compute_diff(&from, &to);
+        let planned = plan_migration(ops);
+
+        let drop_col_pos = planned
+            .iter()
+            .position(
+                |op| matches!(op, MigrationOp::DropColumn { column, .. } if column == "entity_id"),
+            )
+            .expect("should have DropColumn for entity_id");
+
+        let cross_table_alter_after_drop = planned.iter().enumerate().any(|(index, op)| {
+            index > drop_col_pos
+                && matches!(
+                    op,
+                    MigrationOp::AlterPolicy { name, .. }
+                        if name == "sampling_upload_owner_select"
+                )
+        });
+        assert!(
+            !cross_table_alter_after_drop,
+            "cross-table AlterPolicy must not be placed after the cascading DropColumn"
+        );
+
+        let drop_policy_pos = planned
+            .iter()
+            .position(|op| {
+                matches!(op, MigrationOp::DropPolicy { name, .. } if name == "sampling_upload_owner_select")
+            })
+            .expect("cross-table policy must be rebuilt via DropPolicy");
+        let create_policy_pos = planned
+            .iter()
+            .position(|op| {
+                matches!(op, MigrationOp::CreatePolicy(p) if p.name == "sampling_upload_owner_select")
+            })
+            .expect("cross-table policy must be rebuilt via CreatePolicy");
+
+        assert!(
+            drop_policy_pos < drop_col_pos,
+            "DropPolicy ({drop_policy_pos}) must precede DropColumn ({drop_col_pos})"
+        );
+        assert!(
+            drop_col_pos < create_policy_pos,
+            "DropColumn ({drop_col_pos}) must precede CreatePolicy ({create_policy_pos})"
+        );
+
+        let alter_policy_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterPolicy { name, .. } if name == "sampling_upload_owner_select"))
+            .count();
+        assert_eq!(
+            alter_policy_count, 0,
+            "cross-table AlterPolicy must be replaced by a rebuild"
+        );
     }
 
     #[test]
