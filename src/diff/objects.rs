@@ -494,7 +494,13 @@ pub(super) fn diff_views(from: &Schema, to: &Schema, options: &DiffOptions) -> V
         &to.views,
         |_key, view| MigrationOp::CreateView(view.clone()),
         |ops, _key, from_view, to_view| {
-            if !from_view.semantically_equals(to_view) {
+            // Resolve cast no-ops against the desired (`to`) schema's tables, not the
+            // live DB's. The source view's body must be judged against the column
+            // types it will run on after this migration applies. When a column's type
+            // is itself changing in this run, `to.tables` already holds the new type,
+            // so a cast that is a no-op only under the old type stays preserved here
+            // (correctly, since the view will be recreated against the new type).
+            if !from_view.semantically_equals_with_tables(to_view, &to.tables) {
                 ops.push(MigrationOp::AlterView {
                     name: qualified_name(&to_view.schema, &to_view.name),
                     new_view: to_view.clone(),

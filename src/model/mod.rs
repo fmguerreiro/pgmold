@@ -1,4 +1,6 @@
-use crate::util::{expressions_semantically_equal, views_semantically_equal};
+use crate::util::{
+    expressions_semantically_equal, views_semantically_equal, views_semantically_equal_with_columns,
+};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -798,6 +800,27 @@ impl View {
             && self.schema == other.schema
             && self.materialized == other.materialized
             && views_semantically_equal(&self.query, &other.query)
+    }
+
+    /// Like [`View::semantically_equals`], but resolves column references in the
+    /// view bodies against `tables` so that a no-op `CAST(col AS T)` (one whose
+    /// target equals the referenced column's declared type) is treated as
+    /// equivalent to the un-cast form. PostgreSQL elides such casts when storing
+    /// a view, so without this the parsed and introspected bodies never converge.
+    pub fn semantically_equals_with_tables(
+        &self,
+        other: &View,
+        tables: &std::collections::BTreeMap<String, Table>,
+    ) -> bool {
+        self.name == other.name
+            && self.schema == other.schema
+            && self.materialized == other.materialized
+            && views_semantically_equal_with_columns(
+                &self.query,
+                &other.query,
+                tables,
+                &self.schema,
+            )
     }
 }
 
