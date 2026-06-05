@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 
 use crate::model::{parse_qualified_name, qualified_name, Policy, QualifiedName, Schema};
-use crate::parser::{extract_function_references, extract_table_references};
+use crate::parser::{
+    extract_column_references, extract_function_references, extract_table_references,
+};
 
 use super::MigrationOp;
 
@@ -100,6 +102,116 @@ pub(super) fn tables_with_dropped_columns(ops: &[MigrationOp]) -> HashSet<String
             }
         })
         .collect()
+}
+
+/// Extract (table_qualified_name, column) pairs for columns being dropped.
+pub(super) fn dropped_columns(ops: &[MigrationOp]) -> HashSet<(String, String)> {
+    ops.iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropColumn { table, column } = op {
+                Some((table.to_string(), column.clone()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Generate policy drop/create ops for policies on OTHER tables whose USING /
+/// WITH CHECK expressions reference a column being dropped (gh#332).
+///
+/// `generate_policy_ops_for_affected_tables` only rebuilds policies on the same
+/// table as the dropped column. A policy on a different table can reference the
+/// dropped column through a subquery join; PostgreSQL cascade-drops it when the
+/// column is dropped, so an `AlterPolicy` against it fails. Rebuilding it
+/// (DropPolicy + CreatePolicy) is cascade-safe and keeps it ordered before the
+/// DropColumn via the existing planner edges.
+///
+/// Returns the generated ops and the set of (table_qualified_name, policy_name)
+/// pairs that had a DropPolicy emitted, so callers can drop any duplicate
+/// AlterPolicy ops.
+pub(super) fn generate_policy_ops_for_cross_table_column_drops(
+    ops: &[MigrationOp],
+    from: &Schema,
+    to: &Schema,
+    dropped: &HashSet<(String, String)>,
+) -> (Vec<MigrationOp>, HashSet<(String, String)>) {
+    let mut additional_ops = Vec::new();
+    let mut policies_to_filter = HashSet::new();
+
+    if dropped.is_empty() {
+        return (additional_ops, policies_to_filter);
+    }
+
+    let existing_policy_drops: HashSet<(String, String)> =
+        collect_existing_drops(ops, |op| match op {
+            MigrationOp::DropPolicy { table, name } => Some((table.to_string(), name.clone())),
+            _ => None,
+        });
+
+    for (table_name, table) in &from.tables {
+        let qualified_table_str = qualified_name(&table.schema, &table.name);
+        for policy in &table.policies {
+            if !policy_references_dropped_cross_table_column(policy, &qualified_table_str, dropped)
+            {
+                continue;
+            }
+            if existing_policy_drops.contains(&(qualified_table_str.clone(), policy.name.clone())) {
+                continue;
+            }
+
+            let target_policy = to
+                .tables
+                .get(table_name)
+                .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
+
+            policies_to_filter.insert((qualified_table_str.clone(), policy.name.clone()));
+
+            additional_ops.push(MigrationOp::DropPolicy {
+                table: QualifiedName::new(&table.schema, &table.name),
+                name: policy.name.clone(),
+            });
+            let effective_policy = target_policy.unwrap_or(policy).clone();
+            additional_ops.push(MigrationOp::CreatePolicy(effective_policy.clone()));
+            push_policy_recreate_comment(&mut additional_ops, &effective_policy);
+        }
+    }
+
+    (additional_ops, policies_to_filter)
+}
+
+/// Check whether a policy's USING/CHECK expressions reference a dropped column
+/// that lives on a DIFFERENT table than the policy itself. The policy must both
+/// reference the affected table (via a subquery/join) and mention the dropped
+/// column name.
+fn policy_references_dropped_cross_table_column(
+    policy: &Policy,
+    policy_table: &str,
+    dropped: &HashSet<(String, String)>,
+) -> bool {
+    let exprs: Vec<&String> = [&policy.using_expr, &policy.check_expr]
+        .into_iter()
+        .flatten()
+        .collect();
+    if exprs.is_empty() {
+        return false;
+    }
+
+    let referenced_tables: HashSet<String> = exprs
+        .iter()
+        .flat_map(|expr| extract_table_references(expr, &policy.table_schema))
+        .map(|reference| reference.qualified_name())
+        .collect();
+    let referenced_columns: HashSet<String> = exprs
+        .iter()
+        .flat_map(|expr| extract_column_references(expr, &policy.table_schema))
+        .collect();
+
+    dropped.iter().any(|(table, column)| {
+        table != policy_table
+            && referenced_tables.contains(table)
+            && referenced_columns.contains(column)
+    })
 }
 
 /// Generate policy drop/create ops for tables with affected columns (type changes or drops).
