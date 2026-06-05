@@ -164,15 +164,15 @@ pub(super) fn generate_policy_ops_for_cross_table_column_drops(
                 .get(table_name)
                 .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
 
-            policies_to_filter.insert((qualified_table_str.clone(), policy.name.clone()));
-
-            additional_ops.push(MigrationOp::DropPolicy {
-                table: QualifiedName::new(&table.schema, &table.name),
-                name: policy.name.clone(),
-            });
-            let effective_policy = target_policy.unwrap_or(policy).clone();
-            additional_ops.push(MigrationOp::CreatePolicy(effective_policy.clone()));
-            push_policy_recreate_comment(&mut additional_ops, &effective_policy);
+            emit_policy_rebuild(
+                &mut additional_ops,
+                &mut policies_to_filter,
+                &table.schema,
+                &table.name,
+                &qualified_table_str,
+                policy,
+                target_policy,
+            );
         }
     }
 
@@ -252,20 +252,50 @@ pub(super) fn generate_policy_ops_for_affected_tables(
                     .get(table_name)
                     .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
 
-                policies_to_filter.insert((qualified_table_str.clone(), policy.name.clone()));
-
-                additional_ops.push(MigrationOp::DropPolicy {
-                    table: QualifiedName::new(&from_table.schema, &from_table.name),
-                    name: policy.name.clone(),
-                });
-                let effective_policy = target_policy.unwrap_or(policy).clone();
-                additional_ops.push(MigrationOp::CreatePolicy(effective_policy.clone()));
-                push_policy_recreate_comment(&mut additional_ops, &effective_policy);
+                emit_policy_rebuild(
+                    &mut additional_ops,
+                    &mut policies_to_filter,
+                    &from_table.schema,
+                    &from_table.name,
+                    &qualified_table_str,
+                    policy,
+                    target_policy,
+                );
             }
         }
     }
 
     (additional_ops, policies_to_filter)
+}
+
+/// Emit the DropPolicy + CreatePolicy (+ comment) sequence shared by every
+/// policy-rebuild path (cross-table column drops, same-table affected columns,
+/// function changes) and record the policy in `policies_to_filter` so the
+/// caller can strip any duplicate AlterPolicy.
+///
+/// The caller performs its own `to`-side lookup and passes the result as
+/// `target_policy`; the three callers key that lookup differently (two by the
+/// map key, one by the qualified-name string), so the key choice stays with
+/// the caller and this helper stays behaviour-preserving for all of them.
+/// When `target_policy` is `None` the `from`-side `policy` is rebuilt as-is.
+fn emit_policy_rebuild(
+    additional_ops: &mut Vec<MigrationOp>,
+    policies_to_filter: &mut HashSet<(String, String)>,
+    table_schema: &str,
+    table_name: &str,
+    qualified_table_str: &str,
+    policy: &Policy,
+    target_policy: Option<&Policy>,
+) {
+    policies_to_filter.insert((qualified_table_str.to_string(), policy.name.clone()));
+
+    additional_ops.push(MigrationOp::DropPolicy {
+        table: QualifiedName::new(table_schema, table_name),
+        name: policy.name.clone(),
+    });
+    let effective_policy = target_policy.unwrap_or(policy).clone();
+    additional_ops.push(MigrationOp::CreatePolicy(effective_policy.clone()));
+    push_policy_recreate_comment(additional_ops, &effective_policy);
 }
 
 /// When a policy is dropped+recreated due to a column or function dependency,
@@ -466,20 +496,20 @@ pub(super) fn generate_policy_ops_for_function_changes(
                 && !existing_policy_drops
                     .contains(&(qualified_table_str.clone(), policy.name.clone()))
             {
-                policies_to_filter.insert((qualified_table_str.clone(), policy.name.clone()));
-
                 let target_policy = to
                     .tables
                     .get(&qualified_table_str)
                     .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
 
-                additional_ops.push(MigrationOp::DropPolicy {
-                    table: QualifiedName::new(&table.schema, &table.name),
-                    name: policy.name.clone(),
-                });
-                let effective_policy = target_policy.unwrap_or(policy).clone();
-                additional_ops.push(MigrationOp::CreatePolicy(effective_policy.clone()));
-                push_policy_recreate_comment(&mut additional_ops, &effective_policy);
+                emit_policy_rebuild(
+                    &mut additional_ops,
+                    &mut policies_to_filter,
+                    &table.schema,
+                    &table.name,
+                    &qualified_table_str,
+                    policy,
+                    target_policy,
+                );
             }
         }
     }
