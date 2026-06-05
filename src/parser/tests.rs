@@ -5541,3 +5541,59 @@ fn alter_index_rename_with_64_byte_names_applies_truncation() {
     assert_eq!(table.indexes.len(), 1);
     assert_eq!(table.indexes[0].name, "n".repeat(63));
 }
+
+#[test]
+fn truncate_identifier_stops_at_char_boundary_for_multibyte_input() {
+    // `あ` is a 3-byte UTF-8 char. 22 of them is 66 bytes; the 63-byte cap lands on a
+    // char boundary (21 chars = 63 bytes), so the result is exactly 63 bytes of valid UTF-8.
+    let input = "あ".repeat(22);
+    assert_eq!(input.len(), 66);
+    let truncated = truncate_identifier(&input);
+    assert_eq!(truncated, "あ".repeat(21));
+    assert_eq!(truncated.len(), 63);
+}
+
+#[test]
+fn truncate_identifier_does_not_split_codepoint_below_the_byte_cap() {
+    // `À` is a 2-byte UTF-8 char. 32 of them is 64 bytes; byte 63 falls mid-codepoint, so
+    // a byte-safe truncation must back off to byte 62 (31 chars), never produce 63 bytes.
+    let input = "À".repeat(32);
+    assert_eq!(input.len(), 64);
+    let truncated = truncate_identifier(&input);
+    assert_eq!(truncated, "À".repeat(31));
+    assert_eq!(truncated.len(), 62);
+}
+
+#[test]
+fn dedup_check_constraint_name_does_not_panic_on_multibyte_collision() {
+    // The suffix-disambiguation loop truncates the base to fit a numeric suffix. With a
+    // multibyte base, the byte offset can land mid-codepoint; a raw byte slice would panic.
+    let base = "あ".repeat(22);
+    let table = Table {
+        schema: "public".to_string(),
+        name: "t".to_string(),
+        columns: BTreeMap::new(),
+        primary_key: None,
+        indexes: Vec::new(),
+        foreign_keys: Vec::new(),
+        check_constraints: vec![CheckConstraint {
+            name: truncate_identifier(&base),
+            expression: "true".to_string(),
+        }],
+        exclusion_constraints: Vec::new(),
+        comment: None,
+        row_level_security: false,
+        force_row_level_security: false,
+        policies: Vec::new(),
+        partition_by: None,
+        owner: None,
+        grants: Vec::new(),
+    };
+
+    let chosen = dedup_check_constraint_name(&base, &table);
+
+    assert_ne!(chosen, truncate_identifier(&base));
+    assert!(chosen.ends_with('1'));
+    assert!(chosen.len() <= 63);
+    assert!(chosen.is_char_boundary(chosen.len()));
+}

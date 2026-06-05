@@ -15,8 +15,8 @@ use sqlparser::ast::{
 use std::collections::BTreeMap;
 
 use super::util::{
-    extract_qualified_name, normalize_expr, parse_data_type, truncate_identifier, unquote_ident,
-    PG_MAX_IDENTIFIER_LENGTH,
+    extract_qualified_name, normalize_expr, parse_data_type, truncate_identifier,
+    truncate_to_bytes, unquote_ident, PG_MAX_IDENTIFIER_LENGTH,
 };
 
 pub(super) struct ParsedTable {
@@ -519,11 +519,7 @@ pub(super) fn dedup_check_constraint_name(base: &str, table: &Table) -> String {
     loop {
         let suffix = counter.to_string();
         let max_base = PG_MAX_IDENTIFIER_LENGTH.saturating_sub(suffix.len());
-        let truncated_base = if base.len() > max_base {
-            &base[..max_base]
-        } else {
-            base
-        };
+        let truncated_base = truncate_to_bytes(base, max_base);
         let candidate = format!("{truncated_base}{suffix}");
         if !check_name_taken(&candidate, table) {
             return candidate;

@@ -14,15 +14,20 @@ use sqlparser::ast::{
 pub(super) const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
 
 pub(super) fn truncate_identifier(s: &str) -> String {
-    if s.len() <= PG_MAX_IDENTIFIER_LENGTH {
-        return s.to_string();
+    truncate_to_bytes(s, PG_MAX_IDENTIFIER_LENGTH).to_string()
+}
+
+/// Truncate `s` to at most `max_bytes` bytes, backing off to the nearest UTF-8 char
+/// boundary at or below the cap. Mirrors PG's `pg_mbcliplen`: never split a codepoint.
+pub(super) fn truncate_to_bytes(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
     }
-    // Match PG's pg_mbcliplen: stop at a UTF-8 char boundary, not mid-codepoint.
-    let mut end = PG_MAX_IDENTIFIER_LENGTH;
+    let mut end = max_bytes;
     while end > 0 && !s.is_char_boundary(end) {
         end -= 1;
     }
-    s[..end].to_string()
+    &s[..end]
 }
 
 pub(super) fn unquote_ident(s: &str) -> &str {
