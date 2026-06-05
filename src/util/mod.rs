@@ -530,7 +530,12 @@ impl CastContext<'_> {
             },
         };
         let mut found: Option<&PgType> = None;
-        for source in self.aliases.base_sources.iter().filter(|s| matches_qualifier(s)) {
+        for source in self
+            .aliases
+            .base_sources
+            .iter()
+            .filter(|s| matches_qualifier(s))
+        {
             let key = format!("{}.{}", source.schema, source.table);
             let Some(table) = tables.get(&key) else {
                 continue;
@@ -671,6 +676,14 @@ fn column_reference_parts(expr: &Expr) -> Option<(Option<String>, String)> {
 
 /// Compares a column's declared `PgType` against a cast target `DataType`
 /// (both already normalized). Returns true only for an exact no-op match.
+///
+/// Only casts that survive the numeric/datetime/text early exit in `normalize_expr`
+/// reach this function for a column reference. That early exit already strips any
+/// identifier cast whose target is numeric (integer, bigint, smallint, real, double
+/// precision, ...) or datetime (date, timestamp), so those arms would be dead here
+/// and are intentionally omitted. Length-qualified character casts (`varchar(n)`,
+/// `char(n)`) and the non-numeric/non-datetime scalar types (`boolean`, `uuid`) are
+/// not stripped early, so they must be matched here.
 fn pg_type_matches_cast(pg_type: &PgType, cast_type: &DataType) -> bool {
     use sqlparser::ast::CharacterLength;
     let char_len = |len: &Option<CharacterLength>| -> Option<u64> {
@@ -686,14 +699,8 @@ fn pg_type_matches_cast(pg_type: &PgType, cast_type: &DataType) -> bool {
         (PgType::Char(col_len), DataType::Character(cast_len)) => {
             col_len.map(|l| l as u64) == char_len(cast_len)
         }
-        (PgType::Integer, DataType::Integer(_)) => true,
-        (PgType::BigInt, DataType::BigInt(_)) => true,
-        (PgType::SmallInt, DataType::SmallInt(_)) => true,
-        (PgType::Real, DataType::Real) => true,
-        (PgType::DoublePrecision, DataType::DoublePrecision) => true,
         (PgType::Boolean, DataType::Boolean) => true,
         (PgType::Uuid, DataType::Uuid) => true,
-        (PgType::Date, DataType::Date) => true,
         _ => false,
     }
 }
@@ -886,7 +893,10 @@ fn normalize_query(query: &Query, cast_context: CastContext) -> Query {
 fn normalize_group_by(group_by: &GroupByExpr, cast_context: CastContext) -> GroupByExpr {
     match group_by {
         GroupByExpr::Expressions(exprs, modifiers) => GroupByExpr::Expressions(
-            exprs.iter().map(|e| normalize_expr(e, cast_context)).collect(),
+            exprs
+                .iter()
+                .map(|e| normalize_expr(e, cast_context))
+                .collect(),
             modifiers.clone(),
         ),
         other => other.clone(),
@@ -939,7 +949,9 @@ fn normalize_order_by_options(opts: OrderByOptions) -> OrderByOptions {
 /// Normalizes a set expression (SELECT, UNION, etc).
 fn normalize_set_expr(body: &SetExpr, cast_context: CastContext) -> SetExpr {
     match body {
-        SetExpr::Select(select) => SetExpr::Select(Box::new(normalize_select(select, cast_context))),
+        SetExpr::Select(select) => {
+            SetExpr::Select(Box::new(normalize_select(select, cast_context)))
+        }
         SetExpr::Query(q) => SetExpr::Query(Box::new(normalize_query(q, cast_context))),
         SetExpr::SetOperation {
             op,
@@ -1068,9 +1080,9 @@ fn normalize_function_arg(
     cast_context: CastContext,
 ) -> sqlparser::ast::FunctionArg {
     match arg {
-        sqlparser::ast::FunctionArg::Unnamed(arg_expr) => {
-            sqlparser::ast::FunctionArg::Unnamed(normalize_function_arg_expr(arg_expr, cast_context))
-        }
+        sqlparser::ast::FunctionArg::Unnamed(arg_expr) => sqlparser::ast::FunctionArg::Unnamed(
+            normalize_function_arg_expr(arg_expr, cast_context),
+        ),
         sqlparser::ast::FunctionArg::Named {
             name,
             arg,
@@ -1132,10 +1144,16 @@ fn normalize_window_frame_bound(
 ) -> sqlparser::ast::WindowFrameBound {
     match bound {
         sqlparser::ast::WindowFrameBound::Preceding(Some(e)) => {
-            sqlparser::ast::WindowFrameBound::Preceding(Some(Box::new(normalize_expr(e, cast_context))))
+            sqlparser::ast::WindowFrameBound::Preceding(Some(Box::new(normalize_expr(
+                e,
+                cast_context,
+            ))))
         }
         sqlparser::ast::WindowFrameBound::Following(Some(e)) => {
-            sqlparser::ast::WindowFrameBound::Following(Some(Box::new(normalize_expr(e, cast_context))))
+            sqlparser::ast::WindowFrameBound::Following(Some(Box::new(normalize_expr(
+                e,
+                cast_context,
+            ))))
         }
         other => other.clone(),
     }
@@ -1251,8 +1269,11 @@ fn normalize_table_with_joins(
             let normalized_inner = normalize_table_with_joins(inner_twj, cast_context);
 
             // Normalize outer joins
-            let normalized_outer_joins: Vec<_> =
-                twj.joins.iter().map(|j| normalize_join(j, cast_context)).collect();
+            let normalized_outer_joins: Vec<_> = twj
+                .joins
+                .iter()
+                .map(|j| normalize_join(j, cast_context))
+                .collect();
 
             // Combine: inner joins first, then outer joins
             let mut combined_joins = normalized_inner.joins;
@@ -1270,7 +1291,11 @@ fn normalize_table_with_joins(
 
     sqlparser::ast::TableWithJoins {
         relation: normalized_relation,
-        joins: twj.joins.iter().map(|j| normalize_join(j, cast_context)).collect(),
+        joins: twj
+            .joins
+            .iter()
+            .map(|j| normalize_join(j, cast_context))
+            .collect(),
     }
 }
 
@@ -1537,7 +1562,9 @@ fn normalize_expr(expr: &Expr, cast_context: CastContext) -> Expr {
             // column against the FROM clause; elide only on an exact match,
             // otherwise preserve the cast (it is real, e.g. a truncating cast).
             if let Some((qualifier, column)) = &column_ref {
-                if let Some(pg_type) = cast_context.resolve_column_type(qualifier.as_deref(), column) {
+                if let Some(pg_type) =
+                    cast_context.resolve_column_type(qualifier.as_deref(), column)
+                {
                     if pg_type_matches_cast(pg_type, &norm_data_type) {
                         return norm_inner;
                     }
@@ -1638,7 +1665,9 @@ fn normalize_expr(expr: &Expr, cast_context: CastContext) -> Expr {
         } => Expr::Case {
             case_token: case_token.clone(),
             end_token: end_token.clone(),
-            operand: operand.as_ref().map(|e| Box::new(normalize_expr(e, cast_context))),
+            operand: operand
+                .as_ref()
+                .map(|e| Box::new(normalize_expr(e, cast_context))),
             conditions: conditions
                 .iter()
                 .map(|cw| sqlparser::ast::CaseWhen {
@@ -1668,10 +1697,16 @@ fn normalize_expr(expr: &Expr, cast_context: CastContext) -> Expr {
                 }
                 other => other.clone(),
             };
-            func.filter = f.filter.as_ref().map(|e| Box::new(normalize_expr(e, cast_context)));
+            func.filter = f
+                .filter
+                .as_ref()
+                .map(|e| Box::new(normalize_expr(e, cast_context)));
             func.over = f.over.as_ref().map(|w| match w {
                 sqlparser::ast::WindowType::WindowSpec(spec) => {
-                    sqlparser::ast::WindowType::WindowSpec(normalize_window_spec(spec, cast_context))
+                    sqlparser::ast::WindowType::WindowSpec(normalize_window_spec(
+                        spec,
+                        cast_context,
+                    ))
                 }
                 other => other.clone(),
             });
@@ -1705,7 +1740,10 @@ fn normalize_expr(expr: &Expr, cast_context: CastContext) -> Expr {
             negated,
         } => Expr::InList {
             expr: Box::new(normalize_expr(inner, cast_context)),
-            list: list.iter().map(|e| normalize_expr(e, cast_context)).collect(),
+            list: list
+                .iter()
+                .map(|e| normalize_expr(e, cast_context))
+                .collect(),
             negated: *negated,
         },
 
@@ -1779,7 +1817,11 @@ fn normalize_expr(expr: &Expr, cast_context: CastContext) -> Expr {
             if let Expr::Array(arr) = &norm_right {
                 Expr::InList {
                     expr: Box::new(norm_left),
-                    list: arr.elem.iter().map(|e| normalize_expr(e, cast_context)).collect(),
+                    list: arr
+                        .elem
+                        .iter()
+                        .map(|e| normalize_expr(e, cast_context))
+                        .collect(),
                     negated: false,
                 }
             } else {
@@ -1804,7 +1846,11 @@ fn normalize_expr(expr: &Expr, cast_context: CastContext) -> Expr {
             if let Expr::Array(arr) = &norm_right {
                 Expr::InList {
                     expr: Box::new(norm_left),
-                    list: arr.elem.iter().map(|e| normalize_expr(e, cast_context)).collect(),
+                    list: arr
+                        .elem
+                        .iter()
+                        .map(|e| normalize_expr(e, cast_context))
+                        .collect(),
                     negated: true,
                 }
             } else {
@@ -1818,7 +1864,11 @@ fn normalize_expr(expr: &Expr, cast_context: CastContext) -> Expr {
 
         // Normalize Array elements recursively (strips casts inside ARRAY[...])
         Expr::Array(arr) => Expr::Array(sqlparser::ast::Array {
-            elem: arr.elem.iter().map(|e| normalize_expr(e, cast_context)).collect(),
+            elem: arr
+                .elem
+                .iter()
+                .map(|e| normalize_expr(e, cast_context))
+                .collect(),
             named: arr.named,
         }),
 
@@ -3340,12 +3390,71 @@ fn cast_on_subquery_derived_column_preserved() {
 }
 
 #[test]
+#[allow(clippy::bool_assert_comparison)]
+fn noop_uuid_cast_on_single_table_column_elided() {
+    // A `CAST(col AS uuid)` is not stripped by the numeric/datetime/text early
+    // exit, so this elision relies on the Uuid arm of pg_type_matches_cast: the
+    // arm is reachable and must stay.
+    let tables = tables_from_sql("CREATE TABLE s.t (id uuid);");
+    let with_cast = "SELECT CAST(t1.id AS uuid) AS id FROM s.t t1";
+    let without_cast = "SELECT t1.id AS id FROM s.t t1";
+    assert_eq!(
+        views_semantically_equal_with_columns(with_cast, without_cast, &tables, "s"),
+        true,
+        "A no-op CAST to a uuid column's own type should be elided via the Uuid arm"
+    );
+}
+
+#[test]
+#[allow(clippy::bool_assert_comparison)]
+fn noop_boolean_cast_on_single_table_column_elided() {
+    // Like uuid, a boolean cast bypasses the numeric/datetime early exit, so this
+    // exercises the Boolean arm of pg_type_matches_cast; the arm is reachable.
+    let tables = tables_from_sql("CREATE TABLE s.t (flag boolean);");
+    let with_cast = "SELECT CAST(t1.flag AS boolean) AS flag FROM s.t t1";
+    let without_cast = "SELECT t1.flag AS flag FROM s.t t1";
+    assert_eq!(
+        views_semantically_equal_with_columns(with_cast, without_cast, &tables, "s"),
+        true,
+        "A no-op CAST to a boolean column's own type should be elided via the Boolean arm"
+    );
+}
+
+#[test]
+#[allow(clippy::bool_assert_comparison)]
+fn noop_char_cast_on_single_table_column_elided() {
+    let tables = tables_from_sql("CREATE TABLE s.t (c char(10));");
+    let with_cast = "SELECT CAST(t1.c AS char(10)) AS c FROM s.t t1";
+    let without_cast = "SELECT t1.c AS c FROM s.t t1";
+    assert_eq!(
+        views_semantically_equal_with_columns(with_cast, without_cast, &tables, "s"),
+        true,
+        "A no-op CAST to a char column's own declared length should be elided"
+    );
+}
+
+#[test]
+#[allow(clippy::bool_assert_comparison)]
+fn truncating_char_cast_on_single_table_column_preserved() {
+    let tables = tables_from_sql("CREATE TABLE s.t (c char(10));");
+    let with_cast = "SELECT CAST(t1.c AS char(5)) AS c FROM s.t t1";
+    let without_cast = "SELECT t1.c AS c FROM s.t t1";
+    assert_eq!(
+        views_semantically_equal_with_columns(with_cast, without_cast, &tables, "s"),
+        false,
+        "A truncating char cast (shorter target length) is real and must be preserved"
+    );
+}
+
+#[test]
+#[allow(clippy::bool_assert_comparison)]
 fn cast_on_cte_backed_column_preserved_even_when_colliding_base_table_exists() {
     // A real base table named `cte` exists in the same schema with a varchar(100)
     // `bn` column. The CTE shadows it: the CTE's `bn` may have a different type, so
     // the cast must be preserved rather than resolved against the colliding table.
     let tables = tables_from_sql("CREATE TABLE s.cte (bn varchar(100));");
-    let with_cast = "WITH cte AS (SELECT bn FROM s.t) SELECT CAST(cte.bn AS varchar(100)) AS bn FROM cte";
+    let with_cast =
+        "WITH cte AS (SELECT bn FROM s.t) SELECT CAST(cte.bn AS varchar(100)) AS bn FROM cte";
     let without_cast = "WITH cte AS (SELECT bn FROM s.t) SELECT cte.bn FROM cte";
     assert_eq!(
         views_semantically_equal_with_columns(with_cast, without_cast, &tables, "s"),
