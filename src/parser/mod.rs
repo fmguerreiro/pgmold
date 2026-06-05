@@ -61,7 +61,8 @@ use tables::{
 };
 use util::{
     extract_qualified_name, normalize_expr, parse_data_type, parse_for_values,
-    parse_for_values_required, parse_policy_command, truncate_identifier, unquote_ident,
+    parse_for_values_required, parse_policy_command, truncate_identifier, truncated_ident,
+    unquote_ident,
 };
 
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
@@ -153,7 +154,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             Statement::CreateIndex(ci) => {
                 let idx_name = ci
                     .name
-                    .map(|n| unquote_ident(&n.to_string()).to_string())
+                    .as_ref()
+                    .map(truncated_ident)
                     .ok_or_else(|| SchemaError::ParseError("Index must have name".into()))?;
                 let (tbl_schema, tbl_name) = extract_qualified_name(&ci.table_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
@@ -212,7 +214,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             }) => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
                 let policy = Policy {
-                    name: unquote_ident(&name.to_string()).to_string(),
+                    name: truncated_ident(&name),
                     table_schema: tbl_schema,
                     table: tbl_name,
                     command: parse_policy_command(&command),
@@ -334,7 +336,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                                         };
 
                                         table.check_constraints.push(CheckConstraint {
-                                            name: constraint_name,
+                                            name: truncate_identifier(&constraint_name),
                                             expression: normalize_expr(&chk.expr.to_string()),
                                         });
                                         table.check_constraints.sort();
@@ -347,7 +349,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                                             .unwrap_or_else(|| format!("{tbl_name}_unique"));
 
                                         table.indexes.push(Index {
-                                            name: constraint_name,
+                                            name: truncate_identifier(&constraint_name),
                                             columns: uniq
                                                 .columns
                                                 .iter()
@@ -463,8 +465,10 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             }
                         }
                         AlterTableOperation::RenameConstraint { old_name, new_name } => {
-                            let old_constraint_name = unquote_ident(&old_name.value).to_string();
-                            let new_constraint_name = unquote_ident(&new_name.value).to_string();
+                            let old_constraint_name =
+                                truncate_identifier(unquote_ident(&old_name.value));
+                            let new_constraint_name =
+                                truncate_identifier(unquote_ident(&new_name.value));
 
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 for idx in &mut table.indexes {
@@ -833,7 +837,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 ..
             }) => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
-                let trigger_name = unquote_ident(&name.to_string()).to_string();
+                let trigger_name = truncated_ident(&name);
                 let exec = exec_body.as_ref().ok_or_else(|| {
                     SchemaError::ParseError(format!(
                         "Trigger '{trigger_name}' missing EXECUTE clause"
@@ -1000,7 +1004,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     comment: None,
                 };
 
-                let key = format!("{tbl_schema}.{tbl_name}.{trigger_name}");
+                let key = make_trigger_key(&tbl_schema, &tbl_name, &trigger_name);
                 schema.triggers.insert(key, trigger);
             }
             Statement::CreateSequence {
@@ -1011,6 +1015,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 ..
             } => {
                 let (seq_schema, seq_name) = extract_qualified_name(&name);
+                let seq_name = truncate_identifier(&seq_name);
                 let sequence = parse_create_sequence(
                     &seq_schema,
                     &seq_name,
@@ -1037,7 +1042,9 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             schema.views.remove(&key);
                         }
                         ObjectType::Sequence => {
-                            schema.sequences.remove(&key);
+                            let truncated = truncate_identifier(&obj_name);
+                            let truncated_key = qualified_name(&obj_schema, &truncated);
+                            schema.sequences.remove(&truncated_key);
                         }
                         ObjectType::Schema => {
                             schema.schemas.remove(&obj_name);
@@ -1046,11 +1053,12 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             schema.enums.remove(&key);
                         }
                         ObjectType::Index => {
+                            let truncated = truncate_identifier(&obj_name);
                             for table in schema.tables.values_mut() {
-                                table.indexes.retain(|idx| idx.name != obj_name);
+                                table.indexes.retain(|idx| idx.name != truncated);
                             }
                             for partition in schema.partitions.values_mut() {
-                                partition.indexes.retain(|idx| idx.name != obj_name);
+                                partition.indexes.retain(|idx| idx.name != truncated);
                             }
                         }
                         // Cluster-level objects (Database, Role, User) and
@@ -1099,11 +1107,10 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 ..
             }) => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(tbl);
-                let trigger_key = format!(
-                    "{}.{}.{}",
-                    tbl_schema,
-                    tbl_name,
-                    unquote_ident(&trigger_name.to_string())
+                let trigger_key = make_trigger_key(
+                    &tbl_schema,
+                    &tbl_name,
+                    unquote_ident(&trigger_name.to_string()),
                 );
                 schema.triggers.remove(&trigger_key);
             }
@@ -1113,7 +1120,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             }) => {
                 let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
-                let policy_name = unquote_ident(&name.to_string()).to_string();
+                let policy_name = truncated_ident(&name);
 
                 if let Some(table) = schema.tables.get_mut(&tbl_key) {
                     table.policies.retain(|p| p.name != policy_name);
@@ -1242,9 +1249,11 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             | Statement::CreateTablespace(_) => {}
             Statement::AlterIndex { name, operation } => {
                 let (idx_schema, idx_name) = extract_qualified_name(&name);
+                let idx_name = truncate_identifier(&idx_name);
                 match operation {
                     AlterIndexOperation::RenameIndex { index_name } => {
                         let (_, new_name) = extract_qualified_name(&index_name);
+                        let new_name = truncate_identifier(&new_name);
                         let mut found = false;
                         for table in schema.tables.values_mut() {
                             for idx in &mut table.indexes {
@@ -1672,5 +1681,5 @@ fn parse_create_server(stmt: CreateServerStatement, schema: &mut Schema) {
 }
 
 fn make_trigger_key(schema: &str, table: &str, trigger_name: &str) -> String {
-    format!("{}.{}.{}", schema, table, trigger_name)
+    format!("{}.{}.{}", schema, table, truncate_identifier(trigger_name))
 }

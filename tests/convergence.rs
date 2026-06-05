@@ -1327,3 +1327,19 @@ async fn aggregate_referenced_by_view_converges() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn index_with_64_byte_name_converges() {
+    let long_name = "x".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE public.t (
+            a TEXT NOT NULL,
+            b TEXT NOT NULL,
+            c TIMESTAMP WITH TIME ZONE NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS "{long_name}" ON public.t (a, b, c DESC);
+        "#
+    );
+    assert_convergence_public(&sql).await;
+}
