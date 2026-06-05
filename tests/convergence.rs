@@ -1343,3 +1343,45 @@ async fn index_with_64_byte_name_converges() {
     );
     assert_convergence_public(&sql).await;
 }
+
+#[tokio::test]
+async fn view_with_noop_cast_on_column_converges() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.t (
+            id BIGSERIAL PRIMARY KEY,
+            bn VARCHAR(100) NOT NULL
+        );
+
+        CREATE VIEW public.v AS
+            SELECT t1.id, CAST(t1.bn AS VARCHAR(100)) AS bn
+            FROM public.t t1;
+        "#,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn view_with_join_noop_and_real_casts_converges() {
+    assert_convergence_public(
+        r#"
+        CREATE TABLE public.a (
+            id   BIGSERIAL PRIMARY KEY,
+            name VARCHAR(100) NOT NULL
+        );
+
+        CREATE TABLE public.b (
+            id   BIGINT PRIMARY KEY,
+            code VARCHAR(20) NOT NULL
+        );
+
+        CREATE VIEW public.ab AS
+            SELECT
+                CAST(a.name AS VARCHAR(100)) AS name,
+                CAST(b.code AS VARCHAR(10)) AS code
+            FROM public.a a
+            JOIN public.b b ON a.id = b.id;
+        "#,
+    )
+    .await;
+}

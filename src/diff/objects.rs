@@ -494,7 +494,7 @@ pub(super) fn diff_views(from: &Schema, to: &Schema, options: &DiffOptions) -> V
         &to.views,
         |_key, view| MigrationOp::CreateView(view.clone()),
         |ops, _key, from_view, to_view| {
-            if !from_view.semantically_equals(to_view) {
+            if !from_view.semantically_equals_with_tables(to_view, &to.tables) {
                 ops.push(MigrationOp::AlterView {
                     name: qualified_name(&to_view.schema, &to_view.name),
                     new_view: to_view.clone(),
