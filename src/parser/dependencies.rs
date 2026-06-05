@@ -860,9 +860,14 @@ mod tests {
             WHERE sp.id = sampling_project_id AND sp.entity_id IS NOT NULL)";
         let columns = extract_column_references(body, "mrv");
 
-        assert!(columns.contains("entity_id"));
-        assert!(columns.contains("id"));
-        assert!(columns.contains("sampling_project_id"));
+        assert_eq!(
+            columns,
+            HashSet::from([
+                "id".to_string(),
+                "sampling_project_id".to_string(),
+                "entity_id".to_string(),
+            ])
+        );
     }
 
     #[test]
@@ -870,9 +875,10 @@ mod tests {
         let body = "sp.entity_id = other.id";
         let columns = extract_column_references(body, "public");
 
-        assert!(columns.contains("entity_id"));
-        assert!(columns.contains("id"));
-        assert!(!columns.contains("sp.entity_id"));
+        assert_eq!(
+            columns,
+            HashSet::from(["entity_id".to_string(), "id".to_string()])
+        );
     }
 
     #[test]

@@ -560,8 +560,8 @@ mod tests {
     use crate::diff::{compute_diff, MigrationOp};
     use crate::model::{
         qualified_name, ArgMode, Column, ForeignKey, Function, FunctionArg, PgType, Policy,
-        PolicyCommand, ReferentialAction, SecurityType, Trigger, TriggerEnabled, TriggerEvent,
-        TriggerTiming, View, Volatility,
+        PolicyCommand, ReferentialAction, Schema, SecurityType, Trigger, TriggerEnabled,
+        TriggerEvent, TriggerTiming, View, Volatility,
     };
 
     #[test]
@@ -1296,6 +1296,276 @@ mod tests {
             create_policy_ops.len(),
             1,
             "Should have exactly 1 CreatePolicy op"
+        );
+    }
+
+    #[test]
+    fn cross_table_and_same_table_paths_do_not_duplicate_policy_rebuild() {
+        // gh#332 over-rebuild collision: a policy on `mrv.sample` references
+        // `mrv.sampling_project.entity_id` (dropped) through a subquery, AND
+        // `mrv.sample` carries its own local column named `entity_id` plus an
+        // unrelated dropped column (`legacy`). The local drop puts `mrv.sample`
+        // in the same-table rebuild set, while the cross-table reference to the
+        // dropped `entity_id` matches the cross-table path on bare column name.
+        // Both paths could fire on the same policy; the `existing_policy_drops`
+        // guard must keep it to exactly one DropPolicy + one CreatePolicy with
+        // no surviving AlterPolicy and no duplicate OpKey.
+        let cross_table_using = "EXISTS (SELECT 1 FROM mrv.sampling_project sp \
+            WHERE sp.id = sampling_project_id AND sp.entity_id IS NOT NULL)";
+
+        let mut from = empty_schema();
+
+        let mut sampling_project = simple_table_with_schema("sampling_project", "mrv");
+        sampling_project
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        sampling_project.columns.insert(
+            "entity_id".to_string(),
+            simple_column("entity_id", PgType::Integer),
+        );
+        from.tables
+            .insert("mrv.sampling_project".to_string(), sampling_project);
+
+        let mut sample = simple_table_with_schema("sample", "mrv");
+        sample
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        sample.columns.insert(
+            "sampling_project_id".to_string(),
+            simple_column("sampling_project_id", PgType::Integer),
+        );
+        sample.columns.insert(
+            "entity_id".to_string(),
+            simple_column("entity_id", PgType::Integer),
+        );
+        sample
+            .columns
+            .insert("legacy".to_string(), simple_column("legacy", PgType::Text));
+        sample.policies.push(Policy {
+            name: "sample_access".to_string(),
+            table_schema: "mrv".to_string(),
+            table: "sample".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some(cross_table_using.to_string()),
+            check_expr: None,
+            comment: None,
+        });
+        from.tables.insert("mrv.sample".to_string(), sample);
+
+        let mut to = empty_schema();
+
+        let mut sampling_project_to = simple_table_with_schema("sampling_project", "mrv");
+        sampling_project_to
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        to.tables
+            .insert("mrv.sampling_project".to_string(), sampling_project_to);
+
+        let mut sample_to = simple_table_with_schema("sample", "mrv");
+        sample_to
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        sample_to.columns.insert(
+            "sampling_project_id".to_string(),
+            simple_column("sampling_project_id", PgType::Integer),
+        );
+        sample_to.columns.insert(
+            "entity_id".to_string(),
+            simple_column("entity_id", PgType::Integer),
+        );
+        sample_to.policies.push(Policy {
+            name: "sample_access".to_string(),
+            table_schema: "mrv".to_string(),
+            table: "sample".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some(cross_table_using.to_string()),
+            check_expr: None,
+            comment: None,
+        });
+        to.tables.insert("mrv.sample".to_string(), sample_to);
+
+        let ops = compute_diff(&from, &to);
+
+        let keys: Vec<_> = ops
+            .iter()
+            .map(crate::diff::op_key::OpKey::from_op)
+            .collect();
+        let unique: std::collections::HashSet<_> = keys.iter().cloned().collect();
+        assert_eq!(
+            keys.len(),
+            unique.len(),
+            "no duplicate OpKey in the plan: {keys:?}"
+        );
+
+        let drop_policy_ops: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                MigrationOp::DropPolicy { table, name } if name == "sample_access" => {
+                    Some(table.to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        let create_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreatePolicy(p) if p.name == "sample_access"))
+            .collect();
+        let alter_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(
+                |op| matches!(op, MigrationOp::AlterPolicy { name, .. } if name == "sample_access"),
+            )
+            .collect();
+
+        assert_eq!(
+            drop_policy_ops,
+            vec!["mrv.sample".to_string()],
+            "exactly one DropPolicy for the colliding policy"
+        );
+        assert_eq!(
+            create_policy_ops.len(),
+            1,
+            "exactly one CreatePolicy for the colliding policy"
+        );
+        assert_eq!(
+            alter_policy_ops.len(),
+            0,
+            "no surviving AlterPolicy for the colliding policy"
+        );
+    }
+
+    fn cross_table_policy_fixture() -> (Schema, Schema) {
+        let cross_table_using = "EXISTS (SELECT 1 FROM mrv.sampling_project sp \
+            WHERE sp.id = sampling_project_id AND sp.entity_id IS NOT NULL)";
+
+        let mut from = empty_schema();
+        let mut sampling_project = simple_table_with_schema("sampling_project", "mrv");
+        sampling_project
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        sampling_project.columns.insert(
+            "entity_id".to_string(),
+            simple_column("entity_id", PgType::Integer),
+        );
+        from.tables
+            .insert("mrv.sampling_project".to_string(), sampling_project);
+
+        let mut sample = simple_table_with_schema("sample", "mrv");
+        sample
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        sample.columns.insert(
+            "sampling_project_id".to_string(),
+            simple_column("sampling_project_id", PgType::Integer),
+        );
+        sample.policies.push(Policy {
+            name: "sample_access".to_string(),
+            table_schema: "mrv".to_string(),
+            table: "sample".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some(cross_table_using.to_string()),
+            check_expr: None,
+            comment: None,
+        });
+        from.tables.insert("mrv.sample".to_string(), sample);
+
+        let to = from.clone();
+        (from, to)
+    }
+
+    #[test]
+    fn cross_table_column_drops_fast_path_when_nothing_dropped() {
+        let (from, to) = cross_table_policy_fixture();
+        let dropped = std::collections::HashSet::new();
+
+        let (ops, filter) =
+            super::generate_policy_ops_for_cross_table_column_drops(&[], &from, &to, &dropped);
+
+        assert!(ops.is_empty(), "no ops when no column is dropped");
+        assert!(
+            filter.is_empty(),
+            "no policies to filter when no column is dropped"
+        );
+    }
+
+    #[test]
+    fn cross_table_column_drops_rebuilds_referencing_policy() {
+        let (from, to) = cross_table_policy_fixture();
+        let dropped = std::collections::HashSet::from([(
+            "mrv.sampling_project".to_string(),
+            "entity_id".to_string(),
+        )]);
+
+        let (ops, filter) =
+            super::generate_policy_ops_for_cross_table_column_drops(&[], &from, &to, &dropped);
+
+        assert_eq!(
+            filter,
+            std::collections::HashSet::from([(
+                "mrv.sample".to_string(),
+                "sample_access".to_string()
+            )]),
+            "the referencing policy is marked for AlterPolicy removal"
+        );
+
+        let drop_policy_ops: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                MigrationOp::DropPolicy { table, name } => Some((table.to_string(), name.clone())),
+                _ => None,
+            })
+            .collect();
+        let create_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreatePolicy(p) if p.name == "sample_access"))
+            .collect();
+
+        assert_eq!(
+            drop_policy_ops,
+            vec![("mrv.sample".to_string(), "sample_access".to_string())],
+            "exactly one DropPolicy for the cross-table referencing policy"
+        );
+        assert_eq!(
+            create_policy_ops.len(),
+            1,
+            "exactly one CreatePolicy to rebuild the policy"
+        );
+    }
+
+    #[test]
+    fn cross_table_column_drops_falls_back_to_from_policy_when_absent_in_to() {
+        // The `to` schema has no matching policy (renamed/removed from the
+        // model), so the unwrap_or(policy) fallback must rebuild from the
+        // `from`-side policy definition rather than panicking.
+        let (from, mut to) = cross_table_policy_fixture();
+        to.tables.get_mut("mrv.sample").unwrap().policies.clear();
+
+        let dropped = std::collections::HashSet::from([(
+            "mrv.sampling_project".to_string(),
+            "entity_id".to_string(),
+        )]);
+
+        let (ops, _filter) =
+            super::generate_policy_ops_for_cross_table_column_drops(&[], &from, &to, &dropped);
+
+        let created: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                MigrationOp::CreatePolicy(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(created.len(), 1, "one CreatePolicy from the fallback path");
+        assert_eq!(
+            created[0].using_expr.as_deref(),
+            Some(
+                "EXISTS (SELECT 1 FROM mrv.sampling_project sp \
+                WHERE sp.id = sampling_project_id AND sp.entity_id IS NOT NULL)"
+            ),
+            "rebuilt from the from-side policy definition"
         );
     }
 
