@@ -475,32 +475,36 @@ pub fn normalize_view_query(query: &str) -> String {
 /// available (`tables` is `None`) we never elide a length-qualified cast: keeping
 /// a real cast in place is harmless, while wrongly stripping one causes silent
 /// divergence.
+static EMPTY_SCOPE: ColumnScope = ColumnScope::empty();
+
 #[derive(Clone, Copy)]
-struct CastCtx<'a> {
+struct CastContext<'a> {
     tables: Option<&'a BTreeMap<String, Table>>,
     default_schema: &'a str,
     aliases: &'a ColumnScope,
+    cte_names: &'a [String],
 }
 
-impl CastCtx<'_> {
-    fn disabled() -> CastCtx<'static> {
-        static EMPTY: ColumnScope = ColumnScope::empty();
-        CastCtx {
+impl CastContext<'_> {
+    fn disabled() -> CastContext<'static> {
+        CastContext {
             tables: None,
             default_schema: "public",
-            aliases: &EMPTY,
+            aliases: &EMPTY_SCOPE,
+            cte_names: &[],
         }
     }
 
     /// Replaces the alias scope (used when descending into a SELECT with its own FROM).
-    fn with_scope<'b>(&self, aliases: &'b ColumnScope) -> CastCtx<'b>
+    fn with_scope<'b>(&self, aliases: &'b ColumnScope) -> CastContext<'b>
     where
         Self: 'b,
     {
-        CastCtx {
+        CastContext {
             tables: self.tables,
             default_schema: self.default_schema,
             aliases,
+            cte_names: self.cte_names,
         }
     }
 
@@ -511,12 +515,22 @@ impl CastCtx<'_> {
     fn resolve_column_type(&self, qualifier: Option<&str>, column: &str) -> Option<&PgType> {
         let tables = self.tables?;
         let column = column.to_lowercase();
-        let candidates: Vec<&FromSource> = match qualifier {
-            Some(qual) => self.aliases.matching(qual).into_iter().collect(),
-            None => self.aliases.base_sources(),
+        // A qualifier naming an opaque source (subquery, CTE, nested join) resolves
+        // to no base sources, so the cast is preserved.
+        if let Some(qualifier) = qualifier {
+            if self.aliases.opaque_aliases.iter().any(|a| a == qualifier) {
+                return None;
+            }
+        }
+        let matches_qualifier = |source: &FromSource| match qualifier {
+            None => true,
+            Some(qualifier) => match &source.alias {
+                Some(alias) => alias == qualifier,
+                None => source.table == qualifier,
+            },
         };
         let mut found: Option<&PgType> = None;
-        for source in candidates {
+        for source in self.aliases.base_sources.iter().filter(|s| matches_qualifier(s)) {
             let key = format!("{}.{}", source.schema, source.table);
             let Some(table) = tables.get(&key) else {
                 continue;
@@ -557,34 +571,18 @@ impl ColumnScope {
             opaque_aliases: Vec::new(),
         }
     }
-
-    fn base_sources(&self) -> Vec<&FromSource> {
-        self.base_sources.iter().collect()
-    }
-
-    /// Returns the base sources whose alias (or bare table name when unaliased)
-    /// matches `qualifier`. Empty when the qualifier names an opaque source.
-    fn matching(&self, qualifier: &str) -> Vec<&FromSource> {
-        if self.opaque_aliases.iter().any(|a| a == qualifier) {
-            return Vec::new();
-        }
-        self.base_sources
-            .iter()
-            .filter(|s| match &s.alias {
-                Some(alias) => alias == qualifier,
-                None => s.table == qualifier,
-            })
-            .collect()
-    }
 }
 
-/// Builds the column scope for a SELECT from its FROM clause.
-fn build_column_scope(select: &Select, default_schema: &str) -> ColumnScope {
+/// Builds the column scope for a SELECT from its FROM clause. `cte_names` holds the
+/// lowercased names of every CTE visible in the surrounding query so that a FROM
+/// source naming a CTE is treated as opaque rather than resolved against a base
+/// table of the same name.
+fn build_column_scope(select: &Select, default_schema: &str, cte_names: &[String]) -> ColumnScope {
     let mut scope = ColumnScope::empty();
     for twj in &select.from {
-        collect_table_factor(&twj.relation, default_schema, &mut scope);
+        collect_table_factor(&twj.relation, default_schema, cte_names, &mut scope);
         for join in &twj.joins {
-            collect_table_factor(&join.relation, default_schema, &mut scope);
+            collect_table_factor(&join.relation, default_schema, cte_names, &mut scope);
         }
     }
     scope
@@ -593,6 +591,7 @@ fn build_column_scope(select: &Select, default_schema: &str) -> ColumnScope {
 fn collect_table_factor(
     factor: &sqlparser::ast::TableFactor,
     default_schema: &str,
+    cte_names: &[String],
     scope: &mut ColumnScope,
 ) {
     use sqlparser::ast::TableFactor;
@@ -613,6 +612,17 @@ fn collect_table_factor(
                 [table] => (default_schema.to_lowercase(), table.clone()),
                 _ => return,
             };
+            // An unqualified name matching a CTE references the CTE, whose column
+            // types are unknown. Record it as opaque (keyed by its alias if present,
+            // else the CTE name) so any column off it preserves its cast.
+            if parts.len() == 1 && cte_names.iter().any(|c| c == &table) {
+                let opaque = alias
+                    .as_ref()
+                    .map(|a| a.name.value.to_lowercase())
+                    .unwrap_or(table);
+                scope.opaque_aliases.push(opaque);
+                return;
+            }
             scope.base_sources.push(FromSource {
                 alias: alias.as_ref().map(|a| a.name.value.to_lowercase()),
                 schema,
@@ -629,9 +639,9 @@ fn collect_table_factor(
             table_with_joins,
             alias: None,
         } => {
-            collect_table_factor(&table_with_joins.relation, default_schema, scope);
+            collect_table_factor(&table_with_joins.relation, default_schema, cte_names, scope);
             for join in &table_with_joins.joins {
-                collect_table_factor(&join.relation, default_schema, scope);
+                collect_table_factor(&join.relation, default_schema, cte_names, scope);
             }
         }
         _ => {}
@@ -692,7 +702,7 @@ fn pg_type_matches_cast(pg_type: &PgType, cast_type: &DataType) -> bool {
 /// This is more robust than text normalization because it compares structure, not text.
 /// Falls back to regex-based normalization if parsing fails.
 pub fn views_semantically_equal(query1: &str, query2: &str) -> bool {
-    compare_view_queries(query1, query2, CastCtx::disabled())
+    compare_view_queries(query1, query2, CastContext::disabled())
 }
 
 /// Like [`views_semantically_equal`], but resolves column references against the
@@ -705,16 +715,16 @@ pub fn views_semantically_equal_with_columns(
     tables: &BTreeMap<String, Table>,
     default_schema: &str,
 ) -> bool {
-    static EMPTY: ColumnScope = ColumnScope::empty();
-    let ctx = CastCtx {
+    let cast_context = CastContext {
         tables: Some(tables),
         default_schema,
-        aliases: &EMPTY,
+        aliases: &EMPTY_SCOPE,
+        cte_names: &[],
     };
-    compare_view_queries(query1, query2, ctx)
+    compare_view_queries(query1, query2, cast_context)
 }
 
-fn compare_view_queries(query1: &str, query2: &str, ctx: CastCtx) -> bool {
+fn compare_view_queries(query1: &str, query2: &str, cast_context: CastContext) -> bool {
     let dialect = PostgreSqlDialect {};
 
     let ast1 = Parser::parse_sql(&dialect, query1);
@@ -725,15 +735,78 @@ fn compare_view_queries(query1: &str, query2: &str, ctx: CastCtx) -> bool {
             if stmts1.len() != stmts2.len() {
                 return false;
             }
-            stmts1
-                .into_iter()
-                .zip(stmts2)
-                .all(|(s1, s2)| normalize_statement(&s1, ctx) == normalize_statement(&s2, ctx))
+            stmts1.into_iter().zip(stmts2).all(|(s1, s2)| {
+                let mut cte_names = Vec::new();
+                collect_cte_names_in_statement(&s1, &mut cte_names);
+                collect_cte_names_in_statement(&s2, &mut cte_names);
+                let scoped = CastContext {
+                    cte_names: &cte_names,
+                    ..cast_context
+                };
+                normalize_statement(&s1, scoped) == normalize_statement(&s2, scoped)
+            })
         }
         _ => {
             // Fallback to regex normalization if parsing fails
             normalize_view_query(query1) == normalize_view_query(query2)
         }
+    }
+}
+
+/// Collects every CTE name defined anywhere in a statement (top-level and nested
+/// WITH clauses), lowercased, so FROM sources referencing a CTE can be treated as
+/// opaque rather than resolved against a colliding base table.
+fn collect_cte_names_in_statement(stmt: &Statement, names: &mut Vec<String>) {
+    if let Statement::Query(query) = stmt {
+        collect_cte_names_in_query(query, names);
+    }
+}
+
+fn collect_cte_names_in_query(query: &Query, names: &mut Vec<String>) {
+    if let Some(with) = &query.with {
+        for cte in &with.cte_tables {
+            names.push(cte.alias.name.value.to_lowercase());
+            collect_cte_names_in_query(&cte.query, names);
+        }
+    }
+    collect_cte_names_in_set_expr(&query.body, names);
+}
+
+fn collect_cte_names_in_set_expr(body: &SetExpr, names: &mut Vec<String>) {
+    match body {
+        SetExpr::Select(select) => {
+            for twj in &select.from {
+                collect_cte_names_in_table_factor(&twj.relation, names);
+                for join in &twj.joins {
+                    collect_cte_names_in_table_factor(&join.relation, names);
+                }
+            }
+        }
+        SetExpr::Query(q) => collect_cte_names_in_query(q, names),
+        SetExpr::SetOperation { left, right, .. } => {
+            collect_cte_names_in_set_expr(left, names);
+            collect_cte_names_in_set_expr(right, names);
+        }
+        _ => {}
+    }
+}
+
+fn collect_cte_names_in_table_factor(
+    factor: &sqlparser::ast::TableFactor,
+    names: &mut Vec<String>,
+) {
+    use sqlparser::ast::TableFactor;
+    match factor {
+        TableFactor::Derived { subquery, .. } => collect_cte_names_in_query(subquery, names),
+        TableFactor::NestedJoin {
+            table_with_joins, ..
+        } => {
+            collect_cte_names_in_table_factor(&table_with_joins.relation, names);
+            for join in &table_with_joins.joins {
+                collect_cte_names_in_table_factor(&join.relation, names);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -752,8 +825,8 @@ pub fn expressions_semantically_equal(expr1: &str, expr2: &str) -> bool {
 
     match (parse1, parse2) {
         (Ok(ast1), Ok(ast2)) => {
-            let ctx = CastCtx::disabled();
-            normalize_expr(&ast1, ctx) == normalize_expr(&ast2, ctx)
+            let cast_context = CastContext::disabled();
+            normalize_expr(&ast1, cast_context) == normalize_expr(&ast2, cast_context)
         }
         _ => {
             // Fallback to regex normalization if parsing fails
@@ -773,15 +846,15 @@ pub fn optional_expressions_equal(expr1: &Option<String>, expr2: &Option<String>
 }
 
 /// Normalizes a SQL statement to a canonical form for comparison.
-fn normalize_statement(stmt: &Statement, ctx: CastCtx) -> Statement {
+fn normalize_statement(stmt: &Statement, cast_context: CastContext) -> Statement {
     match stmt {
-        Statement::Query(query) => Statement::Query(Box::new(normalize_query(query, ctx))),
+        Statement::Query(query) => Statement::Query(Box::new(normalize_query(query, cast_context))),
         other => other.clone(),
     }
 }
 
 /// Normalizes a query to canonical form.
-fn normalize_query(query: &Query, ctx: CastCtx) -> Query {
+fn normalize_query(query: &Query, cast_context: CastContext) -> Query {
     Query {
         with: query.with.as_ref().map(|w| sqlparser::ast::With {
             with_token: w.with_token.clone(),
@@ -791,14 +864,14 @@ fn normalize_query(query: &Query, ctx: CastCtx) -> Query {
                 .iter()
                 .map(|cte| sqlparser::ast::Cte {
                     alias: cte.alias.clone(),
-                    query: Box::new(normalize_query(&cte.query, ctx)),
+                    query: Box::new(normalize_query(&cte.query, cast_context)),
                     from: cte.from.clone(),
                     materialized: cte.materialized,
                     closing_paren_token: cte.closing_paren_token.clone(),
                 })
                 .collect(),
         }),
-        body: Box::new(normalize_set_expr(&query.body, ctx)),
+        body: Box::new(normalize_set_expr(&query.body, cast_context)),
         order_by: query.order_by.as_ref().map(normalize_order_by),
         limit_clause: query.limit_clause.clone(),
         fetch: query.fetch.clone(),
@@ -810,10 +883,10 @@ fn normalize_query(query: &Query, ctx: CastCtx) -> Query {
     }
 }
 
-fn normalize_group_by(group_by: &GroupByExpr, ctx: CastCtx) -> GroupByExpr {
+fn normalize_group_by(group_by: &GroupByExpr, cast_context: CastContext) -> GroupByExpr {
     match group_by {
         GroupByExpr::Expressions(exprs, modifiers) => GroupByExpr::Expressions(
-            exprs.iter().map(|e| normalize_expr(e, ctx)).collect(),
+            exprs.iter().map(|e| normalize_expr(e, cast_context)).collect(),
             modifiers.clone(),
         ),
         other => other.clone(),
@@ -821,14 +894,14 @@ fn normalize_group_by(group_by: &GroupByExpr, ctx: CastCtx) -> GroupByExpr {
 }
 
 fn normalize_order_by(order_by: &OrderBy) -> OrderBy {
-    let ctx = CastCtx::disabled();
+    let cast_context = CastContext::disabled();
     OrderBy {
         kind: match &order_by.kind {
             OrderByKind::Expressions(exprs) => OrderByKind::Expressions(
                 exprs
                     .iter()
                     .map(|e| OrderByExpr {
-                        expr: normalize_expr(&e.expr, ctx),
+                        expr: normalize_expr(&e.expr, cast_context),
                         options: normalize_order_by_options(e.options),
                         with_fill: e.with_fill.clone(),
                     })
@@ -864,10 +937,10 @@ fn normalize_order_by_options(opts: OrderByOptions) -> OrderByOptions {
 }
 
 /// Normalizes a set expression (SELECT, UNION, etc).
-fn normalize_set_expr(body: &SetExpr, ctx: CastCtx) -> SetExpr {
+fn normalize_set_expr(body: &SetExpr, cast_context: CastContext) -> SetExpr {
     match body {
-        SetExpr::Select(select) => SetExpr::Select(Box::new(normalize_select(select, ctx))),
-        SetExpr::Query(q) => SetExpr::Query(Box::new(normalize_query(q, ctx))),
+        SetExpr::Select(select) => SetExpr::Select(Box::new(normalize_select(select, cast_context))),
+        SetExpr::Query(q) => SetExpr::Query(Box::new(normalize_query(q, cast_context))),
         SetExpr::SetOperation {
             op,
             set_quantifier,
@@ -876,8 +949,8 @@ fn normalize_set_expr(body: &SetExpr, ctx: CastCtx) -> SetExpr {
         } => SetExpr::SetOperation {
             op: *op,
             set_quantifier: *set_quantifier,
-            left: Box::new(normalize_set_expr(left, ctx)),
-            right: Box::new(normalize_set_expr(right, ctx)),
+            left: Box::new(normalize_set_expr(left, cast_context)),
+            right: Box::new(normalize_set_expr(right, cast_context)),
         },
         other => other.clone(),
     }
@@ -977,11 +1050,11 @@ fn normalize_nextval_args(expr: Expr) -> Expr {
 /// Normalizes a FunctionArgExpr, recursively normalizing contained expressions.
 fn normalize_function_arg_expr(
     arg_expr: &sqlparser::ast::FunctionArgExpr,
-    ctx: CastCtx,
+    cast_context: CastContext,
 ) -> sqlparser::ast::FunctionArgExpr {
     match arg_expr {
         sqlparser::ast::FunctionArgExpr::Expr(e) => {
-            sqlparser::ast::FunctionArgExpr::Expr(normalize_expr(e, ctx))
+            sqlparser::ast::FunctionArgExpr::Expr(normalize_expr(e, cast_context))
         }
         other => other.clone(),
     }
@@ -992,11 +1065,11 @@ fn normalize_function_arg_expr(
 /// including stripping table qualifiers from column references.
 fn normalize_function_arg(
     arg: &sqlparser::ast::FunctionArg,
-    ctx: CastCtx,
+    cast_context: CastContext,
 ) -> sqlparser::ast::FunctionArg {
     match arg {
         sqlparser::ast::FunctionArg::Unnamed(arg_expr) => {
-            sqlparser::ast::FunctionArg::Unnamed(normalize_function_arg_expr(arg_expr, ctx))
+            sqlparser::ast::FunctionArg::Unnamed(normalize_function_arg_expr(arg_expr, cast_context))
         }
         sqlparser::ast::FunctionArg::Named {
             name,
@@ -1004,7 +1077,7 @@ fn normalize_function_arg(
             operator,
         } => sqlparser::ast::FunctionArg::Named {
             name: normalize_ident(name),
-            arg: normalize_function_arg_expr(arg, ctx),
+            arg: normalize_function_arg_expr(arg, cast_context),
             operator: operator.clone(),
         },
         sqlparser::ast::FunctionArg::ExprNamed {
@@ -1012,8 +1085,8 @@ fn normalize_function_arg(
             arg,
             operator,
         } => sqlparser::ast::FunctionArg::ExprNamed {
-            name: normalize_expr(name, ctx),
-            arg: normalize_function_arg_expr(arg, ctx),
+            name: normalize_expr(name, cast_context),
+            arg: normalize_function_arg_expr(arg, cast_context),
             operator: operator.clone(),
         },
     }
@@ -1021,20 +1094,20 @@ fn normalize_function_arg(
 
 fn normalize_window_spec(
     spec: &sqlparser::ast::WindowSpec,
-    ctx: CastCtx,
+    cast_context: CastContext,
 ) -> sqlparser::ast::WindowSpec {
     sqlparser::ast::WindowSpec {
         window_name: spec.window_name.clone(),
         partition_by: spec
             .partition_by
             .iter()
-            .map(|e| normalize_expr(e, ctx))
+            .map(|e| normalize_expr(e, cast_context))
             .collect(),
         order_by: spec
             .order_by
             .iter()
             .map(|e| sqlparser::ast::OrderByExpr {
-                expr: normalize_expr(&e.expr, ctx),
+                expr: normalize_expr(&e.expr, cast_context),
                 options: normalize_order_by_options(e.options),
                 with_fill: e.with_fill.clone(),
             })
@@ -1044,25 +1117,25 @@ fn normalize_window_spec(
             .as_ref()
             .map(|wf| sqlparser::ast::WindowFrame {
                 units: wf.units,
-                start_bound: normalize_window_frame_bound(&wf.start_bound, ctx),
+                start_bound: normalize_window_frame_bound(&wf.start_bound, cast_context),
                 end_bound: wf
                     .end_bound
                     .as_ref()
-                    .map(|b| normalize_window_frame_bound(b, ctx)),
+                    .map(|b| normalize_window_frame_bound(b, cast_context)),
             }),
     }
 }
 
 fn normalize_window_frame_bound(
     bound: &sqlparser::ast::WindowFrameBound,
-    ctx: CastCtx,
+    cast_context: CastContext,
 ) -> sqlparser::ast::WindowFrameBound {
     match bound {
         sqlparser::ast::WindowFrameBound::Preceding(Some(e)) => {
-            sqlparser::ast::WindowFrameBound::Preceding(Some(Box::new(normalize_expr(e, ctx))))
+            sqlparser::ast::WindowFrameBound::Preceding(Some(Box::new(normalize_expr(e, cast_context))))
         }
         sqlparser::ast::WindowFrameBound::Following(Some(e)) => {
-            sqlparser::ast::WindowFrameBound::Following(Some(Box::new(normalize_expr(e, ctx))))
+            sqlparser::ast::WindowFrameBound::Following(Some(Box::new(normalize_expr(e, cast_context))))
         }
         other => other.clone(),
     }
@@ -1071,7 +1144,7 @@ fn normalize_window_frame_bound(
 /// Normalizes a TableFactor (the source in a FROM clause).
 fn normalize_table_factor(
     factor: &sqlparser::ast::TableFactor,
-    ctx: CastCtx,
+    cast_context: CastContext,
 ) -> sqlparser::ast::TableFactor {
     use sqlparser::ast::TableFactor;
     match factor {
@@ -1109,7 +1182,7 @@ fn normalize_table_factor(
             sample,
         } => TableFactor::Derived {
             lateral: *lateral,
-            subquery: Box::new(normalize_query(subquery, ctx)),
+            subquery: Box::new(normalize_query(subquery, cast_context)),
             alias: alias.as_ref().map(|a| sqlparser::ast::TableAlias {
                 name: normalize_ident(&a.name),
                 explicit: a.explicit,
@@ -1124,7 +1197,7 @@ fn normalize_table_factor(
             table_with_joins,
             alias,
         } => {
-            let normalized_twj = normalize_table_with_joins(table_with_joins, ctx);
+            let normalized_twj = normalize_table_with_joins(table_with_joins, cast_context);
             // If there are no joins, just return the relation (unwrap parens)
             if normalized_twj.joins.is_empty() {
                 let mut inner = normalized_twj.relation;
@@ -1163,7 +1236,7 @@ fn normalize_table_factor(
 /// Also unwraps NestedJoin when PostgreSQL wraps entire JOINs in parentheses.
 fn normalize_table_with_joins(
     twj: &sqlparser::ast::TableWithJoins,
-    ctx: CastCtx,
+    cast_context: CastContext,
 ) -> sqlparser::ast::TableWithJoins {
     // If the relation is a NestedJoin without an alias, flatten it by combining joins
     // PostgreSQL stores `((A JOIN B) JOIN C)` as NestedJoin { inner: {A, [B]}, joins: [C] }
@@ -1175,11 +1248,11 @@ fn normalize_table_with_joins(
     {
         if alias.is_none() {
             // Recursively normalize the inner TableWithJoins first
-            let normalized_inner = normalize_table_with_joins(inner_twj, ctx);
+            let normalized_inner = normalize_table_with_joins(inner_twj, cast_context);
 
             // Normalize outer joins
             let normalized_outer_joins: Vec<_> =
-                twj.joins.iter().map(|j| normalize_join(j, ctx)).collect();
+                twj.joins.iter().map(|j| normalize_join(j, cast_context)).collect();
 
             // Combine: inner joins first, then outer joins
             let mut combined_joins = normalized_inner.joins;
@@ -1193,21 +1266,21 @@ fn normalize_table_with_joins(
     }
 
     // Standard case: normalize relation and joins separately
-    let normalized_relation = normalize_table_factor(&twj.relation, ctx);
+    let normalized_relation = normalize_table_factor(&twj.relation, cast_context);
 
     sqlparser::ast::TableWithJoins {
         relation: normalized_relation,
-        joins: twj.joins.iter().map(|j| normalize_join(j, ctx)).collect(),
+        joins: twj.joins.iter().map(|j| normalize_join(j, cast_context)).collect(),
     }
 }
 
 /// Normalizes a single Join.
-fn normalize_join(j: &sqlparser::ast::Join, ctx: CastCtx) -> sqlparser::ast::Join {
+fn normalize_join(j: &sqlparser::ast::Join, cast_context: CastContext) -> sqlparser::ast::Join {
     use sqlparser::ast::{Join, JoinOperator};
     let normalize_constraint =
-        |c: &sqlparser::ast::JoinConstraint| normalize_join_constraint(c, ctx);
+        |c: &sqlparser::ast::JoinConstraint| normalize_join_constraint(c, cast_context);
     Join {
-        relation: normalize_table_factor(&j.relation, ctx),
+        relation: normalize_table_factor(&j.relation, cast_context),
         global: j.global,
         join_operator: match &j.join_operator {
             JoinOperator::Join(c) | JoinOperator::Inner(c) => {
@@ -1228,11 +1301,11 @@ fn normalize_join(j: &sqlparser::ast::Join, ctx: CastCtx) -> sqlparser::ast::Joi
 /// Normalizes a JoinConstraint.
 fn normalize_join_constraint(
     constraint: &sqlparser::ast::JoinConstraint,
-    ctx: CastCtx,
+    cast_context: CastContext,
 ) -> sqlparser::ast::JoinConstraint {
     use sqlparser::ast::JoinConstraint;
     match constraint {
-        JoinConstraint::On(expr) => JoinConstraint::On(normalize_expr(expr, ctx)),
+        JoinConstraint::On(expr) => JoinConstraint::On(normalize_expr(expr, cast_context)),
         JoinConstraint::Using(names) => {
             JoinConstraint::Using(names.iter().map(normalize_object_name).collect())
         }
@@ -1260,7 +1333,7 @@ fn normalize_data_type(data_type: &DataType) -> DataType {
 ///
 /// Detects that pattern and reduces it back to the bare function call so that
 /// both forms compare as equal.
-fn try_simplify_scalar_subquery(query: &Query, ctx: CastCtx) -> Option<Expr> {
+fn try_simplify_scalar_subquery(query: &Query, cast_context: CastContext) -> Option<Expr> {
     if query.with.is_some() || query.order_by.is_some() || query.limit_clause.is_some() {
         return None;
     }
@@ -1291,13 +1364,13 @@ fn try_simplify_scalar_subquery(query: &Query, ctx: CastCtx) -> Option<Expr> {
     if !matches!(expr, Expr::Function(_)) {
         return None;
     }
-    Some(normalize_expr(expr, ctx))
+    Some(normalize_expr(expr, cast_context))
 }
 
 /// Normalizes a SELECT statement.
-fn normalize_select(select: &Select, ctx: CastCtx) -> Select {
-    let scope = build_column_scope(select, ctx.default_schema);
-    let scoped = ctx.with_scope(&scope);
+fn normalize_select(select: &Select, cast_context: CastContext) -> Select {
+    let scope = build_column_scope(select, cast_context.default_schema, cast_context.cte_names);
+    let scoped = cast_context.with_scope(&scope);
     Select {
         select_token: select.select_token.clone(),
         distinct: select.distinct.clone(),
@@ -1313,7 +1386,7 @@ fn normalize_select(select: &Select, ctx: CastCtx) -> Select {
         from: select
             .from
             .iter()
-            .map(|twj| normalize_table_with_joins(twj, ctx))
+            .map(|twj| normalize_table_with_joins(twj, cast_context))
             .collect(),
         lateral_views: select.lateral_views.clone(),
         prewhere: select.prewhere.as_ref().map(|e| normalize_expr(e, scoped)),
@@ -1340,13 +1413,13 @@ fn normalize_select(select: &Select, ctx: CastCtx) -> Select {
 /// adding an alias matching the function name.
 fn normalize_select_item(
     item: &sqlparser::ast::SelectItem,
-    ctx: CastCtx,
+    cast_context: CastContext,
 ) -> sqlparser::ast::SelectItem {
     use sqlparser::ast::SelectItem;
     match item {
-        SelectItem::UnnamedExpr(e) => SelectItem::UnnamedExpr(normalize_expr(e, ctx)),
+        SelectItem::UnnamedExpr(e) => SelectItem::UnnamedExpr(normalize_expr(e, cast_context)),
         SelectItem::ExprWithAlias { expr, alias } => {
-            let normalized_expr = normalize_expr(expr, ctx);
+            let normalized_expr = normalize_expr(expr, cast_context);
             if is_auto_generated_alias(&normalized_expr, alias) {
                 SelectItem::UnnamedExpr(normalized_expr)
             } else {
@@ -1387,15 +1460,15 @@ fn is_auto_generated_alias(expr: &Expr, alias: &sqlparser::ast::Ident) -> bool {
 /// - Convert <> ALL(ARRAY[...]) to NOT IN (...)
 /// - Strip ::text casts from string literals
 /// - Normalize FILTER clauses on aggregate functions
-fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
+fn normalize_expr(expr: &Expr, cast_context: CastContext) -> Expr {
     match expr {
         // Unwrap nested expressions (parentheses)
-        Expr::Nested(inner) => normalize_expr(inner, ctx),
+        Expr::Nested(inner) => normalize_expr(inner, cast_context),
 
         // Convert PostgreSQL ~~ operator to LIKE
         Expr::BinaryOp { left, op, right } => {
-            let norm_left = normalize_expr(left, ctx);
-            let norm_right = normalize_expr(right, ctx);
+            let norm_left = normalize_expr(left, cast_context);
+            let norm_right = normalize_expr(right, cast_context);
 
             match op {
                 BinaryOperator::PGLikeMatch => Expr::Like {
@@ -1445,7 +1518,7 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
             // qualifier, so a no-op cast to the column's own declared type can be
             // resolved against the FROM clause and elided.
             let column_ref = column_reference_parts(inner);
-            let norm_inner = normalize_expr(inner, ctx);
+            let norm_inner = normalize_expr(inner, cast_context);
             let norm_data_type = normalize_data_type(data_type);
             if matches!(norm_data_type, DataType::Text) {
                 return norm_inner;
@@ -1464,7 +1537,7 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
             // column against the FROM clause; elide only on an exact match,
             // otherwise preserve the cast (it is real, e.g. a truncating cast).
             if let Some((qualifier, column)) = &column_ref {
-                if let Some(pg_type) = ctx.resolve_column_type(qualifier.as_deref(), column) {
+                if let Some(pg_type) = cast_context.resolve_column_type(qualifier.as_deref(), column) {
                     if pg_type_matches_cast(pg_type, &norm_data_type) {
                         return norm_inner;
                     }
@@ -1509,14 +1582,14 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
         }
 
         Expr::Subquery(q) => {
-            if let Some(simplified) = try_simplify_scalar_subquery(q, ctx) {
+            if let Some(simplified) = try_simplify_scalar_subquery(q, cast_context) {
                 simplified
             } else {
-                Expr::Subquery(Box::new(normalize_query(q, ctx)))
+                Expr::Subquery(Box::new(normalize_query(q, cast_context)))
             }
         }
         Expr::Exists { subquery, negated } => Expr::Exists {
-            subquery: Box::new(normalize_query(subquery, ctx)),
+            subquery: Box::new(normalize_query(subquery, cast_context)),
             negated: *negated,
         },
         Expr::InSubquery {
@@ -1524,8 +1597,8 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
             subquery,
             negated,
         } => Expr::InSubquery {
-            expr: Box::new(normalize_expr(inner, ctx)),
-            subquery: Box::new(normalize_query(subquery, ctx)),
+            expr: Box::new(normalize_expr(inner, cast_context)),
+            subquery: Box::new(normalize_query(subquery, cast_context)),
             negated: *negated,
         },
 
@@ -1538,8 +1611,8 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
         } => Expr::Like {
             negated: *negated,
             any: *any,
-            expr: Box::new(normalize_expr(inner, ctx)),
-            pattern: Box::new(normalize_expr(pattern, ctx)),
+            expr: Box::new(normalize_expr(inner, cast_context)),
+            pattern: Box::new(normalize_expr(pattern, cast_context)),
             escape_char: escape_char.clone(),
         },
         Expr::ILike {
@@ -1551,8 +1624,8 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
         } => Expr::ILike {
             negated: *negated,
             any: *any,
-            expr: Box::new(normalize_expr(inner, ctx)),
-            pattern: Box::new(normalize_expr(pattern, ctx)),
+            expr: Box::new(normalize_expr(inner, cast_context)),
+            pattern: Box::new(normalize_expr(pattern, cast_context)),
             escape_char: escape_char.clone(),
         },
 
@@ -1565,17 +1638,17 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
         } => Expr::Case {
             case_token: case_token.clone(),
             end_token: end_token.clone(),
-            operand: operand.as_ref().map(|e| Box::new(normalize_expr(e, ctx))),
+            operand: operand.as_ref().map(|e| Box::new(normalize_expr(e, cast_context))),
             conditions: conditions
                 .iter()
                 .map(|cw| sqlparser::ast::CaseWhen {
-                    condition: normalize_expr(&cw.condition, ctx),
-                    result: normalize_expr(&cw.result, ctx),
+                    condition: normalize_expr(&cw.condition, cast_context),
+                    result: normalize_expr(&cw.result, cast_context),
                 })
                 .collect(),
             else_result: else_result
                 .as_ref()
-                .map(|e| Box::new(normalize_expr(e, ctx))),
+                .map(|e| Box::new(normalize_expr(e, cast_context))),
         },
 
         Expr::Function(f) => {
@@ -1588,17 +1661,17 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
                         args: args
                             .args
                             .iter()
-                            .map(|a| normalize_function_arg(a, ctx))
+                            .map(|a| normalize_function_arg(a, cast_context))
                             .collect(),
                         clauses: args.clauses.clone(),
                     })
                 }
                 other => other.clone(),
             };
-            func.filter = f.filter.as_ref().map(|e| Box::new(normalize_expr(e, ctx)));
+            func.filter = f.filter.as_ref().map(|e| Box::new(normalize_expr(e, cast_context)));
             func.over = f.over.as_ref().map(|w| match w {
                 sqlparser::ast::WindowType::WindowSpec(spec) => {
-                    sqlparser::ast::WindowType::WindowSpec(normalize_window_spec(spec, ctx))
+                    sqlparser::ast::WindowType::WindowSpec(normalize_window_spec(spec, cast_context))
                 }
                 other => other.clone(),
             });
@@ -1606,7 +1679,7 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
         }
 
         Expr::UnaryOp { op, expr: inner } => {
-            let norm_inner = normalize_expr(inner, ctx);
+            let norm_inner = normalize_expr(inner, cast_context);
             // Normalize NOT (EXISTS ...) → EXISTS { negated: true }
             if matches!(op, sqlparser::ast::UnaryOperator::Not) {
                 if let Expr::Exists {
@@ -1631,8 +1704,8 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
             list,
             negated,
         } => Expr::InList {
-            expr: Box::new(normalize_expr(inner, ctx)),
-            list: list.iter().map(|e| normalize_expr(e, ctx)).collect(),
+            expr: Box::new(normalize_expr(inner, cast_context)),
+            list: list.iter().map(|e| normalize_expr(e, cast_context)).collect(),
             negated: *negated,
         },
 
@@ -1642,22 +1715,22 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
             low,
             high,
         } => Expr::Between {
-            expr: Box::new(normalize_expr(inner, ctx)),
+            expr: Box::new(normalize_expr(inner, cast_context)),
             negated: *negated,
-            low: Box::new(normalize_expr(low, ctx)),
-            high: Box::new(normalize_expr(high, ctx)),
+            low: Box::new(normalize_expr(low, cast_context)),
+            high: Box::new(normalize_expr(high, cast_context)),
         },
 
-        Expr::IsNull(inner) => Expr::IsNull(Box::new(normalize_expr(inner, ctx))),
-        Expr::IsNotNull(inner) => Expr::IsNotNull(Box::new(normalize_expr(inner, ctx))),
+        Expr::IsNull(inner) => Expr::IsNull(Box::new(normalize_expr(inner, cast_context))),
+        Expr::IsNotNull(inner) => Expr::IsNotNull(Box::new(normalize_expr(inner, cast_context))),
 
         Expr::IsDistinctFrom(left, right) => Expr::IsDistinctFrom(
-            Box::new(normalize_expr(left, ctx)),
-            Box::new(normalize_expr(right, ctx)),
+            Box::new(normalize_expr(left, cast_context)),
+            Box::new(normalize_expr(right, cast_context)),
         ),
         Expr::IsNotDistinctFrom(left, right) => Expr::IsNotDistinctFrom(
-            Box::new(normalize_expr(left, ctx)),
-            Box::new(normalize_expr(right, ctx)),
+            Box::new(normalize_expr(left, cast_context)),
+            Box::new(normalize_expr(right, cast_context)),
         ),
 
         // Normalize CompoundIdentifier (lowercase for case-insensitive comparison)
@@ -1701,12 +1774,12 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
             right,
             ..
         } if *compare_op == BinaryOperator::Eq => {
-            let norm_left = normalize_expr(left, ctx);
-            let norm_right = normalize_expr(right, ctx);
+            let norm_left = normalize_expr(left, cast_context);
+            let norm_right = normalize_expr(right, cast_context);
             if let Expr::Array(arr) = &norm_right {
                 Expr::InList {
                     expr: Box::new(norm_left),
-                    list: arr.elem.iter().map(|e| normalize_expr(e, ctx)).collect(),
+                    list: arr.elem.iter().map(|e| normalize_expr(e, cast_context)).collect(),
                     negated: false,
                 }
             } else {
@@ -1726,12 +1799,12 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
             compare_op,
             right,
         } if *compare_op == BinaryOperator::NotEq => {
-            let norm_left = normalize_expr(left, ctx);
-            let norm_right = normalize_expr(right, ctx);
+            let norm_left = normalize_expr(left, cast_context);
+            let norm_right = normalize_expr(right, cast_context);
             if let Expr::Array(arr) = &norm_right {
                 Expr::InList {
                     expr: Box::new(norm_left),
-                    list: arr.elem.iter().map(|e| normalize_expr(e, ctx)).collect(),
+                    list: arr.elem.iter().map(|e| normalize_expr(e, cast_context)).collect(),
                     negated: true,
                 }
             } else {
@@ -1745,7 +1818,7 @@ fn normalize_expr(expr: &Expr, ctx: CastCtx) -> Expr {
 
         // Normalize Array elements recursively (strips casts inside ARRAY[...])
         Expr::Array(arr) => Expr::Array(sqlparser::ast::Array {
-            elem: arr.elem.iter().map(|e| normalize_expr(e, ctx)).collect(),
+            elem: arr.elem.iter().map(|e| normalize_expr(e, cast_context)).collect(),
             named: arr.named,
         }),
 
@@ -2935,7 +3008,7 @@ fn try_simplify_scalar_subquery_matches_sqlparser_group_by_variant() {
         panic!("expected Expr::Subquery, got something else");
     };
     assert!(
-        try_simplify_scalar_subquery(&query, CastCtx::disabled()).is_some(),
+        try_simplify_scalar_subquery(&query, CastContext::disabled()).is_some(),
         "GROUP BY guard in try_simplify_scalar_subquery did not match sqlparser's AST for: {expr_str}"
     );
 }
@@ -3263,5 +3336,20 @@ fn cast_on_subquery_derived_column_preserved() {
     assert!(
         !views_semantically_equal_with_columns(with_cast, without_cast, &tables, "s"),
         "A column sourced from a derived table cannot be resolved to a base column; fail safe and keep the cast"
+    );
+}
+
+#[test]
+fn cast_on_cte_backed_column_preserved_even_when_colliding_base_table_exists() {
+    // A real base table named `cte` exists in the same schema with a varchar(100)
+    // `bn` column. The CTE shadows it: the CTE's `bn` may have a different type, so
+    // the cast must be preserved rather than resolved against the colliding table.
+    let tables = tables_from_sql("CREATE TABLE s.cte (bn varchar(100));");
+    let with_cast = "WITH cte AS (SELECT bn FROM s.t) SELECT CAST(cte.bn AS varchar(100)) AS bn FROM cte";
+    let without_cast = "WITH cte AS (SELECT bn FROM s.t) SELECT cte.bn FROM cte";
+    assert_eq!(
+        views_semantically_equal_with_columns(with_cast, without_cast, &tables, "s"),
+        false,
+        "A CTE name shadows a colliding base table; its columns are opaque so the cast must be preserved"
     );
 }
