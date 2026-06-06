@@ -5609,6 +5609,64 @@ fn names_within_the_byte_limit_are_not_recorded_for_lint() {
 }
 
 #[test]
+fn dropped_sequence_does_not_warn_for_the_overlong_name() {
+    let long = "s".repeat(64);
+    let sql = format!("CREATE SEQUENCE \"{long}\"; DROP SEQUENCE \"{long}\";");
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    assert_eq!(schema.overlong_identifiers, Vec::new());
+}
+
+#[test]
+fn renamed_column_does_not_warn_for_the_overlong_old_name() {
+    let long_old = "o".repeat(64);
+    let sql = format!(
+        "CREATE TABLE t (\"{long_old}\" INTEGER); ALTER TABLE t RENAME COLUMN \"{long_old}\" TO short;"
+    );
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    assert_eq!(schema.overlong_identifiers, Vec::new());
+}
+
+#[test]
+fn renamed_constraint_does_not_warn_for_the_overlong_old_name() {
+    let long_old = "o".repeat(64);
+    let sql = format!(
+        "CREATE TABLE t (id INTEGER, CONSTRAINT \"{long_old}\" CHECK (id > 0)); ALTER TABLE t RENAME CONSTRAINT \"{long_old}\" TO short;"
+    );
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    let names: Vec<&str> = schema
+        .overlong_identifiers
+        .iter()
+        .map(|o| o.name.as_str())
+        .collect();
+    assert!(
+        !names.contains(&long_old.as_str()),
+        "old constraint name should not warn: {names:?}"
+    );
+}
+
+#[test]
+fn surviving_overlong_sequence_warns_once_with_sequence_kind() {
+    let long = "s".repeat(64);
+    let sql = format!("CREATE SEQUENCE \"{long}\";");
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    assert_eq!(
+        schema.overlong_identifiers,
+        vec![crate::model::OverlongIdentifier {
+            kind: "sequence".to_string(),
+            name: long,
+        }]
+    );
+}
+
+#[test]
 fn truncate_identifier_stops_at_char_boundary_for_multibyte_input() {
     // `あ` is a 3-byte UTF-8 char. 22 of them is 66 bytes; the 63-byte cap lands on a
     // char boundary (21 chars = 63 bytes), so the result is exactly 63 bytes of valid UTF-8.

@@ -1438,11 +1438,9 @@ fn classify_overlong_identifiers(schema: &Schema) -> Vec<crate::model::OverlongI
             push("function", &function.name, &mut result);
         }
     }
-    for sequence in schema.sequences.values() {
-        if sequence.name.len() > PG_MAX_IDENTIFIER_LENGTH {
-            push("sequence", &sequence.name, &mut result);
-        }
-    }
+    // Sequences are not walked: every call site inserts them via
+    // `truncate_identifier`, so a model sequence name is always <= 63 bytes.
+    // Overlong sequence coverage comes from the side-channel drain below.
     for enum_type in schema.enums.values() {
         if enum_type.name.len() > PG_MAX_IDENTIFIER_LENGTH {
             push("enum", &enum_type.name, &mut result);
@@ -1454,25 +1452,34 @@ fn classify_overlong_identifiers(schema: &Schema) -> Vec<crate::model::OverlongI
         }
     }
 
+    // Side-channel originals are recorded on every `truncate_identifier` call,
+    // including DROP and RENAME-from lookups whose objects never reach the final
+    // model. Emit only when the truncated form is still present in the model, so
+    // dropped/renamed-away objects are suppressed and the kind always resolves.
     for original in take_overlong_identifiers() {
         let truncated = truncate_to_bytes(&original, PG_MAX_IDENTIFIER_LENGTH);
-        let kind = classify_truncated_name(schema, truncated);
-        push(kind, &original, &mut result);
+        if let Some(kind) = classify_truncated_name(schema, truncated) {
+            push(kind, &original, &mut result);
+        }
     }
 
     result
 }
 
 /// Resolves the kind of a parser-truncated identifier by finding which model
-/// collection holds its truncated form. Falls back to a generic "identifier"
-/// label when it cannot be located; the warning is still emitted.
-fn classify_truncated_name(schema: &Schema, truncated: &str) -> &'static str {
+/// collection holds its truncated form. Returns `None` when no collection holds
+/// it, which means the object was dropped or renamed away and must not warn.
+fn classify_truncated_name(schema: &Schema, truncated: &str) -> Option<&'static str> {
     if schema
         .tables
         .values()
         .any(|t| t.indexes.iter().any(|i| i.name == truncated))
+        || schema
+            .partitions
+            .values()
+            .any(|p| p.indexes.iter().any(|i| i.name == truncated))
     {
-        return "index";
+        return Some("index");
     }
     if schema
         .tables
@@ -1483,10 +1490,10 @@ fn classify_truncated_name(schema: &Schema, truncated: &str) -> &'static str {
             .values()
             .any(|t| t.check_constraints.iter().any(|c| c.name == truncated))
     {
-        return "constraint";
+        return Some("constraint");
     }
     if schema.triggers.values().any(|t| t.name == truncated) {
-        return "trigger";
+        return Some("trigger");
     }
     if schema
         .tables
@@ -1494,12 +1501,12 @@ fn classify_truncated_name(schema: &Schema, truncated: &str) -> &'static str {
         .any(|t| t.policies.iter().any(|p| p.name == truncated))
         || schema.pending_policies.iter().any(|p| p.name == truncated)
     {
-        return "policy";
+        return Some("policy");
     }
     if schema.sequences.values().any(|s| s.name == truncated) {
-        return "sequence";
+        return Some("sequence");
     }
-    "identifier"
+    None
 }
 
 /// Returns `true` when `name` refers to a built-in `pg_catalog` trigger
