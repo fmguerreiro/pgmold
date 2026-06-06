@@ -143,6 +143,98 @@ pub struct PendingRevoke {
     pub grant_option_for: bool,
 }
 
+/// A declared identifier whose original byte length exceeded PostgreSQL's
+/// NAMEDATALEN-1 (63 bytes) before the parser truncated it. Captured at parse
+/// time because the parser rewrites the model to the truncated form (to make
+/// plans converge with `pg_catalog`), which loses the original length. The lint
+/// reads this sidecar to warn the author that PostgreSQL will silently truncate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlongIdentifier {
+    pub kind: String,
+    pub name: String,
+}
+
+/// Removes duplicate overlong-identifier records in place, keyed by
+/// `(kind, name)` to match the dedup the parser applies per file. Used when
+/// merging per-file schemas so a name declared in two sources warns once.
+pub fn dedup_overlong_identifiers(identifiers: &mut Vec<OverlongIdentifier>) {
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    identifiers
+        .retain(|identifier| seen.insert((identifier.kind.clone(), identifier.name.clone())));
+}
+
+/// Parse-time diagnostics carried on `Schema` that are NOT schema state and
+/// therefore must not participate in `Schema` equality. The records hold
+/// PRE-truncation declared names, which `dump` cannot emit (it writes the
+/// truncated 63-byte form), so they inherently cannot survive a dump-reparse.
+/// Including them in `Schema` equality breaks the `parse(dump(parse)) == parse`
+/// round-trip invariant for any identifier that crosses 63 bytes.
+///
+/// The constant `PartialEq`/`Eq`/`Hash` here let `Schema` keep
+/// `#[derive(PartialEq, Eq)]`: the derive automatically covers every real
+/// field (including any added later) while this wrapper makes the diagnostic
+/// invisible to comparison. A hand-rolled `Schema` impl enumerating the other
+/// fields would silently exclude future fields, so it is avoided.
+#[derive(Debug, Clone, Default)]
+pub struct ParseDiagnostics(pub Vec<OverlongIdentifier>);
+
+impl PartialEq for ParseDiagnostics {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for ParseDiagnostics {}
+
+impl std::hash::Hash for ParseDiagnostics {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
+}
+
+impl std::ops::Deref for ParseDiagnostics {
+    type Target = Vec<OverlongIdentifier>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ParseDiagnostics {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<Vec<OverlongIdentifier>> for ParseDiagnostics {
+    fn from(records: Vec<OverlongIdentifier>) -> Self {
+        ParseDiagnostics(records)
+    }
+}
+
+impl IntoIterator for ParseDiagnostics {
+    type Item = OverlongIdentifier;
+    type IntoIter = std::vec::IntoIter<OverlongIdentifier>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl FromIterator<OverlongIdentifier> for ParseDiagnostics {
+    fn from_iter<I: IntoIterator<Item = OverlongIdentifier>>(iter: I) -> Self {
+        ParseDiagnostics(iter.into_iter().collect())
+    }
+}
+
+/// Real, order-sensitive comparison against a bare `Vec`, so existing lint and
+/// merge tests asserting `schema.overlong_identifiers == vec![..]` stay strict.
+/// This does NOT weaken `Schema` equality, which uses the always-equal
+/// `PartialEq for ParseDiagnostics` above.
+impl PartialEq<Vec<OverlongIdentifier>> for ParseDiagnostics {
+    fn eq(&self, other: &Vec<OverlongIdentifier>) -> bool {
+        &self.0 == other
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Schema {
     pub schemas: BTreeMap<String, PgSchema>,
@@ -194,6 +286,11 @@ pub struct Schema {
     /// emitted via the `ON DOMAIN` form.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub domain_constraint_comments: BTreeMap<String, String>,
+    /// Identifiers declared in the source longer than 63 bytes, captured before
+    /// the parser truncated them. Drives the `warn_identifier_exceeds_namedatalen`
+    /// lint. Not serialized: it is a parse-time diagnostic, not schema state.
+    #[serde(skip)]
+    pub overlong_identifiers: ParseDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1053,6 +1150,67 @@ impl Schema {
             default_privileges: Vec::new(),
             table_constraint_comments: BTreeMap::new(),
             domain_constraint_comments: BTreeMap::new(),
+            overlong_identifiers: ParseDiagnostics::default(),
+        }
+    }
+
+    /// Drops overlong-identifier records whose (truncated) object is no longer
+    /// present in this schema. Filtering (`--include`, `--target-schemas`) removes
+    /// objects but not their sidecar warnings; this re-derives the set against the
+    /// retained model so excluded objects do not produce warnings.
+    pub fn retain_overlong_identifiers_in_model(&mut self) {
+        let records = std::mem::take(&mut self.overlong_identifiers);
+        self.overlong_identifiers = records
+            .into_iter()
+            .filter(|identifier| self.contains_overlong_object(identifier))
+            .collect();
+    }
+
+    fn contains_overlong_object(&self, identifier: &OverlongIdentifier) -> bool {
+        use crate::parser::util::{truncate_to_bytes_raw, PG_MAX_IDENTIFIER_LENGTH};
+        // The parser stores every kind under its truncated form. The record's
+        // `name` is the original (overlong) string, so match against both the full
+        // string and its truncation to stay robust to either storage form.
+        let full = identifier.name.as_str();
+        let truncated = truncate_to_bytes_raw(&identifier.name, PG_MAX_IDENTIFIER_LENGTH);
+        let matches = |name: &str| name == full || name == truncated;
+        match identifier.kind.as_str() {
+            "table" => {
+                self.tables.values().any(|t| matches(&t.name))
+                    || self.partitions.values().any(|p| matches(&p.name))
+            }
+            "column" => self
+                .tables
+                .values()
+                .any(|t| t.columns.values().any(|c| matches(&c.name))),
+            "view" => self.views.values().any(|v| matches(&v.name)),
+            "function" => self.functions.values().any(|f| matches(&f.name)),
+            "enum" => self.enums.values().any(|e| matches(&e.name)),
+            "domain" => self.domains.values().any(|d| matches(&d.name)),
+            "sequence" => self.sequences.values().any(|s| matches(&s.name)),
+            "index" => {
+                self.tables
+                    .values()
+                    .any(|t| t.indexes.iter().any(|i| matches(&i.name)))
+                    || self
+                        .partitions
+                        .values()
+                        .any(|p| p.indexes.iter().any(|i| matches(&i.name)))
+            }
+            "constraint" => self.tables.values().any(|t| {
+                t.foreign_keys.iter().any(|f| matches(&f.name))
+                    || t.check_constraints.iter().any(|c| matches(&c.name))
+            }),
+            "trigger" => self.triggers.values().any(|t| matches(&t.name)),
+            "policy" => {
+                self.tables
+                    .values()
+                    .any(|t| t.policies.iter().any(|p| matches(&p.name)))
+                    || self.pending_policies.iter().any(|p| matches(&p.name))
+            }
+            other => panic!(
+                "unknown overlong-identifier kind {other:?}; every kind produced by the parser must be matched here"
+            ),
         }
     }
 
@@ -2750,6 +2908,44 @@ mod tests {
             owner: Some("postgres".to_string()),
         };
         assert_eq!(partition.owner, Some("postgres".to_string()));
+    }
+
+    #[test]
+    fn retain_keeps_overlong_partition_recorded_under_table_kind() {
+        // The parser classifies a partition's overlong name under "table" (a partition
+        // is a table). The model-side retain filter must resolve "table" against
+        // partitions too, or a surviving overlong partition would be wrongly suppressed.
+        let long = "p".repeat(64);
+        let truncated = "p".repeat(63);
+        let partition = Partition {
+            schema: "public".to_string(),
+            name: truncated,
+            parent_schema: "public".to_string(),
+            parent_name: "users".to_string(),
+            bound: PartitionBound::Default,
+            indexes: Vec::new(),
+            check_constraints: Vec::new(),
+            owner: None,
+        };
+        let mut schema = Schema::default();
+        schema
+            .partitions
+            .insert(format!("public.{}", "p".repeat(63)), partition);
+        schema.overlong_identifiers = vec![OverlongIdentifier {
+            kind: "table".to_string(),
+            name: long.clone(),
+        }]
+        .into();
+
+        schema.retain_overlong_identifiers_in_model();
+
+        assert_eq!(
+            schema.overlong_identifiers,
+            vec![OverlongIdentifier {
+                kind: "table".to_string(),
+                name: long,
+            }]
+        );
     }
 
     #[test]

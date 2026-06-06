@@ -15,7 +15,7 @@ mod preprocess;
 mod sequences;
 mod tables;
 mod unrecognized;
-mod util;
+pub(crate) mod util;
 
 #[cfg(test)]
 mod tests;
@@ -61,8 +61,8 @@ use tables::{
 };
 use util::{
     extract_qualified_name, normalize_expr, parse_data_type, parse_for_values,
-    parse_for_values_required, parse_policy_command, truncate_identifier, truncated_ident,
-    unquote_ident,
+    parse_for_values_required, parse_policy_command, take_overlong_identifiers,
+    truncate_identifier, truncated_ident, unquote_ident,
 };
 
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
@@ -111,6 +111,10 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
     let dialect = PostgreSqlDialect {};
     let statements = Parser::parse_sql(&dialect, &preprocessed_sql)
         .map_err(|e| SchemaError::ParseError(format!("SQL parse error: {e}")))?;
+
+    // Discard any originals left by a prior parse that errored before draining,
+    // so this parse's overlong-identifier set is not contaminated.
+    let _ = take_overlong_identifiers();
 
     let mut schema = Schema::new();
 
@@ -1389,7 +1393,113 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
 
     schema.pending_policies = schema.finalize_partial();
 
+    schema.overlong_identifiers = classify_overlong_identifiers(&schema).into();
+
     Ok(schema)
+}
+
+/// Collects every declared identifier longer than 63 bytes for the lint.
+///
+/// PR #343 made the parser truncate every object/column name at parse time, so the
+/// model holds only the truncated (<= 63 byte) form for every kind. The originals
+/// are recovered from the `truncate_to_bytes` side-channel, which records the
+/// pre-truncation string at the single truncation chokepoint regardless of which
+/// wrapper a call site uses. Each original's kind is resolved by matching its
+/// truncated form back against the model, which also suppresses DROP and RENAME-from
+/// lookups whose objects never reach the final model. Deduplicated by `(kind, original)`.
+fn classify_overlong_identifiers(schema: &Schema) -> Vec<crate::model::OverlongIdentifier> {
+    use crate::model::OverlongIdentifier;
+    use std::collections::BTreeSet;
+    use util::{truncate_to_bytes_raw, PG_MAX_IDENTIFIER_LENGTH};
+
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut result = Vec::new();
+
+    for original in take_overlong_identifiers() {
+        let truncated = truncate_to_bytes_raw(&original, PG_MAX_IDENTIFIER_LENGTH);
+        let Some(kind) = classify_truncated_name(schema, truncated) else {
+            continue;
+        };
+        if seen.insert((kind.to_string(), original.clone())) {
+            result.push(OverlongIdentifier {
+                kind: kind.to_string(),
+                name: original,
+            });
+        }
+    }
+
+    result
+}
+
+/// Resolves the kind of a parser-truncated identifier by finding which model
+/// collection holds its truncated form. Returns `None` when no collection holds
+/// it, which means the object was dropped or renamed away and must not warn.
+///
+/// Ordered most-to-least specific so a name shared across kinds resolves
+/// deterministically; nested objects (index, constraint, policy, column) are
+/// checked before the table that holds them.
+fn classify_truncated_name(schema: &Schema, truncated: &str) -> Option<&'static str> {
+    if schema
+        .tables
+        .values()
+        .any(|t| t.indexes.iter().any(|i| i.name == truncated))
+        || schema
+            .partitions
+            .values()
+            .any(|p| p.indexes.iter().any(|i| i.name == truncated))
+    {
+        return Some("index");
+    }
+    if schema
+        .tables
+        .values()
+        .any(|t| t.foreign_keys.iter().any(|f| f.name == truncated))
+        || schema
+            .tables
+            .values()
+            .any(|t| t.check_constraints.iter().any(|c| c.name == truncated))
+    {
+        return Some("constraint");
+    }
+    if schema.triggers.values().any(|t| t.name == truncated) {
+        return Some("trigger");
+    }
+    if schema
+        .tables
+        .values()
+        .any(|t| t.policies.iter().any(|p| p.name == truncated))
+        || schema.pending_policies.iter().any(|p| p.name == truncated)
+    {
+        return Some("policy");
+    }
+    if schema
+        .tables
+        .values()
+        .any(|t| t.columns.values().any(|c| c.name == truncated))
+    {
+        return Some("column");
+    }
+    if schema.tables.values().any(|t| t.name == truncated)
+        || schema.partitions.values().any(|p| p.name == truncated)
+    {
+        return Some("table");
+    }
+    if schema.views.values().any(|v| v.name == truncated) {
+        return Some("view");
+    }
+    if schema.functions.values().any(|f| f.name == truncated) {
+        return Some("function");
+    }
+    if schema.enums.values().any(|e| e.name == truncated) {
+        return Some("enum");
+    }
+    if schema.domains.values().any(|d| d.name == truncated) {
+        return Some("domain");
+    }
+    if schema.sequences.values().any(|s| s.name == truncated) {
+        return Some("sequence");
+    }
+    None
 }
 
 /// Returns `true` when `name` refers to a built-in `pg_catalog` trigger

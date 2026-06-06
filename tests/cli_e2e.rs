@@ -234,6 +234,35 @@ fn diff_shows_changes() {
     );
 }
 
+#[test]
+fn diff_warns_on_overlong_identifier_in_target() {
+    let long = "a".repeat(64);
+    let from_sql = "CREATE TABLE users (id BIGINT NOT NULL PRIMARY KEY);";
+    let to_sql = format!(
+        "CREATE TABLE users (id BIGINT NOT NULL PRIMARY KEY); CREATE INDEX \"{long}\" ON users (id);"
+    );
+    let schema_a = write_sql_temp_file(from_sql);
+    let schema_b = write_sql_temp_file(&to_sql);
+    let from_arg = format!("sql:{}", schema_a.path().display());
+    let to_arg = format!("sql:{}", schema_b.path().display());
+
+    let output = pgmold()
+        .args(["diff", "--from", &from_arg, "--to", &to_arg])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "expected exit 0, got: {}",
+        output.status
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("warn_identifier_exceeds_namedatalen"),
+        "expected identifier warning in diff output, got: {stdout:?}"
+    );
+}
+
 // ── Dump command ─────────────────────────────────────────────────────────────
 
 #[tokio::test]

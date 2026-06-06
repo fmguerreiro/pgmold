@@ -5543,6 +5543,164 @@ fn alter_index_rename_with_64_byte_names_applies_truncation() {
 }
 
 #[test]
+fn overlong_table_name_is_recorded_for_lint() {
+    let long = "t".repeat(64);
+    let sql = format!("CREATE TABLE \"{long}\" (id BIGINT NOT NULL);");
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    assert_eq!(
+        schema.overlong_identifiers,
+        vec![crate::model::OverlongIdentifier {
+            kind: "table".to_string(),
+            name: long,
+        }]
+    );
+}
+
+#[test]
+fn overlong_column_index_and_function_names_are_recorded_for_lint() {
+    let long_column = "c".repeat(64);
+    let long_index = "i".repeat(70);
+    let long_function = "f".repeat(80);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL, "{long_column}" TEXT);
+        CREATE INDEX "{long_index}" ON t (id);
+        CREATE FUNCTION "{long_function}"() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
+        "#
+    );
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    let mut kinds: Vec<&str> = schema
+        .overlong_identifiers
+        .iter()
+        .map(|o| o.kind.as_str())
+        .collect();
+    kinds.sort_unstable();
+    assert_eq!(kinds, vec!["column", "function", "index"]);
+
+    let mut names: Vec<&str> = schema
+        .overlong_identifiers
+        .iter()
+        .map(|o| o.name.as_str())
+        .collect();
+    names.sort_unstable();
+    let mut expected = vec![
+        long_column.as_str(),
+        long_index.as_str(),
+        long_function.as_str(),
+    ];
+    expected.sort_unstable();
+    assert_eq!(names, expected);
+}
+
+#[test]
+fn overlong_names_truncated_via_the_truncated_ident_path_are_recorded() {
+    // PR #343 routes column names (and several other declaration sites) through
+    // `truncated_ident`, which reaches the recording chokepoint in
+    // `truncate_to_bytes`. Recording must follow that path, not only the model walk
+    // that PR #343 made dead for these kinds.
+    let long_column = "c".repeat(64);
+    let long_enum = "e".repeat(64);
+    let long_domain = "d".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TYPE "{long_enum}" AS ENUM ('a');
+        CREATE DOMAIN "{long_domain}" AS integer;
+        CREATE TABLE t (id BIGINT NOT NULL, "{long_column}" TEXT);
+        "#
+    );
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    let mut recorded: Vec<(&str, &str)> = schema
+        .overlong_identifiers
+        .iter()
+        .map(|o| (o.kind.as_str(), o.name.as_str()))
+        .collect();
+    recorded.sort_unstable();
+    let mut expected = vec![
+        ("column", long_column.as_str()),
+        ("domain", long_domain.as_str()),
+        ("enum", long_enum.as_str()),
+    ];
+    expected.sort_unstable();
+    assert_eq!(recorded, expected);
+}
+
+#[test]
+fn names_within_the_byte_limit_are_not_recorded_for_lint() {
+    let sql = r#"
+        CREATE TABLE users (id BIGINT NOT NULL, email TEXT);
+        CREATE INDEX users_email_idx ON users (email);
+    "#;
+
+    let schema = parse_sql_string(sql).expect("Should parse");
+
+    assert_eq!(schema.overlong_identifiers, Vec::new());
+}
+
+#[test]
+fn dropped_sequence_does_not_warn_for_the_overlong_name() {
+    let long = "s".repeat(64);
+    let sql = format!("CREATE SEQUENCE \"{long}\"; DROP SEQUENCE \"{long}\";");
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    assert_eq!(schema.overlong_identifiers, Vec::new());
+}
+
+#[test]
+fn renamed_column_does_not_warn_for_the_overlong_old_name() {
+    let long_old = "o".repeat(64);
+    let sql = format!(
+        "CREATE TABLE t (\"{long_old}\" INTEGER); ALTER TABLE t RENAME COLUMN \"{long_old}\" TO short;"
+    );
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    assert_eq!(schema.overlong_identifiers, Vec::new());
+}
+
+#[test]
+fn renamed_constraint_does_not_warn_for_the_overlong_old_name() {
+    let long_old = "o".repeat(64);
+    let sql = format!(
+        "CREATE TABLE t (id INTEGER, CONSTRAINT \"{long_old}\" CHECK (id > 0)); ALTER TABLE t RENAME CONSTRAINT \"{long_old}\" TO short;"
+    );
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    let names: Vec<&str> = schema
+        .overlong_identifiers
+        .iter()
+        .map(|o| o.name.as_str())
+        .collect();
+    assert!(
+        !names.contains(&long_old.as_str()),
+        "old constraint name should not warn: {names:?}"
+    );
+}
+
+#[test]
+fn surviving_overlong_sequence_warns_once_with_sequence_kind() {
+    let long = "s".repeat(64);
+    let sql = format!("CREATE SEQUENCE \"{long}\";");
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    assert_eq!(
+        schema.overlong_identifiers,
+        vec![crate::model::OverlongIdentifier {
+            kind: "sequence".to_string(),
+            name: long,
+        }]
+    );
+}
+
+#[test]
 fn truncate_identifier_stops_at_char_boundary_for_multibyte_input() {
     // `あ` is a 3-byte UTF-8 char. 22 of them is 66 bytes; the 63-byte cap lands on a
     // char boundary (21 chars = 63 bytes), so the result is exactly 63 bytes of valid UTF-8.
