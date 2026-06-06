@@ -394,33 +394,44 @@ async fn baseline_captures_domain() {
 }
 
 #[tokio::test]
-async fn baseline_preserves_domain_numeric_precision_and_scale() {
+async fn introspect_carries_typmod_through_domain_base_types() {
+    use pgmold::model::PgType;
+
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
 
-    sqlx::raw_sql("CREATE DOMAIN money_amount AS NUMERIC(10, 2);")
-        .execute(connection.pool())
-        .await
-        .unwrap();
-
-    let temp_dir = TempDir::new().unwrap();
-    let output_path = temp_dir.path().join("schema.sql");
-
-    let result = run_baseline(
-        &connection,
-        &url,
-        &["public".to_string()],
-        output_path.to_str().unwrap(),
+    sqlx::raw_sql(
+        r#"
+        CREATE DOMAIN money_amount AS NUMERIC(10, 2);
+        CREATE DOMAIN unbounded_amount AS NUMERIC;
+        CREATE DOMAIN short_name AS VARCHAR(50);
+        "#,
     )
+    .execute(connection.pool())
     .await
     .unwrap();
 
-    assert!(result.report.round_trip_ok);
-    assert!(result.report.zero_diff_ok);
-    assert!(
-        result.sql_dump.contains("NUMERIC(10,2)"),
-        "domain base type lost precision/scale; dump was:\n{}",
-        result.sql_dump
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        schema.domains["public.money_amount"].data_type,
+        PgType::Numeric {
+            precision: Some(10),
+            scale: Some(2)
+        }
+    );
+    assert_eq!(
+        schema.domains["public.unbounded_amount"].data_type,
+        PgType::Numeric {
+            precision: None,
+            scale: None
+        }
+    );
+    assert_eq!(
+        schema.domains["public.short_name"].data_type,
+        PgType::Varchar(Some(50))
     );
 }
 

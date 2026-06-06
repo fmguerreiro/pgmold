@@ -442,7 +442,14 @@ async fn introspect_domains(
                 "uuid" => PgType::Uuid,
                 "json" => PgType::Json,
                 "jsonb" => PgType::Jsonb,
-                "character varying" | "varchar" => PgType::Varchar(None),
+                "character varying" | "varchar" => {
+                    let length = if base_typmod > 0 {
+                        Some((base_typmod - 4) as u32)
+                    } else {
+                        None
+                    };
+                    PgType::Varchar(length)
+                }
                 _ => {
                     let qualified = format!("public.{base_type}");
                     if base_type.contains('.') {

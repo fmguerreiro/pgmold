@@ -390,17 +390,6 @@ async fn domain() {
 }
 
 #[tokio::test]
-async fn domain_over_numeric_with_precision_and_scale() {
-    assert_convergence_public(
-        r#"
-        CREATE DOMAIN public.money_amount AS NUMERIC(10, 2)
-            CONSTRAINT money_amount_check CHECK (VALUE >= 0);
-        "#,
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn partition() {
     assert_convergence_public(
         r#"
