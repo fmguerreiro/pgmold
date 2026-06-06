@@ -754,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn numeric_bare_precision_equivalence_emits_no_alter_column() {
+    fn numeric_identical_precision_and_scale_emits_no_alter_column() {
         let mut from = empty_schema();
         let mut from_table = simple_table("ledger");
         from_table.columns.insert(
@@ -782,6 +782,43 @@ mod tests {
             ),
         );
         to.tables.insert("ledger".to_string(), to_table);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 0);
+    }
+
+    #[test]
+    fn numeric_bare_precision_source_converges_with_introspected_scale_zero() {
+        use crate::parser::parse_sql_string;
+
+        let mut from = empty_schema();
+        let mut from_table = simple_table("ledger");
+        let mut amount_column = simple_column(
+            "amount",
+            PgType::Numeric {
+                precision: Some(10),
+                scale: Some(0),
+            },
+        );
+        amount_column.nullable = false;
+        from_table
+            .columns
+            .insert("amount".to_string(), amount_column);
+        from.tables.insert("public.ledger".to_string(), from_table);
+
+        let to =
+            parse_sql_string(r#"CREATE TABLE "public"."ledger" ("amount" numeric(10) NOT NULL);"#)
+                .unwrap();
+
+        let amount = &to.tables.get("public.ledger").unwrap().columns["amount"];
+        assert_eq!(
+            amount.data_type,
+            PgType::Numeric {
+                precision: Some(10),
+                scale: Some(0),
+            },
+            "parsed numeric(10) must normalize to scale 0 to converge with introspection"
+        );
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 0);
