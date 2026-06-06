@@ -27,6 +27,7 @@ struct PlanOutput {
     operations: Vec<String>,
     statements: Vec<String>,
     lock_warnings: Vec<String>,
+    identifier_warnings: Vec<String>,
     statement_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     validated: Option<bool>,
@@ -499,6 +500,7 @@ pub async fn run() -> Result<()> {
             let to_schema = filter_by_target_schemas(&load_schema(&[to])?, &target_schemas);
             let ops = plan_migration_checked(compute_diff(&from_schema, &to_schema))?;
             let lock_warnings = detect_lock_hazards(&ops);
+            let identifier_warnings = lint_schema(&to_schema);
             let sql = generate_sql(&ops);
 
             if json {
@@ -506,19 +508,28 @@ pub async fn run() -> Result<()> {
                     operations: ops.iter().map(|op| format!("{op:?}")).collect(),
                     statements: sql.clone(),
                     lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
+                    identifier_warnings: identifier_warnings
+                        .iter()
+                        .map(|w| w.message.clone())
+                        .collect(),
                     statement_count: sql.len(),
                     validated: None,
                     idempotent: None,
                     residual_ops_count: None,
                 };
                 print_json(&output)?;
-            } else if sql.is_empty() {
-                println!("No differences found.");
             } else {
-                println!("Migration plan ({} statements):", sql.len());
-                for statement in &sql {
-                    println!("{statement}");
-                    println!();
+                for warning in &identifier_warnings {
+                    println!("[WARNING] {}: {}", warning.rule, warning.message);
+                }
+                if sql.is_empty() {
+                    println!("No differences found.");
+                } else {
+                    println!("Migration plan ({} statements):", sql.len());
+                    for statement in &sql {
+                        println!("{statement}");
+                        println!();
+                    }
                 }
             }
             Ok(())
@@ -690,6 +701,10 @@ pub async fn run() -> Result<()> {
                         operations: ops.iter().map(|op| format!("{op:?}")).collect(),
                         statements: sql.clone(),
                         lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
+                        identifier_warnings: identifier_warnings
+                            .iter()
+                            .map(|w| w.message.clone())
+                            .collect(),
                         statement_count: sql.len(),
                         validated: validation_info.as_ref().map(|v| v.success),
                         idempotent: validation_info.as_ref().map(|v| v.idempotent),
@@ -1441,6 +1456,31 @@ pub async fn run() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_output_json_includes_identifier_warnings() {
+        let output = PlanOutput {
+            operations: Vec::new(),
+            statements: Vec::new(),
+            lock_warnings: Vec::new(),
+            identifier_warnings: vec![
+                "table identifier \"aaaa\" is 64 bytes; PostgreSQL truncates".to_string(),
+            ],
+            statement_count: 0,
+            validated: None,
+            idempotent: None,
+            residual_ops_count: None,
+        };
+
+        let json = serde_json::to_value(&output).unwrap();
+
+        assert_eq!(
+            json["identifier_warnings"],
+            serde_json::json!([
+                "table identifier \"aaaa\" is 64 bytes; PostgreSQL truncates"
+            ])
+        );
+    }
 
     #[test]
     fn parses_exclude_args() {
