@@ -431,7 +431,10 @@ async fn introspect_domains(
                 "smallint" | "int2" => PgType::SmallInt,
                 "real" | "float4" => PgType::Real,
                 "double precision" | "float8" => PgType::DoublePrecision,
-                "numeric" => PgType::BuiltinNamed("numeric".to_string()),
+                "numeric" => PgType::Numeric {
+                    precision: None,
+                    scale: None,
+                },
                 "text" => PgType::Text,
                 "boolean" | "bool" => PgType::Boolean,
                 "timestamp" => PgType::Timestamp,
@@ -884,6 +887,35 @@ async fn introspect_all_columns(
     Ok(result)
 }
 
+/// Decodes a `numeric` column's `atttypmod` into precision/scale. PostgreSQL
+/// packs `precision` in bits 16..32 and `scale` in the low 11 bits of
+/// `(atttypmod - VARHDRSZ)`, where `VARHDRSZ` is 4. `scale` is a signed 11-bit
+/// value (PostgreSQL 15+ allows negative scale, e.g. `numeric(5,-2)`), so it
+/// must be sign-extended from bit 10. An `atttypmod` of -1 is the unconstrained
+/// `numeric`. See PostgreSQL's `numeric_typmodin`/`numeric_typmodout`.
+fn decode_numeric_typmod(atttypmod: i32) -> PgType {
+    if atttypmod == -1 {
+        return PgType::Numeric {
+            precision: None,
+            scale: None,
+        };
+    }
+    let payload = atttypmod - 4;
+    let precision = (payload >> 16) & 0xFFFF;
+    let scale = {
+        let raw = payload & 0x7FF;
+        if raw & 0x400 != 0 {
+            raw - 0x800
+        } else {
+            raw
+        }
+    };
+    PgType::Numeric {
+        precision: Some(precision as u32),
+        scale: Some(scale),
+    }
+}
+
 fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i32>) -> PgType {
     match udt_name {
         "bool" => PgType::Boolean,
@@ -907,7 +939,7 @@ fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i
         "bytea" => PgType::Bytea,
         "json" => PgType::Json,
         "jsonb" => PgType::Jsonb,
-        "numeric" => PgType::BuiltinNamed("numeric".to_string()),
+        "numeric" => decode_numeric_typmod(atttypmod.unwrap_or(-1)),
         "inet" => PgType::Inet,
         "cidr" => PgType::Cidr,
         "macaddr" => PgType::Macaddr,
@@ -946,7 +978,7 @@ fn map_pg_type(
         "smallint" => Ok(PgType::SmallInt),
         "real" => Ok(PgType::Real),
         "double precision" => Ok(PgType::DoublePrecision),
-        "numeric" => Ok(PgType::BuiltinNamed("numeric".to_string())),
+        "numeric" => Ok(decode_numeric_typmod(atttypmod)),
         "character varying" => Ok(PgType::Varchar(char_max_length.map(|l| l as u32))),
         "text" => Ok(PgType::Text),
         "boolean" => Ok(PgType::Boolean),
@@ -2996,9 +3028,82 @@ mod tests {
     }
 
     #[test]
-    fn map_pg_type_builtin_numeric_stays_builtin() {
+    fn map_pg_type_unconstrained_numeric_has_no_precision() {
         let result = map_pg_type("numeric", None, "pg_catalog", "numeric", -1, "numeric").unwrap();
-        assert_eq!(result, PgType::BuiltinNamed("numeric".to_string()));
+        assert_eq!(
+            result,
+            PgType::Numeric {
+                precision: None,
+                scale: None
+            }
+        );
+    }
+
+    #[test]
+    fn map_pg_type_numeric_decodes_precision_and_scale() {
+        let result = map_pg_type(
+            "numeric",
+            None,
+            "pg_catalog",
+            "numeric",
+            655366,
+            "numeric(10,2)",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            PgType::Numeric {
+                precision: Some(10),
+                scale: Some(2)
+            }
+        );
+    }
+
+    #[test]
+    fn map_pg_type_numeric_precision_only_normalizes_scale_to_zero() {
+        let result = map_pg_type(
+            "numeric",
+            None,
+            "pg_catalog",
+            "numeric",
+            655364,
+            "numeric(10,0)",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            PgType::Numeric {
+                precision: Some(10),
+                scale: Some(0)
+            }
+        );
+    }
+
+    #[test]
+    fn map_pg_type_numeric_negative_scale_sign_extends() {
+        // PostgreSQL encodes numeric(5,-2) as ((5 << 16) | (-2 & 0x7ff)) + VARHDRSZ.
+        // Confirmed live against postgres:16: pg_attribute.atttypmod == 329730.
+        let atttypmod = ((5i32 << 16) | (-2i32 & 0x7FF)) + 4;
+        assert_eq!(
+            atttypmod, 329730,
+            "fixture must match PostgreSQL's encoding"
+        );
+        let result = map_pg_type(
+            "numeric",
+            None,
+            "pg_catalog",
+            "numeric",
+            atttypmod,
+            "numeric(5,-2)",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            PgType::Numeric {
+                precision: Some(5),
+                scale: Some(-2)
+            }
+        );
     }
 
     #[test]

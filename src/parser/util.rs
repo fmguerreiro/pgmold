@@ -4,7 +4,7 @@
 #![allow(clippy::wildcard_enum_match_arm)]
 
 use crate::model::*;
-use crate::util::{normalize_type_casts, Result, SchemaError};
+use crate::util::{normalize_type_casts, numeric_typmod_parts, Result, SchemaError};
 use sqlparser::ast::{
     ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, ForValues, ObjectName,
     PartitionBoundValue, TimezoneInfo,
@@ -144,8 +144,9 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
         DataType::SmallInt(_) => Ok(PgType::SmallInt),
         DataType::Real | DataType::Float4 => Ok(PgType::Real),
         DataType::DoublePrecision | DataType::Float8 => Ok(PgType::DoublePrecision),
-        DataType::Numeric(_) | DataType::Decimal(_) => {
-            Ok(PgType::BuiltinNamed("numeric".to_string()))
+        DataType::Numeric(info) | DataType::Decimal(info) => {
+            let (precision, scale) = numeric_typmod_parts(info);
+            Ok(PgType::Numeric { precision, scale })
         }
         DataType::Varchar(len) => {
             let size = len.as_ref().and_then(|l| match l {

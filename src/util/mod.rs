@@ -3,14 +3,28 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use sqlparser::ast::{
-    BinaryOperator, CastKind, DataType, Expr, GroupByExpr, OrderBy, OrderByExpr, OrderByKind,
-    OrderByOptions, Query, Select, SetExpr, Statement,
+    BinaryOperator, CastKind, DataType, ExactNumberInfo, Expr, GroupByExpr, OrderBy, OrderByExpr,
+    OrderByKind, OrderByOptions, Query, Select, SetExpr, Statement,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use thiserror::Error;
 
 use crate::model::{PgType, Table};
+
+/// Decodes a parsed `numeric`/`decimal` type's [`ExactNumberInfo`] into the
+/// canonical `(precision, scale)` pair. `numeric(p)` normalizes to scale 0 to
+/// match PostgreSQL's own typmod encoding, so the model never stores a precision
+/// with a `None` scale. Scale is signed because PostgreSQL 15+ allows negative
+/// scale. This is the single source of truth for that normalization; both the
+/// parser and the view-cast comparator call it.
+pub(crate) fn numeric_typmod_parts(info: &ExactNumberInfo) -> (Option<u32>, Option<i32>) {
+    match info {
+        ExactNumberInfo::None => (None, None),
+        ExactNumberInfo::Precision(p) => (Some(*p as u32), Some(0)),
+        ExactNumberInfo::PrecisionAndScale(p, s) => (Some(*p as u32), Some(*s as i32)),
+    }
+}
 
 static RE_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").expect("valid regex"));
 
@@ -211,30 +225,43 @@ pub fn normalize_type_casts(expr: &str) -> String {
         .to_string()
 }
 
-/// Check if a DataType is a numeric type
+/// Check if a DataType is a numeric type whose cast on a column reference is
+/// always a no-op regardless of the column's declared type.
+///
+/// Precision-qualified `numeric(p[,s])`/`decimal(p[,s])` are deliberately
+/// excluded: a cast such as `numeric(10,2)` may rescale the value (#342), so it
+/// is only a no-op when it matches the column's own precision/scale exactly.
+/// Those are routed through `pg_type_matches_cast` + FROM-clause resolution
+/// instead of this blanket early exit. Bare `numeric`/`decimal` (no typmod) is
+/// still treated as a no-op here because it imposes no constraint.
 fn is_numeric_type(dt: &DataType) -> bool {
-    matches!(
-        dt,
+    use sqlparser::ast::ExactNumberInfo;
+    match dt {
         DataType::Int(_)
-            | DataType::Integer(_)
-            | DataType::BigInt(_)
-            | DataType::SmallInt(_)
-            | DataType::TinyInt(_)
-            | DataType::Numeric(_)
-            | DataType::Decimal(_)
-            | DataType::Float(_)
-            | DataType::Real
-            | DataType::Double(_)
-            | DataType::DoublePrecision
-    )
+        | DataType::Integer(_)
+        | DataType::BigInt(_)
+        | DataType::SmallInt(_)
+        | DataType::TinyInt(_)
+        | DataType::Float(_)
+        | DataType::Real
+        | DataType::Double(_)
+        | DataType::DoublePrecision => true,
+        DataType::Numeric(info) | DataType::Decimal(info) => {
+            matches!(info, ExactNumberInfo::None)
+        }
+        _ => false,
+    }
 }
 
-/// Check if a DataType is a date/time type.
-/// PostgreSQL implicitly casts DATE columns to TIMESTAMP when calling
-/// functions like date_trunc that require a timestamp argument.
-/// These implicit casts should be stripped during normalization.
+/// Check if a DataType is a date/time type whose cast on a column reference is
+/// always a no-op.
+///
+/// PostgreSQL implicitly casts DATE columns to TIMESTAMP when calling functions
+/// like date_trunc that require a timestamp argument; those implicit casts are
+/// stripped during normalization. A precision-qualified `timestamp(p)` is
+/// excluded so a real precision change is not silently dropped (#342).
 fn is_datetime_type(dt: &DataType) -> bool {
-    matches!(dt, DataType::Date | DataType::Timestamp(_, _))
+    matches!(dt, DataType::Date | DataType::Timestamp(None, _))
 }
 
 /// Applies the normalization steps shared by both `normalize_expression_regex` and
@@ -678,12 +705,13 @@ fn column_reference_parts(expr: &Expr) -> Option<(Option<String>, String)> {
 /// (both already normalized). Returns true only for an exact no-op match.
 ///
 /// Only casts that survive the numeric/datetime/text early exit in `normalize_expr`
-/// reach this function for a column reference. That early exit already strips any
-/// identifier cast whose target is numeric (integer, bigint, smallint, real, double
-/// precision, ...) or datetime (date, timestamp), so those arms would be dead here
-/// and are intentionally omitted. Length-qualified character casts (`varchar(n)`,
-/// `char(n)`) and the non-numeric/non-datetime scalar types (`boolean`, `uuid`) are
-/// not stripped early, so they must be matched here.
+/// reach this function for a column reference. That early exit strips identifier
+/// casts whose target is a non-precision numeric (integer, bigint, smallint, real,
+/// double precision, bare numeric) or non-precision datetime (date, plain
+/// timestamp), so those arms are intentionally omitted. Length-qualified character
+/// casts (`varchar(n)`, `char(n)`), precision-qualified numeric casts
+/// (`numeric(p[,s])`), and the scalar types (`boolean`, `uuid`) are not stripped
+/// early, so they must be matched here.
 fn pg_type_matches_cast(pg_type: &PgType, cast_type: &DataType) -> bool {
     use sqlparser::ast::CharacterLength;
     let char_len = |len: &Option<CharacterLength>| -> Option<u64> {
@@ -698,6 +726,13 @@ fn pg_type_matches_cast(pg_type: &PgType, cast_type: &DataType) -> bool {
         }
         (PgType::Char(col_len), DataType::Character(cast_len)) => {
             col_len.map(|l| l as u64) == char_len(cast_len)
+        }
+        (
+            PgType::Numeric { precision, scale },
+            DataType::Numeric(info) | DataType::Decimal(info),
+        ) => {
+            let (cast_precision, cast_scale) = numeric_typmod_parts(info);
+            *precision == cast_precision && *scale == cast_scale
         }
         (PgType::Boolean, DataType::Boolean) => true,
         (PgType::Uuid, DataType::Uuid) => true,
@@ -3443,6 +3478,98 @@ fn truncating_char_cast_on_single_table_column_preserved() {
         views_semantically_equal_with_columns(with_cast, without_cast, &tables, "s"),
         false,
         "A truncating char cast (shorter target length) is real and must be preserved"
+    );
+}
+
+#[test]
+#[allow(clippy::bool_assert_comparison)]
+fn noop_numeric_cast_on_single_table_column_elided() {
+    // #340: a no-op CAST to a numeric column's own precision/scale is stripped by
+    // PostgreSQL's deparser, so pgmold must elide it to converge.
+    let tables = tables_from_sql("CREATE TABLE s.t (amount numeric(10,2));");
+    let with_cast = "SELECT CAST(t1.amount AS numeric(10,2)) AS amount FROM s.t t1";
+    let without_cast = "SELECT t1.amount AS amount FROM s.t t1";
+    assert_eq!(
+        views_semantically_equal_with_columns(with_cast, without_cast, &tables, "s"),
+        true,
+        "A no-op CAST to a numeric column's own precision/scale must be elided"
+    );
+}
+
+#[test]
+#[allow(clippy::bool_assert_comparison)]
+fn rescale_numeric_cast_on_single_table_column_preserved() {
+    // #342: a CAST that changes precision/scale (numeric(12,4) -> numeric(10,2))
+    // is a real rescale and must NOT be elided.
+    let tables = tables_from_sql("CREATE TABLE s.t (amount numeric(12,4));");
+    let with_cast = "SELECT CAST(t1.amount AS numeric(10,2)) AS amount FROM s.t t1";
+    let without_cast = "SELECT t1.amount AS amount FROM s.t t1";
+    assert_eq!(
+        views_semantically_equal_with_columns(with_cast, without_cast, &tables, "s"),
+        false,
+        "A rescaling numeric cast (different precision/scale) is real and must be preserved"
+    );
+}
+
+#[test]
+#[allow(clippy::bool_assert_comparison)]
+fn changed_numeric_cast_target_is_detected() {
+    // #342: two views differing only in the numeric cast target must NOT compare
+    // equal, otherwise a genuine change is silently dropped.
+    let tables = tables_from_sql("CREATE TABLE s.t (amount numeric(12,4));");
+    let cast_10_2 = "SELECT CAST(t1.amount AS numeric(10,2)) AS amount FROM s.t t1";
+    let cast_8_2 = "SELECT CAST(t1.amount AS numeric(8,2)) AS amount FROM s.t t1";
+    assert_eq!(
+        views_semantically_equal_with_columns(cast_10_2, cast_8_2, &tables, "s"),
+        false,
+        "A change to the numeric cast target precision must be detected"
+    );
+}
+
+#[test]
+#[allow(clippy::bool_assert_comparison)]
+fn numeric_cast_on_bare_numeric_column_preserved() {
+    // A cast from an unconstrained `numeric` column to numeric(10,2) adds a real
+    // constraint; PostgreSQL keeps it in the deparsed view, so pgmold must too.
+    let tables = tables_from_sql("CREATE TABLE s.t (amount numeric);");
+    let with_cast = "SELECT CAST(t1.amount AS numeric(10,2)) AS amount FROM s.t t1";
+    let without_cast = "SELECT t1.amount AS amount FROM s.t t1";
+    assert_eq!(
+        views_semantically_equal_with_columns(with_cast, without_cast, &tables, "s"),
+        false,
+        "A cast constraining a bare numeric column is real and must be preserved"
+    );
+}
+
+#[test]
+#[allow(clippy::bool_assert_comparison)]
+fn numeric_cast_on_join_ambiguous_column_preserved() {
+    // The column `amount` exists in two joined tables; it cannot be resolved to a
+    // single declared type, so the cast must be preserved (fail safe).
+    let tables = tables_from_sql(
+        "CREATE TABLE s.a (amount numeric(10,2)); CREATE TABLE s.b (amount numeric(10,2));",
+    );
+    let with_cast =
+        "SELECT CAST(amount AS numeric(10,2)) AS amount FROM s.a JOIN s.b ON s.a.id = s.b.id";
+    let without_cast = "SELECT amount AS amount FROM s.a JOIN s.b ON s.a.id = s.b.id";
+    assert_eq!(
+        views_semantically_equal_with_columns(with_cast, without_cast, &tables, "s"),
+        false,
+        "An ambiguous numeric column reference cannot be resolved; fail safe and keep the cast"
+    );
+}
+
+#[test]
+#[allow(clippy::bool_assert_comparison)]
+fn numeric_cast_on_cte_backed_column_preserved() {
+    let tables = tables_from_sql("CREATE TABLE s.cte (amount numeric(10,2));");
+    let with_cast =
+        "WITH cte AS (SELECT amount FROM s.t) SELECT CAST(cte.amount AS numeric(10,2)) AS amount FROM cte";
+    let without_cast = "WITH cte AS (SELECT amount FROM s.t) SELECT cte.amount FROM cte";
+    assert_eq!(
+        views_semantically_equal_with_columns(with_cast, without_cast, &tables, "s"),
+        false,
+        "A numeric cast on a CTE-backed column is opaque and must be preserved"
     );
 }
 

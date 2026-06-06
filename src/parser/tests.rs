@@ -1927,6 +1927,63 @@ embedding_qualified public.vector(768)
 }
 
 #[test]
+fn parse_numeric_precision_and_scale() {
+    let sql = r#"
+CREATE TABLE money (
+id BIGINT NOT NULL PRIMARY KEY,
+bare numeric,
+p10 numeric(10),
+p10s0 numeric(10,0),
+p10s2 numeric(10,2),
+p12s4 decimal(12,4)
+);
+"#;
+
+    let schema = parse_sql_string(sql).expect("Should parse");
+    let money = &schema.tables["public.money"];
+
+    assert_eq!(
+        money.columns["bare"].data_type,
+        PgType::Numeric {
+            precision: None,
+            scale: None
+        }
+    );
+    assert_eq!(
+        money.columns["p10"].data_type,
+        PgType::Numeric {
+            precision: Some(10),
+            scale: Some(0)
+        }
+    );
+    assert_eq!(
+        money.columns["p10s0"].data_type,
+        PgType::Numeric {
+            precision: Some(10),
+            scale: Some(0)
+        }
+    );
+    assert_eq!(
+        money.columns["p10"].data_type,
+        money.columns["p10s0"].data_type
+    );
+    assert_eq!(
+        money.columns["p10s2"].data_type,
+        PgType::Numeric {
+            precision: Some(10),
+            scale: Some(2)
+        }
+    );
+    assert_eq!(
+        money.columns["p12s4"].data_type,
+        PgType::Numeric {
+            precision: Some(12),
+            scale: Some(4)
+        }
+    );
+}
+
+#[test]
 fn parse_postgis_geometry_types() {
     let sql = r#"
 CREATE TABLE shapes (
