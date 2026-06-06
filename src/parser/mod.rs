@@ -36,7 +36,7 @@ use sqlparser::ast::{
     AlterSchemaOperation, AlterTable, AlterTableOperation, AlterType, AlterTypeAddValue,
     AlterTypeAddValuePosition, AlterTypeOperation, CreateAggregate, CreateAggregateOption,
     CreateDomain, CreateExtension, CreateFunction, CreateServerStatement, CreateTrigger,
-    CreateView, DeferrableInitial, DropDomain, DropExtension, DropFunction, DropTrigger, Expr,
+    CreateView, DeferrableInitial, DropDomain, DropExtension, DropFunction, DropTrigger,
     FunctionParallel, Grantee, GranteeName, GranteesType, ObjectType, Owner, Privileges,
     RenameTableNameKind, SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent,
     TriggerPeriod, TriggerReferencingType, UserDefinedTypeRepresentation,
@@ -62,7 +62,8 @@ use tables::{
 use util::{
     extract_qualified_name, normalize_expr, parse_data_type, parse_for_values,
     parse_for_values_required, parse_policy_command, take_overlong_identifiers,
-    truncate_identifier, truncate_referenced_identifier, truncated_ident, unquote_ident,
+    truncate_identifier, truncate_index_column, truncate_referenced_columns,
+    truncate_referenced_identifier, truncated_ident, unquote_ident,
 };
 
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
@@ -176,20 +177,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     };
                     table.indexes.push(Index {
                         name: idx_name,
-                        columns: ci
-                            .columns
-                            .iter()
-                            .map(|c| {
-                                // A bare-column index entry references a column PG truncates
-                                // at declaration; truncate the reference to match. Expression
-                                // entries (e.g. lower(x)) are kept verbatim.
-                                if let Expr::Identifier(ident) = &c.column.expr {
-                                    truncate_referenced_identifier(&ident.value)
-                                } else {
-                                    unquote_ident(&c.column.expr.to_string()).to_string()
-                                }
-                            })
-                            .collect(),
+                        columns: ci.columns.iter().map(truncate_index_column).collect(),
                         unique: ci.unique,
                         index_type,
                         predicate: ci.predicate.as_ref().map(|p| p.to_string()),
@@ -326,28 +314,14 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                                             extract_qualified_name(&fk.foreign_table);
                                         table.foreign_keys.push(ForeignKey {
                                             name: truncate_identifier(&fk_name),
-                                            columns: fk
-                                                .columns
-                                                .iter()
-                                                .map(|c| {
-                                                    truncate_referenced_identifier(unquote_ident(
-                                                        &c.to_string(),
-                                                    ))
-                                                })
-                                                .collect(),
+                                            columns: truncate_referenced_columns(&fk.columns),
                                             referenced_schema: ref_schema,
                                             referenced_table: truncate_referenced_identifier(
                                                 &raw_ref_table,
                                             ),
-                                            referenced_columns: fk
-                                                .referred_columns
-                                                .iter()
-                                                .map(|c| {
-                                                    truncate_referenced_identifier(unquote_ident(
-                                                        &c.to_string(),
-                                                    ))
-                                                })
-                                                .collect(),
+                                            referenced_columns: truncate_referenced_columns(
+                                                &fk.referred_columns,
+                                            ),
                                             on_delete: parse_referential_action(&fk.on_delete),
                                             on_update: parse_referential_action(&fk.on_update),
                                         });

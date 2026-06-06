@@ -6,8 +6,8 @@
 use crate::model::*;
 use crate::util::{normalize_type_casts, numeric_typmod_parts, Result, SchemaError};
 use sqlparser::ast::{
-    ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, ForValues, ObjectName,
-    PartitionBoundValue, TimezoneInfo,
+    ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, Expr, ForValues, Ident,
+    IndexColumn, ObjectName, PartitionBoundValue, TimezoneInfo,
 };
 
 use std::cell::RefCell;
@@ -45,6 +45,29 @@ pub(super) fn truncate_identifier(s: &str) -> String {
 /// at every place it is referenced.
 pub(super) fn truncate_referenced_identifier(s: &str) -> String {
     truncate_to_bytes_raw(s, PG_MAX_IDENTIFIER_LENGTH).to_string()
+}
+
+/// Truncate a list of referenced column identifiers (FK local or referenced
+/// columns) to the PG-truncated form the catalog holds. See
+/// [`truncate_referenced_identifier`].
+pub(super) fn truncate_referenced_columns(columns: &[Ident]) -> Vec<String> {
+    columns
+        .iter()
+        .map(|column| truncate_referenced_identifier(unquote_ident(&column.to_string())))
+        .collect()
+}
+
+/// Resolve an index column entry to its stored form. A bare-column entry
+/// references a column PG truncates at declaration, so the reference is
+/// truncated to match (see [`truncate_referenced_identifier`]). Expression
+/// entries (e.g. `lower(x)`) are kept verbatim: introspection renders those via
+/// `pg_get_indexdef`, not `attname`.
+pub(super) fn truncate_index_column(column: &IndexColumn) -> String {
+    if let Expr::Identifier(ident) = &column.column.expr {
+        truncate_referenced_identifier(&ident.value)
+    } else {
+        unquote_ident(&column.column.expr.to_string()).to_string()
+    }
 }
 
 /// Truncate `s` to at most `max_bytes` bytes, backing off to the nearest UTF-8 char

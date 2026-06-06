@@ -1419,6 +1419,62 @@ fn foreign_key_to_overlong_column_truncates_referenced_column() {
 }
 
 #[test]
+fn inline_foreign_key_to_overlong_table_truncates_referenced_table() {
+    let parent = "r".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {parent} (id INT NOT NULL, PRIMARY KEY (id)); \
+         CREATE TABLE child ( \
+            id INT NOT NULL, \
+            parent_id INT NOT NULL REFERENCES {parent} (id) \
+         );"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(child.foreign_keys[0].referenced_table, "r".repeat(63));
+}
+
+#[test]
+fn table_constraint_foreign_key_truncates_referenced_column() {
+    let column = "c".repeat(64);
+    let sql = format!(
+        "CREATE TABLE parent_tbl ({column} INT NOT NULL, PRIMARY KEY ({column})); \
+         CREATE TABLE child ( \
+            id INT NOT NULL, \
+            parent_ref INT NOT NULL, \
+            CONSTRAINT child_parent_fkey FOREIGN KEY (parent_ref) REFERENCES parent_tbl ({column}) \
+         );"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(
+        child.foreign_keys[0].referenced_columns,
+        vec!["c".repeat(63)]
+    );
+}
+
+#[test]
+fn alter_table_add_foreign_key_truncates_references() {
+    let parent = "r".repeat(64);
+    let column = "c".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {parent} ({column} INT NOT NULL, PRIMARY KEY ({column})); \
+         CREATE TABLE child (id INT NOT NULL, parent_ref INT NOT NULL, PRIMARY KEY (id)); \
+         ALTER TABLE child ADD CONSTRAINT child_parent_fkey \
+            FOREIGN KEY (parent_ref) REFERENCES {parent} ({column});"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(child.foreign_keys[0].referenced_table, "r".repeat(63));
+    assert_eq!(
+        child.foreign_keys[0].referenced_columns,
+        vec!["c".repeat(63)]
+    );
+}
+
+#[test]
 fn index_on_overlong_column_truncates_plain_reference_but_leaves_expressions() {
     let column = "z".repeat(64);
     let sql = format!(
