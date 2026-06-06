@@ -917,9 +917,10 @@ fn decode_numeric_typmod(atttypmod: i32) -> PgType {
     }
 }
 
-/// Decodes a `varchar` column's `atttypmod` into a declared length. PostgreSQL
-/// stores `length + VARHDRSZ` (4) for a bounded `varchar(n)` and -1 for the
-/// unbounded `varchar`.
+/// Decodes a `varchar` typmod into a declared length. PostgreSQL stores
+/// `length + VARHDRSZ` (4) for a bounded `varchar(n)` and -1 for the unbounded
+/// `varchar`. The same encoding applies to table columns (`atttypmod`) and
+/// domain base types (`typtypmod`).
 fn decode_varchar_typmod(atttypmod: i32) -> Option<u32> {
     if atttypmod > 0 {
         Some((atttypmod - 4) as u32)
