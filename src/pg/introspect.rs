@@ -372,6 +372,7 @@ async fn introspect_domains(
             t.typname AS domain_name,
             bt.typname AS base_type,
             bt.typcategory::text AS base_category,
+            t.typtypmod AS base_typmod,
             t.typnotnull AS not_null,
             pg_get_expr(t.typdefaultbin, 0) AS default_expr,
             r.rolname AS owner,
@@ -409,6 +410,7 @@ async fn introspect_domains(
         let name: String = row.get("domain_name");
         let base_type: String = row.get("base_type");
         let base_category: String = row.get("base_category");
+        let base_typmod: i32 = row.get("base_typmod");
         let not_null: bool = row.get("not_null");
         let default_expr: Option<String> = row
             .get::<Option<String>, &str>("default_expr")
@@ -431,10 +433,7 @@ async fn introspect_domains(
                 "smallint" | "int2" => PgType::SmallInt,
                 "real" | "float4" => PgType::Real,
                 "double precision" | "float8" => PgType::DoublePrecision,
-                "numeric" => PgType::Numeric {
-                    precision: None,
-                    scale: None,
-                },
+                "numeric" => decode_numeric_typmod(base_typmod),
                 "text" => PgType::Text,
                 "boolean" | "bool" => PgType::Boolean,
                 "timestamp" => PgType::Timestamp,

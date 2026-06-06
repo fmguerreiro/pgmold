@@ -394,6 +394,37 @@ async fn baseline_captures_domain() {
 }
 
 #[tokio::test]
+async fn baseline_preserves_domain_numeric_precision_and_scale() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::raw_sql("CREATE DOMAIN money_amount AS NUMERIC(10, 2);")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let temp_dir = TempDir::new().unwrap();
+    let output_path = temp_dir.path().join("schema.sql");
+
+    let result = run_baseline(
+        &connection,
+        &url,
+        &["public".to_string()],
+        output_path.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert!(result.report.round_trip_ok);
+    assert!(result.report.zero_diff_ok);
+    assert!(
+        result.sql_dump.contains("NUMERIC(10,2)"),
+        "domain base type lost precision/scale; dump was:\n{}",
+        result.sql_dump
+    );
+}
+
+#[tokio::test]
 async fn baseline_detects_inherited_table() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
