@@ -6,8 +6,8 @@
 use crate::model::*;
 use crate::util::{normalize_type_casts, Result, SchemaError};
 use sqlparser::ast::{
-    ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, ForValues, ObjectName,
-    PartitionBoundValue, TimezoneInfo,
+    ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, ExactNumberInfo, ForValues,
+    ObjectName, PartitionBoundValue, TimezoneInfo,
 };
 
 /// PostgreSQL's NAMEDATALEN is 64, so identifiers are truncated to 63 bytes.
@@ -110,8 +110,13 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
         DataType::SmallInt(_) => Ok(PgType::SmallInt),
         DataType::Real | DataType::Float4 => Ok(PgType::Real),
         DataType::DoublePrecision | DataType::Float8 => Ok(PgType::DoublePrecision),
-        DataType::Numeric(_) | DataType::Decimal(_) => {
-            Ok(PgType::BuiltinNamed("numeric".to_string()))
+        DataType::Numeric(info) | DataType::Decimal(info) => {
+            let (precision, scale) = match info {
+                ExactNumberInfo::None => (None, None),
+                ExactNumberInfo::Precision(p) => (Some(*p as u32), Some(0)),
+                ExactNumberInfo::PrecisionAndScale(p, s) => (Some(*p as u32), Some(*s as u32)),
+            };
+            Ok(PgType::Numeric { precision, scale })
         }
         DataType::Varchar(len) => {
             let size = len.as_ref().and_then(|l| match l {

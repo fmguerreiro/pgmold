@@ -1013,6 +1013,18 @@ fn format_pg_type(pg_type: &PgType) -> String {
         PgType::Varchar(None) => "VARCHAR".to_string(),
         PgType::Char(Some(len)) => format!("CHAR({len})"),
         PgType::Char(None) => "CHAR(1)".to_string(),
+        PgType::Numeric {
+            precision: Some(precision),
+            scale: Some(scale),
+        } => format!("NUMERIC({precision},{scale})"),
+        PgType::Numeric {
+            precision: Some(precision),
+            scale: None,
+        } => format!("NUMERIC({precision})"),
+        PgType::Numeric {
+            precision: None,
+            scale: _,
+        } => "NUMERIC".to_string(),
         PgType::Text => "TEXT".to_string(),
         PgType::Boolean => "BOOLEAN".to_string(),
         PgType::TimestampTz => "TIMESTAMP WITH TIME ZONE".to_string(),
@@ -1797,6 +1809,31 @@ mod tests {
         assert_eq!(
             format_pg_type(&PgType::Geography(Some("Point".into()), Some(4326))),
             "geography(Point, 4326)"
+        );
+    }
+
+    #[test]
+    fn format_pg_type_numeric_emits_precision_and_scale() {
+        assert_eq!(
+            format_pg_type(&PgType::Numeric {
+                precision: Some(10),
+                scale: Some(2)
+            }),
+            "NUMERIC(10,2)"
+        );
+        assert_eq!(
+            format_pg_type(&PgType::Numeric {
+                precision: Some(10),
+                scale: Some(0)
+            }),
+            "NUMERIC(10,0)"
+        );
+        assert_eq!(
+            format_pg_type(&PgType::Numeric {
+                precision: None,
+                scale: None
+            }),
+            "NUMERIC"
         );
     }
 

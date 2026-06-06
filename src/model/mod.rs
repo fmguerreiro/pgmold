@@ -260,6 +260,14 @@ pub enum PgType {
     DoublePrecision,
     Varchar(Option<u32>),
     Char(Option<u32>),
+    /// PostgreSQL `numeric`/`decimal`. `precision`/`scale` both `None` is the
+    /// unconstrained `numeric` (any value); a precision with `scale` `None` is
+    /// never stored here because `numeric(p)` normalizes to `numeric(p, 0)` in
+    /// both parse and introspection, matching PostgreSQL's own typmod encoding.
+    Numeric {
+        precision: Option<u32>,
+        scale: Option<u32>,
+    },
     Text,
     Boolean,
     TimestampTz,
