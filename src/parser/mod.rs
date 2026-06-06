@@ -121,7 +121,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
     for statement in statements {
         match statement {
             Statement::CreateTable(ct) => {
-                let (table_schema, table_name) = extract_qualified_name(&ct.name);
+                let (table_schema, raw_table_name) = extract_qualified_name(&ct.name);
+                let table_name = truncate_identifier(&raw_table_name);
 
                 if let Some(ref parent_table) = ct.partition_of {
                     let (parent_schema, parent_name) = extract_qualified_name(parent_table);
@@ -192,7 +193,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 representation: Some(UserDefinedTypeRepresentation::Enum { labels }),
                 ..
             } => {
-                let (enum_schema, enum_name) = extract_qualified_name(&name);
+                let (enum_schema, raw_enum_name) = extract_qualified_name(&name);
+                let enum_name = truncate_identifier(&raw_enum_name);
                 let enum_type = EnumType {
                     schema: enum_schema.clone(),
                     name: enum_name.clone(),
@@ -427,7 +429,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 let names_to_drop: Vec<String> = column_names
                                     .iter()
-                                    .map(|n| unquote_ident(&n.value).to_string())
+                                    .map(|n| truncate_identifier(unquote_ident(&n.value)))
                                     .collect();
                                 table
                                     .columns
@@ -437,13 +439,13 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                         AlterTableOperation::RenameTable { table_name } => {
                             let new_name = match table_name {
                                 RenameTableNameKind::As(obj) | RenameTableNameKind::To(obj) => {
-                                    let (new_schema, new_tbl) = extract_qualified_name(&obj);
+                                    let (new_schema, raw_new_tbl) = extract_qualified_name(&obj);
                                     let effective_schema = if obj.0.len() == 1 {
                                         tbl_schema.clone()
                                     } else {
                                         new_schema
                                     };
-                                    (effective_schema, new_tbl)
+                                    (effective_schema, truncate_identifier(&raw_new_tbl))
                                 }
                             };
                             let new_key = qualified_name(&new_name.0, &new_name.1);
@@ -459,8 +461,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             new_column_name,
                         } => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
-                                let old_name = unquote_ident(&old_column_name.value).to_string();
-                                let new_name = unquote_ident(&new_column_name.value).to_string();
+                                let old_name = truncated_ident(&old_column_name);
+                                let new_name = truncated_ident(&new_column_name);
 
                                 if let Some(mut column) = table.columns.remove(&old_name) {
                                     column.name = new_name.clone();
@@ -696,7 +698,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 set_params,
                 ..
             }) => {
-                let (func_schema, func_name) = extract_qualified_name(&name);
+                let (func_schema, raw_func_name) = extract_qualified_name(&name);
+                let func_name = truncate_identifier(&raw_func_name);
                 let func = parse_create_function(
                     &func_schema,
                     &func_name,
@@ -717,7 +720,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 materialized,
                 ..
             }) => {
-                let (view_schema, view_name) = extract_qualified_name(&name);
+                let (view_schema, raw_view_name) = extract_qualified_name(&name);
+                let view_name = truncate_identifier(&raw_view_name);
                 let view = View {
                     schema: view_schema.clone(),
                     name: view_name.clone(),
@@ -778,7 +782,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 default,
                 constraints,
             }) => {
-                let (domain_schema, domain_name) = extract_qualified_name(&name);
+                let (domain_schema, raw_domain_name) = extract_qualified_name(&name);
+                let domain_name = truncate_identifier(&raw_domain_name);
                 let pg_type = parse_data_type(&data_type)?;
 
                 let mut not_null = false;
