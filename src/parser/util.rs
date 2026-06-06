@@ -4,10 +4,10 @@
 #![allow(clippy::wildcard_enum_match_arm)]
 
 use crate::model::*;
-use crate::util::{normalize_type_casts, Result, SchemaError};
+use crate::util::{normalize_type_casts, numeric_typmod_parts, Result, SchemaError};
 use sqlparser::ast::{
-    ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, ExactNumberInfo, ForValues,
-    ObjectName, PartitionBoundValue, TimezoneInfo,
+    ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, ForValues, ObjectName,
+    PartitionBoundValue, TimezoneInfo,
 };
 
 /// PostgreSQL's NAMEDATALEN is 64, so identifiers are truncated to 63 bytes.
@@ -111,11 +111,7 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
         DataType::Real | DataType::Float4 => Ok(PgType::Real),
         DataType::DoublePrecision | DataType::Float8 => Ok(PgType::DoublePrecision),
         DataType::Numeric(info) | DataType::Decimal(info) => {
-            let (precision, scale) = match info {
-                ExactNumberInfo::None => (None, None),
-                ExactNumberInfo::Precision(p) => (Some(*p as u32), Some(0)),
-                ExactNumberInfo::PrecisionAndScale(p, s) => (Some(*p as u32), Some(*s as u32)),
-            };
+            let (precision, scale) = numeric_typmod_parts(info);
             Ok(PgType::Numeric { precision, scale })
         }
         DataType::Varchar(len) => {

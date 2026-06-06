@@ -888,8 +888,11 @@ async fn introspect_all_columns(
 }
 
 /// Decodes a `numeric` column's `atttypmod` into precision/scale. PostgreSQL
-/// packs `precision` in the high 16 bits and `scale` in the low 16 bits of
-/// `(atttypmod - 4)`. An `atttypmod` of -1 is the unconstrained `numeric`.
+/// packs `precision` in bits 16..32 and `scale` in the low 11 bits of
+/// `(atttypmod - VARHDRSZ)`, where `VARHDRSZ` is 4. `scale` is a signed 11-bit
+/// value (PostgreSQL 15+ allows negative scale, e.g. `numeric(5,-2)`), so it
+/// must be sign-extended from bit 10. An `atttypmod` of -1 is the unconstrained
+/// `numeric`. See PostgreSQL's `numeric_typmodin`/`numeric_typmodout`.
 fn decode_numeric_typmod(atttypmod: i32) -> PgType {
     if atttypmod == -1 {
         return PgType::Numeric {
@@ -897,11 +900,19 @@ fn decode_numeric_typmod(atttypmod: i32) -> PgType {
             scale: None,
         };
     }
-    let precision = ((atttypmod - 4) >> 16) & 0xFFFF;
-    let scale = (atttypmod - 4) & 0xFFFF;
+    let payload = atttypmod - 4;
+    let precision = (payload >> 16) & 0xFFFF;
+    let scale = {
+        let raw = payload & 0x7FF;
+        if raw & 0x400 != 0 {
+            raw - 0x800
+        } else {
+            raw
+        }
+    };
     PgType::Numeric {
         precision: Some(precision as u32),
-        scale: Some(scale as u32),
+        scale: Some(scale),
     }
 }
 
@@ -3064,6 +3075,33 @@ mod tests {
             PgType::Numeric {
                 precision: Some(10),
                 scale: Some(0)
+            }
+        );
+    }
+
+    #[test]
+    fn map_pg_type_numeric_negative_scale_sign_extends() {
+        // PostgreSQL encodes numeric(5,-2) as ((5 << 16) | (-2 & 0x7ff)) + VARHDRSZ.
+        // Confirmed live against postgres:16: pg_attribute.atttypmod == 329730.
+        let atttypmod = ((5i32 << 16) | (-2i32 & 0x7FF)) + 4;
+        assert_eq!(
+            atttypmod, 329730,
+            "fixture must match PostgreSQL's encoding"
+        );
+        let result = map_pg_type(
+            "numeric",
+            None,
+            "pg_catalog",
+            "numeric",
+            atttypmod,
+            "numeric(5,-2)",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            PgType::Numeric {
+                precision: Some(5),
+                scale: Some(-2)
             }
         );
     }

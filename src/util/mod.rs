@@ -3,14 +3,28 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use sqlparser::ast::{
-    BinaryOperator, CastKind, DataType, Expr, GroupByExpr, OrderBy, OrderByExpr, OrderByKind,
-    OrderByOptions, Query, Select, SetExpr, Statement,
+    BinaryOperator, CastKind, DataType, ExactNumberInfo, Expr, GroupByExpr, OrderBy, OrderByExpr,
+    OrderByKind, OrderByOptions, Query, Select, SetExpr, Statement,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use thiserror::Error;
 
 use crate::model::{PgType, Table};
+
+/// Decodes a parsed `numeric`/`decimal` type's [`ExactNumberInfo`] into the
+/// canonical `(precision, scale)` pair. `numeric(p)` normalizes to scale 0 to
+/// match PostgreSQL's own typmod encoding, so the model never stores a precision
+/// with a `None` scale. Scale is signed because PostgreSQL 15+ allows negative
+/// scale. This is the single source of truth for that normalization; both the
+/// parser and the view-cast comparator call it.
+pub(crate) fn numeric_typmod_parts(info: &ExactNumberInfo) -> (Option<u32>, Option<i32>) {
+    match info {
+        ExactNumberInfo::None => (None, None),
+        ExactNumberInfo::Precision(p) => (Some(*p as u32), Some(0)),
+        ExactNumberInfo::PrecisionAndScale(p, s) => (Some(*p as u32), Some(*s as i32)),
+    }
+}
 
 static RE_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").expect("valid regex"));
 
@@ -699,21 +713,11 @@ fn column_reference_parts(expr: &Expr) -> Option<(Option<String>, String)> {
 /// (`numeric(p[,s])`), and the scalar types (`boolean`, `uuid`) are not stripped
 /// early, so they must be matched here.
 fn pg_type_matches_cast(pg_type: &PgType, cast_type: &DataType) -> bool {
-    use sqlparser::ast::{CharacterLength, ExactNumberInfo};
+    use sqlparser::ast::CharacterLength;
     let char_len = |len: &Option<CharacterLength>| -> Option<u64> {
         match len {
             Some(CharacterLength::IntegerLength { length, .. }) => Some(*length),
             _ => None,
-        }
-    };
-    // Decode a cast's `ExactNumberInfo` into (precision, scale) using the same
-    // `numeric(p)` -> `numeric(p, 0)` normalization PostgreSQL applies, so it
-    // compares equal to a column declared either way.
-    let numeric_parts = |info: &ExactNumberInfo| -> (Option<u32>, Option<u32>) {
-        match info {
-            ExactNumberInfo::None => (None, None),
-            ExactNumberInfo::Precision(p) => (Some(*p as u32), Some(0)),
-            ExactNumberInfo::PrecisionAndScale(p, s) => (Some(*p as u32), Some(*s as u32)),
         }
     };
     match (pg_type, cast_type) {
@@ -727,7 +731,7 @@ fn pg_type_matches_cast(pg_type: &PgType, cast_type: &DataType) -> bool {
             PgType::Numeric { precision, scale },
             DataType::Numeric(info) | DataType::Decimal(info),
         ) => {
-            let (cast_precision, cast_scale) = numeric_parts(info);
+            let (cast_precision, cast_scale) = numeric_typmod_parts(info);
             *precision == cast_precision && *scale == cast_scale
         }
         (PgType::Boolean, DataType::Boolean) => true,

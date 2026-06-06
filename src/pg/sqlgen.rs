@@ -1018,13 +1018,23 @@ fn format_pg_type(pg_type: &PgType) -> String {
             scale: Some(scale),
         } => format!("NUMERIC({precision},{scale})"),
         PgType::Numeric {
-            precision: Some(precision),
+            precision: Some(_),
             scale: None,
-        } => format!("NUMERIC({precision})"),
+        } => unreachable!(
+            "Numeric {{ precision: Some, scale: None }} is a forbidden IR state; \
+             numeric(p) normalizes to scale 0 at construction"
+        ),
         PgType::Numeric {
             precision: None,
-            scale: _,
+            scale: None,
         } => "NUMERIC".to_string(),
+        PgType::Numeric {
+            precision: None,
+            scale: Some(_),
+        } => unreachable!(
+            "Numeric {{ precision: None, scale: Some }} is a forbidden IR state; \
+             scale without precision cannot exist"
+        ),
         PgType::Text => "TEXT".to_string(),
         PgType::Boolean => "BOOLEAN".to_string(),
         PgType::TimestampTz => "TIMESTAMP WITH TIME ZONE".to_string(),
@@ -1834,6 +1844,17 @@ mod tests {
                 scale: None
             }),
             "NUMERIC"
+        );
+    }
+
+    #[test]
+    fn format_pg_type_numeric_emits_negative_scale() {
+        assert_eq!(
+            format_pg_type(&PgType::Numeric {
+                precision: Some(5),
+                scale: Some(-2)
+            }),
+            "NUMERIC(5,-2)"
         );
     }
 
