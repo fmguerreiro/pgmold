@@ -265,7 +265,7 @@ pub enum PgType {
     /// never stored here because `numeric(p)` normalizes to `numeric(p, 0)` in
     /// both parse and introspection, matching PostgreSQL's own typmod encoding.
     /// `scale` is signed because PostgreSQL 15+ allows negative scale (e.g.
-    /// `numeric(5,-2)` rounds to hundreds), encoded as a signed 16-bit word in
+    /// `numeric(5,-2)` rounds to hundreds), encoded as a signed 11-bit value in
     /// the low bits of `atttypmod`.
     Numeric {
         precision: Option<u32>,
