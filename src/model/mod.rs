@@ -1081,6 +1081,63 @@ impl Schema {
         }
     }
 
+    /// Drops overlong-identifier records whose (truncated) object is no longer
+    /// present in this schema. Filtering (`--include`, `--target-schemas`) removes
+    /// objects but not their sidecar warnings; this re-derives the set against the
+    /// retained model so excluded objects do not produce warnings.
+    pub fn retain_overlong_identifiers_in_model(&mut self) {
+        let records = std::mem::take(&mut self.overlong_identifiers);
+        self.overlong_identifiers = records
+            .into_iter()
+            .filter(|identifier| self.contains_overlong_object(identifier))
+            .collect();
+    }
+
+    fn contains_overlong_object(&self, identifier: &OverlongIdentifier) -> bool {
+        use crate::parser::util::{truncate_to_bytes, PG_MAX_IDENTIFIER_LENGTH};
+        // Model-walk kinds (table, column, view, ...) keep the full name in the
+        // model; side-channel kinds (index, constraint, ...) are stored
+        // truncated. Match either form so both sources resolve.
+        let full = identifier.name.as_str();
+        let truncated = truncate_to_bytes(&identifier.name, PG_MAX_IDENTIFIER_LENGTH);
+        let matches = |name: &str| name == full || name == truncated;
+        match identifier.kind.as_str() {
+            "table" => self.tables.values().any(|t| matches(&t.name)),
+            "column" => self
+                .tables
+                .values()
+                .any(|t| t.columns.values().any(|c| matches(&c.name))),
+            "view" => self.views.values().any(|v| matches(&v.name)),
+            "function" => self.functions.values().any(|f| matches(&f.name)),
+            "enum" => self.enums.values().any(|e| matches(&e.name)),
+            "domain" => self.domains.values().any(|d| matches(&d.name)),
+            "sequence" => self.sequences.values().any(|s| matches(&s.name)),
+            "index" => {
+                self.tables
+                    .values()
+                    .any(|t| t.indexes.iter().any(|i| matches(&i.name)))
+                    || self
+                        .partitions
+                        .values()
+                        .any(|p| p.indexes.iter().any(|i| matches(&i.name)))
+            }
+            "constraint" => self.tables.values().any(|t| {
+                t.foreign_keys.iter().any(|f| matches(&f.name))
+                    || t.check_constraints.iter().any(|c| matches(&c.name))
+            }),
+            "trigger" => self.triggers.values().any(|t| matches(&t.name)),
+            "policy" => {
+                self.tables
+                    .values()
+                    .any(|t| t.policies.iter().any(|p| matches(&p.name)))
+                    || self.pending_policies.iter().any(|p| matches(&p.name))
+            }
+            other => panic!(
+                "unknown overlong-identifier kind {other:?}; every kind produced by the parser must be matched here"
+            ),
+        }
+    }
+
     pub fn fingerprint(&self) -> String {
         use sha2::{Digest, Sha256};
         let json = serde_json::to_string(self).expect("Schema must serialize");
