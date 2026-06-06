@@ -13,7 +13,7 @@ use sqlparser::ast::{
 use std::cell::RefCell;
 
 /// PostgreSQL's NAMEDATALEN is 64, so identifiers are truncated to 63 bytes.
-pub(super) const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
+pub(crate) const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
 
 thread_local! {
     /// Original (pre-truncation) declared identifiers seen during a single parse.
@@ -38,7 +38,7 @@ pub(super) fn truncate_identifier(s: &str) -> String {
 
 /// Truncate `s` to at most `max_bytes` bytes, backing off to the nearest UTF-8 char
 /// boundary at or below the cap. Mirrors PG's `pg_mbcliplen`: never split a codepoint.
-pub(super) fn truncate_to_bytes(s: &str, max_bytes: usize) -> &str {
+pub(crate) fn truncate_to_bytes(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
         return s;
     }

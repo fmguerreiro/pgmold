@@ -2,9 +2,7 @@ pub mod locks;
 
 use crate::diff::MigrationOp;
 use crate::model::{PgType, Schema};
-
-/// PostgreSQL's NAMEDATALEN is 64, so identifiers are stored as at most 63 bytes.
-const MAX_IDENTIFIER_BYTES: usize = 63;
+use crate::parser::util::{truncate_to_bytes, PG_MAX_IDENTIFIER_LENGTH};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LintOptions {
@@ -48,33 +46,20 @@ pub fn lint_schema(schema: &Schema) -> Vec<LintResult> {
     schema
         .overlong_identifiers
         .iter()
-        .filter(|identifier| identifier.name.len() > MAX_IDENTIFIER_BYTES)
+        .filter(|identifier| identifier.name.len() > PG_MAX_IDENTIFIER_LENGTH)
         .map(|identifier| {
             let byte_length = identifier.name.len();
-            let truncated = truncate_to_bytes(&identifier.name, MAX_IDENTIFIER_BYTES);
+            let truncated = truncate_to_bytes(&identifier.name, PG_MAX_IDENTIFIER_LENGTH);
             LintResult {
                 rule: "warn_identifier_exceeds_namedatalen",
                 severity: LintSeverity::Warning,
                 message: format!(
                     "{} identifier \"{}\" is {} bytes; PostgreSQL truncates identifiers to {} bytes and will store it as \"{}\"",
-                    identifier.kind, identifier.name, byte_length, MAX_IDENTIFIER_BYTES, truncated
+                    identifier.kind, identifier.name, byte_length, PG_MAX_IDENTIFIER_LENGTH, truncated
                 ),
             }
         })
         .collect()
-}
-
-/// Truncates `s` to at most `max_bytes` bytes without splitting a UTF-8
-/// codepoint, mirroring PostgreSQL's `pg_mbcliplen`.
-fn truncate_to_bytes(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
 }
 
 pub fn has_errors(results: &[LintResult]) -> bool {

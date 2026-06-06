@@ -15,7 +15,7 @@ mod preprocess;
 mod sequences;
 mod tables;
 mod unrecognized;
-mod util;
+pub(crate) mod util;
 
 #[cfg(test)]
 mod tests;
@@ -1405,6 +1405,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
 fn classify_overlong_identifiers(schema: &Schema) -> Vec<crate::model::OverlongIdentifier> {
     use crate::model::OverlongIdentifier;
     use std::collections::BTreeSet;
+    use util::PG_MAX_IDENTIFIER_LENGTH;
 
     let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
     let mut result = Vec::new();
@@ -1418,43 +1419,43 @@ fn classify_overlong_identifiers(schema: &Schema) -> Vec<crate::model::OverlongI
     };
 
     for table in schema.tables.values() {
-        if table.name.len() > 63 {
+        if table.name.len() > PG_MAX_IDENTIFIER_LENGTH {
             push("table", &table.name, &mut result);
         }
         for column in table.columns.values() {
-            if column.name.len() > 63 {
+            if column.name.len() > PG_MAX_IDENTIFIER_LENGTH {
                 push("column", &column.name, &mut result);
             }
         }
     }
     for view in schema.views.values() {
-        if view.name.len() > 63 {
+        if view.name.len() > PG_MAX_IDENTIFIER_LENGTH {
             push("view", &view.name, &mut result);
         }
     }
     for function in schema.functions.values() {
-        if function.name.len() > 63 {
+        if function.name.len() > PG_MAX_IDENTIFIER_LENGTH {
             push("function", &function.name, &mut result);
         }
     }
     for sequence in schema.sequences.values() {
-        if sequence.name.len() > 63 {
+        if sequence.name.len() > PG_MAX_IDENTIFIER_LENGTH {
             push("sequence", &sequence.name, &mut result);
         }
     }
     for enum_type in schema.enums.values() {
-        if enum_type.name.len() > 63 {
+        if enum_type.name.len() > PG_MAX_IDENTIFIER_LENGTH {
             push("enum", &enum_type.name, &mut result);
         }
     }
     for domain in schema.domains.values() {
-        if domain.name.len() > 63 {
+        if domain.name.len() > PG_MAX_IDENTIFIER_LENGTH {
             push("domain", &domain.name, &mut result);
         }
     }
 
     for original in take_overlong_identifiers() {
-        let truncated = truncate_to_bytes(&original, 63);
+        let truncated = truncate_to_bytes(&original, PG_MAX_IDENTIFIER_LENGTH);
         let kind = classify_truncated_name(schema, truncated);
         push(kind, &original, &mut result);
     }
