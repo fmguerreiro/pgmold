@@ -1,6 +1,6 @@
 mod drizzle;
 
-use crate::model::Schema;
+use crate::model::{dedup_overlong_identifiers, Schema};
 use crate::parser::load_schema_sources;
 use crate::util::SchemaError;
 
@@ -94,7 +94,12 @@ fn merge_schemas(schemas: Vec<Schema>) -> Result<Schema> {
         merged.pending_grants.extend(schema.pending_grants);
         merged.pending_revokes.extend(schema.pending_revokes);
         merged.pending_comments.extend(schema.pending_comments);
+        merged
+            .overlong_identifiers
+            .extend(schema.overlong_identifiers);
     }
+
+    dedup_overlong_identifiers(&mut merged.overlong_identifiers);
 
     merged.finalize().map_err(SchemaError::ParseError)?;
 
@@ -164,6 +169,35 @@ mod tests {
         let result = load_schema_from_sources(&[sql_source(&table_file), sql_source(&policy_file)]);
         let err = result.unwrap_err().to_string();
         assert!(err.contains("nonexistent_table"));
+    }
+
+    #[test]
+    fn overlong_identifiers_merge_across_multiple_sources() {
+        let dir1 = TempDir::new().unwrap();
+        let dir2 = TempDir::new().unwrap();
+        let long_a = "a".repeat(64);
+        let long_b = "b".repeat(64);
+
+        let file_a = write_sql_file(
+            &dir1,
+            "a.sql",
+            format!("CREATE TABLE \"{long_a}\" (id INT);").as_bytes(),
+        );
+        let file_b = write_sql_file(
+            &dir2,
+            "b.sql",
+            format!("CREATE TABLE \"{long_b}\" (id INT);").as_bytes(),
+        );
+
+        let merged = load_schema_from_sources(&[sql_source(&file_a), sql_source(&file_b)]).unwrap();
+
+        let mut names: Vec<&str> = merged
+            .overlong_identifiers
+            .iter()
+            .map(|o| o.name.as_str())
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, vec![long_a.as_str(), long_b.as_str()]);
     }
 
     #[test]

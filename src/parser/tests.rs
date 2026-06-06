@@ -5600,6 +5600,164 @@ fn alter_index_rename_with_64_byte_names_applies_truncation() {
 }
 
 #[test]
+fn overlong_table_name_is_recorded_for_lint() {
+    let long = "t".repeat(64);
+    let sql = format!("CREATE TABLE \"{long}\" (id BIGINT NOT NULL);");
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    assert_eq!(
+        schema.overlong_identifiers,
+        vec![crate::model::OverlongIdentifier {
+            kind: "table".to_string(),
+            name: long,
+        }]
+    );
+}
+
+#[test]
+fn overlong_column_index_and_function_names_are_recorded_for_lint() {
+    let long_column = "c".repeat(64);
+    let long_index = "i".repeat(70);
+    let long_function = "f".repeat(80);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL, "{long_column}" TEXT);
+        CREATE INDEX "{long_index}" ON t (id);
+        CREATE FUNCTION "{long_function}"() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
+        "#
+    );
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    let mut kinds: Vec<&str> = schema
+        .overlong_identifiers
+        .iter()
+        .map(|o| o.kind.as_str())
+        .collect();
+    kinds.sort_unstable();
+    assert_eq!(kinds, vec!["column", "function", "index"]);
+
+    let mut names: Vec<&str> = schema
+        .overlong_identifiers
+        .iter()
+        .map(|o| o.name.as_str())
+        .collect();
+    names.sort_unstable();
+    let mut expected = vec![
+        long_column.as_str(),
+        long_index.as_str(),
+        long_function.as_str(),
+    ];
+    expected.sort_unstable();
+    assert_eq!(names, expected);
+}
+
+#[test]
+fn overlong_names_truncated_via_the_truncated_ident_path_are_recorded() {
+    // PR #343 routes column names (and several other declaration sites) through
+    // `truncated_ident`, which reaches the recording chokepoint in
+    // `truncate_to_bytes`. Recording must follow that path, not only the model walk
+    // that PR #343 made dead for these kinds.
+    let long_column = "c".repeat(64);
+    let long_enum = "e".repeat(64);
+    let long_domain = "d".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TYPE "{long_enum}" AS ENUM ('a');
+        CREATE DOMAIN "{long_domain}" AS integer;
+        CREATE TABLE t (id BIGINT NOT NULL, "{long_column}" TEXT);
+        "#
+    );
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    let mut recorded: Vec<(&str, &str)> = schema
+        .overlong_identifiers
+        .iter()
+        .map(|o| (o.kind.as_str(), o.name.as_str()))
+        .collect();
+    recorded.sort_unstable();
+    let mut expected = vec![
+        ("column", long_column.as_str()),
+        ("domain", long_domain.as_str()),
+        ("enum", long_enum.as_str()),
+    ];
+    expected.sort_unstable();
+    assert_eq!(recorded, expected);
+}
+
+#[test]
+fn names_within_the_byte_limit_are_not_recorded_for_lint() {
+    let sql = r#"
+        CREATE TABLE users (id BIGINT NOT NULL, email TEXT);
+        CREATE INDEX users_email_idx ON users (email);
+    "#;
+
+    let schema = parse_sql_string(sql).expect("Should parse");
+
+    assert_eq!(schema.overlong_identifiers, Vec::new());
+}
+
+#[test]
+fn dropped_sequence_does_not_warn_for_the_overlong_name() {
+    let long = "s".repeat(64);
+    let sql = format!("CREATE SEQUENCE \"{long}\"; DROP SEQUENCE \"{long}\";");
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    assert_eq!(schema.overlong_identifiers, Vec::new());
+}
+
+#[test]
+fn renamed_column_does_not_warn_for_the_overlong_old_name() {
+    let long_old = "o".repeat(64);
+    let sql = format!(
+        "CREATE TABLE t (\"{long_old}\" INTEGER); ALTER TABLE t RENAME COLUMN \"{long_old}\" TO short;"
+    );
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    assert_eq!(schema.overlong_identifiers, Vec::new());
+}
+
+#[test]
+fn renamed_constraint_does_not_warn_for_the_overlong_old_name() {
+    let long_old = "o".repeat(64);
+    let sql = format!(
+        "CREATE TABLE t (id INTEGER, CONSTRAINT \"{long_old}\" CHECK (id > 0)); ALTER TABLE t RENAME CONSTRAINT \"{long_old}\" TO short;"
+    );
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    let names: Vec<&str> = schema
+        .overlong_identifiers
+        .iter()
+        .map(|o| o.name.as_str())
+        .collect();
+    assert!(
+        !names.contains(&long_old.as_str()),
+        "old constraint name should not warn: {names:?}"
+    );
+}
+
+#[test]
+fn surviving_overlong_sequence_warns_once_with_sequence_kind() {
+    let long = "s".repeat(64);
+    let sql = format!("CREATE SEQUENCE \"{long}\";");
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    assert_eq!(
+        schema.overlong_identifiers,
+        vec![crate::model::OverlongIdentifier {
+            kind: "sequence".to_string(),
+            name: long,
+        }]
+    );
+}
+
+#[test]
 fn truncate_identifier_stops_at_char_boundary_for_multibyte_input() {
     // `あ` is a 3-byte UTF-8 char. 22 of them is 66 bytes; the 63-byte cap lands on a
     // char boundary (21 chars = 63 bytes), so the result is exactly 63 bytes of valid UTF-8.
@@ -5688,4 +5846,224 @@ fn alter_table_rename_constraint_matches_already_truncated_old_name() {
     let table = schema.tables.get("public.users").unwrap();
     assert_eq!(table.indexes.len(), 1);
     assert_eq!(table.indexes[0].name, "users_email_index");
+}
+
+#[test]
+fn create_table_truncates_table_name_to_63_bytes() {
+    let long_name = "t".repeat(64);
+    let sql = format!(r#"CREATE TABLE "{long_name}" (id BIGINT NOT NULL);"#);
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "t".repeat(63);
+    let table = schema.tables.get(&format!("public.{truncated}")).unwrap();
+    assert_eq!(table.name, truncated);
+}
+
+#[test]
+fn create_table_truncates_multibyte_table_name_at_char_boundary() {
+    // `À` is a 2-byte UTF-8 char; 32 of them is 64 bytes. PG clips to 63 bytes, which falls
+    // mid-codepoint, so the byte-safe truncation backs off to 31 chars (62 bytes).
+    let long_name = "À".repeat(32);
+    assert_eq!(long_name.len(), 64);
+    let sql = format!(r#"CREATE TABLE "{long_name}" (id BIGINT NOT NULL);"#);
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "À".repeat(31);
+    assert_eq!(truncated.len(), 62);
+    let table = schema.tables.get(&format!("public.{truncated}")).unwrap();
+    assert_eq!(table.name, truncated);
+}
+
+#[test]
+fn create_view_truncates_view_name_to_63_bytes() {
+    let long_name = "v".repeat(64);
+    let sql = format!(r#"CREATE VIEW "{long_name}" AS SELECT 1 AS a;"#);
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "v".repeat(63);
+    let view = schema.views.get(&format!("public.{truncated}")).unwrap();
+    assert_eq!(view.name, truncated);
+    assert!(!view.materialized);
+}
+
+#[test]
+fn create_materialized_view_truncates_view_name_to_63_bytes() {
+    let long_name = "m".repeat(64);
+    let sql = format!(r#"CREATE MATERIALIZED VIEW "{long_name}" AS SELECT 1 AS a;"#);
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "m".repeat(63);
+    let view = schema.views.get(&format!("public.{truncated}")).unwrap();
+    assert_eq!(view.name, truncated);
+    assert!(view.materialized);
+}
+
+#[test]
+fn create_enum_type_truncates_type_name_to_63_bytes() {
+    let long_name = "e".repeat(64);
+    let sql = format!(r#"CREATE TYPE "{long_name}" AS ENUM ('a', 'b');"#);
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "e".repeat(63);
+    let enum_type = schema.enums.get(&format!("public.{truncated}")).unwrap();
+    assert_eq!(enum_type.name, truncated);
+}
+
+#[test]
+fn create_domain_truncates_domain_name_to_63_bytes() {
+    let long_name = "d".repeat(64);
+    let sql = format!(r#"CREATE DOMAIN "{long_name}" AS TEXT;"#);
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "d".repeat(63);
+    let domain = schema.domains.get(&format!("public.{truncated}")).unwrap();
+    assert_eq!(domain.name, truncated);
+}
+
+#[test]
+fn create_function_truncates_function_name_to_63_bytes() {
+    let long_name = "f".repeat(64);
+    let sql = format!(
+        r#"CREATE FUNCTION "{long_name}"() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;"#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "f".repeat(63);
+    let function = schema
+        .functions
+        .values()
+        .find(|f| f.name == truncated)
+        .unwrap();
+    assert_eq!(function.name, truncated);
+    assert!(schema
+        .functions
+        .contains_key(&format!("public.{truncated}()")));
+}
+
+#[test]
+fn create_table_truncates_column_name_to_63_bytes() {
+    let long_col = "c".repeat(64);
+    let sql = format!(r#"CREATE TABLE t (id BIGINT NOT NULL, "{long_col}" TEXT);"#);
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "c".repeat(63);
+    let table = schema.tables.get("public.t").unwrap();
+    assert!(table.columns.contains_key(&truncated));
+    assert_eq!(table.columns.get(&truncated).unwrap().name, truncated);
+}
+
+#[test]
+fn alter_table_add_column_truncates_column_name_to_63_bytes() {
+    let long_col = "c".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL);
+        ALTER TABLE t ADD COLUMN "{long_col}" TEXT;
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "c".repeat(63);
+    let table = schema.tables.get("public.t").unwrap();
+    assert!(table.columns.contains_key(&truncated));
+    assert_eq!(table.columns.get(&truncated).unwrap().name, truncated);
+}
+
+#[test]
+fn alter_table_rename_column_truncates_new_name_to_63_bytes() {
+    let long_new = "n".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL, email TEXT);
+        ALTER TABLE t RENAME COLUMN email TO "{long_new}";
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "n".repeat(63);
+    let table = schema.tables.get("public.t").unwrap();
+    assert!(table.columns.contains_key(&truncated));
+    assert!(!table.columns.contains_key("email"));
+    assert_eq!(table.columns.get(&truncated).unwrap().name, truncated);
+}
+
+#[test]
+fn alter_table_rename_column_matches_already_truncated_old_name() {
+    // A 64-char column name is stored truncated to 63 bytes at creation time. Renaming from
+    // the 64-char form must match the stored 63-byte name, so the old name needs the same
+    // truncation before lookup.
+    let long_old = "o".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL, "{long_old}" TEXT);
+        ALTER TABLE t RENAME COLUMN "{long_old}" TO renamed;
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated_old = "o".repeat(63);
+    let table = schema.tables.get("public.t").unwrap();
+    assert!(table.columns.contains_key("renamed"));
+    assert!(!table.columns.contains_key(&truncated_old));
+    assert_eq!(table.columns.get("renamed").unwrap().name, "renamed");
+}
+
+#[test]
+fn drop_column_with_64_byte_name_removes_column() {
+    // A 64-char column name is stored truncated to 63 bytes at creation time. DROP COLUMN
+    // naming the 64-char form must match the stored 63-byte key, so the drop name needs the
+    // same truncation before lookup.
+    let long_col = "c".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL, "{long_col}" TEXT);
+        ALTER TABLE t DROP COLUMN "{long_col}";
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "c".repeat(63);
+    let table = schema.tables.get("public.t").unwrap();
+    assert!(
+        !table.columns.contains_key(&truncated),
+        "DROP COLUMN with overlong name must remove the column; remaining: {:?}",
+        table.columns.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn inline_table_level_primary_key_on_64_byte_column_resolves_truncated_name() {
+    // A table-level PRIMARY KEY (...) constraint flows through `apply_primary_key`, which must
+    // truncate the column name so it matches the stored 63-byte column key (NOT NULL flip) and
+    // the stored PK column name is the truncated form.
+    let long_col = "c".repeat(64);
+    let sql =
+        format!(r#"CREATE TABLE t ("{long_col}" BIGINT NOT NULL, PRIMARY KEY ("{long_col}"));"#);
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "c".repeat(63);
+    let table = schema.tables.get("public.t").unwrap();
+    let pk = table.primary_key.as_ref().unwrap();
+    assert_eq!(pk.columns, vec![truncated.clone()]);
+    assert!(!table.columns.get(&truncated).unwrap().nullable);
+}
+
+#[test]
+fn alter_table_add_primary_key_on_64_byte_column_resolves_truncated_name() {
+    let long_col = "c".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t ("{long_col}" BIGINT NOT NULL);
+        ALTER TABLE t ADD CONSTRAINT t_pkey PRIMARY KEY ("{long_col}");
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "c".repeat(63);
+    let table = schema.tables.get("public.t").unwrap();
+    let pk = table.primary_key.as_ref().unwrap();
+    assert_eq!(pk.columns, vec![truncated.clone()]);
+    assert!(!table.columns.get(&truncated).unwrap().nullable);
+}
+
+#[test]
+fn alter_table_rename_table_truncates_new_name_to_63_bytes() {
+    let long_new = "n".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL);
+        ALTER TABLE t RENAME TO "{long_new}";
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "n".repeat(63);
+    let table = schema.tables.get(&format!("public.{truncated}")).unwrap();
+    assert_eq!(table.name, truncated);
+    assert!(!schema.tables.contains_key("public.t"));
 }

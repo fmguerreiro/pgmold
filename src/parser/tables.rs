@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 
 use super::util::{
     extract_qualified_name, normalize_expr, parse_data_type, truncate_identifier,
-    truncate_to_bytes, unquote_ident, PG_MAX_IDENTIFIER_LENGTH,
+    truncate_to_bytes_raw, truncated_ident, unquote_ident, PG_MAX_IDENTIFIER_LENGTH,
 };
 
 pub(super) struct ParsedTable {
@@ -60,7 +60,7 @@ pub(super) fn parse_create_table(
     }
 
     for col_def in columns {
-        let col_name = unquote_ident(&col_def.name.to_string()).to_string();
+        let col_name = truncated_ident(&col_def.name);
         for option in &col_def.options {
             let explicit_name = option
                 .name
@@ -363,7 +363,7 @@ pub(super) fn parse_column_with_serial(
         }
     }
 
-    let col_name = unquote_ident(&col_def.name.to_string()).to_string();
+    let col_name = truncated_ident(&col_def.name);
 
     if generated.is_some() {
         let column = Column {
@@ -462,11 +462,7 @@ pub(super) fn detect_serial_type(dt: &DataType) -> Option<SequenceDataType> {
 /// `ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY (...)` — to the given table,
 /// populating `table.primary_key` and flipping the referenced columns to NOT NULL.
 pub(super) fn apply_primary_key(table: &mut Table, pk: &PrimaryKeyConstraint) {
-    let pk_columns: Vec<String> = pk
-        .columns
-        .iter()
-        .map(|c| unquote_ident(&c.to_string()).to_string())
-        .collect();
+    let pk_columns: Vec<String> = pk.columns.iter().map(truncated_ident).collect();
     for pk_col in &pk_columns {
         if let Some(col) = table.columns.get_mut(pk_col) {
             col.nullable = false;
@@ -519,7 +515,7 @@ pub(super) fn dedup_check_constraint_name(base: &str, table: &Table) -> String {
     loop {
         let suffix = counter.to_string();
         let max_base = PG_MAX_IDENTIFIER_LENGTH.saturating_sub(suffix.len());
-        let truncated_base = truncate_to_bytes(base, max_base);
+        let truncated_base = truncate_to_bytes_raw(base, max_base);
         let candidate = format!("{truncated_base}{suffix}");
         if !check_name_taken(&candidate, table) {
             return candidate;

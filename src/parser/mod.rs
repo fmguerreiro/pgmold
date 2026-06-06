@@ -15,7 +15,7 @@ mod preprocess;
 mod sequences;
 mod tables;
 mod unrecognized;
-mod util;
+pub(crate) mod util;
 
 #[cfg(test)]
 mod tests;
@@ -61,8 +61,8 @@ use tables::{
 };
 use util::{
     extract_qualified_name, normalize_expr, parse_data_type, parse_for_values,
-    parse_for_values_required, parse_policy_command, truncate_identifier, truncated_ident,
-    unquote_ident,
+    parse_for_values_required, parse_policy_command, take_overlong_identifiers,
+    truncate_identifier, truncated_ident, unquote_ident,
 };
 
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
@@ -112,12 +112,17 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
     let statements = Parser::parse_sql(&dialect, &preprocessed_sql)
         .map_err(|e| SchemaError::ParseError(format!("SQL parse error: {e}")))?;
 
+    // Discard any originals left by a prior parse that errored before draining,
+    // so this parse's overlong-identifier set is not contaminated.
+    let _ = take_overlong_identifiers();
+
     let mut schema = Schema::new();
 
     for statement in statements {
         match statement {
             Statement::CreateTable(ct) => {
-                let (table_schema, table_name) = extract_qualified_name(&ct.name);
+                let (table_schema, raw_table_name) = extract_qualified_name(&ct.name);
+                let table_name = truncate_identifier(&raw_table_name);
 
                 if let Some(ref parent_table) = ct.partition_of {
                     let (parent_schema, parent_name) = extract_qualified_name(parent_table);
@@ -188,7 +193,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 representation: Some(UserDefinedTypeRepresentation::Enum { labels }),
                 ..
             } => {
-                let (enum_schema, enum_name) = extract_qualified_name(&name);
+                let (enum_schema, raw_enum_name) = extract_qualified_name(&name);
+                let enum_name = truncate_identifier(&raw_enum_name);
                 let enum_type = EnumType {
                     schema: enum_schema.clone(),
                     name: enum_name.clone(),
@@ -423,7 +429,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 let names_to_drop: Vec<String> = column_names
                                     .iter()
-                                    .map(|n| unquote_ident(&n.value).to_string())
+                                    .map(|n| truncate_identifier(unquote_ident(&n.value)))
                                     .collect();
                                 table
                                     .columns
@@ -433,13 +439,13 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                         AlterTableOperation::RenameTable { table_name } => {
                             let new_name = match table_name {
                                 RenameTableNameKind::As(obj) | RenameTableNameKind::To(obj) => {
-                                    let (new_schema, new_tbl) = extract_qualified_name(&obj);
+                                    let (new_schema, raw_new_tbl) = extract_qualified_name(&obj);
                                     let effective_schema = if obj.0.len() == 1 {
                                         tbl_schema.clone()
                                     } else {
                                         new_schema
                                     };
-                                    (effective_schema, new_tbl)
+                                    (effective_schema, truncate_identifier(&raw_new_tbl))
                                 }
                             };
                             let new_key = qualified_name(&new_name.0, &new_name.1);
@@ -455,8 +461,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             new_column_name,
                         } => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
-                                let old_name = unquote_ident(&old_column_name.value).to_string();
-                                let new_name = unquote_ident(&new_column_name.value).to_string();
+                                let old_name = truncated_ident(&old_column_name);
+                                let new_name = truncated_ident(&new_column_name);
 
                                 if let Some(mut column) = table.columns.remove(&old_name) {
                                     column.name = new_name.clone();
@@ -692,7 +698,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 set_params,
                 ..
             }) => {
-                let (func_schema, func_name) = extract_qualified_name(&name);
+                let (func_schema, raw_func_name) = extract_qualified_name(&name);
+                let func_name = truncate_identifier(&raw_func_name);
                 let func = parse_create_function(
                     &func_schema,
                     &func_name,
@@ -713,7 +720,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 materialized,
                 ..
             }) => {
-                let (view_schema, view_name) = extract_qualified_name(&name);
+                let (view_schema, raw_view_name) = extract_qualified_name(&name);
+                let view_name = truncate_identifier(&raw_view_name);
                 let view = View {
                     schema: view_schema.clone(),
                     name: view_name.clone(),
@@ -774,7 +782,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 default,
                 constraints,
             }) => {
-                let (domain_schema, domain_name) = extract_qualified_name(&name);
+                let (domain_schema, raw_domain_name) = extract_qualified_name(&name);
+                let domain_name = truncate_identifier(&raw_domain_name);
                 let pg_type = parse_data_type(&data_type)?;
 
                 let mut not_null = false;
@@ -1384,7 +1393,113 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
 
     schema.pending_policies = schema.finalize_partial();
 
+    schema.overlong_identifiers = classify_overlong_identifiers(&schema).into();
+
     Ok(schema)
+}
+
+/// Collects every declared identifier longer than 63 bytes for the lint.
+///
+/// PR #343 made the parser truncate every object/column name at parse time, so the
+/// model holds only the truncated (<= 63 byte) form for every kind. The originals
+/// are recovered from the `truncate_to_bytes` side-channel, which records the
+/// pre-truncation string at the single truncation chokepoint regardless of which
+/// wrapper a call site uses. Each original's kind is resolved by matching its
+/// truncated form back against the model, which also suppresses DROP and RENAME-from
+/// lookups whose objects never reach the final model. Deduplicated by `(kind, original)`.
+fn classify_overlong_identifiers(schema: &Schema) -> Vec<crate::model::OverlongIdentifier> {
+    use crate::model::OverlongIdentifier;
+    use std::collections::BTreeSet;
+    use util::{truncate_to_bytes_raw, PG_MAX_IDENTIFIER_LENGTH};
+
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut result = Vec::new();
+
+    for original in take_overlong_identifiers() {
+        let truncated = truncate_to_bytes_raw(&original, PG_MAX_IDENTIFIER_LENGTH);
+        let Some(kind) = classify_truncated_name(schema, truncated) else {
+            continue;
+        };
+        if seen.insert((kind.to_string(), original.clone())) {
+            result.push(OverlongIdentifier {
+                kind: kind.to_string(),
+                name: original,
+            });
+        }
+    }
+
+    result
+}
+
+/// Resolves the kind of a parser-truncated identifier by finding which model
+/// collection holds its truncated form. Returns `None` when no collection holds
+/// it, which means the object was dropped or renamed away and must not warn.
+///
+/// Ordered most-to-least specific so a name shared across kinds resolves
+/// deterministically; nested objects (index, constraint, policy, column) are
+/// checked before the table that holds them.
+fn classify_truncated_name(schema: &Schema, truncated: &str) -> Option<&'static str> {
+    if schema
+        .tables
+        .values()
+        .any(|t| t.indexes.iter().any(|i| i.name == truncated))
+        || schema
+            .partitions
+            .values()
+            .any(|p| p.indexes.iter().any(|i| i.name == truncated))
+    {
+        return Some("index");
+    }
+    if schema
+        .tables
+        .values()
+        .any(|t| t.foreign_keys.iter().any(|f| f.name == truncated))
+        || schema
+            .tables
+            .values()
+            .any(|t| t.check_constraints.iter().any(|c| c.name == truncated))
+    {
+        return Some("constraint");
+    }
+    if schema.triggers.values().any(|t| t.name == truncated) {
+        return Some("trigger");
+    }
+    if schema
+        .tables
+        .values()
+        .any(|t| t.policies.iter().any(|p| p.name == truncated))
+        || schema.pending_policies.iter().any(|p| p.name == truncated)
+    {
+        return Some("policy");
+    }
+    if schema
+        .tables
+        .values()
+        .any(|t| t.columns.values().any(|c| c.name == truncated))
+    {
+        return Some("column");
+    }
+    if schema.tables.values().any(|t| t.name == truncated)
+        || schema.partitions.values().any(|p| p.name == truncated)
+    {
+        return Some("table");
+    }
+    if schema.views.values().any(|v| v.name == truncated) {
+        return Some("view");
+    }
+    if schema.functions.values().any(|f| f.name == truncated) {
+        return Some("function");
+    }
+    if schema.enums.values().any(|e| e.name == truncated) {
+        return Some("enum");
+    }
+    if schema.domains.values().any(|d| d.name == truncated) {
+        return Some("domain");
+    }
+    if schema.sequences.values().any(|s| s.name == truncated) {
+        return Some("sequence");
+    }
+    None
 }
 
 /// Returns `true` when `name` refers to a built-in `pg_catalog` trigger
