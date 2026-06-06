@@ -62,7 +62,7 @@ use tables::{
 use util::{
     extract_qualified_name, normalize_expr, parse_data_type, parse_for_values,
     parse_for_values_required, parse_policy_command, take_overlong_identifiers,
-    truncate_identifier, truncate_to_bytes, truncated_ident, unquote_ident,
+    truncate_identifier, truncated_ident, unquote_ident,
 };
 
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
@@ -1400,68 +1400,31 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
 
 /// Collects every declared identifier longer than 63 bytes for the lint.
 ///
-/// Two sources are merged. First, identifiers the parser leaves untruncated in
-/// the model (table, column, function, view, enum, domain, sequence names) are
-/// found by walking the model and checking byte length directly. Second,
-/// identifiers the parser truncates at parse time (index, constraint, foreign
-/// key, trigger, policy names) are recovered from the `truncate_identifier`
-/// side-channel, with their kind resolved by matching the truncated form back
-/// against the model. Deduplicated by `(kind, original)`.
+/// PR #343 made the parser truncate every object/column name at parse time, so the
+/// model holds only the truncated (<= 63 byte) form for every kind. The originals
+/// are recovered from the `truncate_to_bytes` side-channel, which records the
+/// pre-truncation string at the single truncation chokepoint regardless of which
+/// wrapper a call site uses. Each original's kind is resolved by matching its
+/// truncated form back against the model, which also suppresses DROP and RENAME-from
+/// lookups whose objects never reach the final model. Deduplicated by `(kind, original)`.
 fn classify_overlong_identifiers(schema: &Schema) -> Vec<crate::model::OverlongIdentifier> {
     use crate::model::OverlongIdentifier;
     use std::collections::BTreeSet;
-    use util::PG_MAX_IDENTIFIER_LENGTH;
+    use util::{truncate_to_bytes_raw, PG_MAX_IDENTIFIER_LENGTH};
 
     let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
     let mut result = Vec::new();
-    let mut push = |kind: &str, name: &str| {
-        if name.len() > PG_MAX_IDENTIFIER_LENGTH
-            && seen.insert((kind.to_string(), name.to_string()))
-        {
+
+    for original in take_overlong_identifiers() {
+        let truncated = truncate_to_bytes_raw(&original, PG_MAX_IDENTIFIER_LENGTH);
+        let Some(kind) = classify_truncated_name(schema, truncated) else {
+            continue;
+        };
+        if seen.insert((kind.to_string(), original.clone())) {
             result.push(OverlongIdentifier {
                 kind: kind.to_string(),
-                name: name.to_string(),
+                name: original,
             });
-        }
-    };
-
-    // Columns nest under tables, so they stay in this loop; the remaining
-    // single-collection kinds are driven by the `(kind, names)` table below.
-    // Sequences are intentionally absent: every call site inserts them via
-    // `truncate_identifier`, so a model sequence name is always <= 63 bytes;
-    // overlong sequence coverage comes from the side-channel drain.
-    for table in schema.tables.values() {
-        push("table", &table.name);
-        for column in table.columns.values() {
-            push("column", &column.name);
-        }
-    }
-    let single_collections: [(&str, &mut dyn Iterator<Item = &str>); 4] = [
-        ("view", &mut schema.views.values().map(|v| v.name.as_str())),
-        (
-            "function",
-            &mut schema.functions.values().map(|f| f.name.as_str()),
-        ),
-        ("enum", &mut schema.enums.values().map(|e| e.name.as_str())),
-        (
-            "domain",
-            &mut schema.domains.values().map(|d| d.name.as_str()),
-        ),
-    ];
-    for (kind, names) in single_collections {
-        for name in names {
-            push(kind, name);
-        }
-    }
-
-    // Side-channel originals are recorded on every `truncate_identifier` call,
-    // including DROP and RENAME-from lookups whose objects never reach the final
-    // model. Emit only when the truncated form is still present in the model, so
-    // dropped/renamed-away objects are suppressed and the kind always resolves.
-    for original in take_overlong_identifiers() {
-        let truncated = truncate_to_bytes(&original, PG_MAX_IDENTIFIER_LENGTH);
-        if let Some(kind) = classify_truncated_name(schema, truncated) {
-            push(kind, &original);
         }
     }
 
@@ -1471,6 +1434,10 @@ fn classify_overlong_identifiers(schema: &Schema) -> Vec<crate::model::OverlongI
 /// Resolves the kind of a parser-truncated identifier by finding which model
 /// collection holds its truncated form. Returns `None` when no collection holds
 /// it, which means the object was dropped or renamed away and must not warn.
+///
+/// Ordered most-to-least specific so a name shared across kinds resolves
+/// deterministically; nested objects (index, constraint, policy, column) are
+/// checked before the table that holds them.
 fn classify_truncated_name(schema: &Schema, truncated: &str) -> Option<&'static str> {
     if schema
         .tables
@@ -1504,6 +1471,30 @@ fn classify_truncated_name(schema: &Schema, truncated: &str) -> Option<&'static 
         || schema.pending_policies.iter().any(|p| p.name == truncated)
     {
         return Some("policy");
+    }
+    if schema
+        .tables
+        .values()
+        .any(|t| t.columns.values().any(|c| c.name == truncated))
+    {
+        return Some("column");
+    }
+    if schema.tables.values().any(|t| t.name == truncated)
+        || schema.partitions.values().any(|p| p.name == truncated)
+    {
+        return Some("table");
+    }
+    if schema.views.values().any(|v| v.name == truncated) {
+        return Some("view");
+    }
+    if schema.functions.values().any(|f| f.name == truncated) {
+        return Some("function");
+    }
+    if schema.enums.values().any(|e| e.name == truncated) {
+        return Some("enum");
+    }
+    if schema.domains.values().any(|d| d.name == truncated) {
+        return Some("domain");
     }
     if schema.sequences.values().any(|s| s.name == truncated) {
         return Some("sequence");

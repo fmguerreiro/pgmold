@@ -5597,6 +5597,40 @@ fn overlong_column_index_and_function_names_are_recorded_for_lint() {
 }
 
 #[test]
+fn overlong_names_truncated_via_the_truncated_ident_path_are_recorded() {
+    // PR #343 routes column names (and several other declaration sites) through
+    // `truncated_ident`, which reaches the recording chokepoint in
+    // `truncate_to_bytes`. Recording must follow that path, not only the model walk
+    // that PR #343 made dead for these kinds.
+    let long_column = "c".repeat(64);
+    let long_enum = "e".repeat(64);
+    let long_domain = "d".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TYPE "{long_enum}" AS ENUM ('a');
+        CREATE DOMAIN "{long_domain}" AS integer;
+        CREATE TABLE t (id BIGINT NOT NULL, "{long_column}" TEXT);
+        "#
+    );
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    let mut recorded: Vec<(&str, &str)> = schema
+        .overlong_identifiers
+        .iter()
+        .map(|o| (o.kind.as_str(), o.name.as_str()))
+        .collect();
+    recorded.sort_unstable();
+    let mut expected = vec![
+        ("column", long_column.as_str()),
+        ("domain", long_domain.as_str()),
+        ("enum", long_enum.as_str()),
+    ];
+    expected.sort_unstable();
+    assert_eq!(recorded, expected);
+}
+
+#[test]
 fn names_within_the_byte_limit_are_not_recorded_for_lint() {
     let sql = r#"
         CREATE TABLE users (id BIGINT NOT NULL, email TEXT);

@@ -17,9 +17,11 @@ pub(crate) const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
 
 thread_local! {
     /// Original (pre-truncation) declared identifiers seen during a single parse.
-    /// `truncate_identifier` is the chokepoint every truncating call site funnels
-    /// through, so recording here captures the original length the model would
-    /// otherwise lose. Drained by `take_overlong_identifiers` after each parse.
+    /// `truncate_to_bytes` is the single chokepoint every truncating call site
+    /// funnels through (both `truncate_identifier` and `truncated_ident` reach it,
+    /// as does any direct caller), so recording there captures the original length
+    /// the model would otherwise lose regardless of which wrapper the site uses.
+    /// Drained by `take_overlong_identifiers` after each parse.
     static OVERLONG_IDENTIFIERS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -30,15 +32,28 @@ pub(super) fn take_overlong_identifiers() -> Vec<String> {
 }
 
 pub(super) fn truncate_identifier(s: &str) -> String {
-    if s.len() > PG_MAX_IDENTIFIER_LENGTH {
-        OVERLONG_IDENTIFIERS.with(|cell| cell.borrow_mut().push(s.to_string()));
-    }
     truncate_to_bytes(s, PG_MAX_IDENTIFIER_LENGTH).to_string()
 }
 
 /// Truncate `s` to at most `max_bytes` bytes, backing off to the nearest UTF-8 char
 /// boundary at or below the cap. Mirrors PG's `pg_mbcliplen`: never split a codepoint.
+///
+/// This is the single chokepoint for identifier truncation: whenever truncation at
+/// the PG identifier cap actually shortens the input, the original is recorded for the
+/// overlong-identifier lint. Callers that truncate something that is NOT a declared
+/// identifier (display-only formatting, model-side suppression lookups, suffix
+/// disambiguation against an already-recorded base) must use `truncate_to_bytes_raw`
+/// to avoid polluting the recorder.
 pub(crate) fn truncate_to_bytes(s: &str, max_bytes: usize) -> &str {
+    if max_bytes == PG_MAX_IDENTIFIER_LENGTH && s.len() > PG_MAX_IDENTIFIER_LENGTH {
+        OVERLONG_IDENTIFIERS.with(|cell| cell.borrow_mut().push(s.to_string()));
+    }
+    truncate_to_bytes_raw(s, max_bytes)
+}
+
+/// Byte-safe truncation without recording. Use for non-identifier truncation and
+/// for lookups against names that were already recorded at declaration time.
+pub(crate) fn truncate_to_bytes_raw(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
         return s;
     }

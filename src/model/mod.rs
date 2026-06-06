@@ -1095,15 +1095,18 @@ impl Schema {
     }
 
     fn contains_overlong_object(&self, identifier: &OverlongIdentifier) -> bool {
-        use crate::parser::util::{truncate_to_bytes, PG_MAX_IDENTIFIER_LENGTH};
-        // Model-walk kinds (table, column, view, ...) keep the full name in the
-        // model; side-channel kinds (index, constraint, ...) are stored
-        // truncated. Match either form so both sources resolve.
+        use crate::parser::util::{truncate_to_bytes_raw, PG_MAX_IDENTIFIER_LENGTH};
+        // The parser stores every kind under its truncated form. The record's
+        // `name` is the original (overlong) string, so match against both the full
+        // string and its truncation to stay robust to either storage form.
         let full = identifier.name.as_str();
-        let truncated = truncate_to_bytes(&identifier.name, PG_MAX_IDENTIFIER_LENGTH);
+        let truncated = truncate_to_bytes_raw(&identifier.name, PG_MAX_IDENTIFIER_LENGTH);
         let matches = |name: &str| name == full || name == truncated;
         match identifier.kind.as_str() {
-            "table" => self.tables.values().any(|t| matches(&t.name)),
+            "table" => {
+                self.tables.values().any(|t| matches(&t.name))
+                    || self.partitions.values().any(|p| matches(&p.name))
+            }
             "column" => self
                 .tables
                 .values()
@@ -2833,6 +2836,43 @@ mod tests {
             owner: Some("postgres".to_string()),
         };
         assert_eq!(partition.owner, Some("postgres".to_string()));
+    }
+
+    #[test]
+    fn retain_keeps_overlong_partition_recorded_under_table_kind() {
+        // The parser classifies a partition's overlong name under "table" (a partition
+        // is a table). The model-side retain filter must resolve "table" against
+        // partitions too, or a surviving overlong partition would be wrongly suppressed.
+        let long = "p".repeat(64);
+        let truncated = "p".repeat(63);
+        let partition = Partition {
+            schema: "public".to_string(),
+            name: truncated,
+            parent_schema: "public".to_string(),
+            parent_name: "users".to_string(),
+            bound: PartitionBound::Default,
+            indexes: Vec::new(),
+            check_constraints: Vec::new(),
+            owner: None,
+        };
+        let mut schema = Schema::default();
+        schema
+            .partitions
+            .insert(format!("public.{}", "p".repeat(63)), partition);
+        schema.overlong_identifiers = vec![OverlongIdentifier {
+            kind: "table".to_string(),
+            name: long.clone(),
+        }];
+
+        schema.retain_overlong_identifiers_in_model();
+
+        assert_eq!(
+            schema.overlong_identifiers,
+            vec![OverlongIdentifier {
+                kind: "table".to_string(),
+                name: long,
+            }]
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@ pub mod locks;
 
 use crate::diff::MigrationOp;
 use crate::model::{PgType, Schema};
-use crate::parser::util::{truncate_to_bytes, PG_MAX_IDENTIFIER_LENGTH};
+use crate::parser::util::{truncate_to_bytes_raw, PG_MAX_IDENTIFIER_LENGTH};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LintOptions {
@@ -49,7 +49,7 @@ pub fn lint_schema(schema: &Schema) -> Vec<LintResult> {
         .filter(|identifier| identifier.name.len() > PG_MAX_IDENTIFIER_LENGTH)
         .map(|identifier| {
             let byte_length = identifier.name.len();
-            let truncated = truncate_to_bytes(&identifier.name, PG_MAX_IDENTIFIER_LENGTH);
+            let truncated = truncate_to_bytes_raw(&identifier.name, PG_MAX_IDENTIFIER_LENGTH);
             LintResult {
                 rule: "warn_identifier_exceeds_namedatalen",
                 severity: LintSeverity::Warning,
