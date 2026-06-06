@@ -5655,8 +5655,6 @@ fn create_table_truncates_multibyte_table_name_at_char_boundary() {
     assert_eq!(truncated.len(), 62);
     let table = schema.tables.get(&format!("public.{truncated}")).unwrap();
     assert_eq!(table.name, truncated);
-    assert!(table.name.len() <= 63);
-    assert!(table.name.is_char_boundary(table.name.len()));
 }
 
 #[test]
@@ -5782,4 +5780,75 @@ fn alter_table_rename_column_matches_already_truncated_old_name() {
     assert!(table.columns.contains_key("renamed"));
     assert!(!table.columns.contains_key(&truncated_old));
     assert_eq!(table.columns.get("renamed").unwrap().name, "renamed");
+}
+
+#[test]
+fn drop_column_with_64_byte_name_removes_column() {
+    // A 64-char column name is stored truncated to 63 bytes at creation time. DROP COLUMN
+    // naming the 64-char form must match the stored 63-byte key, so the drop name needs the
+    // same truncation before lookup.
+    let long_col = "c".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL, "{long_col}" TEXT);
+        ALTER TABLE t DROP COLUMN "{long_col}";
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "c".repeat(63);
+    let table = schema.tables.get("public.t").unwrap();
+    assert!(
+        !table.columns.contains_key(&truncated),
+        "DROP COLUMN with overlong name must remove the column; remaining: {:?}",
+        table.columns.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn inline_table_level_primary_key_on_64_byte_column_resolves_truncated_name() {
+    // A table-level PRIMARY KEY (...) constraint flows through `apply_primary_key`, which must
+    // truncate the column name so it matches the stored 63-byte column key (NOT NULL flip) and
+    // the stored PK column name is the truncated form.
+    let long_col = "c".repeat(64);
+    let sql =
+        format!(r#"CREATE TABLE t ("{long_col}" BIGINT NOT NULL, PRIMARY KEY ("{long_col}"));"#);
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "c".repeat(63);
+    let table = schema.tables.get("public.t").unwrap();
+    let pk = table.primary_key.as_ref().unwrap();
+    assert_eq!(pk.columns, vec![truncated.clone()]);
+    assert!(!table.columns.get(&truncated).unwrap().nullable);
+}
+
+#[test]
+fn alter_table_add_primary_key_on_64_byte_column_resolves_truncated_name() {
+    let long_col = "c".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t ("{long_col}" BIGINT NOT NULL);
+        ALTER TABLE t ADD CONSTRAINT t_pkey PRIMARY KEY ("{long_col}");
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "c".repeat(63);
+    let table = schema.tables.get("public.t").unwrap();
+    let pk = table.primary_key.as_ref().unwrap();
+    assert_eq!(pk.columns, vec![truncated.clone()]);
+    assert!(!table.columns.get(&truncated).unwrap().nullable);
+}
+
+#[test]
+fn alter_table_rename_table_truncates_new_name_to_63_bytes() {
+    let long_new = "n".repeat(64);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL);
+        ALTER TABLE t RENAME TO "{long_new}";
+        "#
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let truncated = "n".repeat(63);
+    let table = schema.tables.get(&format!("public.{truncated}")).unwrap();
+    assert_eq!(table.name, truncated);
+    assert!(!schema.tables.contains_key("public.t"));
 }
