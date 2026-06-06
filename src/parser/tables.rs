@@ -60,7 +60,7 @@ pub(super) fn parse_create_table(
     }
 
     for col_def in columns {
-        let col_name = unquote_ident(&col_def.name.to_string()).to_string();
+        let col_name = truncate_identifier(unquote_ident(&col_def.name.to_string()));
         for option in &col_def.options {
             let explicit_name = option
                 .name
@@ -363,7 +363,7 @@ pub(super) fn parse_column_with_serial(
         }
     }
 
-    let col_name = unquote_ident(&col_def.name.to_string()).to_string();
+    let col_name = truncate_identifier(unquote_ident(&col_def.name.to_string()));
 
     if generated.is_some() {
         let column = Column {
