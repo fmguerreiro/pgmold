@@ -189,8 +189,7 @@ mod tests {
             format!("CREATE TABLE \"{long_b}\" (id INT);").as_bytes(),
         );
 
-        let merged =
-            load_schema_from_sources(&[sql_source(&file_a), sql_source(&file_b)]).unwrap();
+        let merged = load_schema_from_sources(&[sql_source(&file_a), sql_source(&file_b)]).unwrap();
 
         let mut names: Vec<&str> = merged
             .overlong_identifiers

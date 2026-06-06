@@ -1476,9 +1476,7 @@ mod tests {
 
         assert_eq!(
             json["identifier_warnings"],
-            serde_json::json!([
-                "table identifier \"aaaa\" is 64 bytes; PostgreSQL truncates"
-            ])
+            serde_json::json!(["table identifier \"aaaa\" is 64 bytes; PostgreSQL truncates"])
         );
     }
 

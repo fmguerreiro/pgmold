@@ -1409,46 +1409,43 @@ fn classify_overlong_identifiers(schema: &Schema) -> Vec<crate::model::OverlongI
 
     let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
     let mut result = Vec::new();
-    let mut push = |kind: &str, name: &str, out: &mut Vec<OverlongIdentifier>| {
-        if seen.insert((kind.to_string(), name.to_string())) {
-            out.push(OverlongIdentifier {
+    let mut push = |kind: &str, name: &str| {
+        if name.len() > PG_MAX_IDENTIFIER_LENGTH
+            && seen.insert((kind.to_string(), name.to_string()))
+        {
+            result.push(OverlongIdentifier {
                 kind: kind.to_string(),
                 name: name.to_string(),
             });
         }
     };
 
+    // Columns nest under tables, so they stay in this loop; the remaining
+    // single-collection kinds are driven by the `(kind, names)` table below.
+    // Sequences are intentionally absent: every call site inserts them via
+    // `truncate_identifier`, so a model sequence name is always <= 63 bytes;
+    // overlong sequence coverage comes from the side-channel drain.
     for table in schema.tables.values() {
-        if table.name.len() > PG_MAX_IDENTIFIER_LENGTH {
-            push("table", &table.name, &mut result);
-        }
+        push("table", &table.name);
         for column in table.columns.values() {
-            if column.name.len() > PG_MAX_IDENTIFIER_LENGTH {
-                push("column", &column.name, &mut result);
-            }
+            push("column", &column.name);
         }
     }
-    for view in schema.views.values() {
-        if view.name.len() > PG_MAX_IDENTIFIER_LENGTH {
-            push("view", &view.name, &mut result);
-        }
-    }
-    for function in schema.functions.values() {
-        if function.name.len() > PG_MAX_IDENTIFIER_LENGTH {
-            push("function", &function.name, &mut result);
-        }
-    }
-    // Sequences are not walked: every call site inserts them via
-    // `truncate_identifier`, so a model sequence name is always <= 63 bytes.
-    // Overlong sequence coverage comes from the side-channel drain below.
-    for enum_type in schema.enums.values() {
-        if enum_type.name.len() > PG_MAX_IDENTIFIER_LENGTH {
-            push("enum", &enum_type.name, &mut result);
-        }
-    }
-    for domain in schema.domains.values() {
-        if domain.name.len() > PG_MAX_IDENTIFIER_LENGTH {
-            push("domain", &domain.name, &mut result);
+    let single_collections: [(&str, &mut dyn Iterator<Item = &str>); 4] = [
+        ("view", &mut schema.views.values().map(|v| v.name.as_str())),
+        (
+            "function",
+            &mut schema.functions.values().map(|f| f.name.as_str()),
+        ),
+        ("enum", &mut schema.enums.values().map(|e| e.name.as_str())),
+        (
+            "domain",
+            &mut schema.domains.values().map(|d| d.name.as_str()),
+        ),
+    ];
+    for (kind, names) in single_collections {
+        for name in names {
+            push(kind, name);
         }
     }
 
@@ -1459,7 +1456,7 @@ fn classify_overlong_identifiers(schema: &Schema) -> Vec<crate::model::OverlongI
     for original in take_overlong_identifiers() {
         let truncated = truncate_to_bytes(&original, PG_MAX_IDENTIFIER_LENGTH);
         if let Some(kind) = classify_truncated_name(schema, truncated) {
-            push(kind, &original, &mut result);
+            push(kind, &original);
         }
     }
 

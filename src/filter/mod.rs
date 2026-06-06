@@ -2170,9 +2170,10 @@ mod tests {
         let long_kept = "k".repeat(64);
         let long_dropped = "d".repeat(64);
         let mut schema = Schema::default();
-        schema
-            .tables
-            .insert(format!("public.{long_kept}"), make_table("public", &long_kept));
+        schema.tables.insert(
+            format!("public.{long_kept}"),
+            make_table("public", &long_kept),
+        );
         schema.tables.insert(
             format!("public.{long_dropped}"),
             make_table("public", &long_dropped),
@@ -2188,7 +2189,7 @@ mod tests {
             },
         ];
 
-        let filter = Filter::new(&[long_kept.clone()], &[], &[], &[]).unwrap();
+        let filter = Filter::new(std::slice::from_ref(&long_kept), &[], &[], &[]).unwrap();
         let filtered = filter_schema(&schema, &filter);
 
         assert_eq!(

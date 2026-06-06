@@ -159,7 +159,8 @@ pub struct OverlongIdentifier {
 /// merging per-file schemas so a name declared in two sources warns once.
 pub fn dedup_overlong_identifiers(identifiers: &mut Vec<OverlongIdentifier>) {
     let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
-    identifiers.retain(|identifier| seen.insert((identifier.kind.clone(), identifier.name.clone())));
+    identifiers
+        .retain(|identifier| seen.insert((identifier.kind.clone(), identifier.name.clone())));
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

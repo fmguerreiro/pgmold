@@ -251,7 +251,11 @@ fn diff_warns_on_overlong_identifier_in_target() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "expected exit 0, got: {}", output.status);
+    assert!(
+        output.status.success(),
+        "expected exit 0, got: {}",
+        output.status
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("warn_identifier_exceeds_namedatalen"),
