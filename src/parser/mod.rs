@@ -425,7 +425,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
                                 let names_to_drop: Vec<String> = column_names
                                     .iter()
-                                    .map(|n| unquote_ident(&n.value).to_string())
+                                    .map(|n| truncate_identifier(unquote_ident(&n.value)))
                                     .collect();
                                 table
                                     .columns
@@ -435,13 +435,13 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                         AlterTableOperation::RenameTable { table_name } => {
                             let new_name = match table_name {
                                 RenameTableNameKind::As(obj) | RenameTableNameKind::To(obj) => {
-                                    let (new_schema, new_tbl) = extract_qualified_name(&obj);
+                                    let (new_schema, raw_new_tbl) = extract_qualified_name(&obj);
                                     let effective_schema = if obj.0.len() == 1 {
                                         tbl_schema.clone()
                                     } else {
                                         new_schema
                                     };
-                                    (effective_schema, new_tbl)
+                                    (effective_schema, truncate_identifier(&raw_new_tbl))
                                 }
                             };
                             let new_key = qualified_name(&new_name.0, &new_name.1);
@@ -457,10 +457,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             new_column_name,
                         } => {
                             if let Some(table) = schema.tables.get_mut(&tbl_key) {
-                                let old_name =
-                                    truncate_identifier(unquote_ident(&old_column_name.value));
-                                let new_name =
-                                    truncate_identifier(unquote_ident(&new_column_name.value));
+                                let old_name = truncated_ident(&old_column_name);
+                                let new_name = truncated_ident(&new_column_name);
 
                                 if let Some(mut column) = table.columns.remove(&old_name) {
                                     column.name = new_name.clone();
