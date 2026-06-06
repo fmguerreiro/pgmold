@@ -154,6 +154,14 @@ pub struct OverlongIdentifier {
     pub name: String,
 }
 
+/// Removes duplicate overlong-identifier records in place, keyed by
+/// `(kind, name)` to match the dedup the parser applies per file. Used when
+/// merging per-file schemas so a name declared in two sources warns once.
+pub fn dedup_overlong_identifiers(identifiers: &mut Vec<OverlongIdentifier>) {
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    identifiers.retain(|identifier| seen.insert((identifier.kind.clone(), identifier.name.clone())));
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Schema {
     pub schemas: BTreeMap<String, PgSchema>,

@@ -1,7 +1,7 @@
 use super::{
     extract_function_references, extract_table_references, parse_sql_file, topological_sort,
 };
-use crate::model::Schema;
+use crate::model::{dedup_overlong_identifiers, Schema};
 use crate::util::{Result, SchemaError};
 use glob::glob;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -134,7 +134,12 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
         merged.pending_grants.extend(schema.pending_grants);
         merged.pending_revokes.extend(schema.pending_revokes);
         merged.pending_comments.extend(schema.pending_comments);
+        merged
+            .overlong_identifiers
+            .extend(schema.overlong_identifiers);
     }
+
+    dedup_overlong_identifiers(&mut merged.overlong_identifiers);
 
     merged.pending_policies = merged.finalize_partial();
 
@@ -307,6 +312,33 @@ mod tests {
             .get("public.foo()")
             .expect("function should merge");
         assert_eq!(func.comment.as_deref(), Some("@name fooTag"));
+    }
+
+    #[test]
+    fn merged_sources_carry_overlong_identifiers_from_every_file() {
+        let dir = TempDir::new().unwrap();
+        let long_a = "a".repeat(64);
+        let long_b = "b".repeat(64);
+        fs::write(
+            dir.path().join("0_a.sql"),
+            format!("CREATE TABLE \"{long_a}\" (id INT);"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("1_b.sql"),
+            format!("CREATE TABLE \"{long_b}\" (id INT);"),
+        )
+        .unwrap();
+
+        let result = load_schema_sources(&[dir.path().to_string_lossy().into_owned()]).unwrap();
+
+        let mut names: Vec<&str> = result
+            .overlong_identifiers
+            .iter()
+            .map(|o| o.name.as_str())
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, vec![long_a.as_str(), long_b.as_str()]);
     }
 
     #[test]
