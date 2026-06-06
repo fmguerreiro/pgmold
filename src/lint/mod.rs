@@ -775,7 +775,8 @@ mod tests {
                 kind: "function".to_string(),
                 name: function_name.clone(),
             },
-        ];
+        ]
+        .into();
 
         let results = lint_schema(&schema);
 

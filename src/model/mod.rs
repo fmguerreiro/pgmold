@@ -163,6 +163,78 @@ pub fn dedup_overlong_identifiers(identifiers: &mut Vec<OverlongIdentifier>) {
         .retain(|identifier| seen.insert((identifier.kind.clone(), identifier.name.clone())));
 }
 
+/// Parse-time diagnostics carried on `Schema` that are NOT schema state and
+/// therefore must not participate in `Schema` equality. The records hold
+/// PRE-truncation declared names, which `dump` cannot emit (it writes the
+/// truncated 63-byte form), so they inherently cannot survive a dump-reparse.
+/// Including them in `Schema` equality breaks the `parse(dump(parse)) == parse`
+/// round-trip invariant for any identifier that crosses 63 bytes.
+///
+/// The constant `PartialEq`/`Eq`/`Hash` here let `Schema` keep
+/// `#[derive(PartialEq, Eq)]`: the derive automatically covers every real
+/// field (including any added later) while this wrapper makes the diagnostic
+/// invisible to comparison. A hand-rolled `Schema` impl enumerating the other
+/// fields would silently exclude future fields, so it is avoided.
+#[derive(Debug, Clone, Default)]
+pub struct ParseDiagnostics(pub Vec<OverlongIdentifier>);
+
+impl PartialEq for ParseDiagnostics {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for ParseDiagnostics {}
+
+impl std::hash::Hash for ParseDiagnostics {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
+}
+
+impl std::ops::Deref for ParseDiagnostics {
+    type Target = Vec<OverlongIdentifier>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ParseDiagnostics {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<Vec<OverlongIdentifier>> for ParseDiagnostics {
+    fn from(records: Vec<OverlongIdentifier>) -> Self {
+        ParseDiagnostics(records)
+    }
+}
+
+impl IntoIterator for ParseDiagnostics {
+    type Item = OverlongIdentifier;
+    type IntoIter = std::vec::IntoIter<OverlongIdentifier>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl FromIterator<OverlongIdentifier> for ParseDiagnostics {
+    fn from_iter<I: IntoIterator<Item = OverlongIdentifier>>(iter: I) -> Self {
+        ParseDiagnostics(iter.into_iter().collect())
+    }
+}
+
+/// Real, order-sensitive comparison against a bare `Vec`, so existing lint and
+/// merge tests asserting `schema.overlong_identifiers == vec![..]` stay strict.
+/// This does NOT weaken `Schema` equality, which uses the always-equal
+/// `PartialEq for ParseDiagnostics` above.
+impl PartialEq<Vec<OverlongIdentifier>> for ParseDiagnostics {
+    fn eq(&self, other: &Vec<OverlongIdentifier>) -> bool {
+        &self.0 == other
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Schema {
     pub schemas: BTreeMap<String, PgSchema>,
@@ -218,7 +290,7 @@ pub struct Schema {
     /// the parser truncated them. Drives the `warn_identifier_exceeds_namedatalen`
     /// lint. Not serialized: it is a parse-time diagnostic, not schema state.
     #[serde(skip)]
-    pub overlong_identifiers: Vec<OverlongIdentifier>,
+    pub overlong_identifiers: ParseDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1078,7 +1150,7 @@ impl Schema {
             default_privileges: Vec::new(),
             table_constraint_comments: BTreeMap::new(),
             domain_constraint_comments: BTreeMap::new(),
-            overlong_identifiers: Vec::new(),
+            overlong_identifiers: ParseDiagnostics::default(),
         }
     }
 
@@ -2862,7 +2934,8 @@ mod tests {
         schema.overlong_identifiers = vec![OverlongIdentifier {
             kind: "table".to_string(),
             name: long.clone(),
-        }];
+        }]
+        .into();
 
         schema.retain_overlong_identifiers_in_model();
 

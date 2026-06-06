@@ -2152,7 +2152,8 @@ mod tests {
                 kind: "table".to_string(),
                 name: long_audit.clone(),
             },
-        ];
+        ]
+        .into();
 
         let filtered = filter_by_target_schemas(&schema, &["public".to_string()]);
 
@@ -2187,7 +2188,8 @@ mod tests {
                 kind: "table".to_string(),
                 name: long_dropped.clone(),
             },
-        ];
+        ]
+        .into();
 
         let filter = Filter::new(std::slice::from_ref(&long_kept), &[], &[], &[]).unwrap();
         let filtered = filter_schema(&schema, &filter);

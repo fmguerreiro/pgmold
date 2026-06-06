@@ -1393,7 +1393,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
 
     schema.pending_policies = schema.finalize_partial();
 
-    schema.overlong_identifiers = classify_overlong_identifiers(&schema);
+    schema.overlong_identifiers = classify_overlong_identifiers(&schema).into();
 
     Ok(schema)
 }
