@@ -53,7 +53,7 @@ pub(super) fn truncate_referenced_identifier(s: &str) -> String {
 pub(super) fn truncate_referenced_columns(columns: &[Ident]) -> Vec<String> {
     columns
         .iter()
-        .map(|column| truncate_referenced_identifier(unquote_ident(&column.to_string())))
+        .map(|column| truncate_referenced_identifier(&column.value))
         .collect()
 }
 

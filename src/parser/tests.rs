@@ -1455,6 +1455,23 @@ fn table_constraint_foreign_key_truncates_referenced_column() {
 }
 
 #[test]
+fn foreign_key_truncates_local_columns() {
+    let local = "l".repeat(64);
+    let sql = format!(
+        "CREATE TABLE parent_tbl (id INT NOT NULL, PRIMARY KEY (id)); \
+         CREATE TABLE child ( \
+            id INT NOT NULL, \
+            {local} INT NOT NULL, \
+            CONSTRAINT child_fkey FOREIGN KEY ({local}) REFERENCES parent_tbl (id) \
+         );"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(child.foreign_keys[0].columns, vec!["l".repeat(63)]);
+}
+
+#[test]
 fn alter_table_add_foreign_key_truncates_references() {
     let parent = "r".repeat(64);
     let column = "c".repeat(64);
