@@ -12,7 +12,7 @@ use pgmold::dump::{generate_dump, generate_split_dump};
 use pgmold::expand_contract::expand_operations;
 use pgmold::filter::{filter_by_target_schemas, filter_schema, Filter, ObjectType};
 use pgmold::lint::locks::detect_lock_hazards;
-use pgmold::lint::{has_errors, lint_migration_plan, LintOptions, LintSeverity};
+use pgmold::lint::{has_errors, lint_migration_plan, lint_schema, LintOptions, LintSeverity};
 use pgmold::migrate::{find_next_migration_number, generate_migration_filename};
 use pgmold::model::Schema;
 use pgmold::pg::connection::PgConnection;
@@ -681,6 +681,7 @@ pub async fn run() -> Result<()> {
                 }
             } else {
                 let lock_warnings = detect_lock_hazards(&ops);
+                let identifier_warnings = lint_schema(&filtered_target);
 
                 let sql = generate_sql(&ops);
 
@@ -698,6 +699,9 @@ pub async fn run() -> Result<()> {
                 } else {
                     for warning in &lock_warnings {
                         println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
+                    }
+                    for warning in &identifier_warnings {
+                        println!("[WARNING] {}: {}", warning.rule, warning.message);
                     }
 
                     if sql.is_empty() {
@@ -767,7 +771,8 @@ pub async fn run() -> Result<()> {
             let filtered_db_schema = migration_plan.current_schema;
             let filtered_target = migration_plan.target_schema;
             let lint_options = LintOptions::from_env(allow_destructive);
-            let lint_results = lint_migration_plan(&ops, &lint_options);
+            let mut lint_results = lint_migration_plan(&ops, &lint_options);
+            lint_results.extend(lint_schema(&filtered_target));
 
             if !json {
                 for lint_result in &lint_results {
@@ -992,7 +997,8 @@ pub async fn run() -> Result<()> {
             ))?;
 
             let lint_options = LintOptions::from_env(false);
-            let results = lint_migration_plan(&ops, &lint_options);
+            let mut results = lint_migration_plan(&ops, &lint_options);
+            results.extend(lint_schema(&target));
 
             let error_count = results
                 .iter()

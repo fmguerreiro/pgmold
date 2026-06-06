@@ -10,10 +10,29 @@ use sqlparser::ast::{
     PartitionBoundValue, TimezoneInfo,
 };
 
+use std::cell::RefCell;
+
 /// PostgreSQL's NAMEDATALEN is 64, so identifiers are truncated to 63 bytes.
 pub(super) const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
 
+thread_local! {
+    /// Original (pre-truncation) declared identifiers seen during a single parse.
+    /// `truncate_identifier` is the chokepoint every truncating call site funnels
+    /// through, so recording here captures the original length the model would
+    /// otherwise lose. Drained by `take_overlong_identifiers` after each parse.
+    static OVERLONG_IDENTIFIERS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Removes and returns the originals of every identifier that was truncated
+/// during the parse on this thread, clearing the recorder for the next parse.
+pub(super) fn take_overlong_identifiers() -> Vec<String> {
+    OVERLONG_IDENTIFIERS.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
+}
+
 pub(super) fn truncate_identifier(s: &str) -> String {
+    if s.len() > PG_MAX_IDENTIFIER_LENGTH {
+        OVERLONG_IDENTIFIERS.with(|cell| cell.borrow_mut().push(s.to_string()));
+    }
     truncate_to_bytes(s, PG_MAX_IDENTIFIER_LENGTH).to_string()
 }
 

@@ -143,6 +143,17 @@ pub struct PendingRevoke {
     pub grant_option_for: bool,
 }
 
+/// A declared identifier whose original byte length exceeded PostgreSQL's
+/// NAMEDATALEN-1 (63 bytes) before the parser truncated it. Captured at parse
+/// time because the parser rewrites the model to the truncated form (to make
+/// plans converge with `pg_catalog`), which loses the original length. The lint
+/// reads this sidecar to warn the author that PostgreSQL will silently truncate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlongIdentifier {
+    pub kind: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Schema {
     pub schemas: BTreeMap<String, PgSchema>,
@@ -194,6 +205,11 @@ pub struct Schema {
     /// emitted via the `ON DOMAIN` form.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub domain_constraint_comments: BTreeMap<String, String>,
+    /// Identifiers declared in the source longer than 63 bytes, captured before
+    /// the parser truncated them. Drives the `warn_identifier_exceeds_namedatalen`
+    /// lint. Not serialized: it is a parse-time diagnostic, not schema state.
+    #[serde(skip)]
+    pub overlong_identifiers: Vec<OverlongIdentifier>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1053,6 +1069,7 @@ impl Schema {
             default_privileges: Vec::new(),
             table_constraint_comments: BTreeMap::new(),
             domain_constraint_comments: BTreeMap::new(),
+            overlong_identifiers: Vec::new(),
         }
     }
 

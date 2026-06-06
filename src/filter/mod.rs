@@ -287,6 +287,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         },
         table_constraint_comments: schema.table_constraint_comments.clone(),
         domain_constraint_comments: schema.domain_constraint_comments.clone(),
+        overlong_identifiers: schema.overlong_identifiers.clone(),
     };
     // Drop sidecar entries whose parent (table or domain) was filtered out
     // so the diff loop cannot emit a `COMMENT ON CONSTRAINT ... ON missing`.
@@ -390,6 +391,7 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
             &schema.domain_constraint_comments,
             &allowed,
         ),
+        overlong_identifiers: schema.overlong_identifiers.clone(),
     };
     // Mirror the filter_schema path: drop orphan sidecar entries even
     // though the schema-prefix filter above already covers the only orphan

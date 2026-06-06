@@ -1,7 +1,10 @@
 pub mod locks;
 
 use crate::diff::MigrationOp;
-use crate::model::PgType;
+use crate::model::{PgType, Schema};
+
+/// PostgreSQL's NAMEDATALEN is 64, so identifiers are stored as at most 63 bytes.
+const MAX_IDENTIFIER_BYTES: usize = 63;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LintOptions {
@@ -35,6 +38,43 @@ pub struct LintResult {
 
 pub fn lint_migration_plan(ops: &[MigrationOp], options: &LintOptions) -> Vec<LintResult> {
     ops.iter().flat_map(|op| lint_op(op, options)).collect()
+}
+
+/// Warns for every declared identifier in the source schema whose byte length
+/// exceeds PostgreSQL's NAMEDATALEN-1 (63 bytes). PostgreSQL silently truncates
+/// such identifiers at creation time; pgmold mirrors that truncation so plans
+/// converge, which means the author gets no signal without this lint.
+pub fn lint_schema(schema: &Schema) -> Vec<LintResult> {
+    schema
+        .overlong_identifiers
+        .iter()
+        .filter(|identifier| identifier.name.len() > MAX_IDENTIFIER_BYTES)
+        .map(|identifier| {
+            let byte_length = identifier.name.len();
+            let truncated = truncate_to_bytes(&identifier.name, MAX_IDENTIFIER_BYTES);
+            LintResult {
+                rule: "warn_identifier_exceeds_namedatalen",
+                severity: LintSeverity::Warning,
+                message: format!(
+                    "{} identifier \"{}\" is {} bytes; PostgreSQL truncates identifiers to {} bytes and will store it as \"{}\"",
+                    identifier.kind, identifier.name, byte_length, MAX_IDENTIFIER_BYTES, truncated
+                ),
+            }
+        })
+        .collect()
+}
+
+/// Truncates `s` to at most `max_bytes` bytes without splitting a UTF-8
+/// codepoint, mirroring PostgreSQL's `pg_mbcliplen`.
+fn truncate_to_bytes(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 pub fn has_errors(results: &[LintResult]) -> bool {
@@ -667,5 +707,155 @@ mod tests {
 
         let results = lint_migration_plan(&ops, &options);
         assert!(!has_errors(&results));
+    }
+
+    use crate::model::OverlongIdentifier;
+
+    #[test]
+    fn warns_once_for_a_sixty_four_byte_table_name() {
+        let name = "a".repeat(64);
+        let mut schema = Schema::new();
+        schema.overlong_identifiers.push(OverlongIdentifier {
+            kind: "table".to_string(),
+            name: name.clone(),
+        });
+
+        let results = lint_schema(&schema);
+
+        let truncated = "a".repeat(63);
+        assert_eq!(
+            results,
+            vec![LintResult {
+                rule: "warn_identifier_exceeds_namedatalen",
+                severity: LintSeverity::Warning,
+                message: format!(
+                    "table identifier \"{name}\" is 64 bytes; PostgreSQL truncates identifiers to 63 bytes and will store it as \"{truncated}\""
+                ),
+            }]
+        );
+    }
+
+    #[test]
+    fn does_not_warn_for_a_sixty_three_byte_table_name() {
+        let mut schema = Schema::new();
+        schema.overlong_identifiers.push(OverlongIdentifier {
+            kind: "table".to_string(),
+            name: "a".repeat(63),
+        });
+
+        assert_eq!(lint_schema(&schema), Vec::new());
+    }
+
+    #[test]
+    fn warns_for_a_multibyte_name_under_sixty_four_chars_but_over_sixty_three_bytes() {
+        let name = "é".repeat(32);
+        assert_eq!(name.chars().count(), 32);
+        assert_eq!(name.len(), 64);
+
+        let mut schema = Schema::new();
+        schema.overlong_identifiers.push(OverlongIdentifier {
+            kind: "column".to_string(),
+            name: name.clone(),
+        });
+
+        let truncated = "é".repeat(31);
+        assert_eq!(
+            lint_schema(&schema),
+            vec![LintResult {
+                rule: "warn_identifier_exceeds_namedatalen",
+                severity: LintSeverity::Warning,
+                message: format!(
+                    "column identifier \"{name}\" is 64 bytes; PostgreSQL truncates identifiers to 63 bytes and will store it as \"{truncated}\""
+                ),
+            }]
+        );
+    }
+
+    #[test]
+    fn warns_for_each_overlong_identifier_across_object_kinds() {
+        let column_name = "c".repeat(70);
+        let index_name = "i".repeat(64);
+        let function_name = "f".repeat(80);
+        let mut schema = Schema::new();
+        schema.overlong_identifiers = vec![
+            OverlongIdentifier {
+                kind: "column".to_string(),
+                name: column_name.clone(),
+            },
+            OverlongIdentifier {
+                kind: "index".to_string(),
+                name: index_name.clone(),
+            },
+            OverlongIdentifier {
+                kind: "function".to_string(),
+                name: function_name.clone(),
+            },
+        ];
+
+        let results = lint_schema(&schema);
+
+        assert_eq!(
+            results,
+            vec![
+                LintResult {
+                    rule: "warn_identifier_exceeds_namedatalen",
+                    severity: LintSeverity::Warning,
+                    message: format!(
+                        "column identifier \"{column_name}\" is 70 bytes; PostgreSQL truncates identifiers to 63 bytes and will store it as \"{}\"",
+                        "c".repeat(63)
+                    ),
+                },
+                LintResult {
+                    rule: "warn_identifier_exceeds_namedatalen",
+                    severity: LintSeverity::Warning,
+                    message: format!(
+                        "index identifier \"{index_name}\" is 64 bytes; PostgreSQL truncates identifiers to 63 bytes and will store it as \"{}\"",
+                        "i".repeat(63)
+                    ),
+                },
+                LintResult {
+                    rule: "warn_identifier_exceeds_namedatalen",
+                    severity: LintSeverity::Warning,
+                    message: format!(
+                        "function identifier \"{function_name}\" is 80 bytes; PostgreSQL truncates identifiers to 63 bytes and will store it as \"{}\"",
+                        "f".repeat(63)
+                    ),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parsed_schema_with_overlong_index_warns_through_the_full_path() {
+        let long_index = "i".repeat(70);
+        let sql = format!(
+            "CREATE TABLE t (id BIGINT NOT NULL); CREATE INDEX \"{long_index}\" ON t (id);"
+        );
+        let schema = crate::parser::parse_sql_string(&sql).expect("parse");
+
+        let results = lint_schema(&schema);
+
+        assert_eq!(
+            results,
+            vec![LintResult {
+                rule: "warn_identifier_exceeds_namedatalen",
+                severity: LintSeverity::Warning,
+                message: format!(
+                    "index identifier \"{long_index}\" is 70 bytes; PostgreSQL truncates identifiers to 63 bytes and will store it as \"{}\"",
+                    "i".repeat(63)
+                ),
+            }]
+        );
+    }
+
+    #[test]
+    fn overlong_identifier_warnings_are_not_errors() {
+        let mut schema = Schema::new();
+        schema.overlong_identifiers.push(OverlongIdentifier {
+            kind: "table".to_string(),
+            name: "a".repeat(64),
+        });
+
+        assert!(!has_errors(&lint_schema(&schema)));
     }
 }

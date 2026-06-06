@@ -5543,6 +5543,72 @@ fn alter_index_rename_with_64_byte_names_applies_truncation() {
 }
 
 #[test]
+fn overlong_table_name_is_recorded_for_lint() {
+    let long = "t".repeat(64);
+    let sql = format!("CREATE TABLE \"{long}\" (id BIGINT NOT NULL);");
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    assert_eq!(
+        schema.overlong_identifiers,
+        vec![crate::model::OverlongIdentifier {
+            kind: "table".to_string(),
+            name: long,
+        }]
+    );
+}
+
+#[test]
+fn overlong_column_index_and_function_names_are_recorded_for_lint() {
+    let long_column = "c".repeat(64);
+    let long_index = "i".repeat(70);
+    let long_function = "f".repeat(80);
+    let sql = format!(
+        r#"
+        CREATE TABLE t (id BIGINT NOT NULL, "{long_column}" TEXT);
+        CREATE INDEX "{long_index}" ON t (id);
+        CREATE FUNCTION "{long_function}"() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
+        "#
+    );
+
+    let schema = parse_sql_string(&sql).expect("Should parse");
+
+    let mut kinds: Vec<&str> = schema
+        .overlong_identifiers
+        .iter()
+        .map(|o| o.kind.as_str())
+        .collect();
+    kinds.sort_unstable();
+    assert_eq!(kinds, vec!["column", "function", "index"]);
+
+    let mut names: Vec<&str> = schema
+        .overlong_identifiers
+        .iter()
+        .map(|o| o.name.as_str())
+        .collect();
+    names.sort_unstable();
+    let mut expected = vec![
+        long_column.as_str(),
+        long_index.as_str(),
+        long_function.as_str(),
+    ];
+    expected.sort_unstable();
+    assert_eq!(names, expected);
+}
+
+#[test]
+fn names_within_the_byte_limit_are_not_recorded_for_lint() {
+    let sql = r#"
+        CREATE TABLE users (id BIGINT NOT NULL, email TEXT);
+        CREATE INDEX users_email_idx ON users (email);
+    "#;
+
+    let schema = parse_sql_string(sql).expect("Should parse");
+
+    assert_eq!(schema.overlong_identifiers, Vec::new());
+}
+
+#[test]
 fn truncate_identifier_stops_at_char_boundary_for_multibyte_input() {
     // `あ` is a 3-byte UTF-8 char. 22 of them is 66 bytes; the 63-byte cap lands on a
     // char boundary (21 chars = 63 bytes), so the result is exactly 63 bytes of valid UTF-8.
