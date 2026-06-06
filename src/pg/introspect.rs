@@ -443,12 +443,7 @@ async fn introspect_domains(
                 "json" => PgType::Json,
                 "jsonb" => PgType::Jsonb,
                 "character varying" | "varchar" => {
-                    let length = if base_typmod > 0 {
-                        Some((base_typmod - 4) as u32)
-                    } else {
-                        None
-                    };
-                    PgType::Varchar(length)
+                    PgType::Varchar(decode_varchar_typmod(base_typmod))
                 }
                 _ => {
                     let qualified = format!("public.{base_type}");
@@ -922,6 +917,17 @@ fn decode_numeric_typmod(atttypmod: i32) -> PgType {
     }
 }
 
+/// Decodes a `varchar` column's `atttypmod` into a declared length. PostgreSQL
+/// stores `length + VARHDRSZ` (4) for a bounded `varchar(n)` and -1 for the
+/// unbounded `varchar`.
+fn decode_varchar_typmod(atttypmod: i32) -> Option<u32> {
+    if atttypmod > 0 {
+        Some((atttypmod - 4) as u32)
+    } else {
+        None
+    }
+}
+
 fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i32>) -> PgType {
     match udt_name {
         "bool" => PgType::Boolean,
@@ -931,10 +937,7 @@ fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i
         "float4" => PgType::Real,
         "float8" => PgType::DoublePrecision,
         "text" => PgType::Text,
-        "varchar" => {
-            let length = atttypmod.and_then(|m| if m > 0 { Some((m - 4) as u32) } else { None });
-            PgType::Varchar(length)
-        }
+        "varchar" => PgType::Varchar(atttypmod.and_then(decode_varchar_typmod)),
         "uuid" => PgType::Uuid,
         "timestamptz" => PgType::TimestampTz,
         "timestamp" => PgType::Timestamp,
