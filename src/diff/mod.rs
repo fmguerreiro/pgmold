@@ -3852,6 +3852,128 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
     }
 
     #[test]
+    fn recreates_domain_on_base_type_change() {
+        let mut from = empty_schema();
+        from.domains.insert(
+            "public.price".to_string(),
+            Domain {
+                name: "price".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(2),
+                },
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
+                comment: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.domains.insert(
+            "public.price".to_string(),
+            Domain {
+                name: "price".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Numeric {
+                    precision: Some(12),
+                    scale: Some(4),
+                },
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
+                comment: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        let domain_ops: Vec<&MigrationOp> = ops
+            .iter()
+            .filter(|op| {
+                matches!(
+                    op,
+                    MigrationOp::DropDomain(_)
+                        | MigrationOp::CreateDomain(_)
+                        | MigrationOp::AlterDomain { .. }
+                )
+            })
+            .collect();
+        assert_eq!(domain_ops.len(), 2);
+        let drop_pos = domain_ops
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropDomain(name) if name == "public.price"))
+            .expect("DropDomain for public.price should exist");
+        let create_pos = domain_ops
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateDomain(d) if d.name == "price" && d.data_type == PgType::Numeric { precision: Some(12), scale: Some(4) }))
+            .expect("CreateDomain for the new base type should exist");
+        assert!(
+            drop_pos < create_pos,
+            "DropDomain must precede CreateDomain"
+        );
+    }
+
+    #[test]
+    fn alters_domain_on_default_only_change() {
+        let mut from = empty_schema();
+        from.domains.insert(
+            "public.price".to_string(),
+            Domain {
+                name: "price".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(2),
+                },
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
+                comment: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.domains.insert(
+            "public.price".to_string(),
+            Domain {
+                name: "price".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(2),
+                },
+                default: Some("0".to_string()),
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
+                comment: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterDomain { name, changes }
+                if name == "public.price"
+                    && changes.default == Some(Some("0".to_string()))
+                    && changes.not_null.is_none()
+        ));
+    }
+
+    #[test]
     fn detects_function_owner_change_when_flag_enabled() {
         let func_sig = "public.get_user(integer)".to_string();
         let mut from = empty_schema();
