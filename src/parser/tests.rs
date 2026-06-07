@@ -1581,6 +1581,25 @@ fn index_on_overlong_column_truncates_plain_reference_but_leaves_expressions() {
 }
 
 #[test]
+fn expression_index_truncates_overlong_inner_identifier() {
+    let column = "z".repeat(64);
+    let truncated = "z".repeat(63);
+    let sql = format!(
+        "CREATE TABLE t (id INT NOT NULL, {column} TEXT); \
+         CREATE INDEX t_expr_idx ON t (lower({column}));"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+
+    let expr = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "t_expr_idx")
+        .unwrap();
+    assert_eq!(expr.columns, vec![format!("lower({truncated})")]);
+}
+
+#[test]
 fn create_index_on_overlong_table_name_is_not_dropped() {
     let table = "t".repeat(64);
     let sql = format!(
