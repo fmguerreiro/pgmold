@@ -126,8 +126,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 let table_name = truncate_identifier(&raw_table_name);
 
                 if let Some(ref parent_table) = ct.partition_of {
-                    let (parent_schema, raw_parent_name) = extract_qualified_name(parent_table);
-                    let parent_name = truncate_referenced_identifier(&raw_parent_name);
+                    let (parent_schema, parent_name) =
+                        extract_qualified_name_truncated(parent_table);
                     let bound = parse_for_values(&ct.for_values)?;
                     let partition = Partition {
                         schema: table_schema.clone(),
