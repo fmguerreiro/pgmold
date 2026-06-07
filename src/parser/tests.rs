@@ -1367,6 +1367,157 @@ FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
 }
 
 #[test]
+fn partition_of_overlong_parent_truncates_parent_name() {
+    let parent = "p".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {parent} (id INT NOT NULL, logdate DATE NOT NULL) \
+         PARTITION BY RANGE (logdate); \
+         CREATE TABLE child_part PARTITION OF {parent} \
+         FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let partition = schema.partitions.get("public.child_part").unwrap();
+    assert_eq!(partition.parent_name, "p".repeat(63));
+}
+
+#[test]
+fn foreign_key_to_overlong_table_truncates_referenced_table() {
+    let parent = "r".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {parent} (id INT NOT NULL, PRIMARY KEY (id)); \
+         CREATE TABLE child ( \
+            id INT NOT NULL, \
+            parent_id INT NOT NULL, \
+            PRIMARY KEY (id), \
+            CONSTRAINT child_parent_fkey FOREIGN KEY (parent_id) REFERENCES {parent} (id) \
+         );"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(child.foreign_keys[0].referenced_table, "r".repeat(63));
+}
+
+#[test]
+fn foreign_key_to_overlong_column_truncates_referenced_column() {
+    let column = "c".repeat(64);
+    let sql = format!(
+        "CREATE TABLE parent_tbl ({column} INT NOT NULL, PRIMARY KEY ({column})); \
+         CREATE TABLE child ( \
+            id INT NOT NULL, \
+            parent_ref INT NOT NULL REFERENCES parent_tbl ({column}) \
+         );"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(child.foreign_keys[0].referenced_table, "parent_tbl");
+    assert_eq!(
+        child.foreign_keys[0].referenced_columns,
+        vec!["c".repeat(63)]
+    );
+}
+
+#[test]
+fn inline_foreign_key_to_overlong_table_truncates_referenced_table() {
+    let parent = "r".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {parent} (id INT NOT NULL, PRIMARY KEY (id)); \
+         CREATE TABLE child ( \
+            id INT NOT NULL, \
+            parent_id INT NOT NULL REFERENCES {parent} (id) \
+         );"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(child.foreign_keys[0].referenced_table, "r".repeat(63));
+}
+
+#[test]
+fn table_constraint_foreign_key_truncates_referenced_column() {
+    let column = "c".repeat(64);
+    let sql = format!(
+        "CREATE TABLE parent_tbl ({column} INT NOT NULL, PRIMARY KEY ({column})); \
+         CREATE TABLE child ( \
+            id INT NOT NULL, \
+            parent_ref INT NOT NULL, \
+            CONSTRAINT child_parent_fkey FOREIGN KEY (parent_ref) REFERENCES parent_tbl ({column}) \
+         );"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(
+        child.foreign_keys[0].referenced_columns,
+        vec!["c".repeat(63)]
+    );
+}
+
+#[test]
+fn foreign_key_truncates_local_columns() {
+    let local = "l".repeat(64);
+    let sql = format!(
+        "CREATE TABLE parent_tbl (id INT NOT NULL, PRIMARY KEY (id)); \
+         CREATE TABLE child ( \
+            id INT NOT NULL, \
+            {local} INT NOT NULL, \
+            CONSTRAINT child_fkey FOREIGN KEY ({local}) REFERENCES parent_tbl (id) \
+         );"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(child.foreign_keys[0].columns, vec!["l".repeat(63)]);
+}
+
+#[test]
+fn alter_table_add_foreign_key_truncates_references() {
+    let parent = "r".repeat(64);
+    let column = "c".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {parent} ({column} INT NOT NULL, PRIMARY KEY ({column})); \
+         CREATE TABLE child (id INT NOT NULL, parent_ref INT NOT NULL, PRIMARY KEY (id)); \
+         ALTER TABLE child ADD CONSTRAINT child_parent_fkey \
+            FOREIGN KEY (parent_ref) REFERENCES {parent} ({column});"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(child.foreign_keys[0].referenced_table, "r".repeat(63));
+    assert_eq!(
+        child.foreign_keys[0].referenced_columns,
+        vec!["c".repeat(63)]
+    );
+}
+
+#[test]
+fn index_on_overlong_column_truncates_plain_reference_but_leaves_expressions() {
+    let column = "z".repeat(64);
+    let sql = format!(
+        "CREATE TABLE t (id INT NOT NULL, {column} INT, name TEXT); \
+         CREATE INDEX t_plain_idx ON t ({column}); \
+         CREATE INDEX t_expr_idx ON t (lower(name));"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+
+    let plain = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "t_plain_idx")
+        .unwrap();
+    assert_eq!(plain.columns, vec!["z".repeat(63)]);
+
+    let expr = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "t_expr_idx")
+        .unwrap();
+    assert_eq!(expr.columns, vec!["lower(name)".to_string()]);
+}
+
+#[test]
 fn parses_list_partition() {
     let sql = r#"
 CREATE TABLE customers (

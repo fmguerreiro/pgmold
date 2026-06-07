@@ -390,6 +390,23 @@ async fn domain() {
 }
 
 #[tokio::test]
+async fn index_on_overlong_column_name_converges() {
+    let column = "z".repeat(64);
+    assert_convergence_public(&format!(
+        r#"
+        CREATE TABLE public.measurements (
+            id        BIGINT NOT NULL,
+            {column}  INTEGER,
+            PRIMARY KEY (id)
+        );
+
+        CREATE INDEX measurements_long_col_idx ON public.measurements ({column});
+        "#
+    ))
+    .await;
+}
+
+#[tokio::test]
 async fn partition() {
     assert_convergence_public(
         r#"

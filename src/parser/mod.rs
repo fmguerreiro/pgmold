@@ -62,7 +62,8 @@ use tables::{
 use util::{
     extract_qualified_name, normalize_expr, parse_data_type, parse_for_values,
     parse_for_values_required, parse_policy_command, take_overlong_identifiers,
-    truncate_identifier, truncated_ident, unquote_ident,
+    truncate_identifier, truncate_index_column, truncate_referenced_columns,
+    truncate_referenced_identifier, truncated_ident, unquote_ident,
 };
 
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
@@ -125,7 +126,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 let table_name = truncate_identifier(&raw_table_name);
 
                 if let Some(ref parent_table) = ct.partition_of {
-                    let (parent_schema, parent_name) = extract_qualified_name(parent_table);
+                    let (parent_schema, raw_parent_name) = extract_qualified_name(parent_table);
+                    let parent_name = truncate_referenced_identifier(&raw_parent_name);
                     let bound = parse_for_values(&ct.for_values)?;
                     let partition = Partition {
                         schema: table_schema.clone(),
@@ -175,11 +177,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     };
                     table.indexes.push(Index {
                         name: idx_name,
-                        columns: ci
-                            .columns
-                            .iter()
-                            .map(|c| unquote_ident(&c.column.expr.to_string()).to_string())
-                            .collect(),
+                        columns: ci.columns.iter().map(truncate_index_column).collect(),
                         unique: ci.unique,
                         index_type,
                         predicate: ci.predicate.as_ref().map(|p| p.to_string()),
@@ -312,22 +310,18 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                                                     unquote_ident(&fk.columns[0].to_string())
                                                 )
                                             });
-                                        let (ref_schema, ref_table) =
+                                        let (ref_schema, raw_ref_table) =
                                             extract_qualified_name(&fk.foreign_table);
                                         table.foreign_keys.push(ForeignKey {
                                             name: truncate_identifier(&fk_name),
-                                            columns: fk
-                                                .columns
-                                                .iter()
-                                                .map(|c| unquote_ident(&c.to_string()).to_string())
-                                                .collect(),
+                                            columns: truncate_referenced_columns(&fk.columns),
                                             referenced_schema: ref_schema,
-                                            referenced_table: ref_table,
-                                            referenced_columns: fk
-                                                .referred_columns
-                                                .iter()
-                                                .map(|c| unquote_ident(&c.to_string()).to_string())
-                                                .collect(),
+                                            referenced_table: truncate_referenced_identifier(
+                                                &raw_ref_table,
+                                            ),
+                                            referenced_columns: truncate_referenced_columns(
+                                                &fk.referred_columns,
+                                            ),
                                             on_delete: parse_referential_action(&fk.on_delete),
                                             on_update: parse_referential_action(&fk.on_update),
                                         });
@@ -509,7 +503,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                                 schema: child_schema,
                                 name: child_name,
                                 parent_schema: tbl_schema.clone(),
-                                parent_name: tbl_name.clone(),
+                                parent_name: truncate_referenced_identifier(&tbl_name),
                                 bound,
                                 indexes: Vec::new(),
                                 check_constraints: Vec::new(),
