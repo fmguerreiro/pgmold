@@ -1364,6 +1364,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 table_name,
                 on_domain,
                 comment,
+                comment_dollar_quote: _,
                 if_exists: _,
             } => {
                 apply_comment_statement(

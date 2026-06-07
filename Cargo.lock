@@ -1612,9 +1612,9 @@ dependencies = [
 
 [[package]]
 name = "pgmold-sqlparser"
-version = "0.63.0"
+version = "0.64.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "149cdc1dd64b7bc0f3918f6b8f72f8ea3a7af8b52df3a87bcabc848bf8d023d2"
+checksum = "6db4cd1a99747af2e421b034022a93032ffa8e57d89c97a77d2dfd80d027123e"
 dependencies = [
  "log",
  "recursive",
