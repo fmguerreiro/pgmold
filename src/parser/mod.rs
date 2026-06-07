@@ -847,7 +847,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     ))
                 })?;
                 let func_unqualified = exec.func_name.0.len() == 1;
-                let (func_schema, func_name) = extract_qualified_name(&exec.func_name);
+                let (func_schema, func_name) = extract_qualified_name_truncated(&exec.func_name);
                 let func_schema = if func_unqualified && is_pg_catalog_trigger_function(&func_name)
                 {
                     "pg_catalog".to_string()

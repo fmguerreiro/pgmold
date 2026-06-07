@@ -2693,6 +2693,53 @@ fn comment_on_column_accepts_e_string_literal() {
 }
 
 #[test]
+fn comment_on_overlong_table_attaches_to_truncated_table() {
+    let table = "t".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id integer PRIMARY KEY); \
+         COMMENT ON TABLE {table} IS 'hello';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let parsed = schema
+        .tables
+        .get(&format!("public.{}", "t".repeat(63)))
+        .expect("table should parse");
+    assert_eq!(parsed.comment.as_deref(), Some("hello"));
+}
+
+#[test]
+fn comment_on_overlong_column_attaches_to_truncated_column() {
+    let column = "c".repeat(64);
+    let sql = format!(
+        "CREATE TABLE orders (id integer PRIMARY KEY, {column} numeric); \
+         COMMENT ON COLUMN orders.{column} IS 'amount';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.orders").unwrap();
+    let col = table
+        .columns
+        .get(&"c".repeat(63))
+        .expect("column should exist");
+    assert_eq!(col.comment.as_deref(), Some("amount"));
+}
+
+#[test]
+fn trigger_execute_function_name_is_truncated() {
+    let func = "f".repeat(64);
+    let sql = format!(
+        "CREATE TRIGGER trg BEFORE INSERT ON some_table \
+         FOR EACH ROW EXECUTE FUNCTION {func}();"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let trigger = schema
+        .triggers
+        .values()
+        .find(|t| t.name == "trg")
+        .expect("trigger should parse");
+    assert_eq!(trigger.function_name, "f".repeat(63));
+}
+
+#[test]
 fn comment_on_table_accepts_dollar_quoted_literal() {
     let sql = r#"
         CREATE TABLE t (id integer PRIMARY KEY);
