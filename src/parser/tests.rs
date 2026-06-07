@@ -2756,6 +2756,63 @@ fn comment_on_column_accepts_e_string_literal() {
 }
 
 #[test]
+fn comment_on_column_with_dotted_name_attaches_to_right_column() {
+    let sql = r#"
+        CREATE TABLE mrv.orders (id integer PRIMARY KEY, "a.b" numeric);
+        COMMENT ON COLUMN mrv.orders."a.b" IS 'dotted';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("mrv.orders").expect("table should parse");
+    let column = table
+        .columns
+        .get("a.b")
+        .expect("dotted column should exist");
+    assert_eq!(column.comment.as_deref(), Some("dotted"));
+    assert!(
+        schema.pending_comments.is_empty(),
+        "comment on dotted column should not stay pending"
+    );
+}
+
+#[test]
+fn comment_on_policy_with_dotted_table_attaches() {
+    let sql = r#"
+        CREATE TABLE mrv."a.b" (id integer PRIMARY KEY);
+        CREATE POLICY "p.q" ON mrv."a.b" FOR SELECT USING (true);
+        COMMENT ON POLICY "p.q" ON mrv."a.b" IS 'dotted-table';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema
+        .tables
+        .get("mrv.a.b")
+        .expect("dotted table should parse");
+    let policy = table
+        .policies
+        .iter()
+        .find(|p| p.name == "p.q")
+        .expect("policy should exist");
+    assert_eq!(policy.comment.as_deref(), Some("dotted-table"));
+    assert!(schema.pending_comments.is_empty());
+}
+
+#[test]
+fn comment_on_trigger_with_dotted_name_attaches() {
+    let sql = r#"
+        CREATE TABLE mrv."t.u" (id integer PRIMARY KEY);
+        CREATE TRIGGER "g.h" BEFORE INSERT ON mrv."t.u" FOR EACH ROW EXECUTE FUNCTION fn();
+        COMMENT ON TRIGGER "g.h" ON mrv."t.u" IS 'dotted-trigger';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let trigger = schema
+        .triggers
+        .values()
+        .find(|t| t.name == "g.h")
+        .expect("dotted trigger should parse");
+    assert_eq!(trigger.comment.as_deref(), Some("dotted-trigger"));
+    assert!(schema.pending_comments.is_empty());
+}
+
+#[test]
 fn comment_on_overlong_table_attaches_to_truncated_table() {
     let table = "t".repeat(64);
     let sql = format!(

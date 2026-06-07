@@ -100,7 +100,18 @@ pub enum PendingCommentObjectType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingComment {
     pub object_type: PendingCommentObjectType,
+    /// For top-level kinds (Table, View, Function, ...) this is the object's
+    /// qualified key (`schema.name`) or function signature. For the nested
+    /// kinds (Column, Trigger, Policy, Constraint) this is the *parent's*
+    /// qualified key (`schema.table` / `schema.domain`); the child's own name
+    /// lives in `child_name`. The two fields are never concatenated, so a
+    /// schema, table, or child name containing a literal dot (legal via a
+    /// quoted identifier) routes correctly.
     pub object_key: String,
+    /// `Some(child)` only for the nested kinds Column, Trigger, Policy, and
+    /// Constraint, carrying the column / trigger / policy / constraint name.
+    /// `None` for every top-level kind.
+    pub child_name: Option<String>,
     pub comment: Option<String>,
     /// Only meaningful for `PendingCommentObjectType::Constraint`. `true`
     /// when the source statement used the `ON DOMAIN <domain>` tail rather
@@ -1494,12 +1505,14 @@ impl Schema {
                 }
             }
             PendingCommentObjectType::Column => {
-                if let Some((table_key, col_name)) = pc.object_key.rsplit_once('.') {
-                    if let Some(table) = self.tables.get_mut(table_key) {
-                        if let Some(column) = table.columns.get_mut(col_name) {
-                            column.comment = pc.comment.clone();
-                            return true;
-                        }
+                let column_name = pc
+                    .child_name
+                    .as_deref()
+                    .expect("Column pending comment must carry child_name");
+                if let Some(table) = self.tables.get_mut(&pc.object_key) {
+                    if let Some(column) = table.columns.get_mut(column_name) {
+                        column.comment = pc.comment.clone();
+                        return true;
                     }
                 }
                 false
@@ -1561,7 +1574,16 @@ impl Schema {
                 }
             }
             PendingCommentObjectType::Trigger => {
-                if let Some(trigger) = self.triggers.get_mut(&pc.object_key) {
+                let trigger_name = pc
+                    .child_name
+                    .as_deref()
+                    .expect("Trigger pending comment must carry child_name");
+                // The trigger map is keyed by the parent table key with the
+                // trigger name appended, matching `make_trigger_key`. Rebuild
+                // that exact key from the structured parts instead of splitting
+                // a flat string, so a dotted schema/table/trigger name routes.
+                let trigger_key = format!("{}.{}", pc.object_key, trigger_name);
+                if let Some(trigger) = self.triggers.get_mut(&trigger_key) {
                     trigger.comment = pc.comment.clone();
                     true
                 } else {
@@ -1577,49 +1599,54 @@ impl Schema {
                 }
             }
             PendingCommentObjectType::Policy => {
-                // Key encodes schema.table.policy_name. Split off the policy
-                // name (last segment) and resolve the table from the prefix.
-                if let Some((table_key, policy_name)) = pc.object_key.rsplit_once('.') {
-                    if let Some(table) = self.tables.get_mut(table_key) {
-                        if let Some(policy) =
-                            table.policies.iter_mut().find(|p| p.name == policy_name)
-                        {
-                            policy.comment = pc.comment.clone();
-                            return true;
-                        }
+                let policy_name = pc
+                    .child_name
+                    .as_deref()
+                    .expect("Policy pending comment must carry child_name");
+                if let Some(table) = self.tables.get_mut(&pc.object_key) {
+                    if let Some(policy) =
+                        table.policies.iter_mut().find(|p| p.name == policy_name)
+                    {
+                        policy.comment = pc.comment.clone();
+                        return true;
                     }
                 }
                 false
             }
             PendingCommentObjectType::Constraint => {
-                // Key encodes schema.parent.constraint_name where parent is
-                // either a table, a partition child, or a domain (when
-                // on_domain). Routed through the matching Schema-level
-                // sidecar map so we do not have to mutate every constraint
-                // variant struct. Partition children share the table sidecar
-                // because PostgreSQL stores constraint comments on the child
-                // relation, and the diff/emit path is parent-kind agnostic.
-                let Some((parent_key, _)) = pc.object_key.rsplit_once('.') else {
-                    return false;
-                };
+                // `object_key` is the parent's qualified key (`schema.parent`)
+                // and `child_name` the constraint name. The parent is either a
+                // table, a partition child, or a domain (when `on_domain`).
+                // Routed through the matching Schema-level sidecar map so we do
+                // not have to mutate every constraint variant struct. Partition
+                // children share the table sidecar because PostgreSQL stores
+                // constraint comments on the child relation, and the diff/emit
+                // path is parent-kind agnostic. The sidecar map key keeps the
+                // flat `parent.constraint` form because introspection populates
+                // the same maps with that shape.
+                let constraint_name = pc
+                    .child_name
+                    .as_deref()
+                    .expect("Constraint pending comment must carry child_name");
+                let sidecar_key = format!("{}.{}", pc.object_key, constraint_name);
                 if pc.on_domain {
-                    if !self.domains.contains_key(parent_key) {
+                    if !self.domains.contains_key(&pc.object_key) {
                         return false;
                     }
                     update_constraint_comment(
                         &mut self.domain_constraint_comments,
-                        &pc.object_key,
+                        &sidecar_key,
                         pc.comment.as_ref(),
                     );
                 } else {
-                    if !self.tables.contains_key(parent_key)
-                        && !self.partitions.contains_key(parent_key)
+                    if !self.tables.contains_key(&pc.object_key)
+                        && !self.partitions.contains_key(&pc.object_key)
                     {
                         return false;
                     }
                     update_constraint_comment(
                         &mut self.table_constraint_comments,
-                        &pc.object_key,
+                        &sidecar_key,
                         pc.comment.as_ref(),
                     );
                 }
