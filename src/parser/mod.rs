@@ -60,8 +60,8 @@ use tables::{
     parse_referential_action,
 };
 use util::{
-    extract_qualified_name, normalize_expr, parse_data_type, parse_for_values,
-    parse_for_values_required, parse_policy_command, take_overlong_identifiers,
+    extract_qualified_name, extract_qualified_name_truncated, normalize_expr, parse_data_type,
+    parse_for_values, parse_for_values_required, parse_policy_command, take_overlong_identifiers,
     truncate_identifier, truncate_index_column, truncate_referenced_columns,
     truncate_referenced_identifier, truncated_ident, unquote_ident,
 };
@@ -126,8 +126,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 let table_name = truncate_identifier(&raw_table_name);
 
                 if let Some(ref parent_table) = ct.partition_of {
-                    let (parent_schema, raw_parent_name) = extract_qualified_name(parent_table);
-                    let parent_name = truncate_referenced_identifier(&raw_parent_name);
+                    let (parent_schema, parent_name) =
+                        extract_qualified_name_truncated(parent_table);
                     let bound = parse_for_values(&ct.for_values)?;
                     let partition = Partition {
                         schema: table_schema.clone(),
@@ -164,7 +164,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     .as_ref()
                     .map(truncated_ident)
                     .ok_or_else(|| SchemaError::ParseError("Index must have name".into()))?;
-                let (tbl_schema, tbl_name) = extract_qualified_name(&ci.table_name);
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&ci.table_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
 
                 if let Some(table) = schema.tables.get_mut(&tbl_key) {
@@ -244,7 +244,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             Statement::AlterTable(AlterTable {
                 name, operations, ..
             }) => {
-                let (tbl_schema, tbl_name) = extract_qualified_name(&name);
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
                 for op in operations {
                     match op {
@@ -495,7 +495,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             partition_bound,
                         } => {
                             let (child_schema, child_name) =
-                                extract_qualified_name(&partition_name);
+                                extract_qualified_name_truncated(&partition_name);
                             let child_key = qualified_name(&child_schema, &child_name);
                             let bound = parse_for_values_required(&partition_bound)?;
                             let owner = schema.tables.remove(&child_key).and_then(|t| t.owner);
@@ -503,7 +503,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                                 schema: child_schema,
                                 name: child_name,
                                 parent_schema: tbl_schema.clone(),
-                                parent_name: truncate_referenced_identifier(&tbl_name),
+                                parent_name: tbl_name.clone(),
                                 bound,
                                 indexes: Vec::new(),
                                 check_constraints: Vec::new(),
@@ -517,7 +517,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             finalize: _,
                         } => {
                             let (child_schema, child_name) =
-                                extract_qualified_name(&partition_name);
+                                extract_qualified_name_truncated(&partition_name);
                             let child_key = qualified_name(&child_schema, &child_name);
                             // TODO: PostgreSQL promotes a detached partition to a standalone
                             // table; re-insert into schema.tables to model that.

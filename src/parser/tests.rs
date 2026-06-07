@@ -1518,6 +1518,59 @@ fn index_on_overlong_column_truncates_plain_reference_but_leaves_expressions() {
 }
 
 #[test]
+fn create_index_on_overlong_table_name_is_not_dropped() {
+    let table = "t".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id INT NOT NULL, val INT); \
+         CREATE INDEX overlong_tbl_idx ON {table} (val);"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let parsed = schema
+        .tables
+        .get(&format!("public.{}", "t".repeat(63)))
+        .unwrap();
+    assert_eq!(parsed.indexes.len(), 1);
+    assert_eq!(parsed.indexes[0].name, "overlong_tbl_idx");
+    assert_eq!(parsed.indexes[0].columns, vec!["val".to_string()]);
+}
+
+#[test]
+fn alter_table_on_overlong_table_name_is_not_dropped() {
+    let table = "t".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id INT NOT NULL); \
+         ALTER TABLE {table} ADD COLUMN extra TEXT;"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let parsed = schema
+        .tables
+        .get(&format!("public.{}", "t".repeat(63)))
+        .unwrap();
+    let column = parsed.columns.get("extra").unwrap();
+    assert_eq!(column.data_type, PgType::Text);
+    assert!(column.nullable);
+}
+
+#[test]
+fn attach_partition_with_overlong_child_name_truncates_key_and_name() {
+    let child = "c".repeat(64);
+    let sql = format!(
+        "CREATE TABLE parent_tbl (id INT NOT NULL, logdate DATE NOT NULL) \
+         PARTITION BY RANGE (logdate); \
+         CREATE TABLE {child} (id INT NOT NULL, logdate DATE NOT NULL); \
+         ALTER TABLE parent_tbl ATTACH PARTITION {child} \
+         FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let partition = schema
+        .partitions
+        .get(&format!("public.{}", "c".repeat(63)))
+        .unwrap();
+    assert_eq!(partition.name, "c".repeat(63));
+    assert_eq!(partition.parent_name, "parent_tbl");
+}
+
+#[test]
 fn parses_list_partition() {
     let sql = r#"
 CREATE TABLE customers (
