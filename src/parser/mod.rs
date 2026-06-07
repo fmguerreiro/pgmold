@@ -216,7 +216,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 with_check,
                 ..
             }) => {
-                let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&table_name);
                 let policy = Policy {
                     name: truncated_ident(&name),
                     table_schema: tbl_schema,
@@ -839,7 +839,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 characteristics,
                 ..
             }) => {
-                let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&table_name);
                 let trigger_name = truncated_ident(&name);
                 let exec = exec_body.as_ref().ok_or_else(|| {
                     SchemaError::ParseError(format!(
@@ -1109,7 +1109,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 table_name: Some(ref tbl),
                 ..
             }) => {
-                let (tbl_schema, tbl_name) = extract_qualified_name(tbl);
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(tbl);
                 let trigger_key = make_trigger_key(
                     &tbl_schema,
                     &tbl_name,
@@ -1121,7 +1121,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             Statement::DropPolicy(sqlparser::ast::DropPolicy {
                 name, table_name, ..
             }) => {
-                let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&table_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
                 let policy_name = truncated_ident(&name);
 

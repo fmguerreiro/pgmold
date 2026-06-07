@@ -1492,6 +1492,69 @@ fn alter_table_add_foreign_key_truncates_references() {
 }
 
 #[test]
+fn policy_on_overlong_table_truncates_table_reference() {
+    let table = "p".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id INT NOT NULL); \
+         CREATE POLICY my_policy ON {table} FOR SELECT USING (true);"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let parsed = schema
+        .tables
+        .get(&format!("public.{}", "p".repeat(63)))
+        .unwrap();
+    assert_eq!(
+        parsed.policies.len(),
+        1,
+        "policy should attach to the truncated table, not orphan in pending_policies"
+    );
+    assert_eq!(parsed.policies[0].name, "my_policy");
+    assert_eq!(parsed.policies[0].table, "p".repeat(63));
+}
+
+#[test]
+fn trigger_on_overlong_table_truncates_table_reference() {
+    let table = "g".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id INT NOT NULL); \
+         CREATE TRIGGER my_trigger BEFORE INSERT ON {table} \
+            FOR EACH ROW EXECUTE FUNCTION my_fn();"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let trigger = schema
+        .triggers
+        .values()
+        .find(|t| t.name == "my_trigger")
+        .unwrap();
+    assert_eq!(trigger.target_name, "g".repeat(63));
+}
+
+#[test]
+fn drop_trigger_and_policy_on_overlong_table_match_truncated_targets() {
+    let table = "d".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id INT NOT NULL); \
+         CREATE TRIGGER trg BEFORE INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION fn(); \
+         CREATE POLICY pol ON {table} FOR SELECT USING (true); \
+         DROP TRIGGER trg ON {table}; \
+         DROP POLICY pol ON {table};"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    assert!(
+        schema.triggers.is_empty(),
+        "DROP TRIGGER on the truncated table should remove the trigger"
+    );
+    let parsed = schema
+        .tables
+        .get(&format!("public.{}", "d".repeat(63)))
+        .unwrap();
+    assert!(
+        parsed.policies.is_empty(),
+        "DROP POLICY on the truncated table should remove the policy"
+    );
+}
+
+#[test]
 fn index_on_overlong_column_truncates_plain_reference_but_leaves_expressions() {
     let column = "z".repeat(64);
     let sql = format!(
