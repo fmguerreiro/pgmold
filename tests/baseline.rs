@@ -436,6 +436,38 @@ async fn introspect_carries_typmod_through_domain_base_types() {
 }
 
 #[tokio::test]
+async fn introspect_maps_domain_over_char_and_user_defined_base_types() {
+    use pgmold::model::PgType;
+
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::raw_sql(
+        r#"
+        CREATE DOMAIN fixed_code AS CHAR(10);
+        CREATE TYPE mood AS ENUM ('happy', 'sad');
+        CREATE DOMAIN mood_domain AS mood;
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        schema.domains["public.fixed_code"].data_type,
+        PgType::Char(Some(10))
+    );
+    assert_eq!(
+        schema.domains["public.mood_domain"].data_type,
+        PgType::UserDefined("public.mood".to_string())
+    );
+}
+
+#[tokio::test]
 async fn baseline_detects_inherited_table() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();
