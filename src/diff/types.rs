@@ -94,6 +94,15 @@ pub enum MigrationOp {
     DropTable(String),
     CreatePartition(Partition),
     DropPartition(String),
+    /// Detaches an existing child from its current parent. Carries the `from`
+    /// partition (old parent and bound) so the SQL names the right parent.
+    /// PostgreSQL has no in-place ALTER for a partition's bound or parent, so a
+    /// changed bound/parent is a non-destructive DETACH + ATTACH (drop+recreate
+    /// would `DROP TABLE` the child and lose its rows).
+    DetachPartition(Partition),
+    /// Re-attaches an existing child to a parent with the given bound. Carries
+    /// the `to` partition (new parent and bound).
+    AttachPartition(Partition),
     AddColumn {
         table: QualifiedName,
         column: Column,

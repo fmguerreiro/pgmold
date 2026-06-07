@@ -52,6 +52,8 @@ pub(crate) enum OpKey {
     DropTable(String),
     CreatePartition(String),
     DropPartition(String),
+    DetachPartition(String),
+    AttachPartition(String),
     AddColumn {
         table: QualifiedName,
         column: String,
@@ -261,6 +263,12 @@ impl OpKey {
                 OpKey::CreatePartition(qualified_name(&p.schema, &p.name))
             }
             MigrationOp::DropPartition(name) => OpKey::DropPartition(name.clone()),
+            MigrationOp::DetachPartition(p) => {
+                OpKey::DetachPartition(qualified_name(&p.schema, &p.name))
+            }
+            MigrationOp::AttachPartition(p) => {
+                OpKey::AttachPartition(qualified_name(&p.schema, &p.name))
+            }
             MigrationOp::AddColumn { table, column } => OpKey::AddColumn {
                 table: table.clone(),
                 column: column.name.clone(),

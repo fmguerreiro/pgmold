@@ -413,3 +413,123 @@ async fn partition_remove_partition() {
     let final_ops = compute_diff(&after_schema, &desired_schema);
     assert!(final_ops.is_empty(), "Diff should be empty after migration");
 }
+
+#[tokio::test]
+async fn changed_partition_bound_detaches_and_reattaches_without_data_loss() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE events (
+            id INT NOT NULL,
+            occurred_at DATE NOT NULL
+        ) PARTITION BY RANGE (occurred_at)
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE events_2024 PARTITION OF events
+            FOR VALUES FROM ('2024-01-01') TO ('2024-07-01')
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query("INSERT INTO events (id, occurred_at) VALUES (1, '2024-03-15')")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let desired_schema = parse_sql_string(
+        r#"
+        CREATE TABLE events (
+            id INT NOT NULL,
+            occurred_at DATE NOT NULL
+        ) PARTITION BY RANGE (occurred_at);
+
+        CREATE TABLE events_2024 PARTITION OF events
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+        "#,
+    )
+    .unwrap();
+
+    let current_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let ops = compute_diff(&current_schema, &desired_schema);
+
+    // A bound change must be DETACH then ATTACH, never DROP/CREATE the child
+    // (which would lose the row).
+    assert_eq!(ops.len(), 2, "expected exactly Detach then Attach, got {ops:?}");
+    assert!(
+        matches!(&ops[0], MigrationOp::DetachPartition(p) if p.name == "events_2024"),
+        "first op must be DetachPartition, got {:?}",
+        ops[0]
+    );
+    assert!(
+        matches!(&ops[1], MigrationOp::AttachPartition(p) if p.name == "events_2024"),
+        "second op must be AttachPartition, got {:?}",
+        ops[1]
+    );
+    assert!(
+        !ops.iter().any(|op| matches!(
+            op,
+            MigrationOp::DropPartition(_) | MigrationOp::CreatePartition(_)
+        )),
+        "must not drop or recreate the partition"
+    );
+
+    let sql = generate_sql(&ops);
+    assert_eq!(
+        sql,
+        vec![
+            "ALTER TABLE \"public\".\"events\" DETACH PARTITION \"public\".\"events_2024\";"
+                .to_string(),
+            "ALTER TABLE \"public\".\"events\" ATTACH PARTITION \"public\".\"events_2024\" FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');"
+                .to_string(),
+        ]
+    );
+
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|_| panic!("Failed to execute: {stmt}"));
+    }
+
+    let surviving_row_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM events WHERE id = 1 AND occurred_at = '2024-03-15'")
+            .fetch_one(connection.pool())
+            .await
+            .unwrap();
+    assert_eq!(surviving_row_count, 1, "row must survive DETACH/ATTACH");
+
+    let after_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let partition = after_schema
+        .partitions
+        .get("public.events_2024")
+        .expect("partition should still exist after reattach");
+    match &partition.bound {
+        PartitionBound::Range { from, to } => {
+            assert!(from[0].contains("2024-01-01"));
+            assert!(to[0].contains("2025-01-01"));
+        }
+        other => panic!("expected widened Range bound, got {other:?}"),
+    }
+
+    let final_ops = compute_diff(&after_schema, &desired_schema);
+    assert!(
+        final_ops.is_empty(),
+        "re-plan must converge to empty. Got: {final_ops:?}"
+    );
+}
