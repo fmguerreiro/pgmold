@@ -22,7 +22,10 @@ use crate::model::{
 };
 use crate::util::{Result, SchemaError};
 
-use super::util::{extract_qualified_name, unquote_ident};
+use super::util::{
+    extract_qualified_name, extract_qualified_name_truncated, truncate_referenced_identifier,
+    unquote_ident,
+};
 
 /// Parameters captured from `Statement::Comment` and forwarded to the
 /// pending-comment queue. Mirrors the fields of the AST variant so callers
@@ -57,7 +60,7 @@ pub(super) fn apply_comment_statement(
 
     match object_type {
         CommentObject::Table => {
-            let (obj_schema, obj_name) = extract_qualified_name(object_name);
+            let (obj_schema, obj_name) = extract_qualified_name_truncated(object_name);
             push(
                 schema,
                 PendingCommentObjectType::Table,
@@ -67,11 +70,13 @@ pub(super) fn apply_comment_statement(
         }
         CommentObject::Column => {
             let (table_schema, table_name, column_name) = extract_three_part_name(object_name)?;
+            let table_name = truncate_referenced_identifier(&table_name);
+            let column_name = truncate_referenced_identifier(&column_name);
             let key = format!("{table_schema}.{table_name}.{column_name}");
             push(schema, PendingCommentObjectType::Column, key, comment);
         }
         CommentObject::View => {
-            let (obj_schema, obj_name) = extract_qualified_name(object_name);
+            let (obj_schema, obj_name) = extract_qualified_name_truncated(object_name);
             push(
                 schema,
                 PendingCommentObjectType::View,
@@ -80,7 +85,7 @@ pub(super) fn apply_comment_statement(
             );
         }
         CommentObject::MaterializedView => {
-            let (obj_schema, obj_name) = extract_qualified_name(object_name);
+            let (obj_schema, obj_name) = extract_qualified_name_truncated(object_name);
             push(
                 schema,
                 PendingCommentObjectType::MaterializedView,
@@ -89,7 +94,7 @@ pub(super) fn apply_comment_statement(
             );
         }
         CommentObject::Type => {
-            let (obj_schema, obj_name) = extract_qualified_name(object_name);
+            let (obj_schema, obj_name) = extract_qualified_name_truncated(object_name);
             push(
                 schema,
                 PendingCommentObjectType::Type,
@@ -98,7 +103,7 @@ pub(super) fn apply_comment_statement(
             );
         }
         CommentObject::Domain => {
-            let (obj_schema, obj_name) = extract_qualified_name(object_name);
+            let (obj_schema, obj_name) = extract_qualified_name_truncated(object_name);
             push(
                 schema,
                 PendingCommentObjectType::Domain,
@@ -113,7 +118,7 @@ pub(super) fn apply_comment_statement(
             push(schema, PendingCommentObjectType::Schema, key, comment);
         }
         CommentObject::Sequence => {
-            let (obj_schema, obj_name) = extract_qualified_name(object_name);
+            let (obj_schema, obj_name) = extract_qualified_name_truncated(object_name);
             push(
                 schema,
                 PendingCommentObjectType::Sequence,
@@ -122,7 +127,7 @@ pub(super) fn apply_comment_statement(
             );
         }
         CommentObject::Function => {
-            let (func_schema, func_name) = extract_qualified_name(object_name);
+            let (func_schema, func_name) = extract_qualified_name_truncated(object_name);
             let args_canonical = canonical_args(arguments);
             let key = format!("{func_schema}.{func_name}({args_canonical})");
             push(schema, PendingCommentObjectType::Function, key, comment);
@@ -136,7 +141,7 @@ pub(super) fn apply_comment_statement(
                     "COMMENT ON AGGREGATE {object_name}: argument list is required"
                 )));
             };
-            let (agg_schema, agg_name) = extract_qualified_name(object_name);
+            let (agg_schema, agg_name) = extract_qualified_name_truncated(object_name);
             let args_canonical = canonical_args(Some(args));
             let key = format!("{agg_schema}.{agg_name}({args_canonical})");
             push(schema, PendingCommentObjectType::Aggregate, key, comment);
@@ -148,13 +153,14 @@ pub(super) fn apply_comment_statement(
                     "COMMENT ON TRIGGER expects an unqualified trigger name, got {object_name}"
                 )));
             }
-            let trigger_name = trigger_parts.into_iter().next().unwrap();
+            let trigger_name =
+                truncate_referenced_identifier(&trigger_parts.into_iter().next().unwrap());
             let Some(partner_table) = partner_table else {
                 return Err(SchemaError::ParseError(
                     "COMMENT ON TRIGGER missing ON <table> tail".into(),
                 ));
             };
-            let (table_schema, table_name) = extract_qualified_name(partner_table);
+            let (table_schema, table_name) = extract_qualified_name_truncated(partner_table);
             let key = format!("{table_schema}.{table_name}.{trigger_name}");
             push(schema, PendingCommentObjectType::Trigger, key, comment);
         }
@@ -169,13 +175,14 @@ pub(super) fn apply_comment_statement(
                     "COMMENT ON CONSTRAINT expects an unqualified constraint name, got {object_name}"
                 )));
             }
-            let constraint_name = constraint_parts.into_iter().next().unwrap();
+            let constraint_name =
+                truncate_referenced_identifier(&constraint_parts.into_iter().next().unwrap());
             let Some(partner_relation) = partner_table else {
                 return Err(SchemaError::ParseError(
                     "COMMENT ON CONSTRAINT missing ON [DOMAIN] <relation> tail".into(),
                 ));
             };
-            let (parent_schema, parent_name) = extract_qualified_name(partner_relation);
+            let (parent_schema, parent_name) = extract_qualified_name_truncated(partner_relation);
             let key = format!("{parent_schema}.{parent_name}.{constraint_name}");
             schema.pending_comments.push(PendingComment {
                 object_type: PendingCommentObjectType::Constraint,
@@ -208,13 +215,14 @@ pub(super) fn apply_comment_statement(
                     "COMMENT ON POLICY expects an unqualified policy name, got {object_name}"
                 )));
             }
-            let policy_name = policy_parts.into_iter().next().unwrap();
+            let policy_name =
+                truncate_referenced_identifier(&policy_parts.into_iter().next().unwrap());
             let Some(partner_table) = partner_table else {
                 return Err(SchemaError::ParseError(
                     "COMMENT ON POLICY missing ON <table> tail".into(),
                 ));
             };
-            let (table_schema, table_name) = extract_qualified_name(partner_table);
+            let (table_schema, table_name) = extract_qualified_name_truncated(partner_table);
             let key = format!("{table_schema}.{table_name}.{policy_name}");
             push(schema, PendingCommentObjectType::Policy, key, comment);
         }

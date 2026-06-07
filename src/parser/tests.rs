@@ -2756,6 +2756,127 @@ fn comment_on_column_accepts_e_string_literal() {
 }
 
 #[test]
+fn comment_on_overlong_table_attaches_to_truncated_table() {
+    let table = "t".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id integer PRIMARY KEY); \
+         COMMENT ON TABLE {table} IS 'hello';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let parsed = schema
+        .tables
+        .get(&format!("public.{}", "t".repeat(63)))
+        .expect("table should parse");
+    assert_eq!(parsed.comment.as_deref(), Some("hello"));
+}
+
+#[test]
+fn comment_on_overlong_column_attaches_to_truncated_column() {
+    let column = "c".repeat(64);
+    let sql = format!(
+        "CREATE TABLE orders (id integer PRIMARY KEY, {column} numeric); \
+         COMMENT ON COLUMN orders.{column} IS 'amount';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.orders").unwrap();
+    let col = table
+        .columns
+        .get(&"c".repeat(63))
+        .expect("column should exist");
+    assert_eq!(col.comment.as_deref(), Some("amount"));
+}
+
+#[test]
+fn trigger_execute_function_name_is_truncated() {
+    let func = "f".repeat(64);
+    let sql = format!(
+        "CREATE TRIGGER trg BEFORE INSERT ON some_table \
+         FOR EACH ROW EXECUTE FUNCTION {func}();"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let trigger = schema
+        .triggers
+        .values()
+        .find(|t| t.name == "trg")
+        .expect("trigger should parse");
+    assert_eq!(trigger.function_name, "f".repeat(63));
+}
+
+#[test]
+fn comment_on_overlong_trigger_name_attaches() {
+    let trigger = "g".repeat(64);
+    let sql = format!(
+        "CREATE TABLE tbl (id integer PRIMARY KEY); \
+         CREATE TRIGGER {trigger} BEFORE INSERT ON tbl FOR EACH ROW EXECUTE FUNCTION fn(); \
+         COMMENT ON TRIGGER {trigger} ON tbl IS 'hi';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let parsed = schema
+        .triggers
+        .values()
+        .find(|t| t.name == "g".repeat(63))
+        .expect("trigger should parse under its truncated name");
+    assert_eq!(parsed.comment.as_deref(), Some("hi"));
+    assert!(schema.pending_comments.is_empty());
+}
+
+#[test]
+fn comment_on_overlong_policy_name_attaches() {
+    let policy = "y".repeat(64);
+    let sql = format!(
+        "CREATE TABLE tbl (id integer PRIMARY KEY); \
+         CREATE POLICY {policy} ON tbl FOR SELECT USING (true); \
+         COMMENT ON POLICY {policy} ON tbl IS 'hi';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.tbl").unwrap();
+    let parsed = table
+        .policies
+        .iter()
+        .find(|p| p.name == "y".repeat(63))
+        .expect("policy should attach under its truncated name");
+    assert_eq!(parsed.comment.as_deref(), Some("hi"));
+    assert!(schema.pending_comments.is_empty());
+}
+
+#[test]
+fn comment_on_overlong_constraint_name_attaches() {
+    let constraint = "k".repeat(64);
+    let sql = format!(
+        "CREATE TABLE tbl (id integer, CONSTRAINT {constraint} CHECK (id > 0)); \
+         COMMENT ON CONSTRAINT {constraint} ON tbl IS 'hi';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    assert!(
+        schema.pending_comments.is_empty(),
+        "constraint comment should attach to the truncated constraint, not stay pending"
+    );
+    assert_eq!(
+        schema
+            .table_constraint_comments
+            .get(&format!("public.tbl.{}", "k".repeat(63)))
+            .map(String::as_str),
+        Some("hi")
+    );
+}
+
+#[test]
+fn comment_on_overlong_aggregate_name_attaches() {
+    let aggregate = "a".repeat(64);
+    let sql = format!(
+        "CREATE AGGREGATE {aggregate}(integer) (SFUNC = int4pl, STYPE = integer); \
+         COMMENT ON AGGREGATE {aggregate}(integer) IS 'hi';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let parsed = schema
+        .aggregates
+        .get(&format!("public.{}(integer)", "a".repeat(63)))
+        .expect("aggregate should be stored under its truncated name");
+    assert_eq!(parsed.comment.as_deref(), Some("hi"));
+    assert!(schema.pending_comments.is_empty());
+}
+
+#[test]
 fn comment_on_table_accepts_dollar_quoted_literal() {
     let sql = r#"
         CREATE TABLE t (id integer PRIMARY KEY);
