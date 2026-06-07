@@ -1604,8 +1604,7 @@ impl Schema {
                     .as_deref()
                     .expect("Policy pending comment must carry child_name");
                 if let Some(table) = self.tables.get_mut(&pc.object_key) {
-                    if let Some(policy) =
-                        table.policies.iter_mut().find(|p| p.name == policy_name)
+                    if let Some(policy) = table.policies.iter_mut().find(|p| p.name == policy_name)
                     {
                         policy.comment = pc.comment.clone();
                         return true;
