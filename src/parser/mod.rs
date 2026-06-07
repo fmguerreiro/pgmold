@@ -164,7 +164,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     .as_ref()
                     .map(truncated_ident)
                     .ok_or_else(|| SchemaError::ParseError("Index must have name".into()))?;
-                let (tbl_schema, tbl_name) = extract_qualified_name(&ci.table_name);
+                let (tbl_schema, raw_tbl_name) = extract_qualified_name(&ci.table_name);
+                let tbl_name = truncate_referenced_identifier(&raw_tbl_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
 
                 if let Some(table) = schema.tables.get_mut(&tbl_key) {
@@ -244,7 +245,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             Statement::AlterTable(AlterTable {
                 name, operations, ..
             }) => {
-                let (tbl_schema, tbl_name) = extract_qualified_name(&name);
+                let (tbl_schema, raw_tbl_name) = extract_qualified_name(&name);
+                let tbl_name = truncate_referenced_identifier(&raw_tbl_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
                 for op in operations {
                     match op {
@@ -494,8 +496,9 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             partition_name,
                             partition_bound,
                         } => {
-                            let (child_schema, child_name) =
+                            let (child_schema, raw_child_name) =
                                 extract_qualified_name(&partition_name);
+                            let child_name = truncate_referenced_identifier(&raw_child_name);
                             let child_key = qualified_name(&child_schema, &child_name);
                             let bound = parse_for_values_required(&partition_bound)?;
                             let owner = schema.tables.remove(&child_key).and_then(|t| t.owner);
@@ -503,7 +506,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                                 schema: child_schema,
                                 name: child_name,
                                 parent_schema: tbl_schema.clone(),
-                                parent_name: truncate_referenced_identifier(&tbl_name),
+                                parent_name: tbl_name.clone(),
                                 bound,
                                 indexes: Vec::new(),
                                 check_constraints: Vec::new(),
@@ -516,8 +519,9 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             concurrently: _,
                             finalize: _,
                         } => {
-                            let (child_schema, child_name) =
+                            let (child_schema, raw_child_name) =
                                 extract_qualified_name(&partition_name);
+                            let child_name = truncate_referenced_identifier(&raw_child_name);
                             let child_key = qualified_name(&child_schema, &child_name);
                             // TODO: PostgreSQL promotes a detached partition to a standalone
                             // table; re-insert into schema.tables to model that.
