@@ -1511,7 +1511,8 @@ fn is_pg_catalog_trigger_function(name: &str) -> bool {
 }
 
 fn parse_create_aggregate(stmt: CreateAggregate, schema: &mut Schema) -> Result<()> {
-    let (agg_schema, agg_name) = extract_qualified_name(&stmt.name);
+    let (agg_schema, raw_agg_name) = extract_qualified_name(&stmt.name);
+    let agg_name = truncate_identifier(&raw_agg_name);
     let args: Vec<String> = stmt
         .args
         .iter()
