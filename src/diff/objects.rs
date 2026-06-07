@@ -322,6 +322,13 @@ pub(super) fn diff_domains(from: &Schema, to: &Schema, options: &DiffOptions) ->
         &to.domains,
         |_key, to_domain| MigrationOp::CreateDomain(to_domain.clone()),
         |ops, name, from_domain, to_domain| {
+            // PostgreSQL has no `ALTER DOMAIN ... TYPE`; a base-type change can
+            // only be expressed as drop + recreate.
+            if from_domain.data_type != to_domain.data_type {
+                ops.push(MigrationOp::DropDomain(name.clone()));
+                ops.push(MigrationOp::CreateDomain(to_domain.clone()));
+                return;
+            }
             let changes = DomainChanges {
                 default: if !optional_expressions_equal(&from_domain.default, &to_domain.default) {
                     Some(to_domain.default.clone())
