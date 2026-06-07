@@ -2817,6 +2817,7 @@ fn comment_on_overlong_trigger_name_attaches() {
         .find(|t| t.name == "g".repeat(63))
         .expect("trigger should parse under its truncated name");
     assert_eq!(parsed.comment.as_deref(), Some("hi"));
+    assert!(schema.pending_comments.is_empty());
 }
 
 #[test]
@@ -2835,6 +2836,7 @@ fn comment_on_overlong_policy_name_attaches() {
         .find(|p| p.name == "y".repeat(63))
         .expect("policy should attach under its truncated name");
     assert_eq!(parsed.comment.as_deref(), Some("hi"));
+    assert!(schema.pending_comments.is_empty());
 }
 
 #[test]
@@ -2848,6 +2850,13 @@ fn comment_on_overlong_constraint_name_attaches() {
     assert!(
         schema.pending_comments.is_empty(),
         "constraint comment should attach to the truncated constraint, not stay pending"
+    );
+    assert_eq!(
+        schema
+            .table_constraint_comments
+            .get(&format!("public.tbl.{}", "k".repeat(63)))
+            .map(String::as_str),
+        Some("hi")
     );
 }
 
@@ -2864,6 +2873,7 @@ fn comment_on_overlong_aggregate_name_attaches() {
         .get(&format!("public.{}(integer)", "a".repeat(63)))
         .expect("aggregate should be stored under its truncated name");
     assert_eq!(parsed.comment.as_deref(), Some("hi"));
+    assert!(schema.pending_comments.is_empty());
 }
 
 #[test]
