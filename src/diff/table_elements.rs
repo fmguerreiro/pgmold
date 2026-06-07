@@ -224,15 +224,31 @@ pub(super) fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<Mig
     let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
 
     for foreign_key in &to_table.foreign_keys {
-        if !from_table
+        match from_table
             .foreign_keys
             .iter()
-            .any(|fk| fk.name == foreign_key.name)
+            .find(|fk| fk.name == foreign_key.name)
         {
-            ops.push(MigrationOp::AddForeignKey {
-                table: qualified_table_name.clone(),
-                foreign_key: foreign_key.clone(),
-            });
+            Some(from_fk) => {
+                // PostgreSQL has no ALTER for a foreign key's shape, so a changed
+                // target, column list, or referential action is a drop then an add.
+                if from_fk != foreign_key {
+                    ops.push(MigrationOp::DropForeignKey {
+                        table: qualified_table_name.clone(),
+                        foreign_key_name: from_fk.name.clone(),
+                    });
+                    ops.push(MigrationOp::AddForeignKey {
+                        table: qualified_table_name.clone(),
+                        foreign_key: foreign_key.clone(),
+                    });
+                }
+            }
+            None => {
+                ops.push(MigrationOp::AddForeignKey {
+                    table: qualified_table_name.clone(),
+                    foreign_key: foreign_key.clone(),
+                });
+            }
         }
     }
 

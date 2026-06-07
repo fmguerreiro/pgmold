@@ -610,3 +610,72 @@ async fn fk_type_change_referenced_column_only() {
         "DropForeignKey (pos {drop_fk_pos}) must come before AlterColumn (pos {alter_pos})"
     );
 }
+
+#[tokio::test]
+async fn changed_foreign_key_action_is_dropped_and_re_added() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let initial_sql = r#"
+        CREATE TABLE "public"."parent" (
+            "id" INTEGER NOT NULL,
+            CONSTRAINT "parent_pkey" PRIMARY KEY ("id")
+        );
+        CREATE TABLE "public"."child" (
+            "id" INTEGER NOT NULL,
+            "parent_id" INTEGER NOT NULL,
+            CONSTRAINT "child_pkey" PRIMARY KEY ("id"),
+            CONSTRAINT "child_parent_id_fkey" FOREIGN KEY ("parent_id")
+                REFERENCES "public"."parent"("id") ON DELETE NO ACTION
+        );
+    "#;
+    for stmt in initial_sql.split(';').filter(|s| !s.trim().is_empty()) {
+        sqlx::query(stmt).execute(connection.pool()).await.unwrap();
+    }
+
+    let target_schema = parse_sql_string(
+        r#"
+        CREATE TABLE "public"."parent" (
+            "id" INTEGER NOT NULL,
+            CONSTRAINT "parent_pkey" PRIMARY KEY ("id")
+        );
+        CREATE TABLE "public"."child" (
+            "id" INTEGER NOT NULL,
+            "parent_id" INTEGER NOT NULL,
+            CONSTRAINT "child_pkey" PRIMARY KEY ("id"),
+            CONSTRAINT "child_parent_id_fkey" FOREIGN KEY ("parent_id")
+                REFERENCES "public"."parent"("id") ON DELETE CASCADE
+        );
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let ops = compute_diff(&current, &target_schema);
+
+    assert!(ops
+        .iter()
+        .any(|op| matches!(op, MigrationOp::DropForeignKey { .. })));
+    assert!(ops
+        .iter()
+        .any(|op| matches!(op, MigrationOp::AddForeignKey { .. })));
+
+    let planned = plan_migration(ops);
+    let sql = generate_sql(&planned);
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|e| panic!("Failed to execute: {stmt}\nError: {e}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    assert!(
+        compute_diff(&after, &target_schema).is_empty(),
+        "schema should converge after re-adding the changed foreign key"
+    );
+}
