@@ -10,7 +10,7 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use thiserror::Error;
 
-use crate::model::{PgType, Table};
+use crate::model::{PartitionBound, PgType, Table};
 
 /// Decodes a parsed `numeric`/`decimal` type's [`ExactNumberInfo`] into the
 /// canonical `(precision, scale)` pair. `numeric(p)` normalizes to scale 0 to
@@ -885,6 +885,94 @@ pub fn optional_expressions_equal(expr1: &Option<String>, expr2: &Option<String>
         (Some(e1), Some(e2)) => expressions_semantically_equal(e1, e2),
         _ => false,
     }
+}
+
+/// Compares two partition bounds for semantic equality.
+///
+/// PostgreSQL stores a partition's bound expressions in its own canonical form,
+/// so a `date` literal written as `'2024-01-01'` is introspected back as the
+/// `timestamptz` form `'2024-01-01 00:00:00+00'`, and a bound entered in a
+/// non-UTC offset (`'2022-04-01 01:00:00+01'`) is stored as the equivalent UTC
+/// instant (`'2022-04-01 00:00:00+00'`). A raw string comparison flags these as
+/// drift and emits a perpetual DETACH/ATTACH that never converges. Temporal bound
+/// values are therefore canonicalized to a single UTC instant before comparison;
+/// non-temporal values fall back to the shared SQL expression comparison.
+pub fn partition_bounds_equal(from: &PartitionBound, to: &PartitionBound) -> bool {
+    match (from, to) {
+        (
+            PartitionBound::Range {
+                from: from_lower,
+                to: from_upper,
+            },
+            PartitionBound::Range {
+                from: to_lower,
+                to: to_upper,
+            },
+        ) => bound_values_equal(from_lower, to_lower) && bound_values_equal(from_upper, to_upper),
+        (
+            PartitionBound::List {
+                values: from_values,
+            },
+            PartitionBound::List { values: to_values },
+        ) => bound_values_equal(from_values, to_values),
+        _ => from == to,
+    }
+}
+
+/// Compares two ordered lists of partition bound value expressions element-wise.
+fn bound_values_equal(from: &[String], to: &[String]) -> bool {
+    from.len() == to.len()
+        && from
+            .iter()
+            .zip(to.iter())
+            .all(|(left, right)| bound_value_equal(left, right))
+}
+
+/// Compares a single partition bound value expression. Temporal literals are
+/// canonicalized to a UTC instant; everything else uses the shared SQL
+/// expression comparison so casts and spacing differences still converge.
+fn bound_value_equal(from: &str, to: &str) -> bool {
+    match (parse_temporal_instant(from), parse_temporal_instant(to)) {
+        (Some(left), Some(right)) => left == right,
+        _ => expressions_semantically_equal(from, to),
+    }
+}
+
+/// Parses a temporal bound value expression into a UTC instant in nanoseconds.
+///
+/// Accepts date literals (`'2024-01-01'`), timestamps without offset (assumed to
+/// be UTC, matching the corpus session's `UTC` timezone), and timestamps with an
+/// explicit offset (`'2022-04-01 01:00:00+01'`). Returns `None` for any value
+/// that is not a recognized temporal literal so the caller can fall back to
+/// expression comparison.
+fn parse_temporal_instant(value: &str) -> Option<i64> {
+    use chrono::{DateTime, NaiveDate, NaiveDateTime};
+
+    let trimmed = value.trim();
+    let inner = trimmed
+        .strip_prefix('\'')
+        .and_then(|rest| rest.strip_suffix('\''))?
+        .trim();
+
+    if let Ok(parsed) = DateTime::parse_from_str(inner, "%Y-%m-%d %H:%M:%S%#z") {
+        return parsed.timestamp_nanos_opt();
+    }
+
+    for format in [
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+    ] {
+        if let Ok(parsed) = NaiveDateTime::parse_from_str(inner, format) {
+            return parsed.and_utc().timestamp_nanos_opt();
+        }
+    }
+
+    if let Ok(date) = NaiveDate::parse_from_str(inner, "%Y-%m-%d") {
+        return date.and_hms_opt(0, 0, 0)?.and_utc().timestamp_nanos_opt();
+    }
+
+    None
 }
 
 /// Normalizes a SQL statement to a canonical form for comparison.
@@ -3107,6 +3195,81 @@ fn expressions_equal_interval_literal_vs_cast() {
         expressions_semantically_equal(schema_form, db_form),
         "interval literal and cast syntax should be equal.\nSchema: {schema_form}\nDB: {db_form}"
     );
+}
+
+#[test]
+fn partition_bound_date_literal_equals_timestamptz_midnight() {
+    let parsed = PartitionBound::Range {
+        from: vec!["'2024-01-01'".to_string()],
+        to: vec!["'2024-04-01'".to_string()],
+    };
+    let introspected = PartitionBound::Range {
+        from: vec!["'2024-01-01 00:00:00+00'".to_string()],
+        to: vec!["'2024-04-01 00:00:00+00'".to_string()],
+    };
+    assert!(
+        partition_bounds_equal(&parsed, &introspected),
+        "date literal and timestamptz midnight describe the same instant"
+    );
+}
+
+#[test]
+fn partition_bound_same_instant_different_offset_equal() {
+    let introspected = PartitionBound::Range {
+        from: vec!["'2022-04-01 00:00:00+00'".to_string()],
+        to: vec!["'2022-05-01 00:00:00+00'".to_string()],
+    };
+    let desired = PartitionBound::Range {
+        from: vec!["'2022-04-01 01:00:00+01'".to_string()],
+        to: vec!["'2022-05-01 01:00:00+01'".to_string()],
+    };
+    assert!(
+        partition_bounds_equal(&introspected, &desired),
+        "+01 offset bound is the same UTC instant as the +00 form"
+    );
+}
+
+#[test]
+fn partition_bound_genuine_change_not_equal() {
+    let narrow = PartitionBound::Range {
+        from: vec!["'2024-01-01'".to_string()],
+        to: vec!["'2024-07-01'".to_string()],
+    };
+    let widened = PartitionBound::Range {
+        from: vec!["'2024-01-01'".to_string()],
+        to: vec!["'2025-01-01'".to_string()],
+    };
+    assert!(
+        !partition_bounds_equal(&narrow, &widened),
+        "a genuine bound widening must remain unequal"
+    );
+}
+
+#[test]
+fn partition_bound_adjacent_dates_not_equal() {
+    let day_one = PartitionBound::Range {
+        from: vec!["'2024-01-01'".to_string()],
+        to: vec!["'2024-01-02'".to_string()],
+    };
+    let day_two = PartitionBound::Range {
+        from: vec!["'2024-01-02'".to_string()],
+        to: vec!["'2024-01-03'".to_string()],
+    };
+    assert!(
+        !partition_bounds_equal(&day_one, &day_two),
+        "adjacent single-day partitions are distinct instants"
+    );
+}
+
+#[test]
+fn partition_bound_list_integers_equal() {
+    let parsed = PartitionBound::List {
+        values: vec!["1".to_string(), "2".to_string()],
+    };
+    let introspected = PartitionBound::List {
+        values: vec!["1".to_string(), "2".to_string()],
+    };
+    assert!(partition_bounds_equal(&parsed, &introspected));
 }
 
 #[test]

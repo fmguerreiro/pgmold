@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::model::{
     parse_qualified_name, qualified_name, EnumType, Grant, Schema, Sequence, Server, Trigger,
 };
-use crate::util::optional_expressions_equal;
+use crate::util::{optional_expressions_equal, partition_bounds_equal};
 
 use super::grants::{create_grants_for_new_object, diff_grants_for_object};
 use super::{
@@ -388,7 +388,7 @@ pub(super) fn diff_partitions(
             // changed bound/parent becomes a non-destructive DETACH then ATTACH.
             if from_partition.parent_schema != to_partition.parent_schema
                 || from_partition.parent_name != to_partition.parent_name
-                || from_partition.bound != to_partition.bound
+                || !partition_bounds_equal(&from_partition.bound, &to_partition.bound)
             {
                 ops.push(MigrationOp::DetachPartition(from_partition.clone()));
                 ops.push(MigrationOp::AttachPartition(to_partition.clone()));

@@ -4380,7 +4380,11 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
 
         let ops = compute_diff(&from, &to);
 
-        assert_eq!(ops.len(), 2, "expected exactly Detach then Attach, got {ops:?}");
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected exactly Detach then Attach, got {ops:?}"
+        );
 
         match &ops[0] {
             MigrationOp::DetachPartition(detached) => {
@@ -4451,7 +4455,11 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
 
         let ops = compute_diff(&from, &to);
 
-        assert_eq!(ops.len(), 2, "expected exactly Detach then Attach, got {ops:?}");
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected exactly Detach then Attach, got {ops:?}"
+        );
 
         match &ops[0] {
             MigrationOp::DetachPartition(detached) => {
@@ -4485,7 +4493,8 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         };
 
         let mut from = empty_schema();
-        from.partitions.insert(partition_key.clone(), partition.clone());
+        from.partitions
+            .insert(partition_key.clone(), partition.clone());
         let mut to = empty_schema();
         to.partitions.insert(partition_key, partition);
 

@@ -467,7 +467,11 @@ async fn changed_partition_bound_detaches_and_reattaches_without_data_loss() {
 
     // A bound change must be DETACH then ATTACH, never DROP/CREATE the child
     // (which would lose the row).
-    assert_eq!(ops.len(), 2, "expected exactly Detach then Attach, got {ops:?}");
+    assert_eq!(
+        ops.len(),
+        2,
+        "expected exactly Detach then Attach, got {ops:?}"
+    );
     assert!(
         matches!(&ops[0], MigrationOp::DetachPartition(p) if p.name == "events_2024"),
         "first op must be DetachPartition, got {:?}",
@@ -504,11 +508,12 @@ async fn changed_partition_bound_detaches_and_reattaches_without_data_loss() {
             .unwrap_or_else(|_| panic!("Failed to execute: {stmt}"));
     }
 
-    let surviving_row_count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM events WHERE id = 1 AND occurred_at = '2024-03-15'")
-            .fetch_one(connection.pool())
-            .await
-            .unwrap();
+    let surviving_row_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM events WHERE id = 1 AND occurred_at = '2024-03-15'",
+    )
+    .fetch_one(connection.pool())
+    .await
+    .unwrap();
     assert_eq!(surviving_row_count, 1, "row must survive DETACH/ATTACH");
 
     let after_schema = introspect_schema(&connection, &["public".to_string()], false)
