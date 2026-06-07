@@ -985,6 +985,40 @@ mod tests {
     }
 
     #[test]
+    fn detects_changed_foreign_key_as_drop_and_add() {
+        let make = |on_delete: ReferentialAction| ForeignKey {
+            name: "posts_user_id_fkey".to_string(),
+            columns: vec!["user_id".to_string()],
+            referenced_table: "users".to_string(),
+            referenced_schema: "public".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete,
+            on_update: ReferentialAction::NoAction,
+        };
+
+        let mut from = empty_schema();
+        let mut from_table = simple_table("posts");
+        from_table
+            .foreign_keys
+            .push(make(ReferentialAction::NoAction));
+        from.tables.insert("posts".to_string(), from_table);
+
+        let mut to = empty_schema();
+        let mut to_table = simple_table("posts");
+        to_table.foreign_keys.push(make(ReferentialAction::Cascade));
+        to.tables.insert("posts".to_string(), to_table);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 2);
+        assert!(
+            matches!(&ops[0], MigrationOp::DropForeignKey { table, foreign_key_name } if table == "public.posts" && foreign_key_name == "posts_user_id_fkey")
+        );
+        assert!(
+            matches!(&ops[1], MigrationOp::AddForeignKey { table, foreign_key } if table == "public.posts" && foreign_key.on_delete == ReferentialAction::Cascade)
+        );
+    }
+
+    #[test]
     fn detects_added_function() {
         let from = empty_schema();
         let mut to = empty_schema();
