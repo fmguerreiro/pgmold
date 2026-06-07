@@ -6,11 +6,12 @@
 use crate::model::*;
 use crate::util::{normalize_type_casts, numeric_typmod_parts, Result, SchemaError};
 use sqlparser::ast::{
-    ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, Expr, ForValues, Ident,
-    IndexColumn, ObjectName, PartitionBoundValue, TimezoneInfo,
+    visit_expressions_mut, ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, Expr,
+    ForValues, Ident, IndexColumn, ObjectName, PartitionBoundValue, TimezoneInfo,
 };
 
 use std::cell::RefCell;
+use std::ops::ControlFlow;
 
 /// PostgreSQL's NAMEDATALEN is 64, so identifiers are truncated to 63 bytes.
 pub(crate) const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
@@ -64,9 +65,38 @@ pub(super) fn truncate_referenced_columns(columns: &[Ident]) -> Vec<String> {
 /// `pg_get_indexdef`, not `attname`.
 pub(super) fn truncate_index_column(column: &IndexColumn) -> String {
     if let Expr::Identifier(ident) = &column.column.expr {
-        truncate_referenced_identifier(&ident.value)
-    } else {
-        unquote_ident(&column.column.expr.to_string()).to_string()
+        return truncate_referenced_identifier(&ident.value);
+    }
+    let mut expr = column.column.expr.clone();
+    truncate_identifiers_in_expression(&mut expr);
+    unquote_ident(&expr.to_string()).to_string()
+}
+
+/// Truncate every identifier *reference* inside an index expression (e.g. the
+/// `x` in `lower(x)`) to PG's NAMEDATALEN-1. PostgreSQL truncates the column at
+/// declaration, and `pg_get_indexdef` renders the expression with the truncated
+/// name; a parsed expression over a >63-byte column must match that truncated
+/// form or it drifts forever (perpetual DROP + CREATE INDEX). Only identifier
+/// components are touched; the rest of the expression is left as written.
+fn truncate_identifiers_in_expression(expr: &mut Expr) {
+    let _: ControlFlow<()> = visit_expressions_mut(expr, |node| {
+        match node {
+            Expr::Identifier(ident) => truncate_ident_in_place(ident),
+            Expr::CompoundIdentifier(idents) => {
+                for ident in idents.iter_mut() {
+                    truncate_ident_in_place(ident);
+                }
+            }
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    });
+}
+
+fn truncate_ident_in_place(ident: &mut Ident) {
+    let truncated = truncate_referenced_identifier(&ident.value);
+    if truncated.len() != ident.value.len() {
+        ident.value = truncated;
     }
 }
 
