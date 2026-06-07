@@ -427,7 +427,7 @@ async fn introspect_domains(
                     "expected array base_type to start with '_', got: {base_type}"
                 ))
             })?;
-            let element_type = map_domain_element_type(base_udt, &schema);
+            let element_type = map_udt_name_to_pg_type(base_udt, &base_schema, None);
             PgType::Array(Box::new(element_type))
         } else {
             // pg_type.typname is the internal name (int4, varchar, bpchar, ...), so
@@ -909,6 +909,17 @@ fn decode_varchar_typmod(atttypmod: i32) -> Option<u32> {
     }
 }
 
+/// Decodes a `bpchar` (`char(n)`) typmod into a declared length. Same
+/// `length + VARHDRSZ` (4) encoding as `varchar`; PostgreSQL forbids `char(0)`,
+/// so the smallest bounded typmod is 5.
+fn decode_bpchar_typmod(atttypmod: i32) -> Option<u32> {
+    if atttypmod > 4 {
+        Some((atttypmod - 4) as u32)
+    } else {
+        None
+    }
+}
+
 fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i32>) -> PgType {
     match udt_name {
         "bool" => PgType::Boolean,
@@ -934,10 +945,7 @@ fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i
         "cidr" => PgType::Cidr,
         "macaddr" => PgType::Macaddr,
         "macaddr8" => PgType::Macaddr8,
-        "bpchar" => {
-            let length = atttypmod.and_then(|m| if m > 4 { Some((m - 4) as u32) } else { None });
-            PgType::Char(length)
-        }
+        "bpchar" => PgType::Char(atttypmod.and_then(decode_bpchar_typmod)),
         "point" => PgType::Point,
         "xml" => PgType::Xml,
         "int4range" | "int8range" | "numrange" | "tsrange" | "tstzrange" | "daterange"
@@ -1029,10 +1037,6 @@ fn map_pg_type(
             "unsupported column type from database: {other} (udt_name: {udt_name})"
         ))),
     }
-}
-
-fn map_domain_element_type(base_udt: &str, domain_schema: &str) -> PgType {
-    map_udt_name_to_pg_type(base_udt, domain_schema, None)
 }
 
 /// Parse Postgres' `format_type(atttypid, atttypmod)` output for PostGIS

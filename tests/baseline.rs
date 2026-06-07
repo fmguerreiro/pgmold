@@ -447,6 +447,7 @@ async fn introspect_maps_domain_over_char_and_user_defined_base_types() {
         CREATE DOMAIN fixed_code AS CHAR(10);
         CREATE TYPE mood AS ENUM ('happy', 'sad');
         CREATE DOMAIN mood_domain AS mood;
+        CREATE DOMAIN mood_list AS mood[];
         "#,
     )
     .execute(connection.pool())
@@ -464,6 +465,10 @@ async fn introspect_maps_domain_over_char_and_user_defined_base_types() {
     assert_eq!(
         schema.domains["public.mood_domain"].data_type,
         PgType::UserDefined("public.mood".to_string())
+    );
+    assert_eq!(
+        schema.domains["public.mood_list"].data_type,
+        PgType::Array(Box::new(PgType::UserDefined("public.mood".to_string())))
     );
 }
 
