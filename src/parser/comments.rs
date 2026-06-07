@@ -72,8 +72,13 @@ pub(super) fn apply_comment_statement(
             let (table_schema, table_name, column_name) = extract_three_part_name(object_name)?;
             let table_name = truncate_referenced_identifier(&table_name);
             let column_name = truncate_referenced_identifier(&column_name);
-            let key = format!("{table_schema}.{table_name}.{column_name}");
-            push(schema, PendingCommentObjectType::Column, key, comment);
+            push_nested(
+                schema,
+                PendingCommentObjectType::Column,
+                qualified_name(&table_schema, &table_name),
+                column_name,
+                comment,
+            );
         }
         CommentObject::View => {
             let (obj_schema, obj_name) = extract_qualified_name_truncated(object_name);
@@ -161,8 +166,13 @@ pub(super) fn apply_comment_statement(
                 ));
             };
             let (table_schema, table_name) = extract_qualified_name_truncated(partner_table);
-            let key = format!("{table_schema}.{table_name}.{trigger_name}");
-            push(schema, PendingCommentObjectType::Trigger, key, comment);
+            push_nested(
+                schema,
+                PendingCommentObjectType::Trigger,
+                qualified_name(&table_schema, &table_name),
+                trigger_name,
+                comment,
+            );
         }
         // Object kinds pgmold does not model. Surface a warning so the
         // statement is not silently lost; `unrecognized.rs` will also flag
@@ -183,10 +193,10 @@ pub(super) fn apply_comment_statement(
                 ));
             };
             let (parent_schema, parent_name) = extract_qualified_name_truncated(partner_relation);
-            let key = format!("{parent_schema}.{parent_name}.{constraint_name}");
             schema.pending_comments.push(PendingComment {
                 object_type: PendingCommentObjectType::Constraint,
-                object_key: key,
+                object_key: qualified_name(&parent_schema, &parent_name),
+                child_name: Some(constraint_name),
                 comment,
                 on_domain,
             });
@@ -223,8 +233,13 @@ pub(super) fn apply_comment_statement(
                 ));
             };
             let (table_schema, table_name) = extract_qualified_name_truncated(partner_table);
-            let key = format!("{table_schema}.{table_name}.{policy_name}");
-            push(schema, PendingCommentObjectType::Policy, key, comment);
+            push_nested(
+                schema,
+                PendingCommentObjectType::Policy,
+                qualified_name(&table_schema, &table_name),
+                policy_name,
+                comment,
+            );
         }
         CommentObject::Index => {
             eprintln!(
@@ -273,6 +288,27 @@ fn push(
     schema.pending_comments.push(PendingComment {
         object_type,
         object_key,
+        child_name: None,
+        comment,
+        on_domain: false,
+    });
+}
+
+/// Queues a pending comment for a nested kind (Column, Trigger, Policy) whose
+/// target is identified by a parent key plus a child name. The two names stay
+/// separate so a dotted schema, table, or child identifier routes correctly at
+/// resolution time.
+fn push_nested(
+    schema: &mut Schema,
+    object_type: PendingCommentObjectType,
+    parent_key: String,
+    child_name: String,
+    comment: Option<String>,
+) {
+    schema.pending_comments.push(PendingComment {
+        object_type,
+        object_key: parent_key,
+        child_name: Some(child_name),
         comment,
         on_domain: false,
     });
