@@ -4459,6 +4459,172 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
     }
 
     #[test]
+    fn changed_partition_bound_emits_detach_then_attach_not_drop_recreate() {
+        use crate::model::{Partition, PartitionBound};
+
+        let partition_key = "public.events_2024".to_string();
+
+        let mut from = empty_schema();
+        from.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "events_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "events".to_string(),
+                bound: PartitionBound::Range {
+                    from: vec!["'2024-01-01'".to_string()],
+                    to: vec!["'2024-07-01'".to_string()],
+                },
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "events_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "events".to_string(),
+                bound: PartitionBound::Range {
+                    from: vec!["'2024-01-01'".to_string()],
+                    to: vec!["'2025-01-01'".to_string()],
+                },
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected exactly Detach then Attach, got {ops:?}"
+        );
+
+        match &ops[0] {
+            MigrationOp::DetachPartition(detached) => {
+                assert_eq!(detached.name, "events_2024");
+                assert_eq!(detached.parent_name, "events");
+                assert_eq!(
+                    detached.bound,
+                    PartitionBound::Range {
+                        from: vec!["'2024-01-01'".to_string()],
+                        to: vec!["'2024-07-01'".to_string()],
+                    }
+                );
+            }
+            other => panic!("expected DetachPartition first, got {other:?}"),
+        }
+
+        match &ops[1] {
+            MigrationOp::AttachPartition(attached) => {
+                assert_eq!(attached.name, "events_2024");
+                assert_eq!(attached.parent_name, "events");
+                assert_eq!(
+                    attached.bound,
+                    PartitionBound::Range {
+                        from: vec!["'2024-01-01'".to_string()],
+                        to: vec!["'2025-01-01'".to_string()],
+                    }
+                );
+            }
+            other => panic!("expected AttachPartition second, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn changed_partition_parent_emits_detach_from_old_then_attach_to_new() {
+        use crate::model::{Partition, PartitionBound};
+
+        let partition_key = "public.events_2024".to_string();
+
+        let mut from = empty_schema();
+        from.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "events_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "events_old".to_string(),
+                bound: PartitionBound::Default,
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "events_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "events_new".to_string(),
+                bound: PartitionBound::Default,
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected exactly Detach then Attach, got {ops:?}"
+        );
+
+        match &ops[0] {
+            MigrationOp::DetachPartition(detached) => {
+                assert_eq!(detached.parent_name, "events_old");
+            }
+            other => panic!("expected DetachPartition first, got {other:?}"),
+        }
+
+        match &ops[1] {
+            MigrationOp::AttachPartition(attached) => {
+                assert_eq!(attached.parent_name, "events_new");
+            }
+            other => panic!("expected AttachPartition second, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unchanged_partition_emits_no_detach_or_attach() {
+        use crate::model::{Partition, PartitionBound};
+
+        let partition_key = "public.events_2024".to_string();
+        let partition = Partition {
+            name: "events_2024".to_string(),
+            schema: "public".to_string(),
+            parent_schema: "public".to_string(),
+            parent_name: "events".to_string(),
+            bound: PartitionBound::Default,
+            indexes: Vec::new(),
+            check_constraints: Vec::new(),
+            owner: None,
+        };
+
+        let mut from = empty_schema();
+        from.partitions
+            .insert(partition_key.clone(), partition.clone());
+        let mut to = empty_schema();
+        to.partitions.insert(partition_key, partition);
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "expected no ops, got {ops:?}");
+    }
+
+    #[test]
     fn ignores_partition_owner_change_when_flag_disabled() {
         use crate::model::{Partition, PartitionBound};
 

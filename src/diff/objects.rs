@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::model::{
     parse_qualified_name, qualified_name, EnumType, Grant, Schema, Sequence, Server, Trigger,
 };
-use crate::util::optional_expressions_equal;
+use crate::util::{optional_expressions_equal, partition_bounds_equal};
 
 use super::grants::{create_grants_for_new_object, diff_grants_for_object};
 use super::{
@@ -389,7 +389,18 @@ pub(super) fn diff_partitions(
         &from.partitions,
         &to.partitions,
         |_key, partition| MigrationOp::CreatePartition(partition.clone()),
-        |_ops, _key, _from_partition, _to_partition| {},
+        |ops, _key, from_partition, to_partition| {
+            // PostgreSQL cannot ALTER a partition's bound or parent in place, and
+            // drop+recreate would `DROP TABLE` the child (losing its rows), so a
+            // changed bound/parent becomes a non-destructive DETACH then ATTACH.
+            if from_partition.parent_schema != to_partition.parent_schema
+                || from_partition.parent_name != to_partition.parent_name
+                || !partition_bounds_equal(&from_partition.bound, &to_partition.bound)
+            {
+                ops.push(MigrationOp::DetachPartition(from_partition.clone()));
+                ops.push(MigrationOp::AttachPartition(to_partition.clone()));
+            }
+        },
         |name, _val| MigrationOp::DropPartition(name.clone()),
         qualified_coords,
         None,

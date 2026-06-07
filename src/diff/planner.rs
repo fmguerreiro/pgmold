@@ -39,6 +39,8 @@ struct NodeSets {
     drop_aggregates: Vec<NodeIndex>,
     tables: Vec<NodeIndex>,
     partitions: Vec<NodeIndex>,
+    detach_partitions: Vec<NodeIndex>,
+    attach_partitions: Vec<NodeIndex>,
     add_columns: Vec<NodeIndex>,
     add_pks: Vec<NodeIndex>,
     add_indexes: Vec<NodeIndex>,
@@ -97,6 +99,8 @@ impl NodeSets {
             drop_aggregates: graph.nodes_matching(|k| matches!(k, OpKey::DropAggregate { .. })),
             tables: graph.nodes_matching(|k| matches!(k, OpKey::CreateTable(_))),
             partitions: graph.nodes_matching(|k| matches!(k, OpKey::CreatePartition(_))),
+            detach_partitions: graph.nodes_matching(|k| matches!(k, OpKey::DetachPartition(_))),
+            attach_partitions: graph.nodes_matching(|k| matches!(k, OpKey::AttachPartition(_))),
             add_columns: graph.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. })),
             add_pks: graph.nodes_matching(|k| matches!(k, OpKey::AddPrimaryKey { .. })),
             add_indexes: graph.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. })),
@@ -353,6 +357,14 @@ impl MigrationGraph {
     fn add_table_and_partition_edges(&mut self, ns: &NodeSets) {
         self.edges_all_to_all(&ns.tables, &ns.partitions);
 
+        // A changed bound/parent is DETACH then re-ATTACH. The child must be
+        // detached from its old parent before it can be attached to the new one,
+        // and the (possibly newly created) parent table must exist before ATTACH.
+        self.edges_all_to_all(&ns.detach_partitions, &ns.attach_partitions);
+        self.edges_all_to_all(&ns.tables, &ns.detach_partitions);
+        self.edges_all_to_all(&ns.tables, &ns.attach_partitions);
+        self.edges_all_to_all(&ns.add_columns, &ns.attach_partitions);
+
         self.edges_all_to_all(&ns.tables, &ns.add_columns);
         self.edges_all_to_all(&ns.tables, &ns.add_pks);
         self.edges_all_to_all(&ns.tables, &ns.add_indexes);
@@ -494,6 +506,8 @@ impl MigrationGraph {
             &ns.functions,
             &ns.tables,
             &ns.partitions,
+            &ns.detach_partitions,
+            &ns.attach_partitions,
             &ns.add_columns,
             &ns.add_pks,
             &ns.add_indexes,

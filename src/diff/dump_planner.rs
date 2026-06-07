@@ -57,6 +57,8 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             | MigrationOp::AlterDomain { .. }
             | MigrationOp::DropTable(_)
             | MigrationOp::DropPartition(_)
+            | MigrationOp::DetachPartition(_)
+            | MigrationOp::AttachPartition(_)
             | MigrationOp::AddColumn { .. }
             | MigrationOp::DropColumn { .. }
             | MigrationOp::AlterColumn { .. }

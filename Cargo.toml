@@ -27,6 +27,7 @@ hex = "0.4"
 regex = "1.10"
 glob = "0.3"
 petgraph = "0.6"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 proptest = "1"
