@@ -371,6 +371,7 @@ async fn introspect_domains(
             n.nspname AS schema_name,
             t.typname AS domain_name,
             bt.typname AS base_type,
+            bn.nspname AS base_schema,
             bt.typcategory::text AS base_category,
             t.typtypmod AS base_typmod,
             t.typnotnull AS not_null,
@@ -380,6 +381,7 @@ async fn introspect_domains(
         FROM pg_type t
         JOIN pg_namespace n ON t.typnamespace = n.oid
         JOIN pg_type bt ON t.typbasetype = bt.oid
+        JOIN pg_namespace bn ON bt.typnamespace = bn.oid
         JOIN pg_roles r ON t.typowner = r.oid
         WHERE t.typtype = 'd'
             AND n.nspname = ANY($1::text[])
@@ -409,6 +411,7 @@ async fn introspect_domains(
         let schema: String = row.get("schema_name");
         let name: String = row.get("domain_name");
         let base_type: String = row.get("base_type");
+        let base_schema: String = row.get("base_schema");
         let base_category: String = row.get("base_category");
         let base_typmod: i32 = row.get("base_typmod");
         let not_null: bool = row.get("not_null");
@@ -424,36 +427,13 @@ async fn introspect_domains(
                     "expected array base_type to start with '_', got: {base_type}"
                 ))
             })?;
-            let element_type = map_domain_element_type(base_udt, &schema);
+            let element_type = map_udt_name_to_pg_type(base_udt, &base_schema, None);
             PgType::Array(Box::new(element_type))
         } else {
-            match base_type.as_str() {
-                "integer" | "int4" => PgType::Integer,
-                "bigint" | "int8" => PgType::BigInt,
-                "smallint" | "int2" => PgType::SmallInt,
-                "real" | "float4" => PgType::Real,
-                "double precision" | "float8" => PgType::DoublePrecision,
-                "numeric" => decode_numeric_typmod(base_typmod),
-                "text" => PgType::Text,
-                "boolean" | "bool" => PgType::Boolean,
-                "timestamp" => PgType::Timestamp,
-                "timestamp with time zone" | "timestamptz" => PgType::TimestampTz,
-                "date" => PgType::Date,
-                "uuid" => PgType::Uuid,
-                "json" => PgType::Json,
-                "jsonb" => PgType::Jsonb,
-                "character varying" | "varchar" => {
-                    PgType::Varchar(decode_varchar_typmod(base_typmod))
-                }
-                _ => {
-                    let qualified = format!("public.{base_type}");
-                    if base_type.contains('.') {
-                        PgType::UserDefined(base_type)
-                    } else {
-                        PgType::UserDefined(qualified)
-                    }
-                }
-            }
+            // pg_type.typname is the internal name (int4, varchar, bpchar, ...), so
+            // route the base type through the same mapper table-column introspection
+            // uses, passing the domain's stored typmod for parameterized types.
+            map_udt_name_to_pg_type(&base_type, &base_schema, Some(base_typmod))
         };
 
         let domain = Domain {
@@ -929,6 +909,17 @@ fn decode_varchar_typmod(atttypmod: i32) -> Option<u32> {
     }
 }
 
+/// Decodes a `bpchar` (`char(n)`) typmod into a declared length. Same
+/// `length + VARHDRSZ` (4) encoding as `varchar`; PostgreSQL forbids `char(0)`,
+/// so the smallest bounded typmod is 5.
+fn decode_bpchar_typmod(atttypmod: i32) -> Option<u32> {
+    if atttypmod > 4 {
+        Some((atttypmod - 4) as u32)
+    } else {
+        None
+    }
+}
+
 fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i32>) -> PgType {
     match udt_name {
         "bool" => PgType::Boolean,
@@ -954,10 +945,7 @@ fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i
         "cidr" => PgType::Cidr,
         "macaddr" => PgType::Macaddr,
         "macaddr8" => PgType::Macaddr8,
-        "bpchar" => {
-            let length = atttypmod.and_then(|m| if m > 4 { Some((m - 4) as u32) } else { None });
-            PgType::Char(length)
-        }
+        "bpchar" => PgType::Char(atttypmod.and_then(decode_bpchar_typmod)),
         "point" => PgType::Point,
         "xml" => PgType::Xml,
         "int4range" | "int8range" | "numrange" | "tsrange" | "tstzrange" | "daterange"
@@ -1049,10 +1037,6 @@ fn map_pg_type(
             "unsupported column type from database: {other} (udt_name: {udt_name})"
         ))),
     }
-}
-
-fn map_domain_element_type(base_udt: &str, domain_schema: &str) -> PgType {
-    map_udt_name_to_pg_type(base_udt, domain_schema, None)
 }
 
 /// Parse Postgres' `format_type(atttypid, atttypmod)` output for PostGIS
