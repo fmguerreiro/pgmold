@@ -1503,10 +1503,12 @@ fn policy_on_overlong_table_truncates_table_reference() {
         .tables
         .get(&format!("public.{}", "p".repeat(63)))
         .unwrap();
-    assert!(
-        parsed.policies.iter().any(|p| p.name == "my_policy"),
+    assert_eq!(
+        parsed.policies.len(),
+        1,
         "policy should attach to the truncated table, not orphan in pending_policies"
     );
+    assert_eq!(parsed.policies[0].name, "my_policy");
     assert_eq!(parsed.policies[0].table, "p".repeat(63));
 }
 
@@ -1525,6 +1527,31 @@ fn trigger_on_overlong_table_truncates_table_reference() {
         .find(|t| t.name == "my_trigger")
         .unwrap();
     assert_eq!(trigger.target_name, "g".repeat(63));
+}
+
+#[test]
+fn drop_trigger_and_policy_on_overlong_table_match_truncated_targets() {
+    let table = "d".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id INT NOT NULL); \
+         CREATE TRIGGER trg BEFORE INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION fn(); \
+         CREATE POLICY pol ON {table} FOR SELECT USING (true); \
+         DROP TRIGGER trg ON {table}; \
+         DROP POLICY pol ON {table};"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    assert!(
+        schema.triggers.is_empty(),
+        "DROP TRIGGER on the truncated table should remove the trigger"
+    );
+    let parsed = schema
+        .tables
+        .get(&format!("public.{}", "d".repeat(63)))
+        .unwrap();
+    assert!(
+        parsed.policies.is_empty(),
+        "DROP POLICY on the truncated table should remove the policy"
+    );
 }
 
 #[test]
