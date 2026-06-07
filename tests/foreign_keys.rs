@@ -655,12 +655,19 @@ async fn changed_foreign_key_action_is_dropped_and_re_added() {
         .unwrap();
     let ops = compute_diff(&current, &target_schema);
 
-    assert!(ops
+    let drop_pos = ops
         .iter()
-        .any(|op| matches!(op, MigrationOp::DropForeignKey { .. })));
-    assert!(ops
+        .position(|op| matches!(op, MigrationOp::DropForeignKey { .. }))
+        .expect("expected a DropForeignKey op");
+    let add_pos = ops
         .iter()
-        .any(|op| matches!(op, MigrationOp::AddForeignKey { .. })));
+        .position(|op| matches!(op, MigrationOp::AddForeignKey { .. }))
+        .expect("expected an AddForeignKey op");
+    assert_eq!(ops.len(), 2, "only the changed FK should diff: {ops:?}");
+    assert!(
+        drop_pos < add_pos,
+        "DropForeignKey must precede AddForeignKey"
+    );
 
     let planned = plan_migration(ops);
     let sql = generate_sql(&planned);

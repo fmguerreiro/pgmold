@@ -232,6 +232,11 @@ pub(super) fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<Mig
             Some(from_fk) => {
                 // PostgreSQL has no ALTER for a foreign key's shape, so a changed
                 // target, column list, or referential action is a drop then an add.
+                // Raw equality is safe here (unlike check constraints, which need
+                // semantically_equals): referential actions are the same enum on
+                // both sides, the column lists are plain identifiers with no
+                // expression folding, and referenced_schema defaults to "public"
+                // to match introspection.
                 if from_fk != foreign_key {
                     ops.push(MigrationOp::DropForeignKey {
                         table: qualified_table_name.clone(),
