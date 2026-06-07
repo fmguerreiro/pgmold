@@ -1531,6 +1531,7 @@ fn create_index_on_overlong_table_name_is_not_dropped() {
         .unwrap();
     assert_eq!(parsed.indexes.len(), 1);
     assert_eq!(parsed.indexes[0].name, "overlong_tbl_idx");
+    assert_eq!(parsed.indexes[0].columns, vec!["val".to_string()]);
 }
 
 #[test]
@@ -1545,7 +1546,9 @@ fn alter_table_on_overlong_table_name_is_not_dropped() {
         .tables
         .get(&format!("public.{}", "t".repeat(63)))
         .unwrap();
-    assert!(parsed.columns.contains_key("extra"));
+    let column = parsed.columns.get("extra").unwrap();
+    assert_eq!(column.data_type, PgType::Text);
+    assert!(column.nullable);
 }
 
 #[test]

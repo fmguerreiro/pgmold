@@ -124,6 +124,15 @@ pub(super) fn extract_qualified_name(name: &ObjectName) -> (String, String) {
     }
 }
 
+/// Like [`extract_qualified_name`], but truncates the name part to the form the
+/// catalog holds, for use at sites that *reference* or *look up* an object
+/// declared elsewhere (see [`truncate_referenced_identifier`]). The schema part
+/// is left untruncated, matching declaration sites.
+pub(super) fn extract_qualified_name_truncated(name: &ObjectName) -> (String, String) {
+    let (schema, object_name) = extract_qualified_name(name);
+    (schema, truncate_referenced_identifier(&object_name))
+}
+
 pub(super) fn parse_policy_command(cmd: &Option<CreatePolicyCommand>) -> PolicyCommand {
     match cmd {
         Some(CreatePolicyCommand::All) => PolicyCommand::All,
