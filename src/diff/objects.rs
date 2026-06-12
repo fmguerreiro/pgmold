@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 
 use crate::model::{
-    parse_qualified_name, qualified_name, EnumType, Grant, Schema, Sequence, Server, Trigger,
+    parse_qualified_name, qualified_name, EnumType, Grant, QualifiedName, Schema, Sequence, Server,
+    Trigger,
 };
 use crate::util::{optional_expressions_equal, partition_bounds_equal};
 
 use super::grants::{create_grants_for_new_object, diff_grants_for_object};
+use super::table_elements::{diff_check_constraint_lists, diff_index_lists};
 use super::{
     DiffOptions, DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp, OwnerObjectKind,
     SequenceChanges,
@@ -400,6 +402,27 @@ pub(super) fn diff_partitions(
                 ops.push(MigrationOp::DetachPartition(from_partition.clone()));
                 ops.push(MigrationOp::AttachPartition(to_partition.clone()));
             }
+            // A partition child is a relation in its own right: its partition-local
+            // indexes and CHECK constraints reconcile exactly like a table's, and
+            // independently of any bound/parent change above. These fields are not
+            // yet populated by the parser or introspection (pgmold-53bm), so this
+            // path is reachable only from hand-built schemas today; the planner
+            // ordering of these ops relative to a simultaneous DETACH+ATTACH is
+            // deferred to that follow-up, where it can be tested end to end.
+            let from_name = QualifiedName::new(&from_partition.schema, &from_partition.name);
+            let to_name = QualifiedName::new(&to_partition.schema, &to_partition.name);
+            ops.extend(diff_index_lists(
+                &from_name,
+                &to_name,
+                &from_partition.indexes,
+                &to_partition.indexes,
+            ));
+            ops.extend(diff_check_constraint_lists(
+                &from_name,
+                &to_name,
+                &from_partition.check_constraints,
+                &to_partition.check_constraints,
+            ));
         },
         |name, _val| MigrationOp::DropPartition(name.clone()),
         qualified_coords,
