@@ -157,19 +157,19 @@ fn push_constraint_comment_op(
 
 fn push_constraint_comment_ops(
     ops: &mut Vec<MigrationOp>,
-    sidecar: &std::collections::BTreeMap<String, String>,
+    sidecar: &std::collections::BTreeMap<crate::model::ConstraintCommentKey, String>,
     parent_schema: &str,
     parent_name: &str,
     on_domain: bool,
 ) {
-    let parent_prefix = format!("{parent_schema}.{parent_name}.");
+    let parent_key = crate::model::qualified_name(parent_schema, parent_name);
     for (key, comment) in sidecar.iter() {
-        if let Some(constraint_name) = key.strip_prefix(&parent_prefix) {
+        if key.parent_key == parent_key {
             push_constraint_comment_op(
                 ops,
                 parent_schema,
                 parent_name,
-                constraint_name,
+                &key.constraint_name,
                 comment,
                 on_domain,
             );

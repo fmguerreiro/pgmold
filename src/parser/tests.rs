@@ -2930,7 +2930,10 @@ fn comment_on_overlong_constraint_name_attaches() {
     assert_eq!(
         schema
             .table_constraint_comments
-            .get(&format!("public.tbl.{}", "k".repeat(63)))
+            .get(&crate::model::ConstraintCommentKey::new(
+                "public.tbl",
+                "k".repeat(63),
+            ))
             .map(String::as_str),
         Some("hi")
     );
@@ -3200,7 +3203,10 @@ fn comment_on_constraint_on_table_captures_text() {
     assert_eq!(
         schema
             .table_constraint_comments
-            .get("public.users.users_email_chk")
+            .get(&crate::model::ConstraintCommentKey::new(
+                "public.users",
+                "users_email_chk",
+            ))
             .map(String::as_str),
         Some("positive id"),
     );
@@ -3218,9 +3224,9 @@ fn comment_on_constraint_null_clears_comment() {
         COMMENT ON CONSTRAINT users_id_chk ON public.users IS NULL;
     "#;
     let schema = parse_sql_string(sql).unwrap();
-    assert!(!schema
-        .table_constraint_comments
-        .contains_key("public.users.users_id_chk"));
+    assert!(!schema.table_constraint_comments.contains_key(
+        &crate::model::ConstraintCommentKey::new("public.users", "users_id_chk",)
+    ));
 }
 
 #[test]
@@ -3233,7 +3239,10 @@ fn comment_on_constraint_on_domain_captures_text() {
     assert_eq!(
         schema
             .domain_constraint_comments
-            .get("public.amount.amount_positive")
+            .get(&crate::model::ConstraintCommentKey::new(
+                "public.amount",
+                "amount_positive",
+            ))
             .map(String::as_str),
         Some("must be positive"),
     );
@@ -3256,7 +3265,10 @@ fn comment_on_constraint_roundtrips_through_dump() {
     assert_eq!(
         reparsed
             .table_constraint_comments
-            .get("public.users.users_id_chk")
+            .get(&crate::model::ConstraintCommentKey::new(
+                "public.users",
+                "users_id_chk",
+            ))
             .map(String::as_str),
         Some("positive id"),
     );
@@ -3275,7 +3287,10 @@ fn comment_on_constraint_on_domain_roundtrips_through_dump() {
     assert_eq!(
         reparsed
             .domain_constraint_comments
-            .get("public.amount.amount_positive")
+            .get(&crate::model::ConstraintCommentKey::new(
+                "public.amount",
+                "amount_positive",
+            ))
             .map(String::as_str),
         Some("must be positive"),
     );

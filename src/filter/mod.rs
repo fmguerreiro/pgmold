@@ -345,13 +345,13 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
     }
 
     fn retain_by_key_schema(
-        map: &BTreeMap<String, String>,
+        map: &BTreeMap<crate::model::ConstraintCommentKey, String>,
         allowed: &HashSet<&str>,
-    ) -> BTreeMap<String, String> {
+    ) -> BTreeMap<crate::model::ConstraintCommentKey, String> {
         map.iter()
             .filter(|(key, _)| {
-                key.split_once('.')
-                    .is_some_and(|(s, _)| allowed.contains(s))
+                let (schema, _) = crate::model::parse_qualified_name(&key.parent_key);
+                allowed.contains(schema.as_str())
             })
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()

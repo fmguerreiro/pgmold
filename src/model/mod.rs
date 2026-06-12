@@ -1,7 +1,7 @@
 use crate::util::{
     expressions_semantically_equal, views_semantically_equal, views_semantically_equal_with_columns,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -283,20 +283,19 @@ pub struct Schema {
     pub pending_comments: Vec<PendingComment>,
     pub default_privileges: Vec<DefaultPrivilege>,
     /// Comments on named table constraints (PK, FK, CHECK, UNIQUE, EXCLUDE)
-    /// keyed as `"schema.table.constraint_name"`. Stored as a Schema-level
-    /// sidecar so adding the field does not require changing every
-    /// `Table` / `ForeignKey` / `CheckConstraint` / `Index` constructor in
-    /// the codebase. The constraint kind is irrelevant for emitting
+    /// keyed by the parent's qualified key plus the constraint name. Stored
+    /// as a Schema-level sidecar so adding the field does not require changing
+    /// every `Table` / `ForeignKey` / `CheckConstraint` / `Index` constructor
+    /// in the codebase. The constraint kind is irrelevant for emitting
     /// `COMMENT ON CONSTRAINT name ON tbl IS '...'` because PostgreSQL
     /// resolves the kind from `pg_constraint`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub table_constraint_comments: BTreeMap<String, String>,
-    /// Comments on named CHECK constraints attached to domains, keyed as
-    /// `"schema.domain.constraint_name"`. Mirrors
+    pub table_constraint_comments: BTreeMap<ConstraintCommentKey, String>,
+    /// Comments on named CHECK constraints attached to domains. Mirrors
     /// `table_constraint_comments` but resolved against `domains` and
     /// emitted via the `ON DOMAIN` form.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub domain_constraint_comments: BTreeMap<String, String>,
+    pub domain_constraint_comments: BTreeMap<ConstraintCommentKey, String>,
     /// Identifiers declared in the source longer than 63 bytes, captured before
     /// the parser truncated them. Drives the `warn_identifier_exceeds_namedatalen`
     /// lint. Not serialized: it is a parse-time diagnostic, not schema state.
@@ -1130,6 +1129,56 @@ pub fn qualified_name(schema: &str, name: &str) -> String {
     format!("{schema}.{name}")
 }
 
+/// Key for the constraint-comment sidecar maps. Holds the parent's qualified
+/// key (`schema.parent`) and the constraint name as separate fields so a
+/// dotted constraint name or dotted table name (legal via quoted identifiers)
+/// routes unambiguously. Packing both into one dot-joined string and
+/// re-splitting with `rsplit_once('.')` misroutes such identifiers, the same
+/// bug class fixed for column/policy/trigger pending comments in pgmold-298.
+/// The schema/name split inside `parent_key` follows the same convention as
+/// the `tables` / `partitions` / `domains` map keys, so a dotted schema name
+/// remains a pre-existing, codebase-wide ambiguity this struct does not touch.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ConstraintCommentKey {
+    /// The parent's qualified key, identical to the key under which the parent
+    /// lives in `tables` / `partitions` / `domains` (`schema.parent`).
+    pub parent_key: String,
+    /// The constraint's unqualified name.
+    pub constraint_name: String,
+}
+
+impl ConstraintCommentKey {
+    pub fn new(parent_key: impl Into<String>, constraint_name: impl Into<String>) -> Self {
+        Self {
+            parent_key: parent_key.into(),
+            constraint_name: constraint_name.into(),
+        }
+    }
+}
+
+// Serialized as a JSON two-element array string so the key survives
+// `serde_json` (which requires map keys to be strings) without reintroducing
+// the dot-join ambiguity the struct exists to remove.
+impl Serialize for ConstraintCommentKey {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let encoded = serde_json::to_string(&(&self.parent_key, &self.constraint_name))
+            .map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&encoded)
+    }
+}
+
+impl<'de> Deserialize<'de> for ConstraintCommentKey {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let encoded = String::deserialize(deserializer)?;
+        let (parent_key, constraint_name): (String, String) =
+            serde_json::from_str(&encoded).map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            parent_key,
+            constraint_name,
+        })
+    }
+}
+
 /// Parses a qualified name into (schema, name) tuple.
 /// Defaults to "public" schema if no dot separator found.
 ///
@@ -1620,21 +1669,21 @@ impl Schema {
                 // not have to mutate every constraint variant struct. Partition
                 // children share the table sidecar because PostgreSQL stores
                 // constraint comments on the child relation, and the diff/emit
-                // path is parent-kind agnostic. The sidecar map key keeps the
-                // flat `parent.constraint` form because introspection populates
-                // the same maps with that shape.
+                // path is parent-kind agnostic. The sidecar map keys the parent
+                // and constraint names separately so a dotted identifier routes
+                // unambiguously, matching how introspection populates the maps.
                 let constraint_name = pc
                     .child_name
                     .as_deref()
                     .expect("Constraint pending comment must carry child_name");
-                let sidecar_key = format!("{}.{}", pc.object_key, constraint_name);
+                let sidecar_key = ConstraintCommentKey::new(pc.object_key.clone(), constraint_name);
                 if pc.on_domain {
                     if !self.domains.contains_key(&pc.object_key) {
                         return false;
                     }
                     update_constraint_comment(
                         &mut self.domain_constraint_comments,
-                        &sidecar_key,
+                        sidecar_key,
                         pc.comment.as_ref(),
                     );
                 } else {
@@ -1645,7 +1694,7 @@ impl Schema {
                     }
                     update_constraint_comment(
                         &mut self.table_constraint_comments,
-                        &sidecar_key,
+                        sidecar_key,
                         pc.comment.as_ref(),
                     );
                 }
@@ -1665,15 +1714,11 @@ impl Schema {
         let tables = &self.tables;
         let partitions = &self.partitions;
         self.table_constraint_comments.retain(|key, _| {
-            key.rsplit_once('.').is_some_and(|(parent, _)| {
-                tables.contains_key(parent) || partitions.contains_key(parent)
-            })
+            tables.contains_key(&key.parent_key) || partitions.contains_key(&key.parent_key)
         });
         let domains = &self.domains;
-        self.domain_constraint_comments.retain(|key, _| {
-            key.rsplit_once('.')
-                .is_some_and(|(parent, _)| domains.contains_key(parent))
-        });
+        self.domain_constraint_comments
+            .retain(|key, _| domains.contains_key(&key.parent_key));
     }
 
     fn merge_all_grants(&mut self) {
@@ -1729,16 +1774,16 @@ pub fn revoke_from_grants(
 }
 
 fn update_constraint_comment(
-    sidecar: &mut BTreeMap<String, String>,
-    key: &str,
+    sidecar: &mut BTreeMap<ConstraintCommentKey, String>,
+    key: ConstraintCommentKey,
     comment: Option<&String>,
 ) {
     match comment {
         Some(text) => {
-            sidecar.insert(key.to_string(), text.clone());
+            sidecar.insert(key, text.clone());
         }
         None => {
-            sidecar.remove(key);
+            sidecar.remove(&key);
         }
     }
 }
@@ -2117,6 +2162,43 @@ mod tests {
             parse_qualified_name("auth.accounts"),
             ("auth".to_string(), "accounts".to_string())
         );
+    }
+
+    #[test]
+    fn constraint_comment_key_serializes_as_json_array_string() {
+        let key = ConstraintCommentKey::new("public.users", "users_pkey");
+        let encoded = serde_json::to_string(&key).unwrap();
+        assert_eq!(encoded, r#""[\"public.users\",\"users_pkey\"]""#);
+        let decoded: ConstraintCommentKey = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, key);
+    }
+
+    #[test]
+    fn constraint_comment_key_round_trips_dotted_identifiers_through_serde() {
+        // A constraint name and a quoted table name each carrying a literal dot:
+        // the flat dot-joined string this struct replaced could not round-trip
+        // these without misrouting.
+        let key = ConstraintCommentKey::new("public.tbl.with.dots", "chk.v2");
+        let decoded: ConstraintCommentKey =
+            serde_json::from_str(&serde_json::to_string(&key).unwrap()).unwrap();
+        assert_eq!(decoded.parent_key, "public.tbl.with.dots");
+        assert_eq!(decoded.constraint_name, "chk.v2");
+    }
+
+    #[test]
+    fn schema_with_constraint_comments_round_trips_through_serde() {
+        let mut schema = Schema::new();
+        schema.table_constraint_comments.insert(
+            ConstraintCommentKey::new("public.users", "users_pkey"),
+            "primary key".to_string(),
+        );
+        schema.domain_constraint_comments.insert(
+            ConstraintCommentKey::new("public.amount", "amount_positive"),
+            "must be positive".to_string(),
+        );
+        let restored: Schema =
+            serde_json::from_str(&serde_json::to_string(&schema).unwrap()).unwrap();
+        assert_eq!(restored, schema);
     }
 
     #[test]
