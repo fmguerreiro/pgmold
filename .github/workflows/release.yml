@@ -11,7 +11,8 @@ permissions:
 jobs:
   build-linux:
     name: Build ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    # Keep glibc compatibility with Debian 12 and other supported deployment images.
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
