@@ -13,6 +13,9 @@ jobs:
     name: Build ${{ matrix.target }}
     # Keep glibc compatibility with Debian 12 and other supported deployment images.
     runs-on: ubuntu-22.04
+    env:
+      CROSS_TARGET_X86_64_UNKNOWN_LINUX_GNU_IMAGE: ghcr.io/cross-rs/x86_64-unknown-linux-gnu:0.2.5
+      CROSS_TARGET_AARCH64_UNKNOWN_LINUX_GNU_IMAGE: ghcr.io/cross-rs/aarch64-unknown-linux-gnu:0.2.5
     strategy:
       fail-fast: false
       matrix:
