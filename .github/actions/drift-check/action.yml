@@ -20,6 +20,10 @@ inputs:
     description: 'pgmold version to install'
     required: false
     default: 'latest'
+  repository:
+    description: 'GitHub repository to download pgmold releases from'
+    required: false
+    default: 'fmguerreiro/pgmold'
   fail-on-drift:
     description: 'Fail the action if drift is detected'
     required: false
@@ -128,10 +132,11 @@ runs:
       id: version
       env:
         INPUT_VERSION: ${{ inputs.version }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
         if [[ "$INPUT_VERSION" == "latest" ]]; then
-          VERSION=$(gh api repos/fmguerreiro/pgmold/releases/latest --jq '.tag_name')
+          VERSION=$(gh api "repos/${INPUT_REPOSITORY}/releases/latest" --jq '.tag_name')
         else
           VERSION="$INPUT_VERSION"
         fi
@@ -147,10 +152,11 @@ runs:
       env:
         VERSION: ${{ steps.version.outputs.version }}
         TARGET: ${{ steps.platform.outputs.target }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
       run: |
         echo "Downloading pgmold ${VERSION} for ${TARGET}..."
         curl --fail -L -o pgmold.tar.gz \
-          "https://github.com/fmguerreiro/pgmold/releases/download/${VERSION}/pgmold-${TARGET}.tar.gz"
+          "https://github.com/${INPUT_REPOSITORY}/releases/download/${VERSION}/pgmold-${TARGET}.tar.gz"
 
         tar xzf pgmold.tar.gz
         chmod +x pgmold
