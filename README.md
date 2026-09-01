@@ -1,3 +1,5 @@
+
+
 <p align="center">
   <img src="logo.png" alt="pgmold" width="200">
 </p>
@@ -284,7 +286,7 @@ The action runs in two modes:
 
 **Key inputs:**
 - `schema` (required): Schema source(s), space-separated.
-- `database`: PostgreSQL connection string. Required unless `baseline` is set.
+- `database`: PostgreSQL connection string. Required unless `baseline` or `database-secret-command` is set.
 - `baseline`: `sql:path/to/baseline.sql` for SQL-to-SQL diff mode.
 - `target-schemas`: Comma-separated PostgreSQL schemas. Default: `public`.
 - `fail-on-drift`: Fail if drift detected. Default: `true`.
