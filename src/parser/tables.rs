@@ -16,7 +16,8 @@ use std::collections::BTreeMap;
 
 use super::util::{
     extract_qualified_name, normalize_expr, parse_data_type, truncate_identifier,
-    truncate_to_bytes_raw, truncated_ident, unquote_ident, PG_MAX_IDENTIFIER_LENGTH,
+    truncate_referenced_columns, truncate_referenced_identifier, truncate_to_bytes_raw,
+    truncated_ident, unquote_ident, PG_MAX_IDENTIFIER_LENGTH,
 };
 
 pub(super) struct ParsedTable {
@@ -92,7 +93,8 @@ pub(super) fn parse_create_table(
                     let constraint_name = explicit_name
                         .clone()
                         .unwrap_or_else(|| format!("{}_{}_fkey", table.name, col_name));
-                    let (ref_schema, ref_table) = extract_qualified_name(&fk.foreign_table);
+                    let (ref_schema, raw_ref_table) = extract_qualified_name(&fk.foreign_table);
+                    let ref_table = truncate_referenced_identifier(&raw_ref_table);
                     if fk.referred_columns.is_empty() {
                         return Err(crate::util::SchemaError::ParseError(format!(
                             "Inline REFERENCES on column \"{}\".\"{}\".\"{}\" must specify \
@@ -105,11 +107,7 @@ pub(super) fn parse_create_table(
                             schema, name, col_name, ref_table
                         )));
                     }
-                    let referenced_columns: Vec<String> = fk
-                        .referred_columns
-                        .iter()
-                        .map(|c| unquote_ident(&c.to_string()).to_string())
-                        .collect();
+                    let referenced_columns = truncate_referenced_columns(&fk.referred_columns);
                     table.foreign_keys.push(ForeignKey {
                         name: truncate_identifier(&constraint_name),
                         columns: vec![col_name.clone()],
@@ -164,11 +162,7 @@ pub(super) fn parse_create_table(
         match constraint {
             TableConstraint::PrimaryKey(pk) => apply_primary_key(&mut table, pk),
             TableConstraint::ForeignKey(fk) => {
-                let fk_columns: Vec<String> = fk
-                    .columns
-                    .iter()
-                    .map(|c| unquote_ident(&c.to_string()).to_string())
-                    .collect();
+                let fk_columns = truncate_referenced_columns(&fk.columns);
                 let fk_name = fk
                     .name
                     .as_ref()
@@ -178,17 +172,13 @@ pub(super) fn parse_create_table(
                         format!("{}_{}_fkey", table.name, fk_columns.join("_"))
                     });
 
-                let (ref_schema, ref_table) = extract_qualified_name(&fk.foreign_table);
+                let (ref_schema, raw_ref_table) = extract_qualified_name(&fk.foreign_table);
                 table.foreign_keys.push(ForeignKey {
                     name: truncate_identifier(&fk_name),
                     columns: fk_columns,
                     referenced_schema: ref_schema,
-                    referenced_table: ref_table,
-                    referenced_columns: fk
-                        .referred_columns
-                        .iter()
-                        .map(|c| unquote_ident(&c.to_string()).to_string())
-                        .collect(),
+                    referenced_table: truncate_referenced_identifier(&raw_ref_table),
+                    referenced_columns: truncate_referenced_columns(&fk.referred_columns),
                     on_delete: parse_referential_action(&fk.on_delete),
                     on_update: parse_referential_action(&fk.on_update),
                 });

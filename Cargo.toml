@@ -17,7 +17,7 @@ categories = ["command-line-utilities", "database"]
 clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1.35", features = ["full"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres"] }
-sqlparser = { package = "pgmold-sqlparser", version = "0.63.0", features = ["visitor"] }
+sqlparser = { package = "pgmold-sqlparser", version = "0.64.0", features = ["visitor"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
@@ -27,6 +27,7 @@ hex = "0.4"
 regex = "1.10"
 glob = "0.3"
 petgraph = "0.6"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 proptest = "1"
@@ -37,11 +38,11 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres"] }
 tokio = { version = "1.35", features = ["full"] }
 assert_cmd = "2"
 criterion = { version = "0.5", features = ["html_reports"] }
-sqlparser = { package = "pgmold-sqlparser", version = "0.63.0", features = ["visitor"] }
+sqlparser = { package = "pgmold-sqlparser", version = "0.64.0", features = ["visitor"] }
 
 [[bench]]
 name = "performance"
 harness = false
 
 [build-dependencies]
-sqlparser = { package = "pgmold-sqlparser", version = "0.63.0", features = ["visitor"] }
+sqlparser = { package = "pgmold-sqlparser", version = "0.64.0", features = ["visitor"] }

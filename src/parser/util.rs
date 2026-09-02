@@ -6,11 +6,12 @@
 use crate::model::*;
 use crate::util::{normalize_type_casts, numeric_typmod_parts, Result, SchemaError};
 use sqlparser::ast::{
-    ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, ForValues, ObjectName,
-    PartitionBoundValue, TimezoneInfo,
+    visit_expressions_mut, ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, Expr,
+    ForValues, Ident, IndexColumn, ObjectName, PartitionBoundValue, TimezoneInfo,
 };
 
 use std::cell::RefCell;
+use std::ops::ControlFlow;
 
 /// PostgreSQL's NAMEDATALEN is 64, so identifiers are truncated to 63 bytes.
 pub(crate) const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
@@ -33,6 +34,70 @@ pub(super) fn take_overlong_identifiers() -> Vec<String> {
 
 pub(super) fn truncate_identifier(s: &str) -> String {
     truncate_to_bytes(s, PG_MAX_IDENTIFIER_LENGTH).to_string()
+}
+
+/// Truncate an identifier that *references* an object or column declared
+/// elsewhere (a foreign-key target, a partition parent, an index column) to
+/// PG's NAMEDATALEN-1. PostgreSQL truncates these the same as the declaration,
+/// so a reference to a >63-byte name must match the truncated form the catalog
+/// actually holds; otherwise it points at a name PG never has, reintroducing
+/// drift. Unlike `truncate_identifier`, this does NOT feed the
+/// overlong-identifier lint: the name is reported at its declaration site, not
+/// at every place it is referenced.
+pub(super) fn truncate_referenced_identifier(s: &str) -> String {
+    truncate_to_bytes_raw(s, PG_MAX_IDENTIFIER_LENGTH).to_string()
+}
+
+/// Truncate a list of referenced column identifiers (FK local or referenced
+/// columns) to the PG-truncated form the catalog holds. See
+/// [`truncate_referenced_identifier`].
+pub(super) fn truncate_referenced_columns(columns: &[Ident]) -> Vec<String> {
+    columns
+        .iter()
+        .map(|column| truncate_referenced_identifier(&column.value))
+        .collect()
+}
+
+/// Resolve an index column entry to its stored form. A bare-column entry
+/// references a column PG truncates at declaration, so the reference is
+/// truncated to match (see [`truncate_referenced_identifier`]). Expression
+/// entries (e.g. `lower(x)`) are kept verbatim: introspection renders those via
+/// `pg_get_indexdef`, not `attname`.
+pub(super) fn truncate_index_column(column: &IndexColumn) -> String {
+    if let Expr::Identifier(ident) = &column.column.expr {
+        return truncate_referenced_identifier(&ident.value);
+    }
+    let mut expr = column.column.expr.clone();
+    truncate_identifiers_in_expression(&mut expr);
+    unquote_ident(&expr.to_string()).to_string()
+}
+
+/// Truncate every identifier *reference* inside an index expression (e.g. the
+/// `x` in `lower(x)`) to PG's NAMEDATALEN-1. PostgreSQL truncates the column at
+/// declaration, and `pg_get_indexdef` renders the expression with the truncated
+/// name; a parsed expression over a >63-byte column must match that truncated
+/// form or it drifts forever (perpetual DROP + CREATE INDEX). Only identifier
+/// components are touched; the rest of the expression is left as written.
+fn truncate_identifiers_in_expression(expr: &mut Expr) {
+    let _: ControlFlow<()> = visit_expressions_mut(expr, |node| {
+        match node {
+            Expr::Identifier(ident) => truncate_ident_in_place(ident),
+            Expr::CompoundIdentifier(idents) => {
+                for ident in idents.iter_mut() {
+                    truncate_ident_in_place(ident);
+                }
+            }
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    });
+}
+
+fn truncate_ident_in_place(ident: &mut Ident) {
+    let truncated = truncate_referenced_identifier(&ident.value);
+    if truncated.len() != ident.value.len() {
+        ident.value = truncated;
+    }
 }
 
 /// Truncate `s` to at most `max_bytes` bytes, backing off to the nearest UTF-8 char
@@ -87,6 +152,15 @@ pub(super) fn extract_qualified_name(name: &ObjectName) -> (String, String) {
         [table] => ("public".to_string(), table.clone()),
         _ => panic!("Unexpected object name format: {name:?}"),
     }
+}
+
+/// Like [`extract_qualified_name`], but truncates the name part to the form the
+/// catalog holds, for use at sites that *reference* or *look up* an object
+/// declared elsewhere (see [`truncate_referenced_identifier`]). The schema part
+/// is left untruncated, matching declaration sites.
+pub(super) fn extract_qualified_name_truncated(name: &ObjectName) -> (String, String) {
+    let (schema, object_name) = extract_qualified_name(name);
+    (schema, truncate_referenced_identifier(&object_name))
 }
 
 pub(super) fn parse_policy_command(cmd: &Option<CreatePolicyCommand>) -> PolicyCommand {

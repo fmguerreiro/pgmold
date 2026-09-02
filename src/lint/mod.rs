@@ -261,6 +261,8 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         | MigrationOp::CreateTable(_)
         | MigrationOp::CreatePartition(_)
         | MigrationOp::DropPartition(_)
+        | MigrationOp::DetachPartition(_)
+        | MigrationOp::AttachPartition(_)
         | MigrationOp::AddColumn { .. }
         | MigrationOp::AddPrimaryKey { .. }
         | MigrationOp::DropPrimaryKey { .. }

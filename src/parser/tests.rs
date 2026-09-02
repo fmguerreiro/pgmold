@@ -1367,6 +1367,292 @@ FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
 }
 
 #[test]
+fn partition_of_overlong_parent_truncates_parent_name() {
+    let parent = "p".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {parent} (id INT NOT NULL, logdate DATE NOT NULL) \
+         PARTITION BY RANGE (logdate); \
+         CREATE TABLE child_part PARTITION OF {parent} \
+         FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let partition = schema.partitions.get("public.child_part").unwrap();
+    assert_eq!(partition.parent_name, "p".repeat(63));
+}
+
+#[test]
+fn foreign_key_to_overlong_table_truncates_referenced_table() {
+    let parent = "r".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {parent} (id INT NOT NULL, PRIMARY KEY (id)); \
+         CREATE TABLE child ( \
+            id INT NOT NULL, \
+            parent_id INT NOT NULL, \
+            PRIMARY KEY (id), \
+            CONSTRAINT child_parent_fkey FOREIGN KEY (parent_id) REFERENCES {parent} (id) \
+         );"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(child.foreign_keys[0].referenced_table, "r".repeat(63));
+}
+
+#[test]
+fn foreign_key_to_overlong_column_truncates_referenced_column() {
+    let column = "c".repeat(64);
+    let sql = format!(
+        "CREATE TABLE parent_tbl ({column} INT NOT NULL, PRIMARY KEY ({column})); \
+         CREATE TABLE child ( \
+            id INT NOT NULL, \
+            parent_ref INT NOT NULL REFERENCES parent_tbl ({column}) \
+         );"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(child.foreign_keys[0].referenced_table, "parent_tbl");
+    assert_eq!(
+        child.foreign_keys[0].referenced_columns,
+        vec!["c".repeat(63)]
+    );
+}
+
+#[test]
+fn inline_foreign_key_to_overlong_table_truncates_referenced_table() {
+    let parent = "r".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {parent} (id INT NOT NULL, PRIMARY KEY (id)); \
+         CREATE TABLE child ( \
+            id INT NOT NULL, \
+            parent_id INT NOT NULL REFERENCES {parent} (id) \
+         );"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(child.foreign_keys[0].referenced_table, "r".repeat(63));
+}
+
+#[test]
+fn table_constraint_foreign_key_truncates_referenced_column() {
+    let column = "c".repeat(64);
+    let sql = format!(
+        "CREATE TABLE parent_tbl ({column} INT NOT NULL, PRIMARY KEY ({column})); \
+         CREATE TABLE child ( \
+            id INT NOT NULL, \
+            parent_ref INT NOT NULL, \
+            CONSTRAINT child_parent_fkey FOREIGN KEY (parent_ref) REFERENCES parent_tbl ({column}) \
+         );"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(
+        child.foreign_keys[0].referenced_columns,
+        vec!["c".repeat(63)]
+    );
+}
+
+#[test]
+fn foreign_key_truncates_local_columns() {
+    let local = "l".repeat(64);
+    let sql = format!(
+        "CREATE TABLE parent_tbl (id INT NOT NULL, PRIMARY KEY (id)); \
+         CREATE TABLE child ( \
+            id INT NOT NULL, \
+            {local} INT NOT NULL, \
+            CONSTRAINT child_fkey FOREIGN KEY ({local}) REFERENCES parent_tbl (id) \
+         );"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(child.foreign_keys[0].columns, vec!["l".repeat(63)]);
+}
+
+#[test]
+fn alter_table_add_foreign_key_truncates_references() {
+    let parent = "r".repeat(64);
+    let column = "c".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {parent} ({column} INT NOT NULL, PRIMARY KEY ({column})); \
+         CREATE TABLE child (id INT NOT NULL, parent_ref INT NOT NULL, PRIMARY KEY (id)); \
+         ALTER TABLE child ADD CONSTRAINT child_parent_fkey \
+            FOREIGN KEY (parent_ref) REFERENCES {parent} ({column});"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let child = schema.tables.get("public.child").unwrap();
+    assert_eq!(child.foreign_keys.len(), 1);
+    assert_eq!(child.foreign_keys[0].referenced_table, "r".repeat(63));
+    assert_eq!(
+        child.foreign_keys[0].referenced_columns,
+        vec!["c".repeat(63)]
+    );
+}
+
+#[test]
+fn policy_on_overlong_table_truncates_table_reference() {
+    let table = "p".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id INT NOT NULL); \
+         CREATE POLICY my_policy ON {table} FOR SELECT USING (true);"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let parsed = schema
+        .tables
+        .get(&format!("public.{}", "p".repeat(63)))
+        .unwrap();
+    assert_eq!(
+        parsed.policies.len(),
+        1,
+        "policy should attach to the truncated table, not orphan in pending_policies"
+    );
+    assert_eq!(parsed.policies[0].name, "my_policy");
+    assert_eq!(parsed.policies[0].table, "p".repeat(63));
+}
+
+#[test]
+fn trigger_on_overlong_table_truncates_table_reference() {
+    let table = "g".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id INT NOT NULL); \
+         CREATE TRIGGER my_trigger BEFORE INSERT ON {table} \
+            FOR EACH ROW EXECUTE FUNCTION my_fn();"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let trigger = schema
+        .triggers
+        .values()
+        .find(|t| t.name == "my_trigger")
+        .unwrap();
+    assert_eq!(trigger.target_name, "g".repeat(63));
+}
+
+#[test]
+fn drop_trigger_and_policy_on_overlong_table_match_truncated_targets() {
+    let table = "d".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id INT NOT NULL); \
+         CREATE TRIGGER trg BEFORE INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION fn(); \
+         CREATE POLICY pol ON {table} FOR SELECT USING (true); \
+         DROP TRIGGER trg ON {table}; \
+         DROP POLICY pol ON {table};"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    assert!(
+        schema.triggers.is_empty(),
+        "DROP TRIGGER on the truncated table should remove the trigger"
+    );
+    let parsed = schema
+        .tables
+        .get(&format!("public.{}", "d".repeat(63)))
+        .unwrap();
+    assert!(
+        parsed.policies.is_empty(),
+        "DROP POLICY on the truncated table should remove the policy"
+    );
+}
+
+#[test]
+fn index_on_overlong_column_truncates_plain_reference_but_leaves_expressions() {
+    let column = "z".repeat(64);
+    let sql = format!(
+        "CREATE TABLE t (id INT NOT NULL, {column} INT, name TEXT); \
+         CREATE INDEX t_plain_idx ON t ({column}); \
+         CREATE INDEX t_expr_idx ON t (lower(name));"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+
+    let plain = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "t_plain_idx")
+        .unwrap();
+    assert_eq!(plain.columns, vec!["z".repeat(63)]);
+
+    let expr = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "t_expr_idx")
+        .unwrap();
+    assert_eq!(expr.columns, vec!["lower(name)".to_string()]);
+}
+
+#[test]
+fn expression_index_truncates_overlong_inner_identifier() {
+    let column = "z".repeat(64);
+    let truncated = "z".repeat(63);
+    let sql = format!(
+        "CREATE TABLE t (id INT NOT NULL, {column} TEXT); \
+         CREATE INDEX t_expr_idx ON t (lower({column}));"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.t").unwrap();
+
+    let expr = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "t_expr_idx")
+        .unwrap();
+    assert_eq!(expr.columns, vec![format!("lower({truncated})")]);
+}
+
+#[test]
+fn create_index_on_overlong_table_name_is_not_dropped() {
+    let table = "t".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id INT NOT NULL, val INT); \
+         CREATE INDEX overlong_tbl_idx ON {table} (val);"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let parsed = schema
+        .tables
+        .get(&format!("public.{}", "t".repeat(63)))
+        .unwrap();
+    assert_eq!(parsed.indexes.len(), 1);
+    assert_eq!(parsed.indexes[0].name, "overlong_tbl_idx");
+    assert_eq!(parsed.indexes[0].columns, vec!["val".to_string()]);
+}
+
+#[test]
+fn alter_table_on_overlong_table_name_is_not_dropped() {
+    let table = "t".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id INT NOT NULL); \
+         ALTER TABLE {table} ADD COLUMN extra TEXT;"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let parsed = schema
+        .tables
+        .get(&format!("public.{}", "t".repeat(63)))
+        .unwrap();
+    let column = parsed.columns.get("extra").unwrap();
+    assert_eq!(column.data_type, PgType::Text);
+    assert!(column.nullable);
+}
+
+#[test]
+fn attach_partition_with_overlong_child_name_truncates_key_and_name() {
+    let child = "c".repeat(64);
+    let sql = format!(
+        "CREATE TABLE parent_tbl (id INT NOT NULL, logdate DATE NOT NULL) \
+         PARTITION BY RANGE (logdate); \
+         CREATE TABLE {child} (id INT NOT NULL, logdate DATE NOT NULL); \
+         ALTER TABLE parent_tbl ATTACH PARTITION {child} \
+         FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let partition = schema
+        .partitions
+        .get(&format!("public.{}", "c".repeat(63)))
+        .unwrap();
+    assert_eq!(partition.name, "c".repeat(63));
+    assert_eq!(partition.parent_name, "parent_tbl");
+}
+
+#[test]
 fn parses_list_partition() {
     let sql = r#"
 CREATE TABLE customers (
@@ -2486,6 +2772,184 @@ fn comment_on_column_accepts_e_string_literal() {
         column.comment.as_deref(),
         Some("@deprecated use\ttotals.amount")
     );
+}
+
+#[test]
+fn comment_on_column_with_dotted_name_attaches_to_right_column() {
+    let sql = r#"
+        CREATE TABLE mrv.orders (id integer PRIMARY KEY, "a.b" numeric);
+        COMMENT ON COLUMN mrv.orders."a.b" IS 'dotted';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("mrv.orders").expect("table should parse");
+    let column = table
+        .columns
+        .get("a.b")
+        .expect("dotted column should exist");
+    assert_eq!(column.comment.as_deref(), Some("dotted"));
+    assert!(
+        schema.pending_comments.is_empty(),
+        "comment on dotted column should not stay pending"
+    );
+}
+
+#[test]
+fn comment_on_policy_with_dotted_table_attaches() {
+    let sql = r#"
+        CREATE TABLE mrv."a.b" (id integer PRIMARY KEY);
+        CREATE POLICY "p.q" ON mrv."a.b" FOR SELECT USING (true);
+        COMMENT ON POLICY "p.q" ON mrv."a.b" IS 'dotted-table';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema
+        .tables
+        .get("mrv.a.b")
+        .expect("dotted table should parse");
+    let policy = table
+        .policies
+        .iter()
+        .find(|p| p.name == "p.q")
+        .expect("policy should exist");
+    assert_eq!(policy.comment.as_deref(), Some("dotted-table"));
+    assert!(schema.pending_comments.is_empty());
+}
+
+#[test]
+fn comment_on_trigger_with_dotted_name_attaches() {
+    let sql = r#"
+        CREATE TABLE mrv."t.u" (id integer PRIMARY KEY);
+        CREATE TRIGGER "g.h" BEFORE INSERT ON mrv."t.u" FOR EACH ROW EXECUTE FUNCTION fn();
+        COMMENT ON TRIGGER "g.h" ON mrv."t.u" IS 'dotted-trigger';
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let trigger = schema
+        .triggers
+        .values()
+        .find(|t| t.name == "g.h")
+        .expect("dotted trigger should parse");
+    assert_eq!(trigger.comment.as_deref(), Some("dotted-trigger"));
+    assert!(schema.pending_comments.is_empty());
+}
+
+#[test]
+fn comment_on_overlong_table_attaches_to_truncated_table() {
+    let table = "t".repeat(64);
+    let sql = format!(
+        "CREATE TABLE {table} (id integer PRIMARY KEY); \
+         COMMENT ON TABLE {table} IS 'hello';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let parsed = schema
+        .tables
+        .get(&format!("public.{}", "t".repeat(63)))
+        .expect("table should parse");
+    assert_eq!(parsed.comment.as_deref(), Some("hello"));
+}
+
+#[test]
+fn comment_on_overlong_column_attaches_to_truncated_column() {
+    let column = "c".repeat(64);
+    let sql = format!(
+        "CREATE TABLE orders (id integer PRIMARY KEY, {column} numeric); \
+         COMMENT ON COLUMN orders.{column} IS 'amount';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.orders").unwrap();
+    let col = table
+        .columns
+        .get(&"c".repeat(63))
+        .expect("column should exist");
+    assert_eq!(col.comment.as_deref(), Some("amount"));
+}
+
+#[test]
+fn trigger_execute_function_name_is_truncated() {
+    let func = "f".repeat(64);
+    let sql = format!(
+        "CREATE TRIGGER trg BEFORE INSERT ON some_table \
+         FOR EACH ROW EXECUTE FUNCTION {func}();"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let trigger = schema
+        .triggers
+        .values()
+        .find(|t| t.name == "trg")
+        .expect("trigger should parse");
+    assert_eq!(trigger.function_name, "f".repeat(63));
+}
+
+#[test]
+fn comment_on_overlong_trigger_name_attaches() {
+    let trigger = "g".repeat(64);
+    let sql = format!(
+        "CREATE TABLE tbl (id integer PRIMARY KEY); \
+         CREATE TRIGGER {trigger} BEFORE INSERT ON tbl FOR EACH ROW EXECUTE FUNCTION fn(); \
+         COMMENT ON TRIGGER {trigger} ON tbl IS 'hi';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let parsed = schema
+        .triggers
+        .values()
+        .find(|t| t.name == "g".repeat(63))
+        .expect("trigger should parse under its truncated name");
+    assert_eq!(parsed.comment.as_deref(), Some("hi"));
+    assert!(schema.pending_comments.is_empty());
+}
+
+#[test]
+fn comment_on_overlong_policy_name_attaches() {
+    let policy = "y".repeat(64);
+    let sql = format!(
+        "CREATE TABLE tbl (id integer PRIMARY KEY); \
+         CREATE POLICY {policy} ON tbl FOR SELECT USING (true); \
+         COMMENT ON POLICY {policy} ON tbl IS 'hi';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let table = schema.tables.get("public.tbl").unwrap();
+    let parsed = table
+        .policies
+        .iter()
+        .find(|p| p.name == "y".repeat(63))
+        .expect("policy should attach under its truncated name");
+    assert_eq!(parsed.comment.as_deref(), Some("hi"));
+    assert!(schema.pending_comments.is_empty());
+}
+
+#[test]
+fn comment_on_overlong_constraint_name_attaches() {
+    let constraint = "k".repeat(64);
+    let sql = format!(
+        "CREATE TABLE tbl (id integer, CONSTRAINT {constraint} CHECK (id > 0)); \
+         COMMENT ON CONSTRAINT {constraint} ON tbl IS 'hi';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    assert!(
+        schema.pending_comments.is_empty(),
+        "constraint comment should attach to the truncated constraint, not stay pending"
+    );
+    assert_eq!(
+        schema
+            .table_constraint_comments
+            .get(&format!("public.tbl.{}", "k".repeat(63)))
+            .map(String::as_str),
+        Some("hi")
+    );
+}
+
+#[test]
+fn comment_on_overlong_aggregate_name_attaches() {
+    let aggregate = "a".repeat(64);
+    let sql = format!(
+        "CREATE AGGREGATE {aggregate}(integer) (SFUNC = int4pl, STYPE = integer); \
+         COMMENT ON AGGREGATE {aggregate}(integer) IS 'hi';"
+    );
+    let schema = parse_sql_string(&sql).unwrap();
+    let parsed = schema
+        .aggregates
+        .get(&format!("public.{}(integer)", "a".repeat(63)))
+        .expect("aggregate should be stored under its truncated name");
+    assert_eq!(parsed.comment.as_deref(), Some("hi"));
+    assert!(schema.pending_comments.is_empty());
 }
 
 #[test]

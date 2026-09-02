@@ -218,3 +218,206 @@ async fn apply_adds_bigserial_column_and_index_to_existing_table() {
         "apply should converge, but the remaining diff was: {final_diff:?}"
     );
 }
+
+#[tokio::test]
+async fn apply_orders_create_sequence_before_nextval_default_add_column() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let setup_file = write_sql_temp_file(
+        r#"
+        CREATE TABLE t (
+            id INT NOT NULL
+        );
+        "#,
+    );
+    let setup_source = setup_file.path().to_str().unwrap().to_string();
+    apply_migration(
+        &[setup_source],
+        &connection,
+        ApplyOptions {
+            dry_run: false,
+            allow_destructive: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    let target_file = write_sql_temp_file(
+        r#"
+        CREATE SEQUENCE s;
+        CREATE TABLE t (
+            id INT NOT NULL,
+            c BIGINT DEFAULT nextval('s')
+        );
+        "#,
+    );
+    let target_source = target_file.path().to_str().unwrap().to_string();
+    let result = apply_migration(
+        std::slice::from_ref(&target_source),
+        &connection,
+        ApplyOptions {
+            dry_run: false,
+            allow_destructive: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(result.applied);
+    let create_sequence_pos = result
+        .sql_statements
+        .iter()
+        .position(|s| s.contains("CREATE SEQUENCE"))
+        .expect("CREATE SEQUENCE statement not found");
+    let add_column_pos = result
+        .sql_statements
+        .iter()
+        .position(|s| s.contains("ADD COLUMN"))
+        .expect("ADD COLUMN statement not found");
+    assert!(
+        create_sequence_pos < add_column_pos,
+        "CREATE SEQUENCE must come before ADD COLUMN: {:#?}",
+        result.sql_statements
+    );
+
+    let second_result = apply_migration(
+        &[target_source],
+        &connection,
+        ApplyOptions {
+            dry_run: false,
+            allow_destructive: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        second_result.operations.is_empty(),
+        "second plan against the same target must be empty: {:#?}",
+        second_result.operations
+    );
+}
+
+#[tokio::test]
+async fn apply_orders_create_sequence_before_owned_by_on_existing_column() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let setup_file = write_sql_temp_file(
+        r#"
+        CREATE TABLE t (
+            id INT NOT NULL,
+            c BIGINT
+        );
+        "#,
+    );
+    let setup_source = setup_file.path().to_str().unwrap().to_string();
+    apply_migration(
+        &[setup_source],
+        &connection,
+        ApplyOptions {
+            dry_run: false,
+            allow_destructive: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    let target_file = write_sql_temp_file(
+        r#"
+        CREATE SEQUENCE s OWNED BY t.c;
+        CREATE TABLE t (
+            id INT NOT NULL,
+            c BIGINT
+        );
+        "#,
+    );
+    let target_source = target_file.path().to_str().unwrap().to_string();
+    let result = apply_migration(
+        std::slice::from_ref(&target_source),
+        &connection,
+        ApplyOptions {
+            dry_run: false,
+            allow_destructive: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(result.applied);
+    let create_sequence_pos = result
+        .sql_statements
+        .iter()
+        .position(|s| s.contains("CREATE SEQUENCE"))
+        .expect("CREATE SEQUENCE statement not found");
+    let alter_sequence_pos = result
+        .sql_statements
+        .iter()
+        .position(|s| s.contains("ALTER SEQUENCE") && s.contains("OWNED BY"))
+        .expect("ALTER SEQUENCE ... OWNED BY statement not found");
+    assert!(
+        create_sequence_pos < alter_sequence_pos,
+        "CREATE SEQUENCE must come before ALTER SEQUENCE OWNED BY: {:#?}",
+        result.sql_statements
+    );
+
+    let second_result = apply_migration(
+        &[target_source],
+        &connection,
+        ApplyOptions {
+            dry_run: false,
+            allow_destructive: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        second_result.operations.is_empty(),
+        "second plan against the same target must be empty: {:#?}",
+        second_result.operations
+    );
+}
+
+#[tokio::test]
+async fn apply_bigserial_column_on_new_table_still_works() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let target_file = write_sql_temp_file(
+        r#"
+        CREATE TABLE t (
+            id INT NOT NULL,
+            c BIGSERIAL
+        );
+        "#,
+    );
+    let target_source = target_file.path().to_str().unwrap().to_string();
+    let result = apply_migration(
+        std::slice::from_ref(&target_source),
+        &connection,
+        ApplyOptions {
+            dry_run: false,
+            allow_destructive: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(result.applied);
+
+    let second_result = apply_migration(
+        &[target_source],
+        &connection,
+        ApplyOptions {
+            dry_run: false,
+            allow_destructive: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        second_result.operations.is_empty(),
+        "second plan against the same target must be empty: {:#?}",
+        second_result.operations
+    );
+}

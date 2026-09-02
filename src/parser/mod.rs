@@ -60,9 +60,10 @@ use tables::{
     parse_referential_action,
 };
 use util::{
-    extract_qualified_name, normalize_expr, parse_data_type, parse_for_values,
-    parse_for_values_required, parse_policy_command, take_overlong_identifiers,
-    truncate_identifier, truncated_ident, unquote_ident,
+    extract_qualified_name, extract_qualified_name_truncated, normalize_expr, parse_data_type,
+    parse_for_values, parse_for_values_required, parse_policy_command, take_overlong_identifiers,
+    truncate_identifier, truncate_index_column, truncate_referenced_columns,
+    truncate_referenced_identifier, truncated_ident, unquote_ident,
 };
 
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
@@ -125,7 +126,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 let table_name = truncate_identifier(&raw_table_name);
 
                 if let Some(ref parent_table) = ct.partition_of {
-                    let (parent_schema, parent_name) = extract_qualified_name(parent_table);
+                    let (parent_schema, parent_name) =
+                        extract_qualified_name_truncated(parent_table);
                     let bound = parse_for_values(&ct.for_values)?;
                     let partition = Partition {
                         schema: table_schema.clone(),
@@ -162,7 +164,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     .as_ref()
                     .map(truncated_ident)
                     .ok_or_else(|| SchemaError::ParseError("Index must have name".into()))?;
-                let (tbl_schema, tbl_name) = extract_qualified_name(&ci.table_name);
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&ci.table_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
 
                 if let Some(table) = schema.tables.get_mut(&tbl_key) {
@@ -175,11 +177,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     };
                     table.indexes.push(Index {
                         name: idx_name,
-                        columns: ci
-                            .columns
-                            .iter()
-                            .map(|c| unquote_ident(&c.column.expr.to_string()).to_string())
-                            .collect(),
+                        columns: ci.columns.iter().map(truncate_index_column).collect(),
                         unique: ci.unique,
                         index_type,
                         predicate: ci.predicate.as_ref().map(|p| p.to_string()),
@@ -218,7 +216,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 with_check,
                 ..
             }) => {
-                let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&table_name);
                 let policy = Policy {
                     name: truncated_ident(&name),
                     table_schema: tbl_schema,
@@ -246,7 +244,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             Statement::AlterTable(AlterTable {
                 name, operations, ..
             }) => {
-                let (tbl_schema, tbl_name) = extract_qualified_name(&name);
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
                 for op in operations {
                     match op {
@@ -312,22 +310,18 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                                                     unquote_ident(&fk.columns[0].to_string())
                                                 )
                                             });
-                                        let (ref_schema, ref_table) =
+                                        let (ref_schema, raw_ref_table) =
                                             extract_qualified_name(&fk.foreign_table);
                                         table.foreign_keys.push(ForeignKey {
                                             name: truncate_identifier(&fk_name),
-                                            columns: fk
-                                                .columns
-                                                .iter()
-                                                .map(|c| unquote_ident(&c.to_string()).to_string())
-                                                .collect(),
+                                            columns: truncate_referenced_columns(&fk.columns),
                                             referenced_schema: ref_schema,
-                                            referenced_table: ref_table,
-                                            referenced_columns: fk
-                                                .referred_columns
-                                                .iter()
-                                                .map(|c| unquote_ident(&c.to_string()).to_string())
-                                                .collect(),
+                                            referenced_table: truncate_referenced_identifier(
+                                                &raw_ref_table,
+                                            ),
+                                            referenced_columns: truncate_referenced_columns(
+                                                &fk.referred_columns,
+                                            ),
                                             on_delete: parse_referential_action(&fk.on_delete),
                                             on_update: parse_referential_action(&fk.on_update),
                                         });
@@ -501,7 +495,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             partition_bound,
                         } => {
                             let (child_schema, child_name) =
-                                extract_qualified_name(&partition_name);
+                                extract_qualified_name_truncated(&partition_name);
                             let child_key = qualified_name(&child_schema, &child_name);
                             let bound = parse_for_values_required(&partition_bound)?;
                             let owner = schema.tables.remove(&child_key).and_then(|t| t.owner);
@@ -523,7 +517,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             finalize: _,
                         } => {
                             let (child_schema, child_name) =
-                                extract_qualified_name(&partition_name);
+                                extract_qualified_name_truncated(&partition_name);
                             let child_key = qualified_name(&child_schema, &child_name);
                             // TODO: PostgreSQL promotes a detached partition to a standalone
                             // table; re-insert into schema.tables to model that.
@@ -845,7 +839,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 characteristics,
                 ..
             }) => {
-                let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&table_name);
                 let trigger_name = truncated_ident(&name);
                 let exec = exec_body.as_ref().ok_or_else(|| {
                     SchemaError::ParseError(format!(
@@ -853,7 +847,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     ))
                 })?;
                 let func_unqualified = exec.func_name.0.len() == 1;
-                let (func_schema, func_name) = extract_qualified_name(&exec.func_name);
+                let (func_schema, func_name) = extract_qualified_name_truncated(&exec.func_name);
                 let func_schema = if func_unqualified && is_pg_catalog_trigger_function(&func_name)
                 {
                     "pg_catalog".to_string()
@@ -1115,7 +1109,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 table_name: Some(ref tbl),
                 ..
             }) => {
-                let (tbl_schema, tbl_name) = extract_qualified_name(tbl);
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(tbl);
                 let trigger_key = make_trigger_key(
                     &tbl_schema,
                     &tbl_name,
@@ -1127,7 +1121,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             Statement::DropPolicy(sqlparser::ast::DropPolicy {
                 name, table_name, ..
             }) => {
-                let (tbl_schema, tbl_name) = extract_qualified_name(&table_name);
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&table_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
                 let policy_name = truncated_ident(&name);
 
@@ -1370,6 +1364,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 table_name,
                 on_domain,
                 comment,
+                comment_dollar_quote: _,
                 if_exists: _,
             } => {
                 apply_comment_statement(
@@ -1517,7 +1512,8 @@ fn is_pg_catalog_trigger_function(name: &str) -> bool {
 }
 
 fn parse_create_aggregate(stmt: CreateAggregate, schema: &mut Schema) -> Result<()> {
-    let (agg_schema, agg_name) = extract_qualified_name(&stmt.name);
+    let (agg_schema, raw_agg_name) = extract_qualified_name(&stmt.name);
+    let agg_name = truncate_identifier(&raw_agg_name);
     let args: Vec<String> = stmt
         .args
         .iter()

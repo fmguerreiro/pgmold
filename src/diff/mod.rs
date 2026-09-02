@@ -985,6 +985,40 @@ mod tests {
     }
 
     #[test]
+    fn detects_changed_foreign_key_as_drop_and_add() {
+        let make = |on_delete: ReferentialAction| ForeignKey {
+            name: "posts_user_id_fkey".to_string(),
+            columns: vec!["user_id".to_string()],
+            referenced_table: "users".to_string(),
+            referenced_schema: "public".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete,
+            on_update: ReferentialAction::NoAction,
+        };
+
+        let mut from = empty_schema();
+        let mut from_table = simple_table("posts");
+        from_table
+            .foreign_keys
+            .push(make(ReferentialAction::NoAction));
+        from.tables.insert("posts".to_string(), from_table);
+
+        let mut to = empty_schema();
+        let mut to_table = simple_table("posts");
+        to_table.foreign_keys.push(make(ReferentialAction::Cascade));
+        to.tables.insert("posts".to_string(), to_table);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 2);
+        assert!(
+            matches!(&ops[0], MigrationOp::DropForeignKey { table, foreign_key_name } if table == "public.posts" && foreign_key_name == "posts_user_id_fkey")
+        );
+        assert!(
+            matches!(&ops[1], MigrationOp::AddForeignKey { table, foreign_key } if table == "public.posts" && foreign_key.on_delete == ReferentialAction::Cascade)
+        );
+    }
+
+    #[test]
     fn detects_added_function() {
         let from = empty_schema();
         let mut to = empty_schema();
@@ -1062,7 +1096,7 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "auth.my_func"),
             "DropFunction should use qualified name with schema, got: {:?}",
-            &ops[0]
+            ops[0]
         );
     }
 
@@ -1126,12 +1160,12 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "public.my_func"),
             "First op should be DropFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
         assert!(
             matches!(&ops[1], MigrationOp::CreateFunction(f) if f.name == "my_func"),
             "Second op should be CreateFunction, got: {:?}",
-            &ops[1]
+            ops[1]
         );
     }
 
@@ -1194,7 +1228,7 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::AlterFunction { name, .. } if name == "public.my_func"),
             "Should be AlterFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
     }
 
@@ -1258,12 +1292,12 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { .. }),
             "First op should be DropFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
         assert!(
             matches!(&ops[1], MigrationOp::CreateFunction(_)),
             "Second op should be CreateFunction, got: {:?}",
-            &ops[1]
+            ops[1]
         );
     }
 
@@ -1327,12 +1361,12 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { .. }),
             "First op should be DropFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
         assert!(
             matches!(&ops[1], MigrationOp::CreateFunction(_)),
             "Second op should be CreateFunction, got: {:?}",
-            &ops[1]
+            ops[1]
         );
     }
 
@@ -1358,7 +1392,7 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropView { name, .. } if name == "reporting.my_view"),
             "DropView should use qualified name with schema, got: {:?}",
-            &ops[0]
+            ops[0]
         );
     }
 
@@ -3818,6 +3852,128 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
     }
 
     #[test]
+    fn recreates_domain_on_base_type_change() {
+        let mut from = empty_schema();
+        from.domains.insert(
+            "public.price".to_string(),
+            Domain {
+                name: "price".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(2),
+                },
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
+                comment: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.domains.insert(
+            "public.price".to_string(),
+            Domain {
+                name: "price".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Numeric {
+                    precision: Some(12),
+                    scale: Some(4),
+                },
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
+                comment: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        let domain_ops: Vec<&MigrationOp> = ops
+            .iter()
+            .filter(|op| {
+                matches!(
+                    op,
+                    MigrationOp::DropDomain(_)
+                        | MigrationOp::CreateDomain(_)
+                        | MigrationOp::AlterDomain { .. }
+                )
+            })
+            .collect();
+        assert_eq!(domain_ops.len(), 2);
+        let drop_pos = domain_ops
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropDomain(name) if name == "public.price"))
+            .expect("DropDomain for public.price should exist");
+        let create_pos = domain_ops
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateDomain(d) if d.name == "price" && d.data_type == PgType::Numeric { precision: Some(12), scale: Some(4) }))
+            .expect("CreateDomain for the new base type should exist");
+        assert!(
+            drop_pos < create_pos,
+            "DropDomain must precede CreateDomain"
+        );
+    }
+
+    #[test]
+    fn alters_domain_on_default_only_change() {
+        let mut from = empty_schema();
+        from.domains.insert(
+            "public.price".to_string(),
+            Domain {
+                name: "price".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(2),
+                },
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
+                comment: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.domains.insert(
+            "public.price".to_string(),
+            Domain {
+                name: "price".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(2),
+                },
+                default: Some("0".to_string()),
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
+                comment: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterDomain { name, changes }
+                if name == "public.price"
+                    && changes.default == Some(Some("0".to_string()))
+                    && changes.not_null.is_none()
+        ));
+    }
+
+    #[test]
     fn detects_function_owner_change_when_flag_enabled() {
         let func_sig = "public.get_user(integer)".to_string();
         let mut from = empty_schema();
@@ -4300,6 +4456,172 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
                 ..
             } if schema == "public" && name == "orders_2024" && new_owner == "newowner"
         ));
+    }
+
+    #[test]
+    fn changed_partition_bound_emits_detach_then_attach_not_drop_recreate() {
+        use crate::model::{Partition, PartitionBound};
+
+        let partition_key = "public.events_2024".to_string();
+
+        let mut from = empty_schema();
+        from.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "events_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "events".to_string(),
+                bound: PartitionBound::Range {
+                    from: vec!["'2024-01-01'".to_string()],
+                    to: vec!["'2024-07-01'".to_string()],
+                },
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "events_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "events".to_string(),
+                bound: PartitionBound::Range {
+                    from: vec!["'2024-01-01'".to_string()],
+                    to: vec!["'2025-01-01'".to_string()],
+                },
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected exactly Detach then Attach, got {ops:?}"
+        );
+
+        match &ops[0] {
+            MigrationOp::DetachPartition(detached) => {
+                assert_eq!(detached.name, "events_2024");
+                assert_eq!(detached.parent_name, "events");
+                assert_eq!(
+                    detached.bound,
+                    PartitionBound::Range {
+                        from: vec!["'2024-01-01'".to_string()],
+                        to: vec!["'2024-07-01'".to_string()],
+                    }
+                );
+            }
+            other => panic!("expected DetachPartition first, got {other:?}"),
+        }
+
+        match &ops[1] {
+            MigrationOp::AttachPartition(attached) => {
+                assert_eq!(attached.name, "events_2024");
+                assert_eq!(attached.parent_name, "events");
+                assert_eq!(
+                    attached.bound,
+                    PartitionBound::Range {
+                        from: vec!["'2024-01-01'".to_string()],
+                        to: vec!["'2025-01-01'".to_string()],
+                    }
+                );
+            }
+            other => panic!("expected AttachPartition second, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn changed_partition_parent_emits_detach_from_old_then_attach_to_new() {
+        use crate::model::{Partition, PartitionBound};
+
+        let partition_key = "public.events_2024".to_string();
+
+        let mut from = empty_schema();
+        from.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "events_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "events_old".to_string(),
+                bound: PartitionBound::Default,
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "events_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "events_new".to_string(),
+                bound: PartitionBound::Default,
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected exactly Detach then Attach, got {ops:?}"
+        );
+
+        match &ops[0] {
+            MigrationOp::DetachPartition(detached) => {
+                assert_eq!(detached.parent_name, "events_old");
+            }
+            other => panic!("expected DetachPartition first, got {other:?}"),
+        }
+
+        match &ops[1] {
+            MigrationOp::AttachPartition(attached) => {
+                assert_eq!(attached.parent_name, "events_new");
+            }
+            other => panic!("expected AttachPartition second, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unchanged_partition_emits_no_detach_or_attach() {
+        use crate::model::{Partition, PartitionBound};
+
+        let partition_key = "public.events_2024".to_string();
+        let partition = Partition {
+            name: "events_2024".to_string(),
+            schema: "public".to_string(),
+            parent_schema: "public".to_string(),
+            parent_name: "events".to_string(),
+            bound: PartitionBound::Default,
+            indexes: Vec::new(),
+            check_constraints: Vec::new(),
+            owner: None,
+        };
+
+        let mut from = empty_schema();
+        from.partitions
+            .insert(partition_key.clone(), partition.clone());
+        let mut to = empty_schema();
+        to.partitions.insert(partition_key, partition);
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "expected no ops, got {ops:?}");
     }
 
     #[test]
