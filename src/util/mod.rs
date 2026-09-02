@@ -149,9 +149,11 @@ pub fn sanitize_connection_error(connection_url: &str, error_message: &str) -> S
     match extract_password(connection_url) {
         Some(password) if password.len() >= 3 => {
             let mut result = error_message.replace(&password, "****");
-            let decoded = simple_percent_decode(&password);
-            if decoded != password {
-                result = result.replace(&decoded, "****");
+            // Invalid UTF-8 has no decoded form that could appear in a driver message.
+            if let Some(decoded) = simple_percent_decode(&password) {
+                if decoded != password {
+                    result = result.replace(&decoded, "****");
+                }
             }
             result
         }
@@ -161,7 +163,8 @@ pub fn sanitize_connection_error(connection_url: &str, error_message: &str) -> S
 
 /// Decodes percent-encoded bytes in a string (e.g., `%40` → `@`).
 /// Collects raw bytes first then converts to UTF-8 to handle multi-byte sequences.
-fn simple_percent_decode(input: &str) -> String {
+/// Returns `None` when the decoded bytes are not valid UTF-8.
+fn simple_percent_decode(input: &str) -> Option<String> {
     let mut raw_bytes = Vec::with_capacity(input.len());
     let bytes = input.as_bytes();
     let mut i = 0;
@@ -176,7 +179,7 @@ fn simple_percent_decode(input: &str) -> String {
         raw_bytes.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8(raw_bytes).expect("percent-decoded bytes are valid UTF-8")
+    String::from_utf8(raw_bytes).ok()
 }
 
 /// Strips dollar-quote delimiters from a function body.
@@ -2456,9 +2459,18 @@ mod tests {
 
     #[test]
     fn simple_percent_decode_multibyte_utf8() {
-        assert_eq!(super::simple_percent_decode("%C3%A9"), "\u{00e9}");
+        assert_eq!(super::simple_percent_decode("%C3%A9").unwrap(), "\u{00e9}");
     }
 
+    #[test]
+    fn sanitize_connection_error_scrubs_password_whose_escapes_decode_to_invalid_utf8() {
+        let url = "postgres://user:p%FFss@localhost/db";
+        let error = "authentication failed for user \"user\" (password was p%FFss)";
+        assert_eq!(
+            sanitize_connection_error(url, error),
+            "authentication failed for user \"user\" (password was ****)"
+        );
+    }
     // Normalization edge-case: two different qualified columns whose trailing segment matches
     // (e.g. a."id" vs b."id") should NOT compare equal when the surrounding context
     // distinguishes them. The 2-part collapsing reduces each to its bare last segment, but
