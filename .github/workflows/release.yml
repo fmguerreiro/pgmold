@@ -105,3 +105,42 @@ jobs:
           files: |
             artifacts/*.tar.gz
             artifacts/checksums-sha256.txt
+
+  publish:
+    name: Publish to crates.io
+    needs: [build-linux, build-macos, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          cargo_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pgmold") | .version')"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$tag_version" != "$cargo_version" ]; then
+            echo "Tag version ($tag_version) does not match Cargo.toml version ($cargo_version)" >&2
+            exit 1
+          fi
+
+      - name: Check if version already published
+        id: check
+        run: |
+          cargo_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pgmold") | .version')"
+          published_versions="$(curl -sS -A "pgmold-ci/1.0" https://crates.io/api/v1/crates/pgmold | jq -r '.versions[]?.num')"
+          if echo "$published_versions" | grep -qx "$cargo_version"; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to crates.io
+        if: steps.check.outputs.already_published == 'false'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish
