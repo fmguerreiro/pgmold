@@ -1,3 +1,4 @@
+use crate::util::{Result, SchemaError};
 use regex::Regex;
 use std::path::Path;
 
@@ -29,8 +30,8 @@ pub fn find_next_migration_number(dir: &Path) -> std::io::Result<u32> {
 /// Generates migration filename like "0003_add_users.sql"
 /// Sanitizes name: lowercase, spaces to underscores, remove special chars
 /// Collapses consecutive underscores and trims leading/trailing underscores
-/// Panics if name contains no alphanumeric characters
-pub fn generate_migration_filename(number: u32, name: &str) -> String {
+/// Returns an error if name contains no alphanumeric characters
+pub fn generate_migration_filename(number: u32, name: &str) -> Result<String> {
     let sanitized: String = name
         .to_lowercase()
         .replace([' ', '-'], "_")
@@ -46,10 +47,12 @@ pub fn generate_migration_filename(number: u32, name: &str) -> String {
         .join("_");
 
     if sanitized.is_empty() {
-        panic!("Migration name must contain at least one alphanumeric character");
+        return Err(SchemaError::ValidationError(
+            "Migration name must contain at least one alphanumeric character".to_string(),
+        ));
     }
 
-    format!("{number:04}_{sanitized}.sql")
+    Ok(format!("{number:04}_{sanitized}.sql"))
 }
 
 #[cfg(test)]
@@ -86,15 +89,15 @@ mod tests {
     #[test]
     fn generates_filename_with_padding() {
         assert_eq!(
-            generate_migration_filename(1, "initial"),
+            generate_migration_filename(1, "initial").unwrap(),
             "0001_initial.sql"
         );
         assert_eq!(
-            generate_migration_filename(42, "add users"),
+            generate_migration_filename(42, "add users").unwrap(),
             "0042_add_users.sql"
         );
         assert_eq!(
-            generate_migration_filename(999, "Test-Name"),
+            generate_migration_filename(999, "Test-Name").unwrap(),
             "0999_test_name.sql"
         );
     }
@@ -111,22 +114,25 @@ mod tests {
     #[test]
     fn sanitizes_special_characters() {
         assert_eq!(
-            generate_migration_filename(1, "add@users!"),
+            generate_migration_filename(1, "add@users!").unwrap(),
             "0001_addusers.sql"
         );
         assert_eq!(
-            generate_migration_filename(2, "   spaces   "),
+            generate_migration_filename(2, "   spaces   ").unwrap(),
             "0002_spaces.sql"
         );
         assert_eq!(
-            generate_migration_filename(3, "multiple---dashes"),
+            generate_migration_filename(3, "multiple---dashes").unwrap(),
             "0003_multiple_dashes.sql"
         );
     }
 
     #[test]
-    #[should_panic(expected = "Migration name must contain at least one alphanumeric character")]
-    fn panics_on_empty_name() {
-        generate_migration_filename(1, "!!!");
+    fn rejects_name_with_no_alphanumeric_characters() {
+        let error = generate_migration_filename(1, "!!!").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Validation error: Migration name must contain at least one alphanumeric character"
+        );
     }
 }
