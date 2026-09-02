@@ -380,6 +380,8 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.tables, &ns.triggers);
         self.edges_all_to_all(&ns.tables, &ns.views);
         self.edges_all_to_all(&ns.tables, &ns.alter_sequences);
+        // ALTER SEQUENCE ... OWNED BY needs the target column to already exist.
+        self.edges_all_to_all(&ns.add_columns, &ns.alter_sequences);
     }
 
     /// Tier 5: Table elements — columns before indexes, FKs, checks, views, policies, triggers.
@@ -1883,6 +1885,87 @@ mod tests {
         assert!(
             create_table_pos < alter_seq_pos,
             "AlterSequence (setting OWNED BY) must come after CreateTable"
+        );
+    }
+
+    #[test]
+    fn sequence_created_before_serial_column_added_to_existing_table() {
+        let sequence = Sequence {
+            name: "test_outbox_seq_seq".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            owner: None,
+            grants: Vec::new(),
+            cache: Some(1),
+            owned_by: Some(SequenceOwner {
+                table_schema: "public".to_string(),
+                table_name: "test_outbox".to_string(),
+                column_name: "seq".to_string(),
+            }),
+            comment: None,
+        };
+        let table = QualifiedName::new("public", "test_outbox");
+        let ops = vec![
+            MigrationOp::AddIndex {
+                table: table.clone(),
+                index: Index {
+                    name: "idx_test_outbox_unprocessed".to_string(),
+                    columns: vec!["seq".to_string()],
+                    unique: false,
+                    index_type: IndexType::BTree,
+                    predicate: Some("processed_at IS NULL".to_string()),
+                    is_constraint: false,
+                },
+            },
+            MigrationOp::AddColumn {
+                table,
+                column: Column {
+                    name: "seq".to_string(),
+                    data_type: PgType::BigInt,
+                    nullable: true,
+                    default: Some("nextval('test_outbox_seq_seq'::regclass)".to_string()),
+                    comment: None,
+                    generated: None,
+                },
+            },
+            MigrationOp::CreateSequence(sequence),
+        ];
+
+        let result = plan_migration(ops);
+
+        let create_sequence_pos = result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateSequence(_)))
+            .expect("CreateSequence should exist");
+        let add_column_pos = result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddColumn { .. }))
+            .expect("AddColumn should exist");
+        let alter_sequence_pos = result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterSequence { .. }))
+            .expect("AlterSequence should exist");
+        let add_index_pos = result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddIndex { .. }))
+            .expect("AddIndex should exist");
+
+        assert!(
+            create_sequence_pos < add_column_pos,
+            "CreateSequence must come before AddColumn using its nextval default"
+        );
+        assert!(
+            add_column_pos < alter_sequence_pos,
+            "AddColumn must come before AlterSequence sets OWNED BY"
+        );
+        assert!(
+            add_column_pos < add_index_pos,
+            "AddColumn must come before AddIndex using the column"
         );
     }
 
