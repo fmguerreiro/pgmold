@@ -86,57 +86,23 @@ pub fn load_schema_sources(sources: &[String]) -> Result<Schema> {
     let mut merged = Schema::new();
     let mut object_sources: HashMap<String, PathBuf> = HashMap::new();
 
-    macro_rules! merge_objects {
-        ($sources:ident, $path:ident, $merged:ident, $kind:literal, $field:ident, $schema:ident) => {
-            for (name, value) in $schema.$field {
-                if let Some(existing_path) = $sources.get(&format!("{}:{name}", $kind)) {
-                    return Err(SchemaError::ParseError(format!(
-                        "Duplicate {} \"{name}\" defined in:\n  - {}\n  - {}",
-                        $kind,
-                        existing_path.display(),
-                        $path.display()
-                    )));
-                }
-                $sources.insert(format!("{}:{name}", $kind), $path.clone());
-                $merged.$field.insert(name, value);
-            }
-        };
-    }
-
     for (path, schema) in file_schemas {
-        merge_objects!(object_sources, path, merged, "table", tables, schema);
-        merge_objects!(object_sources, path, merged, "enum", enums, schema);
-        merge_objects!(object_sources, path, merged, "function", functions, schema);
-        merge_objects!(object_sources, path, merged, "view", views, schema);
-        merge_objects!(object_sources, path, merged, "trigger", triggers, schema);
-        merge_objects!(object_sources, path, merged, "sequence", sequences, schema);
-        merge_objects!(object_sources, path, merged, "domain", domains, schema);
-        merge_objects!(
-            object_sources,
-            path,
-            merged,
-            "extension",
-            extensions,
-            schema
-        );
-        merge_objects!(object_sources, path, merged, "schema", schemas, schema);
-        merge_objects!(
-            object_sources,
-            path,
-            merged,
-            "partition",
-            partitions,
-            schema
-        );
-
-        merged.pending_policies.extend(schema.pending_policies);
-        merged.pending_owners.extend(schema.pending_owners);
-        merged.pending_grants.extend(schema.pending_grants);
-        merged.pending_revokes.extend(schema.pending_revokes);
-        merged.pending_comments.extend(schema.pending_comments);
-        merged
-            .overlong_identifiers
-            .extend(schema.overlong_identifiers);
+        merged.merge_from(schema, |kind, name, already_present| {
+            let key = format!("{kind}:{name}");
+            if already_present {
+                let existing_path = object_sources
+                    .get(&key)
+                    .expect("observe is called on first insert before any conflict");
+                Err(SchemaError::ParseError(format!(
+                    "Duplicate {kind} \"{name}\" defined in:\n  - {}\n  - {}",
+                    existing_path.display(),
+                    path.display()
+                )))
+            } else {
+                object_sources.insert(key, path.clone());
+                Ok(())
+            }
+        })?;
     }
 
     dedup_overlong_identifiers(&mut merged.overlong_identifiers);
@@ -339,6 +305,68 @@ mod tests {
             .collect();
         names.sort_unstable();
         assert_eq!(names, vec![long_a.as_str(), long_b.as_str()]);
+    }
+
+    #[test]
+    fn single_sql_file_keeps_aggregate() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("agg.sql"),
+            "CREATE FUNCTION public.sum_sfunc(bigint, bigint) RETURNS bigint LANGUAGE sql AS $$ SELECT $1 + $2 $$;\n\
+             CREATE AGGREGATE public.mysum(bigint) (SFUNC = public.sum_sfunc, STYPE = bigint, INITCOND = '0');",
+        )
+        .unwrap();
+
+        let result = load_schema_sources(&[dir.path().to_string_lossy().into_owned()]).unwrap();
+        assert_eq!(result.aggregates.len(), 1);
+    }
+
+    #[test]
+    fn single_sql_file_keeps_default_privileges() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("privileges.sql"),
+            "CREATE SCHEMA IF NOT EXISTS app;\n\
+             ALTER DEFAULT PRIVILEGES IN SCHEMA app GRANT SELECT ON TABLES TO PUBLIC;",
+        )
+        .unwrap();
+
+        let result = load_schema_sources(&[dir.path().to_string_lossy().into_owned()]).unwrap();
+        assert_eq!(result.default_privileges.len(), 1);
+    }
+
+    #[test]
+    fn servers_merge_across_multiple_files() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("0_a.sql"),
+            "CREATE SERVER server_a FOREIGN DATA WRAPPER postgres_fdw;",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("1_b.sql"),
+            "CREATE SERVER server_b FOREIGN DATA WRAPPER postgres_fdw;",
+        )
+        .unwrap();
+
+        let result = load_schema_sources(&[dir.path().to_string_lossy().into_owned()]).unwrap();
+        let mut names: Vec<&str> = result.servers.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["server_a", "server_b"]);
+    }
+
+    #[test]
+    fn duplicate_table_across_files_reports_both_paths() {
+        let dir = TempDir::new().unwrap();
+        let file_a = dir.path().join("0_a.sql");
+        let file_b = dir.path().join("1_b.sql");
+        fs::write(&file_a, "CREATE TABLE public.users (id INT);").unwrap();
+        fs::write(&file_b, "CREATE TABLE public.users (id INT);").unwrap();
+
+        let result = load_schema_sources(&[dir.path().to_string_lossy().into_owned()]);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains(&file_a.display().to_string()), "{err}");
+        assert!(err.contains(&file_b.display().to_string()), "{err}");
     }
 
     #[test]
