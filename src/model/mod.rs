@@ -425,6 +425,8 @@ pub enum IndexType {
     Hash,
     Gin,
     Gist,
+    Brin,
+    SpGist,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

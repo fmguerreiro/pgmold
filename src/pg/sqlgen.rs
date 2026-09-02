@@ -851,6 +851,8 @@ fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {
         IndexType::Hash => " USING hash",
         IndexType::Gin => " USING gin",
         IndexType::Gist => " USING gist",
+        IndexType::Brin => " USING brin",
+        IndexType::SpGist => " USING spgist",
     };
 
     let where_clause = index

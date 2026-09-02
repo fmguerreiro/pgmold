@@ -173,7 +173,18 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                         Some(sqlparser::ast::IndexType::GiST) => IndexType::Gist,
                         Some(sqlparser::ast::IndexType::GIN) => IndexType::Gin,
                         Some(sqlparser::ast::IndexType::Hash) => IndexType::Hash,
-                        Some(using) => panic!("unsupported index type: {using:?}"),
+                        Some(sqlparser::ast::IndexType::BRIN) => IndexType::Brin,
+                        Some(sqlparser::ast::IndexType::SPGiST) => IndexType::SpGist,
+                        Some(sqlparser::ast::IndexType::Bloom) => {
+                            return Err(SchemaError::ParseError(
+                                "unsupported index type: BLOOM".into(),
+                            ))
+                        }
+                        Some(sqlparser::ast::IndexType::Custom(ident)) => {
+                            return Err(SchemaError::ParseError(format!(
+                                "unsupported index type: {ident}"
+                            )))
+                        }
                     };
                     table.indexes.push(Index {
                         name: idx_name,
