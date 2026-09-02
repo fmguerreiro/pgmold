@@ -1096,7 +1096,7 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "auth.my_func"),
             "DropFunction should use qualified name with schema, got: {:?}",
-            &ops[0]
+            ops[0]
         );
     }
 
@@ -1160,12 +1160,12 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "public.my_func"),
             "First op should be DropFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
         assert!(
             matches!(&ops[1], MigrationOp::CreateFunction(f) if f.name == "my_func"),
             "Second op should be CreateFunction, got: {:?}",
-            &ops[1]
+            ops[1]
         );
     }
 
@@ -1228,7 +1228,7 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::AlterFunction { name, .. } if name == "public.my_func"),
             "Should be AlterFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
     }
 
@@ -1292,12 +1292,12 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { .. }),
             "First op should be DropFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
         assert!(
             matches!(&ops[1], MigrationOp::CreateFunction(_)),
             "Second op should be CreateFunction, got: {:?}",
-            &ops[1]
+            ops[1]
         );
     }
 
@@ -1361,12 +1361,12 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { .. }),
             "First op should be DropFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
         assert!(
             matches!(&ops[1], MigrationOp::CreateFunction(_)),
             "Second op should be CreateFunction, got: {:?}",
-            &ops[1]
+            ops[1]
         );
     }
 
@@ -1392,7 +1392,7 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropView { name, .. } if name == "reporting.my_view"),
             "DropView should use qualified name with schema, got: {:?}",
-            &ops[0]
+            ops[0]
         );
     }
 
