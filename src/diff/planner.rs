@@ -266,6 +266,9 @@ impl MigrationGraph {
     /// to avoid introducing cycles.
     fn add_function_edges(&mut self, ns: &NodeSets) {
         self.edges_all_to_all(&ns.sequences, &ns.tables);
+        // OWNED BY metadata alone misses nextval() defaults on existing tables.
+        self.edges_all_to_all(&ns.sequences, &ns.add_columns);
+        self.edges_all_to_all(&ns.sequences, &ns.alter_sequences);
 
         // Pre-compute each table's direct FK dependencies, used to expand the skip set
         // through transitive FK closure. If a function depends on table T (via SETOF or
@@ -1465,7 +1468,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 mod tests {
     use super::*;
     use crate::diff::test_helpers::simple_table_with_fks;
-    use crate::diff::{ColumnChanges, OwnerObjectKind, PolicyChanges};
+    use crate::diff::{ColumnChanges, OwnerObjectKind, PolicyChanges, SequenceChanges};
     use crate::model::*;
     use std::collections::BTreeMap;
 
@@ -1880,6 +1883,90 @@ mod tests {
         assert!(
             create_table_pos < alter_seq_pos,
             "AlterSequence (setting OWNED BY) must come after CreateTable"
+        );
+    }
+
+    #[test]
+    fn create_sequence_before_add_column_referencing_nextval() {
+        let seq = Sequence {
+            name: "s".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            owner: None,
+            grants: Vec::new(),
+            cache: Some(1),
+            owned_by: None,
+            comment: None,
+        };
+
+        let ops = vec![
+            MigrationOp::CreateSequence(seq),
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "t"),
+                column: Column {
+                    name: "c".to_string(),
+                    data_type: PgType::BigInt,
+                    nullable: true,
+                    default: Some("nextval('public.s'::regclass)".to_string()),
+                    comment: None,
+                    generated: None,
+                },
+            },
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreateSequence",
+            "AddColumn",
+            |op| matches!(op, MigrationOp::CreateSequence(_)),
+            |op| matches!(op, MigrationOp::AddColumn { .. }),
+        );
+    }
+
+    #[test]
+    fn create_sequence_before_alter_sequence_owned_by_existing_column() {
+        let seq = Sequence {
+            name: "s".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            owner: None,
+            grants: Vec::new(),
+            cache: Some(1),
+            owned_by: None,
+            comment: None,
+        };
+
+        let ops = vec![
+            MigrationOp::CreateSequence(seq),
+            MigrationOp::AlterSequence {
+                name: "public.s".to_string(),
+                changes: SequenceChanges {
+                    owned_by: Some(Some(SequenceOwner {
+                        table_schema: "public".to_string(),
+                        table_name: "t".to_string(),
+                        column_name: "c".to_string(),
+                    })),
+                    ..Default::default()
+                },
+            },
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreateSequence",
+            "AlterSequence",
+            |op| matches!(op, MigrationOp::CreateSequence(_)),
+            |op| matches!(op, MigrationOp::AlterSequence { .. }),
         );
     }
 
