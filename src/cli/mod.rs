@@ -1248,7 +1248,8 @@ pub async fn run() -> Result<()> {
 
             let next_number = find_next_migration_number(migrations_path)
                 .map_err(|e| anyhow!("Failed to determine next migration number: {e}"))?;
-            let filename = generate_migration_filename(next_number, &name);
+            let filename =
+                generate_migration_filename(next_number, &name).map_err(|e| anyhow!("{e}"))?;
             let file_path = migrations_path.join(&filename);
 
             let content = sql.join("\n\n");
