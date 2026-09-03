@@ -1,4 +1,4 @@
-use crate::model::{Column, Index, Policy, QualifiedName, Table};
+use crate::model::{CheckConstraint, Column, Index, Policy, QualifiedName, Table};
 use crate::util::{expressions_semantically_equal, optional_expressions_equal};
 
 use super::{ColumnChanges, MigrationOp, PolicyChanges};
@@ -172,23 +172,39 @@ pub(super) fn indexes_semantically_equal(from: &Index, to: &Index) -> bool {
 }
 
 pub(super) fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
-    let mut ops = Vec::new();
-    let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
-    let from_qualified_table_name = || QualifiedName::new(&from_table.schema, &from_table.name);
+    diff_index_lists(
+        &QualifiedName::new(&from_table.schema, &from_table.name),
+        &QualifiedName::new(&to_table.schema, &to_table.name),
+        &from_table.indexes,
+        &to_table.indexes,
+    )
+}
 
-    for index in &to_table.indexes {
-        let existing = from_table.indexes.iter().find(|i| i.name == index.name);
+/// Diffs two index lists belonging to the same relation (a table or a partition
+/// child). Adds target the `to` relation; drops target the `from` relation,
+/// matching `diff_indexes`. Shared so partition children get the same index
+/// reconciliation as tables.
+pub(super) fn diff_index_lists(
+    from_name: &QualifiedName,
+    to_name: &QualifiedName,
+    from_indexes: &[Index],
+    to_indexes: &[Index],
+) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for index in to_indexes {
+        let existing = from_indexes.iter().find(|i| i.name == index.name);
         match existing {
             None => {
                 ops.push(MigrationOp::AddIndex {
-                    table: qualified_table_name.clone(),
+                    table: to_name.clone(),
                     index: index.clone(),
                 });
             }
             Some(from_index) if !indexes_semantically_equal(from_index, index) => {
-                ops.push(drop_index_op(from_qualified_table_name(), from_index));
+                ops.push(drop_index_op(from_name.clone(), from_index));
                 ops.push(MigrationOp::AddIndex {
-                    table: qualified_table_name.clone(),
+                    table: to_name.clone(),
                     index: index.clone(),
                 });
             }
@@ -196,9 +212,9 @@ pub(super) fn diff_indexes(from_table: &Table, to_table: &Table) -> Vec<Migratio
         }
     }
 
-    for index in &from_table.indexes {
-        if !to_table.indexes.iter().any(|i| i.name == index.name) {
-            ops.push(drop_index_op(from_qualified_table_name(), index));
+    for index in from_indexes {
+        if !to_indexes.iter().any(|i| i.name == index.name) {
+            ops.push(drop_index_op(from_name.clone(), index));
         }
     }
 
@@ -274,45 +290,55 @@ pub(super) fn diff_foreign_keys(from_table: &Table, to_table: &Table) -> Vec<Mig
 }
 
 pub(super) fn diff_check_constraints(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
-    let mut ops = Vec::new();
-    let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
+    diff_check_constraint_lists(
+        &QualifiedName::new(&from_table.schema, &from_table.name),
+        &QualifiedName::new(&to_table.schema, &to_table.name),
+        &from_table.check_constraints,
+        &to_table.check_constraints,
+    )
+}
 
-    for to_constraint in &to_table.check_constraints {
-        let matching_from = from_table
-            .check_constraints
-            .iter()
-            .find(|cc| cc.name == to_constraint.name);
+/// Diffs two check-constraint lists belonging to the same relation (a table or
+/// a partition child). A changed constraint becomes a drop then an add because
+/// PostgreSQL has no in-place ALTER for a CHECK expression. Shared so partition
+/// children get the same reconciliation as tables.
+pub(super) fn diff_check_constraint_lists(
+    from_name: &QualifiedName,
+    to_name: &QualifiedName,
+    from_checks: &[CheckConstraint],
+    to_checks: &[CheckConstraint],
+) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+
+    for to_constraint in to_checks {
+        let matching_from = from_checks.iter().find(|cc| cc.name == to_constraint.name);
 
         match matching_from {
             Some(from_constraint) => {
                 if !from_constraint.semantically_equals(to_constraint) {
                     ops.push(MigrationOp::DropCheckConstraint {
-                        table: qualified_table_name.clone(),
+                        table: from_name.clone(),
                         constraint_name: from_constraint.name.clone(),
                     });
                     ops.push(MigrationOp::AddCheckConstraint {
-                        table: qualified_table_name.clone(),
+                        table: to_name.clone(),
                         check_constraint: to_constraint.clone(),
                     });
                 }
             }
             None => {
                 ops.push(MigrationOp::AddCheckConstraint {
-                    table: qualified_table_name.clone(),
+                    table: to_name.clone(),
                     check_constraint: to_constraint.clone(),
                 });
             }
         }
     }
 
-    for from_constraint in &from_table.check_constraints {
-        if !to_table
-            .check_constraints
-            .iter()
-            .any(|cc| cc.name == from_constraint.name)
-        {
+    for from_constraint in from_checks {
+        if !to_checks.iter().any(|cc| cc.name == from_constraint.name) {
             ops.push(MigrationOp::DropCheckConstraint {
-                table: QualifiedName::new(&from_table.schema, &from_table.name),
+                table: from_name.clone(),
                 constraint_name: from_constraint.name.clone(),
             });
         }

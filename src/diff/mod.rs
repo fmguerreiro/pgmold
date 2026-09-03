@@ -4624,6 +4624,189 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         assert!(ops.is_empty(), "expected no ops, got {ops:?}");
     }
 
+    fn partition_with(
+        indexes: Vec<crate::model::Index>,
+        check_constraints: Vec<crate::model::CheckConstraint>,
+    ) -> crate::model::Partition {
+        crate::model::Partition {
+            name: "events_2024".to_string(),
+            schema: "public".to_string(),
+            parent_schema: "public".to_string(),
+            parent_name: "events".to_string(),
+            bound: crate::model::PartitionBound::Default,
+            indexes,
+            check_constraints,
+            owner: None,
+        }
+    }
+
+    fn partition_index(name: &str, columns: Vec<&str>) -> crate::model::Index {
+        crate::model::Index {
+            name: name.to_string(),
+            columns: columns.into_iter().map(String::from).collect(),
+            unique: false,
+            index_type: crate::model::IndexType::BTree,
+            predicate: None,
+            is_constraint: false,
+        }
+    }
+
+    fn partition_check(name: &str, expression: &str) -> crate::model::CheckConstraint {
+        crate::model::CheckConstraint {
+            name: name.to_string(),
+            expression: expression.to_string(),
+        }
+    }
+
+    fn diff_one_partition(
+        from_partition: crate::model::Partition,
+        to_partition: crate::model::Partition,
+    ) -> Vec<MigrationOp> {
+        let key = "public.events_2024".to_string();
+        let mut from = empty_schema();
+        from.partitions.insert(key.clone(), from_partition);
+        let mut to = empty_schema();
+        to.partitions.insert(key, to_partition);
+        compute_diff(&from, &to)
+    }
+
+    #[test]
+    fn added_partition_index_emits_add_index() {
+        let ops = diff_one_partition(
+            partition_with(Vec::new(), Vec::new()),
+            partition_with(
+                vec![partition_index("events_2024_logdate_idx", vec!["logdate"])],
+                Vec::new(),
+            ),
+        );
+        assert_eq!(ops.len(), 1, "expected one AddIndex, got {ops:?}");
+        match &ops[0] {
+            MigrationOp::AddIndex { table, index } => {
+                assert_eq!(table.to_string(), "public.events_2024");
+                assert_eq!(index.name, "events_2024_logdate_idx");
+                assert_eq!(index.columns, vec!["logdate".to_string()]);
+            }
+            other => panic!("expected AddIndex, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn changed_partition_index_emits_drop_then_add() {
+        let ops = diff_one_partition(
+            partition_with(
+                vec![partition_index("events_2024_idx", vec!["logdate"])],
+                Vec::new(),
+            ),
+            partition_with(
+                vec![partition_index("events_2024_idx", vec!["city_id"])],
+                Vec::new(),
+            ),
+        );
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected DropIndex then AddIndex, got {ops:?}"
+        );
+        match &ops[0] {
+            MigrationOp::DropIndex { table, index_name } => {
+                assert_eq!(table.to_string(), "public.events_2024");
+                assert_eq!(index_name, "events_2024_idx");
+            }
+            other => panic!("expected DropIndex first, got {other:?}"),
+        }
+        match &ops[1] {
+            MigrationOp::AddIndex { index, .. } => {
+                assert_eq!(index.columns, vec!["city_id".to_string()]);
+            }
+            other => panic!("expected AddIndex second, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn removed_partition_index_emits_drop_index() {
+        let ops = diff_one_partition(
+            partition_with(
+                vec![partition_index("events_2024_idx", vec!["logdate"])],
+                Vec::new(),
+            ),
+            partition_with(Vec::new(), Vec::new()),
+        );
+        assert_eq!(ops.len(), 1, "expected one DropIndex, got {ops:?}");
+        match &ops[0] {
+            MigrationOp::DropIndex { table, index_name } => {
+                assert_eq!(table.to_string(), "public.events_2024");
+                assert_eq!(index_name, "events_2024_idx");
+            }
+            other => panic!("expected DropIndex, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn added_partition_check_constraint_emits_add() {
+        let check = partition_check("events_2024_peak_positive", "peaktemp > 0");
+        let ops = diff_one_partition(
+            partition_with(Vec::new(), Vec::new()),
+            partition_with(Vec::new(), vec![check]),
+        );
+        assert_eq!(ops.len(), 1, "expected one AddCheckConstraint, got {ops:?}");
+        match &ops[0] {
+            MigrationOp::AddCheckConstraint {
+                table,
+                check_constraint,
+            } => {
+                assert_eq!(table.to_string(), "public.events_2024");
+                assert_eq!(check_constraint.name, "events_2024_peak_positive");
+            }
+            other => panic!("expected AddCheckConstraint, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn changed_partition_check_constraint_emits_drop_then_add() {
+        let ops = diff_one_partition(
+            partition_with(
+                Vec::new(),
+                vec![partition_check("events_2024_chk", "peaktemp > 0")],
+            ),
+            partition_with(
+                Vec::new(),
+                vec![partition_check("events_2024_chk", "peaktemp > 10")],
+            ),
+        );
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected DropCheckConstraint then AddCheckConstraint, got {ops:?}"
+        );
+        match &ops[0] {
+            MigrationOp::DropCheckConstraint {
+                table,
+                constraint_name,
+            } => {
+                assert_eq!(table.to_string(), "public.events_2024");
+                assert_eq!(constraint_name, "events_2024_chk");
+            }
+            other => panic!("expected DropCheckConstraint first, got {other:?}"),
+        }
+        match &ops[1] {
+            MigrationOp::AddCheckConstraint {
+                check_constraint, ..
+            } => {
+                assert_eq!(check_constraint.expression, "peaktemp > 10");
+            }
+            other => panic!("expected AddCheckConstraint second, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unchanged_partition_index_and_check_emit_no_ops() {
+        let index = partition_index("events_2024_idx", vec!["logdate"]);
+        let check = partition_check("events_2024_chk", "peaktemp > 0");
+        let partition = partition_with(vec![index], vec![check]);
+        let ops = diff_one_partition(partition.clone(), partition);
+        assert!(ops.is_empty(), "expected no ops, got {ops:?}");
+    }
+
     #[test]
     fn ignores_partition_owner_change_when_flag_disabled() {
         use crate::model::{Partition, PartitionBound};
