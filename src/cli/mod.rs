@@ -6,13 +6,15 @@ use serde::Serialize;
 use sqlx::Executor;
 
 use pgmold::check::{check_schema, has_errors as check_has_errors, IssueSeverity};
-use pgmold::diff::{compute_diff, planner::plan_migration_checked};
+use pgmold::diff::{compute_diff, planner::plan_migration_checked, MigrationOp};
 use pgmold::drift::detect_drift;
 use pgmold::dump::{generate_dump, generate_split_dump};
 use pgmold::expand_contract::expand_operations;
 use pgmold::filter::{filter_by_target_schemas, filter_schema, Filter, ObjectType};
-use pgmold::lint::locks::detect_lock_hazards;
-use pgmold::lint::{has_errors, lint_migration_plan, lint_schema, LintOptions, LintSeverity};
+use pgmold::lint::locks::{detect_lock_hazards, LockWarning};
+use pgmold::lint::{
+    has_errors, lint_migration_plan, lint_schema, LintOptions, LintResult, LintSeverity,
+};
 use pgmold::migrate::{find_next_migration_number, generate_migration_filename};
 use pgmold::model::Schema;
 use pgmold::pg::connection::PgConnection;
@@ -35,6 +37,30 @@ struct PlanOutput {
     idempotent: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     residual_ops_count: Option<usize>,
+}
+
+impl PlanOutput {
+    fn new(
+        ops: &[MigrationOp],
+        sql: Vec<String>,
+        lock_warnings: &[LockWarning],
+        identifier_warnings: &[LintResult],
+        validation: Option<&ValidationResult>,
+    ) -> Self {
+        Self {
+            operations: ops.iter().map(|op| format!("{op:?}")).collect(),
+            statement_count: sql.len(),
+            statements: sql,
+            lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
+            identifier_warnings: identifier_warnings
+                .iter()
+                .map(|w| w.message.clone())
+                .collect(),
+            validated: validation.map(|v| v.success),
+            idempotent: validation.map(|v| v.idempotent),
+            residual_ops_count: validation.map(|v| v.residual_ops.len()),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -321,6 +347,8 @@ enum Commands {
         #[arg(long, default_value = "public", value_delimiter = ',')]
         target_schemas: Vec<String>,
         #[command(flatten)]
+        filter: FilterArgs,
+        #[command(flatten)]
         grants: GrantArgs,
         /// Output lint results as JSON
         #[arg(long, short = 'j')]
@@ -381,6 +409,8 @@ enum Commands {
         /// Target PostgreSQL schemas (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
         target_schemas: Vec<String>,
+        #[command(flatten)]
+        filter: FilterArgs,
         #[command(flatten)]
         grants: GrantArgs,
         /// Output result as JSON
@@ -554,19 +584,7 @@ pub async fn run() -> Result<()> {
             let sql = generate_sql(&ops);
 
             if json {
-                let output = PlanOutput {
-                    operations: ops.iter().map(|op| format!("{op:?}")).collect(),
-                    statements: sql.clone(),
-                    lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
-                    identifier_warnings: identifier_warnings
-                        .iter()
-                        .map(|w| w.message.clone())
-                        .collect(),
-                    statement_count: sql.len(),
-                    validated: None,
-                    idempotent: None,
-                    residual_ops_count: None,
-                };
+                let output = PlanOutput::new(&ops, sql, &lock_warnings, &identifier_warnings, None);
                 print_json(&output)?;
             } else {
                 for warning in &identifier_warnings {
@@ -750,19 +768,13 @@ pub async fn run() -> Result<()> {
                 let sql = generate_sql(&ops);
 
                 if json {
-                    let output = PlanOutput {
-                        operations: ops.iter().map(|op| format!("{op:?}")).collect(),
-                        statements: sql.clone(),
-                        lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
-                        identifier_warnings: identifier_warnings
-                            .iter()
-                            .map(|w| w.message.clone())
-                            .collect(),
-                        statement_count: sql.len(),
-                        validated: validation_info.as_ref().map(|v| v.success),
-                        idempotent: validation_info.as_ref().map(|v| v.idempotent),
-                        residual_ops_count: validation_info.as_ref().map(|v| v.residual_ops.len()),
-                    };
+                    let output = PlanOutput::new(
+                        &ops,
+                        sql,
+                        &lock_warnings,
+                        &identifier_warnings,
+                        validation_info.as_ref(),
+                    );
                     print_json(&output)?;
                 } else {
                     for warning in &lock_warnings {
@@ -1050,26 +1062,34 @@ pub async fn run() -> Result<()> {
             schema,
             database,
             target_schemas,
+            filter,
             grants,
             json,
         } => {
-            let target = load_schema(&schema)?;
-            let target = filter_by_target_schemas(&target, &target_schemas);
+            let plan_options = PlanOptions {
+                manage_ownership: grants.manage_ownership,
+                manage_grants: grants.manage_grants(),
+                excluded_grant_roles: grants.excluded_grant_roles(),
+                include_extension_objects: filter.include_extension_objects,
+                exclude_unmanaged_partitions: filter.exclude_unmanaged_partitions,
+            };
+            let filter = filter.to_filter()?;
 
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
-            let current = introspect_schema(&connection, &target_schemas, false)
-                .await
-                .map_err(|e| anyhow!("{e}"))?;
-            let ops = plan_migration_checked(pgmold::diff::compute_diff_with_flags(
-                &current,
-                &target,
-                grants.manage_ownership,
-                grants.manage_grants(),
-                &grants.excluded_grant_roles(),
-            ))?;
+            let migration_plan = compute_migration_plan(
+                &schema,
+                &connection,
+                &target_schemas,
+                &filter,
+                &plan_options,
+            )
+            .await
+            .map_err(|e| anyhow!("{e}"))?;
+            let ops = migration_plan.ops;
+            let target = migration_plan.target_schema;
 
             let lint_options = LintOptions::from_env(false).inspect_err(|e| {
                 if json {
@@ -1273,26 +1293,33 @@ pub async fn run() -> Result<()> {
             migrations,
             name,
             target_schemas,
+            filter,
             grants,
             json,
         } => {
-            let target = load_schema(&schema)?;
-            let target = filter_by_target_schemas(&target, &target_schemas);
+            let plan_options = PlanOptions {
+                manage_ownership: grants.manage_ownership,
+                manage_grants: grants.manage_grants(),
+                excluded_grant_roles: grants.excluded_grant_roles(),
+                include_extension_objects: filter.include_extension_objects,
+                exclude_unmanaged_partitions: filter.exclude_unmanaged_partitions,
+            };
+            let filter = filter.to_filter()?;
+
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
-            let current = introspect_schema(&connection, &target_schemas, false)
-                .await
-                .map_err(|e| anyhow!("{e}"))?;
-
-            let ops = plan_migration_checked(pgmold::diff::compute_diff_with_flags(
-                &current,
-                &target,
-                grants.manage_ownership,
-                grants.manage_grants(),
-                &grants.excluded_grant_roles(),
-            ))?;
+            let migration_plan = compute_migration_plan(
+                &schema,
+                &connection,
+                &target_schemas,
+                &filter,
+                &plan_options,
+            )
+            .await
+            .map_err(|e| anyhow!("{e}"))?;
+            let ops = migration_plan.ops;
             let sql = generate_sql(&ops);
 
             if sql.is_empty() {
@@ -1441,14 +1468,14 @@ pub async fn run() -> Result<()> {
                     description: "Lint schema or migration plan for issues".into(),
                     supports_json: true,
                     requires_database: true,
-                    supports_filters: false,
+                    supports_filters: true,
                 },
                 CommandDescription {
                     name: "migrate".into(),
                     description: "Generate a numbered migration file from schema diff".into(),
                     supports_json: true,
                     requires_database: true,
-                    supports_filters: false,
+                    supports_filters: true,
                 },
                 CommandDescription {
                     name: "check".into(),
@@ -1527,18 +1554,17 @@ mod tests {
 
     #[test]
     fn plan_output_json_includes_identifier_warnings() {
-        let output = PlanOutput {
-            operations: Vec::new(),
-            statements: Vec::new(),
-            lock_warnings: Vec::new(),
-            identifier_warnings: vec![
-                "table identifier \"aaaa\" is 64 bytes; PostgreSQL truncates".to_string(),
-            ],
-            statement_count: 0,
-            validated: None,
-            idempotent: None,
-            residual_ops_count: None,
-        };
+        let output = PlanOutput::new(
+            &[],
+            Vec::new(),
+            &[],
+            &[LintResult {
+                rule: "identifier_length",
+                severity: LintSeverity::Warning,
+                message: "table identifier \"aaaa\" is 64 bytes; PostgreSQL truncates".to_string(),
+            }],
+            None,
+        );
 
         let json = serde_json::to_value(&output).unwrap();
 
