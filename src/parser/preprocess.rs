@@ -1,5 +1,81 @@
 use regex::Regex;
 
+enum QuotedKind {
+    SingleQuotedString,
+    DoubleQuotedIdentifier,
+    DollarQuotedBlock,
+}
+
+struct QuotedRun {
+    kind: QuotedKind,
+    end: usize,
+}
+
+/// Returns `None` when `index` does not open a quoted run, which is how `$1`
+/// stays a positional parameter. An unterminated run extends to end of input.
+fn scan_quoted(sql: &str, index: usize) -> Option<QuotedRun> {
+    let bytes = sql.as_bytes();
+    let length = bytes.len();
+
+    match bytes[index] {
+        b'\'' => {
+            let mut index = index + 1;
+            while index < length {
+                if bytes[index] == b'\'' {
+                    index += 1;
+                    if index < length && bytes[index] == b'\'' {
+                        index += 1;
+                    } else {
+                        break;
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+            Some(QuotedRun {
+                kind: QuotedKind::SingleQuotedString,
+                end: index,
+            })
+        }
+        b'"' => {
+            let mut index = index + 1;
+            while index < length && bytes[index] != b'"' {
+                index += 1;
+            }
+            if index < length {
+                index += 1;
+            }
+            Some(QuotedRun {
+                kind: QuotedKind::DoubleQuotedIdentifier,
+                end: index,
+            })
+        }
+        b'$' => {
+            let mut tag_end = index + 1;
+            while tag_end < length
+                && (bytes[tag_end].is_ascii_alphanumeric() || bytes[tag_end] == b'_')
+            {
+                tag_end += 1;
+            }
+            if tag_end < length && bytes[tag_end] == b'$' {
+                let tag_close = tag_end + 1;
+                let tag = &sql[index..tag_close];
+                let end = match sql[tag_close..].find(tag) {
+                    Some(close_offset) => tag_close + close_offset + tag.len(),
+                    None => length,
+                };
+                Some(QuotedRun {
+                    kind: QuotedKind::DollarQuotedBlock,
+                    end,
+                })
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 pub(super) fn strip_comments(sql: &str) -> String {
     let bytes = sql.as_bytes();
     let length = bytes.len();
@@ -8,53 +84,16 @@ pub(super) fn strip_comments(sql: &str) -> String {
 
     while index < length {
         match bytes[index] {
-            b'\'' => {
-                let start = index;
-                index += 1;
-                while index < length {
-                    if bytes[index] == b'\'' {
-                        index += 1;
-                        if index < length && bytes[index] == b'\'' {
-                            index += 1;
-                        } else {
-                            break;
-                        }
-                    } else {
-                        index += 1;
-                    }
+            b'\'' | b'"' | b'$' => match scan_quoted(sql, index) {
+                Some(run) => {
+                    result.push_str(&sql[index..run.end]);
+                    index = run.end;
                 }
-                result.push_str(&sql[start..index]);
-            }
-            b'"' => {
-                let start = index;
-                index += 1;
-                while index < length && bytes[index] != b'"' {
+                None => {
+                    result.push('$');
                     index += 1;
                 }
-                if index < length {
-                    index += 1;
-                }
-                result.push_str(&sql[start..index]);
-            }
-            b'$' => {
-                let tag_start = index;
-                index += 1;
-                while index < length
-                    && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
-                {
-                    index += 1;
-                }
-                if index < length && bytes[index] == b'$' {
-                    index += 1;
-                    let tag = &sql[tag_start..index];
-                    if let Some(close_offset) = sql[index..].find(tag) {
-                        index += close_offset + tag.len();
-                    } else {
-                        index = length;
-                    }
-                }
-                result.push_str(&sql[tag_start..index]);
-            }
+            },
             b'-' if index + 1 < length && bytes[index + 1] == b'-' => {
                 while index < length && bytes[index] != b'\n' {
                     index += 1;
@@ -203,68 +242,24 @@ pub(super) fn protect_quoted_content(sql: &str) -> (String, Vec<(String, String)
 
     while index < length {
         match bytes[index] {
-            b'"' => {
-                let start = index;
-                index += 1;
-                while index < length && bytes[index] != b'"' {
+            b'"' | b'\'' | b'$' => match scan_quoted(sql, index) {
+                Some(run) => {
+                    let original = &sql[index..run.end];
+                    let sequence = replacements.len();
+                    let placeholder = match run.kind {
+                        QuotedKind::SingleQuotedString => format!("'_PQ{sequence}_'"),
+                        QuotedKind::DoubleQuotedIdentifier => format!("\"_PQ{sequence}_\""),
+                        QuotedKind::DollarQuotedBlock => format!("$$_PQ{sequence}_$$"),
+                    };
+                    replacements.push((placeholder.clone(), original.to_string()));
+                    result.push_str(&placeholder);
+                    index = run.end;
+                }
+                None => {
+                    result.push('$');
                     index += 1;
                 }
-                if index < length {
-                    index += 1;
-                }
-                let original = &sql[start..index];
-                let sequence = replacements.len();
-                let placeholder = format!("\"_PQ{sequence}_\"");
-                replacements.push((placeholder.clone(), original.to_string()));
-                result.push_str(&placeholder);
-            }
-            b'\'' => {
-                let start = index;
-                index += 1;
-                while index < length {
-                    if bytes[index] == b'\'' {
-                        index += 1;
-                        if index < length && bytes[index] == b'\'' {
-                            index += 1;
-                        } else {
-                            break;
-                        }
-                    } else {
-                        index += 1;
-                    }
-                }
-                let original = &sql[start..index];
-                let sequence = replacements.len();
-                let placeholder = format!("'_PQ{sequence}_'");
-                replacements.push((placeholder.clone(), original.to_string()));
-                result.push_str(&placeholder);
-            }
-            b'$' => {
-                let tag_start = index;
-                index += 1;
-                while index < length
-                    && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
-                {
-                    index += 1;
-                }
-                if index < length && bytes[index] == b'$' {
-                    index += 1;
-                    let tag = &sql[tag_start..index];
-                    if let Some(close_offset) = sql[index..].find(tag) {
-                        let end = index + close_offset + tag.len();
-                        let original = &sql[tag_start..end];
-                        let sequence = replacements.len();
-                        let placeholder = format!("$$_PQ{sequence}_$$");
-                        replacements.push((placeholder.clone(), original.to_string()));
-                        result.push_str(&placeholder);
-                        index = end;
-                    } else {
-                        result.push_str(&sql[tag_start..index]);
-                    }
-                } else {
-                    result.push_str(&sql[tag_start..index]);
-                }
-            }
+            },
             _ => {
                 let start = index;
                 index += 1;
@@ -717,5 +712,41 @@ GRANT SELECT ON public.users TO readonly;
         let sql = "ALTER TYPE old_name RENAME TO new_name;";
         let result = preprocess_sql(sql);
         assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn strip_comments_preserves_unterminated_dollar_tag_body() {
+        let sql = "CREATE FUNCTION f() AS $body$ SELECT 1; -- GRANT ALL ON t TO public;";
+        let result = strip_comments(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn protect_quoted_content_protects_unterminated_dollar_tag_to_end_of_input() {
+        let sql = "CREATE FUNCTION f() AS $body$ SELECT 1; -- GRANT ALL ON t TO public;";
+        let (result, replacements) = protect_quoted_content(sql);
+        assert_eq!(result, "CREATE FUNCTION f() AS $$_PQ0_$$");
+        assert_eq!(
+            replacements,
+            vec![(
+                "$$_PQ0_$$".to_string(),
+                "$body$ SELECT 1; -- GRANT ALL ON t TO public;".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn strip_comments_preserves_positional_parameters() {
+        let sql = "SELECT $1 WHERE id = $2;";
+        let result = strip_comments(sql);
+        assert_eq!(result, sql);
+    }
+
+    #[test]
+    fn protect_quoted_content_preserves_positional_parameters() {
+        let sql = "SELECT $1 WHERE id = $2;";
+        let (result, replacements) = protect_quoted_content(sql);
+        assert_eq!(result, sql);
+        assert_eq!(replacements, Vec::new());
     }
 }
