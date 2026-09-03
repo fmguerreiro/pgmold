@@ -46,3 +46,6 @@ harness = false
 
 [build-dependencies]
 sqlparser = { package = "pgmold-sqlparser", version = "0.64.0", features = ["visitor"] }
+
+[profile.dev]
+debug = "line-tables-only"
