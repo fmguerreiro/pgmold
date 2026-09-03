@@ -479,6 +479,42 @@ async fn run_validation(
     Ok(validation_result)
 }
 
+fn block_destructive_plan_validation(ops: &[pgmold::diff::MigrationOp], json: bool) -> Result<()> {
+    let lint_options = LintOptions::from_env(false);
+    let lint_results = lint_migration_plan(ops, &lint_options);
+
+    if !json {
+        for lint_result in &lint_results {
+            let severity = match lint_result.severity {
+                LintSeverity::Error => "ERROR",
+                LintSeverity::Warning => "WARNING",
+            };
+            println!(
+                "[{}] {}: {}",
+                severity, lint_result.rule, lint_result.message
+            );
+        }
+    }
+
+    if has_errors(&lint_results) {
+        let error_count = lint_results
+            .iter()
+            .filter(|r| matches!(r.severity, LintSeverity::Error))
+            .count();
+        if json {
+            let error_msg = format!("Migration blocked by {error_count} lint error(s)");
+            let lint_error_output = serde_json::json!({
+                "success": false,
+                "error": error_msg,
+            });
+            print_json(&lint_error_output)?;
+        }
+        return Err(anyhow!("Migration blocked by {error_count} lint error(s)"));
+    }
+
+    Ok(())
+}
+
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
@@ -597,6 +633,8 @@ pub async fn run() -> Result<()> {
             };
 
             let validation_info = if let Some(validate_db_url) = &validate {
+                block_destructive_plan_validation(&ops, json)?;
+
                 let result = run_validation(
                     &ops,
                     validate_db_url,
@@ -2366,5 +2404,25 @@ mod tests {
         } else {
             panic!("Expected Plan command");
         }
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_refuses_on_drop_table() {
+        let ops = vec![pgmold::diff::MigrationOp::DropTable(
+            "public.old_table".to_string(),
+        )];
+        let result = block_destructive_plan_validation(&ops, false);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("blocked by 1 lint error"));
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_allows_non_destructive_ops() {
+        let ops: Vec<pgmold::diff::MigrationOp> = Vec::new();
+        let result = block_destructive_plan_validation(&ops, false);
+        assert!(result.is_ok());
     }
 }
