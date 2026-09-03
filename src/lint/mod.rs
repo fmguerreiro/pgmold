@@ -110,6 +110,24 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
             }
         }
 
+        MigrationOp::DropPartition(name) => {
+            if options.is_production {
+                results.push(LintResult {
+                    rule: "deny_drop_partition_in_prod",
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping partition {name} is not allowed in production (PGMOLD_PROD=1)"
+                    ),
+                });
+            } else if !options.allow_destructive {
+                results.push(LintResult {
+                    rule: "deny_drop_partition",
+                    severity: LintSeverity::Error,
+                    message: format!("Dropping partition {name} requires --allow-destructive flag"),
+                });
+            }
+        }
+
         MigrationOp::AlterColumn {
             table,
             column,
@@ -337,7 +355,6 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         | MigrationOp::AlterDomain { .. }
         | MigrationOp::CreateTable(_)
         | MigrationOp::CreatePartition(_)
-        | MigrationOp::DropPartition(_)
         | MigrationOp::DetachPartition(_)
         | MigrationOp::AttachPartition(_)
         | MigrationOp::AddColumn { .. }
@@ -468,6 +485,44 @@ mod tests {
         let results = lint_migration_plan(&ops, &options);
         assert!(has_errors(&results));
         assert_eq!(results[0].rule, "deny_drop_table_in_prod");
+    }
+
+    #[test]
+    fn blocks_drop_partition_without_flag() {
+        let ops = vec![MigrationOp::DropPartition("events_2024".to_string())];
+        let options = LintOptions {
+            allow_destructive: false,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_partition");
+    }
+
+    #[test]
+    fn allows_drop_partition_with_flag() {
+        let ops = vec![MigrationOp::DropPartition("events_2024".to_string())];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!has_errors(&results));
+    }
+
+    #[test]
+    fn blocks_drop_partition_in_production() {
+        let ops = vec![MigrationOp::DropPartition("events_2024".to_string())];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: true,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_partition_in_prod");
     }
 
     #[test]
