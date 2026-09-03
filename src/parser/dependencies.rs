@@ -241,10 +241,11 @@ fn format_extract_table_references_failure(
 
 /// Heuristic detector for PL/pgSQL function bodies.
 ///
-/// A plpgsql body starts with either a `DECLARE` block (variable
-/// declarations) or a bare `BEGIN` block (statements). The keyword must
-/// be standalone — terminated by whitespace or punctuation — so that
-/// identifiers like `beginner_id` or `declared_level` do not match.
+/// A plpgsql body starts with a `DECLARE` block (variable declarations), a
+/// bare `BEGIN` block (statements), or a compiler directive line such as
+/// `#variable_conflict`. The `DECLARE`/`BEGIN` keyword must be standalone —
+/// terminated by whitespace or punctuation — so that identifiers like
+/// `beginner_id` or `declared_level` do not match.
 ///
 /// Used to suppress warnings in `extract_table_references` for bodies that
 /// sqlparser cannot and should not parse as raw SQL.
