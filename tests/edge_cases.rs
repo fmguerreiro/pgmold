@@ -528,6 +528,71 @@ async fn domain_constraint_comment_round_trips_through_apply_and_introspect() {
 }
 
 #[tokio::test]
+async fn partition_parent_constraint_comment_is_not_duplicated_onto_children() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    // PostgreSQL replicates a parent CHECK constraint onto every partition
+    // child, but a COMMENT placed on the parent leaves each child's
+    // obj_description NULL. The introspection IS NOT NULL filter must keep the
+    // comment on the parent alone, never copying it onto the children.
+    let target = parse_sql_string(
+        r#"
+        CREATE TABLE public.measurement (
+            city_id INT NOT NULL,
+            logdate DATE NOT NULL,
+            peaktemp INT,
+            CONSTRAINT measurement_peak_positive CHECK (peaktemp > 0)
+        ) PARTITION BY RANGE (logdate);
+        CREATE TABLE public.measurement_2024 PARTITION OF public.measurement
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+        CREATE TABLE public.measurement_2025 PARTITION OF public.measurement
+            FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+        COMMENT ON CONSTRAINT measurement_peak_positive ON public.measurement
+            IS 'parent-level sanity check';
+        "#,
+    )
+    .unwrap();
+
+    let current = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let sql_stmts = generate_sql(&plan_migration(compute_diff(&current, &target)));
+    for stmt in &sql_stmts {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|error| panic!("Failed to execute statement: {stmt}\nError: {error}"));
+    }
+
+    let after = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let constraint_comments: Vec<(&String, &String)> = after
+        .table_constraint_comments
+        .iter()
+        .filter(|(_, comment)| comment.as_str() == "parent-level sanity check")
+        .collect();
+    assert_eq!(
+        constraint_comments,
+        vec![(
+            &"public.measurement.measurement_peak_positive".to_string(),
+            &"parent-level sanity check".to_string()
+        )],
+        "parent constraint comment must introspect exactly once, on the parent, \
+         not duplicated onto partition children"
+    );
+
+    let drift_ops = compute_diff(&after, &target);
+    assert!(
+        drift_ops.is_empty(),
+        "no drift expected after apply; got {drift_ops:?}"
+    );
+}
+
+#[tokio::test]
 async fn partition_child_constraint_comment_round_trips_through_apply_and_introspect() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();

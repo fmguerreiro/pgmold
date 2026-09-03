@@ -371,7 +371,9 @@ async fn introspect_domains(
             n.nspname AS schema_name,
             t.typname AS domain_name,
             bt.typname AS base_type,
+            bn.nspname AS base_schema,
             bt.typcategory::text AS base_category,
+            t.typtypmod AS base_typmod,
             t.typnotnull AS not_null,
             pg_get_expr(t.typdefaultbin, 0) AS default_expr,
             r.rolname AS owner,
@@ -379,6 +381,7 @@ async fn introspect_domains(
         FROM pg_type t
         JOIN pg_namespace n ON t.typnamespace = n.oid
         JOIN pg_type bt ON t.typbasetype = bt.oid
+        JOIN pg_namespace bn ON bt.typnamespace = bn.oid
         JOIN pg_roles r ON t.typowner = r.oid
         WHERE t.typtype = 'd'
             AND n.nspname = ANY($1::text[])
@@ -408,7 +411,9 @@ async fn introspect_domains(
         let schema: String = row.get("schema_name");
         let name: String = row.get("domain_name");
         let base_type: String = row.get("base_type");
+        let base_schema: String = row.get("base_schema");
         let base_category: String = row.get("base_category");
+        let base_typmod: i32 = row.get("base_typmod");
         let not_null: bool = row.get("not_null");
         let default_expr: Option<String> = row
             .get::<Option<String>, &str>("default_expr")
@@ -422,34 +427,13 @@ async fn introspect_domains(
                     "expected array base_type to start with '_', got: {base_type}"
                 ))
             })?;
-            let element_type = map_domain_element_type(base_udt, &schema);
+            let element_type = map_udt_name_to_pg_type(base_udt, &base_schema, None);
             PgType::Array(Box::new(element_type))
         } else {
-            match base_type.as_str() {
-                "integer" | "int4" => PgType::Integer,
-                "bigint" | "int8" => PgType::BigInt,
-                "smallint" | "int2" => PgType::SmallInt,
-                "real" | "float4" => PgType::Real,
-                "double precision" | "float8" => PgType::DoublePrecision,
-                "numeric" => PgType::BuiltinNamed("numeric".to_string()),
-                "text" => PgType::Text,
-                "boolean" | "bool" => PgType::Boolean,
-                "timestamp" => PgType::Timestamp,
-                "timestamp with time zone" | "timestamptz" => PgType::TimestampTz,
-                "date" => PgType::Date,
-                "uuid" => PgType::Uuid,
-                "json" => PgType::Json,
-                "jsonb" => PgType::Jsonb,
-                "character varying" | "varchar" => PgType::Varchar(None),
-                _ => {
-                    let qualified = format!("public.{base_type}");
-                    if base_type.contains('.') {
-                        PgType::UserDefined(base_type)
-                    } else {
-                        PgType::UserDefined(qualified)
-                    }
-                }
-            }
+            // pg_type.typname is the internal name (int4, varchar, bpchar, ...), so
+            // route the base type through the same mapper table-column introspection
+            // uses, passing the domain's stored typmod for parameterized types.
+            map_udt_name_to_pg_type(&base_type, &base_schema, Some(base_typmod))
         };
 
         let domain = Domain {
@@ -884,6 +868,58 @@ async fn introspect_all_columns(
     Ok(result)
 }
 
+/// Decodes a `numeric` column's `atttypmod` into precision/scale. PostgreSQL
+/// packs `precision` in bits 16..32 and `scale` in the low 11 bits of
+/// `(atttypmod - VARHDRSZ)`, where `VARHDRSZ` is 4. `scale` is a signed 11-bit
+/// value (PostgreSQL 15+ allows negative scale, e.g. `numeric(5,-2)`), so it
+/// must be sign-extended from bit 10. An `atttypmod` of -1 is the unconstrained
+/// `numeric`. See PostgreSQL's `numeric_typmodin`/`numeric_typmodout`.
+fn decode_numeric_typmod(atttypmod: i32) -> PgType {
+    if atttypmod == -1 {
+        return PgType::Numeric {
+            precision: None,
+            scale: None,
+        };
+    }
+    let payload = atttypmod - 4;
+    let precision = (payload >> 16) & 0xFFFF;
+    let scale = {
+        let raw = payload & 0x7FF;
+        if raw & 0x400 != 0 {
+            raw - 0x800
+        } else {
+            raw
+        }
+    };
+    PgType::Numeric {
+        precision: Some(precision as u32),
+        scale: Some(scale),
+    }
+}
+
+/// Decodes a `varchar` typmod into a declared length. PostgreSQL stores
+/// `length + VARHDRSZ` (4) for a bounded `varchar(n)` and -1 for the unbounded
+/// `varchar`. The same encoding applies to table columns (`atttypmod`) and
+/// domain base types (`typtypmod`).
+fn decode_varchar_typmod(atttypmod: i32) -> Option<u32> {
+    if atttypmod > 0 {
+        Some((atttypmod - 4) as u32)
+    } else {
+        None
+    }
+}
+
+/// Decodes a `bpchar` (`char(n)`) typmod into a declared length. Same
+/// `length + VARHDRSZ` (4) encoding as `varchar`; PostgreSQL forbids `char(0)`,
+/// so the smallest bounded typmod is 5.
+fn decode_bpchar_typmod(atttypmod: i32) -> Option<u32> {
+    if atttypmod > 4 {
+        Some((atttypmod - 4) as u32)
+    } else {
+        None
+    }
+}
+
 fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i32>) -> PgType {
     match udt_name {
         "bool" => PgType::Boolean,
@@ -893,10 +929,7 @@ fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i
         "float4" => PgType::Real,
         "float8" => PgType::DoublePrecision,
         "text" => PgType::Text,
-        "varchar" => {
-            let length = atttypmod.and_then(|m| if m > 0 { Some((m - 4) as u32) } else { None });
-            PgType::Varchar(length)
-        }
+        "varchar" => PgType::Varchar(atttypmod.and_then(decode_varchar_typmod)),
         "uuid" => PgType::Uuid,
         "timestamptz" => PgType::TimestampTz,
         "timestamp" => PgType::Timestamp,
@@ -907,15 +940,12 @@ fn map_udt_name_to_pg_type(udt_name: &str, udt_schema: &str, atttypmod: Option<i
         "bytea" => PgType::Bytea,
         "json" => PgType::Json,
         "jsonb" => PgType::Jsonb,
-        "numeric" => PgType::BuiltinNamed("numeric".to_string()),
+        "numeric" => decode_numeric_typmod(atttypmod.unwrap_or(-1)),
         "inet" => PgType::Inet,
         "cidr" => PgType::Cidr,
         "macaddr" => PgType::Macaddr,
         "macaddr8" => PgType::Macaddr8,
-        "bpchar" => {
-            let length = atttypmod.and_then(|m| if m > 4 { Some((m - 4) as u32) } else { None });
-            PgType::Char(length)
-        }
+        "bpchar" => PgType::Char(atttypmod.and_then(decode_bpchar_typmod)),
         "point" => PgType::Point,
         "xml" => PgType::Xml,
         "int4range" | "int8range" | "numrange" | "tsrange" | "tstzrange" | "daterange"
@@ -946,7 +976,7 @@ fn map_pg_type(
         "smallint" => Ok(PgType::SmallInt),
         "real" => Ok(PgType::Real),
         "double precision" => Ok(PgType::DoublePrecision),
-        "numeric" => Ok(PgType::BuiltinNamed("numeric".to_string())),
+        "numeric" => Ok(decode_numeric_typmod(atttypmod)),
         "character varying" => Ok(PgType::Varchar(char_max_length.map(|l| l as u32))),
         "text" => Ok(PgType::Text),
         "boolean" => Ok(PgType::Boolean),
@@ -1007,10 +1037,6 @@ fn map_pg_type(
             "unsupported column type from database: {other} (udt_name: {udt_name})"
         ))),
     }
-}
-
-fn map_domain_element_type(base_udt: &str, domain_schema: &str) -> PgType {
-    map_udt_name_to_pg_type(base_udt, domain_schema, None)
 }
 
 /// Parse Postgres' `format_type(atttypid, atttypmod)` output for PostGIS
@@ -1141,7 +1167,13 @@ async fn introspect_all_indexes(
             "hash" => IndexType::Hash,
             "gin" => IndexType::Gin,
             "gist" => IndexType::Gist,
-            _ => panic!("unsupported index type: {am_name}"),
+            "brin" => IndexType::Brin,
+            "spgist" => IndexType::SpGist,
+            other => {
+                return Err(SchemaError::DatabaseError(format!(
+                    "unsupported index access method: {other}"
+                )))
+            }
         };
 
         result
@@ -2996,9 +3028,82 @@ mod tests {
     }
 
     #[test]
-    fn map_pg_type_builtin_numeric_stays_builtin() {
+    fn map_pg_type_unconstrained_numeric_has_no_precision() {
         let result = map_pg_type("numeric", None, "pg_catalog", "numeric", -1, "numeric").unwrap();
-        assert_eq!(result, PgType::BuiltinNamed("numeric".to_string()));
+        assert_eq!(
+            result,
+            PgType::Numeric {
+                precision: None,
+                scale: None
+            }
+        );
+    }
+
+    #[test]
+    fn map_pg_type_numeric_decodes_precision_and_scale() {
+        let result = map_pg_type(
+            "numeric",
+            None,
+            "pg_catalog",
+            "numeric",
+            655366,
+            "numeric(10,2)",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            PgType::Numeric {
+                precision: Some(10),
+                scale: Some(2)
+            }
+        );
+    }
+
+    #[test]
+    fn map_pg_type_numeric_precision_only_normalizes_scale_to_zero() {
+        let result = map_pg_type(
+            "numeric",
+            None,
+            "pg_catalog",
+            "numeric",
+            655364,
+            "numeric(10,0)",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            PgType::Numeric {
+                precision: Some(10),
+                scale: Some(0)
+            }
+        );
+    }
+
+    #[test]
+    fn map_pg_type_numeric_negative_scale_sign_extends() {
+        // PostgreSQL encodes numeric(5,-2) as ((5 << 16) | (-2 & 0x7ff)) + VARHDRSZ.
+        // Confirmed live against postgres:16: pg_attribute.atttypmod == 329730.
+        let atttypmod = ((5i32 << 16) | (-2i32 & 0x7FF)) + 4;
+        assert_eq!(
+            atttypmod, 329730,
+            "fixture must match PostgreSQL's encoding"
+        );
+        let result = map_pg_type(
+            "numeric",
+            None,
+            "pg_catalog",
+            "numeric",
+            atttypmod,
+            "numeric(5,-2)",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            PgType::Numeric {
+                precision: Some(5),
+                scale: Some(-2)
+            }
+        );
     }
 
     #[test]

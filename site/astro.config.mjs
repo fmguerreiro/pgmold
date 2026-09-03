@@ -69,6 +69,7 @@ export default defineConfig({
 						{ label: 'Terraform Provider', slug: 'reference/terraform' },
 						{ label: 'GitHub Action', slug: 'reference/github-action' },
 						{ label: 'PostgreSQL Compatibility', slug: 'reference/compatibility' },
+						{ label: 'Known Limitations', slug: 'reference/limitations' },
 					],
 				},
 				{

@@ -1,7 +1,7 @@
 use super::op_key::extract_relation_references;
 use super::MigrationOp;
 use crate::model::qualified_name;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// Unlike plan_migration, keeps OWNED BY inline in CREATE SEQUENCE
 /// by placing sequences after tables they reference.
@@ -57,6 +57,8 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             | MigrationOp::AlterDomain { .. }
             | MigrationOp::DropTable(_)
             | MigrationOp::DropPartition(_)
+            | MigrationOp::DetachPartition(_)
+            | MigrationOp::AttachPartition(_)
             | MigrationOp::AddColumn { .. }
             | MigrationOp::DropColumn { .. }
             | MigrationOp::AlterColumn { .. }
@@ -125,7 +127,7 @@ fn order_view_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
         return ops;
     }
 
-    let view_names: HashSet<String> = ops
+    let view_names: BTreeSet<String> = ops
         .iter()
         .filter_map(|op| match op {
             MigrationOp::CreateView(view) => Some(qualified_name(&view.schema, &view.name)),
@@ -133,14 +135,14 @@ fn order_view_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
         })
         .collect();
 
-    let mut ops_by_name: HashMap<String, MigrationOp> = HashMap::new();
-    let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut ops_by_name: BTreeMap<String, MigrationOp> = BTreeMap::new();
+    let mut dependencies: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
     for op in ops {
         if let MigrationOp::CreateView(ref view) = op {
             let view_name = qualified_name(&view.schema, &view.name);
 
-            let deps: HashSet<String> = extract_relation_references(&view.query)
+            let deps: BTreeSet<String> = extract_relation_references(&view.query)
                 .into_iter()
                 .filter(|r| view_names.contains(r) && *r != view_name)
                 .collect();
@@ -158,14 +160,14 @@ fn order_table_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
         return ops;
     }
 
-    let mut ops_by_name: HashMap<String, MigrationOp> = HashMap::new();
-    let mut dependencies: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut ops_by_name: BTreeMap<String, MigrationOp> = BTreeMap::new();
+    let mut dependencies: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
     for op in ops {
         if let MigrationOp::CreateTable(ref table) = op {
             let table_name = qualified_name(&table.schema, &table.name);
 
-            let deps: HashSet<String> = table
+            let deps: BTreeSet<String> = table
                 .foreign_keys
                 .iter()
                 .map(|fk| qualified_name(&fk.referenced_schema, &fk.referenced_table))
@@ -182,11 +184,11 @@ fn order_table_creates(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 
 /// Kahn's algorithm topological sort over named operations and their dependencies.
 fn kahn_sort(
-    named_ops: &HashMap<String, MigrationOp>,
-    dependencies: &HashMap<String, HashSet<String>>,
+    named_ops: &BTreeMap<String, MigrationOp>,
+    dependencies: &BTreeMap<String, BTreeSet<String>>,
 ) -> Vec<MigrationOp> {
-    let mut in_degree: HashMap<String, usize> = HashMap::new();
-    let mut reverse_deps: HashMap<String, Vec<String>> = HashMap::new();
+    let mut in_degree: BTreeMap<String, usize> = BTreeMap::new();
+    let mut reverse_deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for name in named_ops.keys() {
         in_degree.insert(name.clone(), 0);
@@ -246,7 +248,19 @@ mod tests {
     use super::*;
     use crate::diff::test_helpers::simple_table_with_fks;
     use crate::diff::GrantObjectKind;
-    use crate::model::{DefaultPrivilegeObjectType, Privilege};
+    use crate::model::{DefaultPrivilegeObjectType, ForeignKey, Privilege, ReferentialAction};
+
+    fn make_fk(referenced_table: &str) -> ForeignKey {
+        ForeignKey {
+            name: format!("fk_{referenced_table}"),
+            columns: vec!["id".to_string()],
+            referenced_table: referenced_table.to_string(),
+            referenced_schema: "public".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete: ReferentialAction::NoAction,
+            on_update: ReferentialAction::NoAction,
+        }
+    }
 
     #[test]
     fn plan_dump_orders_default_privileges_at_end() {
@@ -293,6 +307,76 @@ mod tests {
         assert!(
             grant_idx.unwrap() < adp_idx.unwrap(),
             "GrantPrivileges should come before AlterDefaultPrivileges in dump"
+        );
+    }
+
+    #[test]
+    fn plan_dump_orders_independent_tables_deterministically() {
+        let ops = vec![
+            MigrationOp::CreateTable(simple_table_with_fks("zebra", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("mango", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("apple", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("koala", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("igloo", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("banana", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("waffle", vec![])),
+            MigrationOp::CreateTable(simple_table_with_fks("delta", vec![])),
+        ];
+
+        let ordered = plan_dump(ops);
+
+        let table_names: Vec<String> = ordered
+            .into_iter()
+            .filter_map(|op| match op {
+                MigrationOp::CreateTable(table) => Some(table.name),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            table_names,
+            vec![
+                "apple".to_string(),
+                "banana".to_string(),
+                "delta".to_string(),
+                "igloo".to_string(),
+                "koala".to_string(),
+                "mango".to_string(),
+                "waffle".to_string(),
+                "zebra".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn plan_dump_orders_dependent_table_after_referenced_table() {
+        let comments = simple_table_with_fks("comments", vec![make_fk("posts"), make_fk("users")]);
+        let posts = simple_table_with_fks("posts", vec![make_fk("users")]);
+        let users = simple_table_with_fks("users", vec![]);
+
+        let ops = vec![
+            MigrationOp::CreateTable(comments),
+            MigrationOp::CreateTable(posts),
+            MigrationOp::CreateTable(users),
+        ];
+
+        let ordered = plan_dump(ops);
+
+        let table_names: Vec<String> = ordered
+            .into_iter()
+            .filter_map(|op| match op {
+                MigrationOp::CreateTable(table) => Some(table.name),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            table_names,
+            vec![
+                "users".to_string(),
+                "posts".to_string(),
+                "comments".to_string(),
+            ]
         );
     }
 }

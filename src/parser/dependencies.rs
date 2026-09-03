@@ -149,6 +149,62 @@ pub fn extract_table_references(body: &str, default_schema: &str) -> HashSet<Obj
     refs
 }
 
+/// Extract bare column identifiers referenced in a SQL body.
+///
+/// Walks every expression in the parsed body and collects the unqualified
+/// name of each column identifier, dropping any table/alias qualifier. Used
+/// to decide whether a policy's USING/WITH CHECK expression depends on a
+/// column being dropped (gh#332). Like the other extractors here, an
+/// unparseable body degrades to an empty set rather than failing.
+pub fn extract_column_references(body: &str, default_schema: &str) -> HashSet<String> {
+    use core::ops::ControlFlow;
+    use sqlparser::ast::{visit_expressions, Ident};
+
+    let mut columns = HashSet::new();
+
+    if is_plpgsql_body(body) {
+        return columns;
+    }
+
+    let dialect = PostgreSqlDialect {};
+    let sql_as_where = format!("SELECT 1 WHERE {body}");
+    let sql_as_subquery = format!("SELECT * FROM ({body}) AS subq");
+
+    let statements = match Parser::parse_sql(&dialect, &sql_as_where)
+        .or_else(|_| Parser::parse_sql(&dialect, &sql_as_subquery))
+        .or_else(|_| Parser::parse_sql(&dialect, body))
+    {
+        Ok(stmts) => stmts,
+        Err(err) => {
+            if let Some(message) =
+                format_extract_table_references_failure(body, default_schema, &err.to_string())
+            {
+                eprintln!("{message}");
+            }
+            return columns;
+        }
+    };
+
+    let mut push_ident = |ident: &Ident| {
+        columns.insert(unquote_ident(&ident.to_string()).to_string());
+    };
+
+    let _ = visit_expressions(&statements, |expr| {
+        match expr {
+            Expr::Identifier(ident) => push_ident(ident),
+            Expr::CompoundIdentifier(parts) => {
+                if let Some(last) = parts.last() {
+                    push_ident(last);
+                }
+            }
+            _ => {}
+        }
+        ControlFlow::<()>::Continue(())
+    });
+
+    columns
+}
+
 /// Build the warning message for a total parse failure in
 /// `extract_table_references`. Returns `None` for trivially empty bodies
 /// and for PL/pgSQL function bodies — neither is expected to parse as
@@ -799,6 +855,40 @@ mod tests {
 
         assert_eq!(refs.len(), 1);
         assert!(refs.contains(&ObjectRef::new("public", "users")));
+    }
+
+    #[test]
+    fn extract_columns_from_policy_subquery_expression() {
+        let body = "EXISTS (SELECT 1 FROM mrv.sampling_project sp \
+            WHERE sp.id = sampling_project_id AND sp.entity_id IS NOT NULL)";
+        let columns = extract_column_references(body, "mrv");
+
+        assert_eq!(
+            columns,
+            HashSet::from([
+                "id".to_string(),
+                "sampling_project_id".to_string(),
+                "entity_id".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn extract_columns_strips_table_qualifier() {
+        let body = "sp.entity_id = other.id";
+        let columns = extract_column_references(body, "public");
+
+        assert_eq!(
+            columns,
+            HashSet::from(["entity_id".to_string(), "id".to_string()])
+        );
+    }
+
+    #[test]
+    fn extract_columns_returns_empty_on_unparseable_body() {
+        let columns =
+            extract_column_references("this is not sql at all >>> complete nonsense", "public");
+        assert!(columns.is_empty());
     }
 
     #[test]

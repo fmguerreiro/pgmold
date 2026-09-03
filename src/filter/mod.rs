@@ -287,10 +287,12 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         },
         table_constraint_comments: schema.table_constraint_comments.clone(),
         domain_constraint_comments: schema.domain_constraint_comments.clone(),
+        overlong_identifiers: schema.overlong_identifiers.clone(),
     };
     // Drop sidecar entries whose parent (table or domain) was filtered out
     // so the diff loop cannot emit a `COMMENT ON CONSTRAINT ... ON missing`.
     filtered.drop_orphan_constraint_comments();
+    filtered.retain_overlong_identifiers_in_model();
     filtered
 }
 
@@ -390,12 +392,14 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
             &schema.domain_constraint_comments,
             &allowed,
         ),
+        overlong_identifiers: schema.overlong_identifiers.clone(),
     };
     // Mirror the filter_schema path: drop orphan sidecar entries even
     // though the schema-prefix filter above already covers the only orphan
     // shape currently possible. Defense-in-depth so future changes to
     // table / domain filtering cannot leak stale comments.
     result.drop_orphan_constraint_comments();
+    result.retain_overlong_identifiers_in_model();
     result
 }
 
@@ -2124,6 +2128,79 @@ mod tests {
 
             owner: None,
         }
+    }
+
+    #[test]
+    fn filter_by_target_schemas_drops_overlong_identifiers_of_excluded_objects() {
+        let long_public = "p".repeat(64);
+        let long_audit = "a".repeat(64);
+        let mut schema = Schema::default();
+        schema.tables.insert(
+            format!("public.{long_public}"),
+            make_table("public", &long_public),
+        );
+        schema.tables.insert(
+            format!("audit.{long_audit}"),
+            make_table("audit", &long_audit),
+        );
+        schema.overlong_identifiers = vec![
+            crate::model::OverlongIdentifier {
+                kind: "table".to_string(),
+                name: long_public.clone(),
+            },
+            crate::model::OverlongIdentifier {
+                kind: "table".to_string(),
+                name: long_audit.clone(),
+            },
+        ]
+        .into();
+
+        let filtered = filter_by_target_schemas(&schema, &["public".to_string()]);
+
+        assert_eq!(
+            filtered.overlong_identifiers,
+            vec![crate::model::OverlongIdentifier {
+                kind: "table".to_string(),
+                name: long_public,
+            }]
+        );
+    }
+
+    #[test]
+    fn filter_schema_drops_overlong_identifiers_of_excluded_objects() {
+        let long_kept = "k".repeat(64);
+        let long_dropped = "d".repeat(64);
+        let mut schema = Schema::default();
+        schema.tables.insert(
+            format!("public.{long_kept}"),
+            make_table("public", &long_kept),
+        );
+        schema.tables.insert(
+            format!("public.{long_dropped}"),
+            make_table("public", &long_dropped),
+        );
+        schema.overlong_identifiers = vec![
+            crate::model::OverlongIdentifier {
+                kind: "table".to_string(),
+                name: long_kept.clone(),
+            },
+            crate::model::OverlongIdentifier {
+                kind: "table".to_string(),
+                name: long_dropped.clone(),
+            },
+        ]
+        .into();
+
+        let filter = Filter::new(std::slice::from_ref(&long_kept), &[], &[], &[]).unwrap();
+        let filtered = filter_schema(&schema, &filter);
+
+        assert_eq!(
+            filtered.overlong_identifiers,
+            vec![crate::model::OverlongIdentifier {
+                kind: "table".to_string(),
+                name: long_kept,
+            }]
+        );
     }
 
     #[test]

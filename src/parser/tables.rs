@@ -15,8 +15,9 @@ use sqlparser::ast::{
 use std::collections::BTreeMap;
 
 use super::util::{
-    extract_qualified_name, normalize_expr, parse_data_type, truncate_identifier, unquote_ident,
-    PG_MAX_IDENTIFIER_LENGTH,
+    extract_qualified_name, normalize_expr, parse_data_type, truncate_identifier,
+    truncate_referenced_columns, truncate_referenced_identifier, truncate_to_bytes_raw,
+    truncated_ident, unquote_ident, PG_MAX_IDENTIFIER_LENGTH,
 };
 
 pub(super) struct ParsedTable {
@@ -60,7 +61,7 @@ pub(super) fn parse_create_table(
     }
 
     for col_def in columns {
-        let col_name = unquote_ident(&col_def.name.to_string()).to_string();
+        let col_name = truncated_ident(&col_def.name);
         for option in &col_def.options {
             let explicit_name = option
                 .name
@@ -92,7 +93,8 @@ pub(super) fn parse_create_table(
                     let constraint_name = explicit_name
                         .clone()
                         .unwrap_or_else(|| format!("{}_{}_fkey", table.name, col_name));
-                    let (ref_schema, ref_table) = extract_qualified_name(&fk.foreign_table);
+                    let (ref_schema, raw_ref_table) = extract_qualified_name(&fk.foreign_table);
+                    let ref_table = truncate_referenced_identifier(&raw_ref_table);
                     if fk.referred_columns.is_empty() {
                         return Err(crate::util::SchemaError::ParseError(format!(
                             "Inline REFERENCES on column \"{}\".\"{}\".\"{}\" must specify \
@@ -105,11 +107,7 @@ pub(super) fn parse_create_table(
                             schema, name, col_name, ref_table
                         )));
                     }
-                    let referenced_columns: Vec<String> = fk
-                        .referred_columns
-                        .iter()
-                        .map(|c| unquote_ident(&c.to_string()).to_string())
-                        .collect();
+                    let referenced_columns = truncate_referenced_columns(&fk.referred_columns);
                     table.foreign_keys.push(ForeignKey {
                         name: truncate_identifier(&constraint_name),
                         columns: vec![col_name.clone()],
@@ -164,11 +162,7 @@ pub(super) fn parse_create_table(
         match constraint {
             TableConstraint::PrimaryKey(pk) => apply_primary_key(&mut table, pk),
             TableConstraint::ForeignKey(fk) => {
-                let fk_columns: Vec<String> = fk
-                    .columns
-                    .iter()
-                    .map(|c| unquote_ident(&c.to_string()).to_string())
-                    .collect();
+                let fk_columns = truncate_referenced_columns(&fk.columns);
                 let fk_name = fk
                     .name
                     .as_ref()
@@ -178,17 +172,13 @@ pub(super) fn parse_create_table(
                         format!("{}_{}_fkey", table.name, fk_columns.join("_"))
                     });
 
-                let (ref_schema, ref_table) = extract_qualified_name(&fk.foreign_table);
+                let (ref_schema, raw_ref_table) = extract_qualified_name(&fk.foreign_table);
                 table.foreign_keys.push(ForeignKey {
                     name: truncate_identifier(&fk_name),
                     columns: fk_columns,
                     referenced_schema: ref_schema,
-                    referenced_table: ref_table,
-                    referenced_columns: fk
-                        .referred_columns
-                        .iter()
-                        .map(|c| unquote_ident(&c.to_string()).to_string())
-                        .collect(),
+                    referenced_table: truncate_referenced_identifier(&raw_ref_table),
+                    referenced_columns: truncate_referenced_columns(&fk.referred_columns),
                     on_delete: parse_referential_action(&fk.on_delete),
                     on_update: parse_referential_action(&fk.on_update),
                 });
@@ -363,7 +353,7 @@ pub(super) fn parse_column_with_serial(
         }
     }
 
-    let col_name = unquote_ident(&col_def.name.to_string()).to_string();
+    let col_name = truncated_ident(&col_def.name);
 
     if generated.is_some() {
         let column = Column {
@@ -378,7 +368,7 @@ pub(super) fn parse_column_with_serial(
     }
 
     if let Some(seq_data_type) = detect_serial_type(&col_def.data_type) {
-        let seq_name = format!("{table_name}_{col_name}_seq");
+        let seq_name = truncate_identifier(&format!("{table_name}_{col_name}_seq"));
         let seq_qualified = qualified_name(table_schema, &seq_name);
 
         let pg_type = match seq_data_type {
@@ -462,11 +452,7 @@ pub(super) fn detect_serial_type(dt: &DataType) -> Option<SequenceDataType> {
 /// `ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY (...)` — to the given table,
 /// populating `table.primary_key` and flipping the referenced columns to NOT NULL.
 pub(super) fn apply_primary_key(table: &mut Table, pk: &PrimaryKeyConstraint) {
-    let pk_columns: Vec<String> = pk
-        .columns
-        .iter()
-        .map(|c| unquote_ident(&c.to_string()).to_string())
-        .collect();
+    let pk_columns: Vec<String> = pk.columns.iter().map(truncated_ident).collect();
     for pk_col in &pk_columns {
         if let Some(col) = table.columns.get_mut(pk_col) {
             col.nullable = false;
@@ -519,11 +505,7 @@ pub(super) fn dedup_check_constraint_name(base: &str, table: &Table) -> String {
     loop {
         let suffix = counter.to_string();
         let max_base = PG_MAX_IDENTIFIER_LENGTH.saturating_sub(suffix.len());
-        let truncated_base = if base.len() > max_base {
-            &base[..max_base]
-        } else {
-            base
-        };
+        let truncated_base = truncate_to_bytes_raw(base, max_base);
         let candidate = format!("{truncated_base}{suffix}");
         if !check_name_taken(&candidate, table) {
             return candidate;

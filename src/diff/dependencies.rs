@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 
 use crate::model::{parse_qualified_name, qualified_name, Policy, QualifiedName, Schema};
-use crate::parser::{extract_function_references, extract_table_references};
+use crate::parser::{
+    extract_column_references, extract_function_references, extract_table_references,
+};
 
 use super::MigrationOp;
 
@@ -102,6 +104,115 @@ pub(super) fn tables_with_dropped_columns(ops: &[MigrationOp]) -> HashSet<String
         .collect()
 }
 
+pub(super) fn dropped_columns(ops: &[MigrationOp]) -> HashSet<(String, String)> {
+    ops.iter()
+        .filter_map(|op| {
+            if let MigrationOp::DropColumn { table, column } = op {
+                Some((table.to_string(), column.clone()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Generate policy drop/create ops for policies on OTHER tables whose USING /
+/// WITH CHECK expressions reference a column being dropped (gh#332).
+///
+/// `generate_policy_ops_for_affected_tables` only rebuilds policies on the same
+/// table as the dropped column. A policy on a different table can reference the
+/// dropped column through a subquery join; PostgreSQL cascade-drops it when the
+/// column is dropped, so an `AlterPolicy` against it fails. Rebuilding it
+/// (DropPolicy + CreatePolicy) is cascade-safe and keeps it ordered before the
+/// DropColumn via the existing planner edges.
+///
+/// Returns the generated ops and the set of (table_qualified_name, policy_name)
+/// pairs that had a DropPolicy emitted, so callers can drop any duplicate
+/// AlterPolicy ops.
+pub(super) fn generate_policy_ops_for_cross_table_column_drops(
+    ops: &[MigrationOp],
+    from: &Schema,
+    to: &Schema,
+    dropped: &HashSet<(String, String)>,
+) -> (Vec<MigrationOp>, HashSet<(String, String)>) {
+    let mut additional_ops = Vec::new();
+    let mut policies_to_filter = HashSet::new();
+
+    if dropped.is_empty() {
+        return (additional_ops, policies_to_filter);
+    }
+
+    let existing_policy_drops: HashSet<(String, String)> =
+        collect_existing_drops(ops, |op| match op {
+            MigrationOp::DropPolicy { table, name } => Some((table.to_string(), name.clone())),
+            _ => None,
+        });
+
+    for (table_name, table) in &from.tables {
+        let qualified_table_str = qualified_name(&table.schema, &table.name);
+        for policy in &table.policies {
+            if !policy_references_dropped_cross_table_column(policy, &qualified_table_str, dropped)
+            {
+                continue;
+            }
+            if existing_policy_drops.contains(&(qualified_table_str.clone(), policy.name.clone())) {
+                continue;
+            }
+
+            let target_policy = to
+                .tables
+                .get(table_name)
+                .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
+
+            emit_policy_rebuild(
+                &mut additional_ops,
+                &mut policies_to_filter,
+                &table.schema,
+                &table.name,
+                &qualified_table_str,
+                policy,
+                target_policy,
+            );
+        }
+    }
+
+    (additional_ops, policies_to_filter)
+}
+
+/// Check whether a policy's USING/CHECK expressions reference a dropped column
+/// that lives on a DIFFERENT table than the policy itself. The policy must both
+/// reference the affected table (via a subquery/join) and mention the dropped
+/// column name.
+fn policy_references_dropped_cross_table_column(
+    policy: &Policy,
+    policy_table: &str,
+    dropped: &HashSet<(String, String)>,
+) -> bool {
+    let exprs: Vec<&String> = [&policy.using_expr, &policy.check_expr]
+        .into_iter()
+        .flatten()
+        .collect();
+    if exprs.is_empty() {
+        return false;
+    }
+
+    let referenced_tables: HashSet<String> = exprs
+        .iter()
+        .flat_map(|expr| extract_table_references(expr, &policy.table_schema))
+        .map(|reference| reference.qualified_name())
+        .collect();
+    let referenced_columns: HashSet<String> = exprs
+        .iter()
+        .flat_map(|expr| extract_column_references(expr, &policy.table_schema))
+        .collect();
+
+    dropped.iter().any(|(table, column)| {
+        table != policy_table
+            && referenced_tables.contains(table)
+            && referenced_columns.contains(column)
+    })
+}
+
 /// Generate policy drop/create ops for tables with affected columns (type changes or drops).
 /// PostgreSQL requires policies to be dropped before altering column types or dropping columns.
 /// Uses conservative approach: if any column on a table is affected, drop/recreate all policies.
@@ -141,20 +252,50 @@ pub(super) fn generate_policy_ops_for_affected_tables(
                     .get(table_name)
                     .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
 
-                policies_to_filter.insert((qualified_table_str.clone(), policy.name.clone()));
-
-                additional_ops.push(MigrationOp::DropPolicy {
-                    table: QualifiedName::new(&from_table.schema, &from_table.name),
-                    name: policy.name.clone(),
-                });
-                let effective_policy = target_policy.unwrap_or(policy).clone();
-                additional_ops.push(MigrationOp::CreatePolicy(effective_policy.clone()));
-                push_policy_recreate_comment(&mut additional_ops, &effective_policy);
+                emit_policy_rebuild(
+                    &mut additional_ops,
+                    &mut policies_to_filter,
+                    &from_table.schema,
+                    &from_table.name,
+                    &qualified_table_str,
+                    policy,
+                    target_policy,
+                );
             }
         }
     }
 
     (additional_ops, policies_to_filter)
+}
+
+/// Emit the DropPolicy + CreatePolicy (+ comment) sequence shared by every
+/// policy-rebuild path (cross-table column drops, same-table affected columns,
+/// function changes) and record the policy in `policies_to_filter` so the
+/// caller can strip any duplicate AlterPolicy.
+///
+/// The caller performs its own `to`-side lookup and passes the result as
+/// `target_policy`; the three callers key that lookup differently (two by the
+/// map key, one by the qualified-name string), so the key choice stays with
+/// the caller and this helper stays behaviour-preserving for all of them.
+/// When `target_policy` is `None` the `from`-side `policy` is rebuilt as-is.
+fn emit_policy_rebuild(
+    additional_ops: &mut Vec<MigrationOp>,
+    policies_to_filter: &mut HashSet<(String, String)>,
+    table_schema: &str,
+    table_name: &str,
+    qualified_table_str: &str,
+    policy: &Policy,
+    target_policy: Option<&Policy>,
+) {
+    policies_to_filter.insert((qualified_table_str.to_string(), policy.name.clone()));
+
+    additional_ops.push(MigrationOp::DropPolicy {
+        table: QualifiedName::new(table_schema, table_name),
+        name: policy.name.clone(),
+    });
+    let effective_policy = target_policy.unwrap_or(policy).clone();
+    additional_ops.push(MigrationOp::CreatePolicy(effective_policy.clone()));
+    push_policy_recreate_comment(additional_ops, &effective_policy);
 }
 
 /// When a policy is dropped+recreated due to a column or function dependency,
@@ -355,20 +496,20 @@ pub(super) fn generate_policy_ops_for_function_changes(
                 && !existing_policy_drops
                     .contains(&(qualified_table_str.clone(), policy.name.clone()))
             {
-                policies_to_filter.insert((qualified_table_str.clone(), policy.name.clone()));
-
                 let target_policy = to
                     .tables
                     .get(&qualified_table_str)
                     .and_then(|t| t.policies.iter().find(|p| p.name == policy.name));
 
-                additional_ops.push(MigrationOp::DropPolicy {
-                    table: QualifiedName::new(&table.schema, &table.name),
-                    name: policy.name.clone(),
-                });
-                let effective_policy = target_policy.unwrap_or(policy).clone();
-                additional_ops.push(MigrationOp::CreatePolicy(effective_policy.clone()));
-                push_policy_recreate_comment(&mut additional_ops, &effective_policy);
+                emit_policy_rebuild(
+                    &mut additional_ops,
+                    &mut policies_to_filter,
+                    &table.schema,
+                    &table.name,
+                    &qualified_table_str,
+                    policy,
+                    target_policy,
+                );
             }
         }
     }
@@ -419,8 +560,8 @@ mod tests {
     use crate::diff::{compute_diff, MigrationOp};
     use crate::model::{
         qualified_name, ArgMode, Column, ForeignKey, Function, FunctionArg, PgType, Policy,
-        PolicyCommand, ReferentialAction, SecurityType, Trigger, TriggerEnabled, TriggerEvent,
-        TriggerTiming, View, Volatility,
+        PolicyCommand, ReferentialAction, Schema, SecurityType, Trigger, TriggerEnabled,
+        TriggerEvent, TriggerTiming, View, Volatility,
     };
 
     #[test]
@@ -1155,6 +1296,276 @@ mod tests {
             create_policy_ops.len(),
             1,
             "Should have exactly 1 CreatePolicy op"
+        );
+    }
+
+    #[test]
+    fn cross_table_and_same_table_paths_do_not_duplicate_policy_rebuild() {
+        // gh#332 over-rebuild collision: a policy on `mrv.sample` references
+        // `mrv.sampling_project.entity_id` (dropped) through a subquery, AND
+        // `mrv.sample` carries its own local column named `entity_id` plus an
+        // unrelated dropped column (`legacy`). The local drop puts `mrv.sample`
+        // in the same-table rebuild set, while the cross-table reference to the
+        // dropped `entity_id` matches the cross-table path on bare column name.
+        // Both paths could fire on the same policy; the `existing_policy_drops`
+        // guard must keep it to exactly one DropPolicy + one CreatePolicy with
+        // no surviving AlterPolicy and no duplicate OpKey.
+        let cross_table_using = "EXISTS (SELECT 1 FROM mrv.sampling_project sp \
+            WHERE sp.id = sampling_project_id AND sp.entity_id IS NOT NULL)";
+
+        let mut from = empty_schema();
+
+        let mut sampling_project = simple_table_with_schema("sampling_project", "mrv");
+        sampling_project
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        sampling_project.columns.insert(
+            "entity_id".to_string(),
+            simple_column("entity_id", PgType::Integer),
+        );
+        from.tables
+            .insert("mrv.sampling_project".to_string(), sampling_project);
+
+        let mut sample = simple_table_with_schema("sample", "mrv");
+        sample
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        sample.columns.insert(
+            "sampling_project_id".to_string(),
+            simple_column("sampling_project_id", PgType::Integer),
+        );
+        sample.columns.insert(
+            "entity_id".to_string(),
+            simple_column("entity_id", PgType::Integer),
+        );
+        sample
+            .columns
+            .insert("legacy".to_string(), simple_column("legacy", PgType::Text));
+        sample.policies.push(Policy {
+            name: "sample_access".to_string(),
+            table_schema: "mrv".to_string(),
+            table: "sample".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some(cross_table_using.to_string()),
+            check_expr: None,
+            comment: None,
+        });
+        from.tables.insert("mrv.sample".to_string(), sample);
+
+        let mut to = empty_schema();
+
+        let mut sampling_project_to = simple_table_with_schema("sampling_project", "mrv");
+        sampling_project_to
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        to.tables
+            .insert("mrv.sampling_project".to_string(), sampling_project_to);
+
+        let mut sample_to = simple_table_with_schema("sample", "mrv");
+        sample_to
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        sample_to.columns.insert(
+            "sampling_project_id".to_string(),
+            simple_column("sampling_project_id", PgType::Integer),
+        );
+        sample_to.columns.insert(
+            "entity_id".to_string(),
+            simple_column("entity_id", PgType::Integer),
+        );
+        sample_to.policies.push(Policy {
+            name: "sample_access".to_string(),
+            table_schema: "mrv".to_string(),
+            table: "sample".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some(cross_table_using.to_string()),
+            check_expr: None,
+            comment: None,
+        });
+        to.tables.insert("mrv.sample".to_string(), sample_to);
+
+        let ops = compute_diff(&from, &to);
+
+        let keys: Vec<_> = ops
+            .iter()
+            .map(crate::diff::op_key::OpKey::from_op)
+            .collect();
+        let unique: std::collections::HashSet<_> = keys.iter().cloned().collect();
+        assert_eq!(
+            keys.len(),
+            unique.len(),
+            "no duplicate OpKey in the plan: {keys:?}"
+        );
+
+        let drop_policy_ops: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                MigrationOp::DropPolicy { table, name } if name == "sample_access" => {
+                    Some(table.to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        let create_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreatePolicy(p) if p.name == "sample_access"))
+            .collect();
+        let alter_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(
+                |op| matches!(op, MigrationOp::AlterPolicy { name, .. } if name == "sample_access"),
+            )
+            .collect();
+
+        assert_eq!(
+            drop_policy_ops,
+            vec!["mrv.sample".to_string()],
+            "exactly one DropPolicy for the colliding policy"
+        );
+        assert_eq!(
+            create_policy_ops.len(),
+            1,
+            "exactly one CreatePolicy for the colliding policy"
+        );
+        assert_eq!(
+            alter_policy_ops.len(),
+            0,
+            "no surviving AlterPolicy for the colliding policy"
+        );
+    }
+
+    fn cross_table_policy_fixture() -> (Schema, Schema) {
+        let cross_table_using = "EXISTS (SELECT 1 FROM mrv.sampling_project sp \
+            WHERE sp.id = sampling_project_id AND sp.entity_id IS NOT NULL)";
+
+        let mut from = empty_schema();
+        let mut sampling_project = simple_table_with_schema("sampling_project", "mrv");
+        sampling_project
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        sampling_project.columns.insert(
+            "entity_id".to_string(),
+            simple_column("entity_id", PgType::Integer),
+        );
+        from.tables
+            .insert("mrv.sampling_project".to_string(), sampling_project);
+
+        let mut sample = simple_table_with_schema("sample", "mrv");
+        sample
+            .columns
+            .insert("id".to_string(), simple_column("id", PgType::Integer));
+        sample.columns.insert(
+            "sampling_project_id".to_string(),
+            simple_column("sampling_project_id", PgType::Integer),
+        );
+        sample.policies.push(Policy {
+            name: "sample_access".to_string(),
+            table_schema: "mrv".to_string(),
+            table: "sample".to_string(),
+            command: PolicyCommand::Select,
+            roles: vec!["authenticated".to_string()],
+            using_expr: Some(cross_table_using.to_string()),
+            check_expr: None,
+            comment: None,
+        });
+        from.tables.insert("mrv.sample".to_string(), sample);
+
+        let to = from.clone();
+        (from, to)
+    }
+
+    #[test]
+    fn cross_table_column_drops_fast_path_when_nothing_dropped() {
+        let (from, to) = cross_table_policy_fixture();
+        let dropped = std::collections::HashSet::new();
+
+        let (ops, filter) =
+            super::generate_policy_ops_for_cross_table_column_drops(&[], &from, &to, &dropped);
+
+        assert!(ops.is_empty(), "no ops when no column is dropped");
+        assert!(
+            filter.is_empty(),
+            "no policies to filter when no column is dropped"
+        );
+    }
+
+    #[test]
+    fn cross_table_column_drops_rebuilds_referencing_policy() {
+        let (from, to) = cross_table_policy_fixture();
+        let dropped = std::collections::HashSet::from([(
+            "mrv.sampling_project".to_string(),
+            "entity_id".to_string(),
+        )]);
+
+        let (ops, filter) =
+            super::generate_policy_ops_for_cross_table_column_drops(&[], &from, &to, &dropped);
+
+        assert_eq!(
+            filter,
+            std::collections::HashSet::from([(
+                "mrv.sample".to_string(),
+                "sample_access".to_string()
+            )]),
+            "the referencing policy is marked for AlterPolicy removal"
+        );
+
+        let drop_policy_ops: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                MigrationOp::DropPolicy { table, name } => Some((table.to_string(), name.clone())),
+                _ => None,
+            })
+            .collect();
+        let create_policy_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::CreatePolicy(p) if p.name == "sample_access"))
+            .collect();
+
+        assert_eq!(
+            drop_policy_ops,
+            vec![("mrv.sample".to_string(), "sample_access".to_string())],
+            "exactly one DropPolicy for the cross-table referencing policy"
+        );
+        assert_eq!(
+            create_policy_ops.len(),
+            1,
+            "exactly one CreatePolicy to rebuild the policy"
+        );
+    }
+
+    #[test]
+    fn cross_table_column_drops_falls_back_to_from_policy_when_absent_in_to() {
+        // The `to` schema has no matching policy (renamed/removed from the
+        // model), so the unwrap_or(policy) fallback must rebuild from the
+        // `from`-side policy definition rather than panicking.
+        let (from, mut to) = cross_table_policy_fixture();
+        to.tables.get_mut("mrv.sample").unwrap().policies.clear();
+
+        let dropped = std::collections::HashSet::from([(
+            "mrv.sampling_project".to_string(),
+            "entity_id".to_string(),
+        )]);
+
+        let (ops, _filter) =
+            super::generate_policy_ops_for_cross_table_column_drops(&[], &from, &to, &dropped);
+
+        let created: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                MigrationOp::CreatePolicy(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(created.len(), 1, "one CreatePolicy from the fallback path");
+        assert_eq!(
+            created[0].using_expr.as_deref(),
+            Some(
+                "EXISTS (SELECT 1 FROM mrv.sampling_project sp \
+                WHERE sp.id = sampling_project_id AND sp.entity_id IS NOT NULL)"
+            ),
+            "rebuilt from the from-side policy definition"
         );
     }
 

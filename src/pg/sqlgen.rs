@@ -133,6 +133,23 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             )]
         }
 
+        MigrationOp::DetachPartition(partition) => {
+            vec![format!(
+                "ALTER TABLE {} DETACH PARTITION {};",
+                quote_qualified(&partition.parent_schema, &partition.parent_name),
+                quote_qualified(&partition.schema, &partition.name),
+            )]
+        }
+
+        MigrationOp::AttachPartition(partition) => {
+            vec![format!(
+                "ALTER TABLE {} ATTACH PARTITION {} {};",
+                quote_qualified(&partition.parent_schema, &partition.parent_name),
+                quote_qualified(&partition.schema, &partition.name),
+                format_partition_bound(&partition.bound),
+            )]
+        }
+
         MigrationOp::AddColumn { table, column } => {
             vec![format!(
                 "ALTER TABLE {} ADD COLUMN {};",
@@ -800,11 +817,8 @@ fn generate_create_table(table: &Table) -> Vec<String> {
     statements
 }
 
-fn generate_create_partition(partition: &Partition) -> String {
-    let partition_name = quote_qualified(&partition.schema, &partition.name);
-    let parent_name = quote_qualified(&partition.parent_schema, &partition.parent_name);
-
-    let bound_clause = match &partition.bound {
+fn format_partition_bound(bound: &PartitionBound) -> String {
+    match bound {
         PartitionBound::Range { from, to } => {
             format!(
                 "FOR VALUES FROM ({}) TO ({})",
@@ -819,7 +833,13 @@ fn generate_create_partition(partition: &Partition) -> String {
             format!("FOR VALUES WITH (MODULUS {modulus}, REMAINDER {remainder})")
         }
         PartitionBound::Default => "DEFAULT".to_string(),
-    };
+    }
+}
+
+fn generate_create_partition(partition: &Partition) -> String {
+    let partition_name = quote_qualified(&partition.schema, &partition.name);
+    let parent_name = quote_qualified(&partition.parent_schema, &partition.parent_name);
+    let bound_clause = format_partition_bound(&partition.bound);
 
     format!("CREATE TABLE {partition_name} PARTITION OF {parent_name} {bound_clause};")
 }
@@ -831,6 +851,8 @@ fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {
         IndexType::Hash => " USING hash",
         IndexType::Gin => " USING gin",
         IndexType::Gist => " USING gist",
+        IndexType::Brin => " USING brin",
+        IndexType::SpGist => " USING spgist",
     };
 
     let where_clause = index
@@ -1013,6 +1035,28 @@ fn format_pg_type(pg_type: &PgType) -> String {
         PgType::Varchar(None) => "VARCHAR".to_string(),
         PgType::Char(Some(len)) => format!("CHAR({len})"),
         PgType::Char(None) => "CHAR(1)".to_string(),
+        PgType::Numeric {
+            precision: Some(precision),
+            scale: Some(scale),
+        } => format!("NUMERIC({precision},{scale})"),
+        PgType::Numeric {
+            precision: Some(_),
+            scale: None,
+        } => unreachable!(
+            "Numeric {{ precision: Some, scale: None }} is a forbidden IR state; \
+             numeric(p) normalizes to scale 0 at construction"
+        ),
+        PgType::Numeric {
+            precision: None,
+            scale: None,
+        } => "NUMERIC".to_string(),
+        PgType::Numeric {
+            precision: None,
+            scale: Some(_),
+        } => unreachable!(
+            "Numeric {{ precision: None, scale: Some }} is a forbidden IR state; \
+             scale without precision cannot exist"
+        ),
         PgType::Text => "TEXT".to_string(),
         PgType::Boolean => "BOOLEAN".to_string(),
         PgType::TimestampTz => "TIMESTAMP WITH TIME ZONE".to_string(),
@@ -1797,6 +1841,42 @@ mod tests {
         assert_eq!(
             format_pg_type(&PgType::Geography(Some("Point".into()), Some(4326))),
             "geography(Point, 4326)"
+        );
+    }
+
+    #[test]
+    fn format_pg_type_numeric_emits_precision_and_scale() {
+        assert_eq!(
+            format_pg_type(&PgType::Numeric {
+                precision: Some(10),
+                scale: Some(2)
+            }),
+            "NUMERIC(10,2)"
+        );
+        assert_eq!(
+            format_pg_type(&PgType::Numeric {
+                precision: Some(10),
+                scale: Some(0)
+            }),
+            "NUMERIC(10,0)"
+        );
+        assert_eq!(
+            format_pg_type(&PgType::Numeric {
+                precision: None,
+                scale: None
+            }),
+            "NUMERIC"
+        );
+    }
+
+    #[test]
+    fn format_pg_type_numeric_emits_negative_scale() {
+        assert_eq!(
+            format_pg_type(&PgType::Numeric {
+                precision: Some(5),
+                scale: Some(-2)
+            }),
+            "NUMERIC(5,-2)"
         );
     }
 
@@ -4380,6 +4460,81 @@ mod tests {
         assert_eq!(
             sql[0],
             "ALTER TABLE \"public\".\"orders_2024\" OWNER TO analytics_user;"
+        );
+    }
+
+    #[test]
+    fn detach_partition_generates_alter_table_detach_sql() {
+        use crate::model::{Partition, PartitionBound};
+
+        let ops = vec![MigrationOp::DetachPartition(Partition {
+            name: "events_2024".to_string(),
+            schema: "public".to_string(),
+            parent_schema: "public".to_string(),
+            parent_name: "events".to_string(),
+            bound: PartitionBound::Range {
+                from: vec!["'2024-01-01'".to_string()],
+                to: vec!["'2024-07-01'".to_string()],
+            },
+            indexes: Vec::new(),
+            check_constraints: Vec::new(),
+            owner: None,
+        })];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"events\" DETACH PARTITION \"public\".\"events_2024\";"
+        );
+    }
+
+    #[test]
+    fn attach_partition_generates_alter_table_attach_for_values_sql() {
+        use crate::model::{Partition, PartitionBound};
+
+        let ops = vec![MigrationOp::AttachPartition(Partition {
+            name: "events_2024".to_string(),
+            schema: "public".to_string(),
+            parent_schema: "public".to_string(),
+            parent_name: "events".to_string(),
+            bound: PartitionBound::Range {
+                from: vec!["'2024-01-01'".to_string()],
+                to: vec!["'2025-01-01'".to_string()],
+            },
+            indexes: Vec::new(),
+            check_constraints: Vec::new(),
+            owner: None,
+        })];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"events\" ATTACH PARTITION \"public\".\"events_2024\" FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');"
+        );
+    }
+
+    #[test]
+    fn attach_default_partition_generates_alter_table_attach_default_sql() {
+        use crate::model::{Partition, PartitionBound};
+
+        let ops = vec![MigrationOp::AttachPartition(Partition {
+            name: "events_other".to_string(),
+            schema: "public".to_string(),
+            parent_schema: "public".to_string(),
+            parent_name: "events".to_string(),
+            bound: PartitionBound::Default,
+            indexes: Vec::new(),
+            check_constraints: Vec::new(),
+            owner: None,
+        })];
+
+        let sql = generate_sql(&ops);
+        assert_eq!(sql.len(), 1);
+        assert_eq!(
+            sql[0],
+            "ALTER TABLE \"public\".\"events\" ATTACH PARTITION \"public\".\"events_other\" DEFAULT;"
         );
     }
 

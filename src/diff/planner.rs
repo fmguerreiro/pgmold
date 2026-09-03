@@ -39,6 +39,8 @@ struct NodeSets {
     drop_aggregates: Vec<NodeIndex>,
     tables: Vec<NodeIndex>,
     partitions: Vec<NodeIndex>,
+    detach_partitions: Vec<NodeIndex>,
+    attach_partitions: Vec<NodeIndex>,
     add_columns: Vec<NodeIndex>,
     add_pks: Vec<NodeIndex>,
     add_indexes: Vec<NodeIndex>,
@@ -97,6 +99,8 @@ impl NodeSets {
             drop_aggregates: graph.nodes_matching(|k| matches!(k, OpKey::DropAggregate { .. })),
             tables: graph.nodes_matching(|k| matches!(k, OpKey::CreateTable(_))),
             partitions: graph.nodes_matching(|k| matches!(k, OpKey::CreatePartition(_))),
+            detach_partitions: graph.nodes_matching(|k| matches!(k, OpKey::DetachPartition(_))),
+            attach_partitions: graph.nodes_matching(|k| matches!(k, OpKey::AttachPartition(_))),
             add_columns: graph.nodes_matching(|k| matches!(k, OpKey::AddColumn { .. })),
             add_pks: graph.nodes_matching(|k| matches!(k, OpKey::AddPrimaryKey { .. })),
             add_indexes: graph.nodes_matching(|k| matches!(k, OpKey::AddIndex { .. })),
@@ -262,6 +266,9 @@ impl MigrationGraph {
     /// to avoid introducing cycles.
     fn add_function_edges(&mut self, ns: &NodeSets) {
         self.edges_all_to_all(&ns.sequences, &ns.tables);
+        // OWNED BY metadata alone misses nextval() defaults on existing tables.
+        self.edges_all_to_all(&ns.sequences, &ns.add_columns);
+        self.edges_all_to_all(&ns.sequences, &ns.alter_sequences);
 
         // Pre-compute each table's direct FK dependencies, used to expand the skip set
         // through transitive FK closure. If a function depends on table T (via SETOF or
@@ -353,6 +360,14 @@ impl MigrationGraph {
     fn add_table_and_partition_edges(&mut self, ns: &NodeSets) {
         self.edges_all_to_all(&ns.tables, &ns.partitions);
 
+        // A changed bound/parent is DETACH then re-ATTACH. The child must be
+        // detached from its old parent before it can be attached to the new one,
+        // and the (possibly newly created) parent table must exist before ATTACH.
+        self.edges_all_to_all(&ns.detach_partitions, &ns.attach_partitions);
+        self.edges_all_to_all(&ns.tables, &ns.detach_partitions);
+        self.edges_all_to_all(&ns.tables, &ns.attach_partitions);
+        self.edges_all_to_all(&ns.add_columns, &ns.attach_partitions);
+
         self.edges_all_to_all(&ns.tables, &ns.add_columns);
         self.edges_all_to_all(&ns.tables, &ns.add_pks);
         self.edges_all_to_all(&ns.tables, &ns.add_indexes);
@@ -365,6 +380,8 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.tables, &ns.triggers);
         self.edges_all_to_all(&ns.tables, &ns.views);
         self.edges_all_to_all(&ns.tables, &ns.alter_sequences);
+        // ALTER SEQUENCE ... OWNED BY needs the target column to already exist.
+        self.edges_all_to_all(&ns.add_columns, &ns.alter_sequences);
     }
 
     /// Tier 5: Table elements — columns before indexes, FKs, checks, views, policies, triggers.
@@ -494,6 +511,8 @@ impl MigrationGraph {
             &ns.functions,
             &ns.tables,
             &ns.partitions,
+            &ns.detach_partitions,
+            &ns.attach_partitions,
             &ns.add_columns,
             &ns.add_pks,
             &ns.add_indexes,
@@ -1451,7 +1470,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 mod tests {
     use super::*;
     use crate::diff::test_helpers::simple_table_with_fks;
-    use crate::diff::{ColumnChanges, OwnerObjectKind, PolicyChanges};
+    use crate::diff::{ColumnChanges, OwnerObjectKind, PolicyChanges, SequenceChanges};
     use crate::model::*;
     use std::collections::BTreeMap;
 
@@ -1866,6 +1885,171 @@ mod tests {
         assert!(
             create_table_pos < alter_seq_pos,
             "AlterSequence (setting OWNED BY) must come after CreateTable"
+        );
+    }
+
+    #[test]
+    fn sequence_created_before_serial_column_added_to_existing_table() {
+        let sequence = Sequence {
+            name: "test_outbox_seq_seq".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            owner: None,
+            grants: Vec::new(),
+            cache: Some(1),
+            owned_by: Some(SequenceOwner {
+                table_schema: "public".to_string(),
+                table_name: "test_outbox".to_string(),
+                column_name: "seq".to_string(),
+            }),
+            comment: None,
+        };
+        let table = QualifiedName::new("public", "test_outbox");
+        let ops = vec![
+            MigrationOp::AddIndex {
+                table: table.clone(),
+                index: Index {
+                    name: "idx_test_outbox_unprocessed".to_string(),
+                    columns: vec!["seq".to_string()],
+                    unique: false,
+                    index_type: IndexType::BTree,
+                    predicate: Some("processed_at IS NULL".to_string()),
+                    is_constraint: false,
+                },
+            },
+            MigrationOp::AddColumn {
+                table,
+                column: Column {
+                    name: "seq".to_string(),
+                    data_type: PgType::BigInt,
+                    nullable: true,
+                    default: Some("nextval('test_outbox_seq_seq'::regclass)".to_string()),
+                    comment: None,
+                    generated: None,
+                },
+            },
+            MigrationOp::CreateSequence(sequence),
+        ];
+
+        let result = plan_migration(ops);
+
+        let create_sequence_pos = result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateSequence(_)))
+            .expect("CreateSequence should exist");
+        let add_column_pos = result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddColumn { .. }))
+            .expect("AddColumn should exist");
+        let alter_sequence_pos = result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterSequence { .. }))
+            .expect("AlterSequence should exist");
+        let add_index_pos = result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddIndex { .. }))
+            .expect("AddIndex should exist");
+
+        assert!(
+            create_sequence_pos < add_column_pos,
+            "CreateSequence must come before AddColumn using its nextval default"
+        );
+        assert!(
+            add_column_pos < alter_sequence_pos,
+            "AddColumn must come before AlterSequence sets OWNED BY"
+        );
+        assert!(
+            add_column_pos < add_index_pos,
+            "AddColumn must come before AddIndex using the column"
+        );
+    }
+
+    #[test]
+    fn create_sequence_before_add_column_referencing_nextval() {
+        let seq = Sequence {
+            name: "s".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            owner: None,
+            grants: Vec::new(),
+            cache: Some(1),
+            owned_by: None,
+            comment: None,
+        };
+
+        let ops = vec![
+            MigrationOp::CreateSequence(seq),
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "t"),
+                column: Column {
+                    name: "c".to_string(),
+                    data_type: PgType::BigInt,
+                    nullable: true,
+                    default: Some("nextval('public.s'::regclass)".to_string()),
+                    comment: None,
+                    generated: None,
+                },
+            },
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreateSequence",
+            "AddColumn",
+            |op| matches!(op, MigrationOp::CreateSequence(_)),
+            |op| matches!(op, MigrationOp::AddColumn { .. }),
+        );
+    }
+
+    #[test]
+    fn create_sequence_before_alter_sequence_owned_by_existing_column() {
+        let seq = Sequence {
+            name: "s".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            owner: None,
+            grants: Vec::new(),
+            cache: Some(1),
+            owned_by: None,
+            comment: None,
+        };
+
+        let ops = vec![
+            MigrationOp::CreateSequence(seq),
+            MigrationOp::AlterSequence {
+                name: "public.s".to_string(),
+                changes: SequenceChanges {
+                    owned_by: Some(Some(SequenceOwner {
+                        table_schema: "public".to_string(),
+                        table_name: "t".to_string(),
+                        column_name: "c".to_string(),
+                    })),
+                    ..Default::default()
+                },
+            },
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreateSequence",
+            "AlterSequence",
+            |op| matches!(op, MigrationOp::CreateSequence(_)),
+            |op| matches!(op, MigrationOp::AlterSequence { .. }),
         );
     }
 

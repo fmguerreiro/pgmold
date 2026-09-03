@@ -16,9 +16,10 @@ pub use types::{
 };
 
 use dependencies::{
-    generate_fk_ops_for_type_changes, generate_policy_ops_for_affected_tables,
-    generate_policy_ops_for_function_changes, generate_trigger_ops_for_affected_tables,
-    generate_view_ops_for_affected_tables, tables_with_dropped_columns, type_changed_columns,
+    dropped_columns, generate_fk_ops_for_type_changes, generate_policy_ops_for_affected_tables,
+    generate_policy_ops_for_cross_table_column_drops, generate_policy_ops_for_function_changes,
+    generate_trigger_ops_for_affected_tables, generate_view_ops_for_affected_tables,
+    tables_with_dropped_columns, type_changed_columns,
 };
 use grants::diff_default_privileges;
 use objects::{
@@ -162,6 +163,23 @@ pub fn compute_diff_with_flags(
         });
     }
     ops.extend(column_drop_view_ops);
+
+    // Drop/recreate policies on OTHER tables that reference a dropped column
+    // through a subquery join (gh#332). A DropColumn ... CASCADE destroys these
+    // policies, so an AlterPolicy against them fails; rebuild them instead.
+    let dropped_column_pairs = dropped_columns(&ops);
+    let (cross_table_policy_ops, cross_table_policies_to_filter) =
+        generate_policy_ops_for_cross_table_column_drops(&ops, from, to, &dropped_column_pairs);
+    if !cross_table_policies_to_filter.is_empty() {
+        ops.retain(|op| {
+            if let MigrationOp::AlterPolicy { table, name, .. } = op {
+                !cross_table_policies_to_filter.contains(&(table.to_string(), name.clone()))
+            } else {
+                true
+            }
+        });
+    }
+    ops.extend(cross_table_policy_ops);
 
     // Drop/recreate policies that reference functions being dropped
     let (policy_ops, policies_to_filter) = generate_policy_ops_for_function_changes(&ops, from, to);
@@ -696,6 +714,117 @@ mod tests {
     }
 
     #[test]
+    fn detects_numeric_precision_change_as_alter_column() {
+        let mut from = empty_schema();
+        let mut from_table = simple_table("ledger");
+        from_table.columns.insert(
+            "amount".to_string(),
+            simple_column(
+                "amount",
+                PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(2),
+                },
+            ),
+        );
+        from.tables.insert("ledger".to_string(), from_table);
+
+        let mut to = empty_schema();
+        let mut to_table = simple_table("ledger");
+        to_table.columns.insert(
+            "amount".to_string(),
+            simple_column(
+                "amount",
+                PgType::Numeric {
+                    precision: Some(12),
+                    scale: Some(4),
+                },
+            ),
+        );
+        to.tables.insert("ledger".to_string(), to_table);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterColumn { table, column, changes }
+            if table == "public.ledger" && column == "amount"
+                && changes.data_type == Some(PgType::Numeric { precision: Some(12), scale: Some(4) })
+        ));
+    }
+
+    #[test]
+    fn numeric_identical_precision_and_scale_emits_no_alter_column() {
+        let mut from = empty_schema();
+        let mut from_table = simple_table("ledger");
+        from_table.columns.insert(
+            "amount".to_string(),
+            simple_column(
+                "amount",
+                PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(0),
+                },
+            ),
+        );
+        from.tables.insert("ledger".to_string(), from_table);
+
+        let mut to = empty_schema();
+        let mut to_table = simple_table("ledger");
+        to_table.columns.insert(
+            "amount".to_string(),
+            simple_column(
+                "amount",
+                PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(0),
+                },
+            ),
+        );
+        to.tables.insert("ledger".to_string(), to_table);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 0);
+    }
+
+    #[test]
+    fn numeric_bare_precision_source_converges_with_introspected_scale_zero() {
+        use crate::parser::parse_sql_string;
+
+        let mut from = empty_schema();
+        let mut from_table = simple_table("ledger");
+        let mut amount_column = simple_column(
+            "amount",
+            PgType::Numeric {
+                precision: Some(10),
+                scale: Some(0),
+            },
+        );
+        amount_column.nullable = false;
+        from_table
+            .columns
+            .insert("amount".to_string(), amount_column);
+        from.tables.insert("public.ledger".to_string(), from_table);
+
+        let to =
+            parse_sql_string(r#"CREATE TABLE "public"."ledger" ("amount" numeric(10) NOT NULL);"#)
+                .unwrap();
+
+        let amount = &to.tables.get("public.ledger").unwrap().columns["amount"];
+        assert_eq!(
+            amount.data_type,
+            PgType::Numeric {
+                precision: Some(10),
+                scale: Some(0),
+            },
+            "parsed numeric(10) must normalize to scale 0 to converge with introspection"
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 0);
+    }
+
+    #[test]
     fn detects_added_index() {
         let mut from = empty_schema();
         from.tables
@@ -856,6 +985,40 @@ mod tests {
     }
 
     #[test]
+    fn detects_changed_foreign_key_as_drop_and_add() {
+        let make = |on_delete: ReferentialAction| ForeignKey {
+            name: "posts_user_id_fkey".to_string(),
+            columns: vec!["user_id".to_string()],
+            referenced_table: "users".to_string(),
+            referenced_schema: "public".to_string(),
+            referenced_columns: vec!["id".to_string()],
+            on_delete,
+            on_update: ReferentialAction::NoAction,
+        };
+
+        let mut from = empty_schema();
+        let mut from_table = simple_table("posts");
+        from_table
+            .foreign_keys
+            .push(make(ReferentialAction::NoAction));
+        from.tables.insert("posts".to_string(), from_table);
+
+        let mut to = empty_schema();
+        let mut to_table = simple_table("posts");
+        to_table.foreign_keys.push(make(ReferentialAction::Cascade));
+        to.tables.insert("posts".to_string(), to_table);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 2);
+        assert!(
+            matches!(&ops[0], MigrationOp::DropForeignKey { table, foreign_key_name } if table == "public.posts" && foreign_key_name == "posts_user_id_fkey")
+        );
+        assert!(
+            matches!(&ops[1], MigrationOp::AddForeignKey { table, foreign_key } if table == "public.posts" && foreign_key.on_delete == ReferentialAction::Cascade)
+        );
+    }
+
+    #[test]
     fn detects_added_function() {
         let from = empty_schema();
         let mut to = empty_schema();
@@ -933,7 +1096,7 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "auth.my_func"),
             "DropFunction should use qualified name with schema, got: {:?}",
-            &ops[0]
+            ops[0]
         );
     }
 
@@ -997,12 +1160,12 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "public.my_func"),
             "First op should be DropFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
         assert!(
             matches!(&ops[1], MigrationOp::CreateFunction(f) if f.name == "my_func"),
             "Second op should be CreateFunction, got: {:?}",
-            &ops[1]
+            ops[1]
         );
     }
 
@@ -1065,7 +1228,7 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::AlterFunction { name, .. } if name == "public.my_func"),
             "Should be AlterFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
     }
 
@@ -1129,12 +1292,12 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { .. }),
             "First op should be DropFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
         assert!(
             matches!(&ops[1], MigrationOp::CreateFunction(_)),
             "Second op should be CreateFunction, got: {:?}",
-            &ops[1]
+            ops[1]
         );
     }
 
@@ -1198,12 +1361,12 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { .. }),
             "First op should be DropFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
         assert!(
             matches!(&ops[1], MigrationOp::CreateFunction(_)),
             "Second op should be CreateFunction, got: {:?}",
-            &ops[1]
+            ops[1]
         );
     }
 
@@ -1229,7 +1392,7 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropView { name, .. } if name == "reporting.my_view"),
             "DropView should use qualified name with schema, got: {:?}",
-            &ops[0]
+            ops[0]
         );
     }
 
@@ -3689,6 +3852,128 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
     }
 
     #[test]
+    fn recreates_domain_on_base_type_change() {
+        let mut from = empty_schema();
+        from.domains.insert(
+            "public.price".to_string(),
+            Domain {
+                name: "price".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(2),
+                },
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
+                comment: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.domains.insert(
+            "public.price".to_string(),
+            Domain {
+                name: "price".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Numeric {
+                    precision: Some(12),
+                    scale: Some(4),
+                },
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
+                comment: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        let domain_ops: Vec<&MigrationOp> = ops
+            .iter()
+            .filter(|op| {
+                matches!(
+                    op,
+                    MigrationOp::DropDomain(_)
+                        | MigrationOp::CreateDomain(_)
+                        | MigrationOp::AlterDomain { .. }
+                )
+            })
+            .collect();
+        assert_eq!(domain_ops.len(), 2);
+        let drop_pos = domain_ops
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropDomain(name) if name == "public.price"))
+            .expect("DropDomain for public.price should exist");
+        let create_pos = domain_ops
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateDomain(d) if d.name == "price" && d.data_type == PgType::Numeric { precision: Some(12), scale: Some(4) }))
+            .expect("CreateDomain for the new base type should exist");
+        assert!(
+            drop_pos < create_pos,
+            "DropDomain must precede CreateDomain"
+        );
+    }
+
+    #[test]
+    fn alters_domain_on_default_only_change() {
+        let mut from = empty_schema();
+        from.domains.insert(
+            "public.price".to_string(),
+            Domain {
+                name: "price".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(2),
+                },
+                default: None,
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
+                comment: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.domains.insert(
+            "public.price".to_string(),
+            Domain {
+                name: "price".to_string(),
+                schema: "public".to_string(),
+                data_type: PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(2),
+                },
+                default: Some("0".to_string()),
+                not_null: false,
+                collation: None,
+                check_constraints: Vec::new(),
+                owner: None,
+                grants: Vec::new(),
+                comment: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            MigrationOp::AlterDomain { name, changes }
+                if name == "public.price"
+                    && changes.default == Some(Some("0".to_string()))
+                    && changes.not_null.is_none()
+        ));
+    }
+
+    #[test]
     fn detects_function_owner_change_when_flag_enabled() {
         let func_sig = "public.get_user(integer)".to_string();
         let mut from = empty_schema();
@@ -4174,6 +4459,172 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
     }
 
     #[test]
+    fn changed_partition_bound_emits_detach_then_attach_not_drop_recreate() {
+        use crate::model::{Partition, PartitionBound};
+
+        let partition_key = "public.events_2024".to_string();
+
+        let mut from = empty_schema();
+        from.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "events_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "events".to_string(),
+                bound: PartitionBound::Range {
+                    from: vec!["'2024-01-01'".to_string()],
+                    to: vec!["'2024-07-01'".to_string()],
+                },
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "events_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "events".to_string(),
+                bound: PartitionBound::Range {
+                    from: vec!["'2024-01-01'".to_string()],
+                    to: vec!["'2025-01-01'".to_string()],
+                },
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected exactly Detach then Attach, got {ops:?}"
+        );
+
+        match &ops[0] {
+            MigrationOp::DetachPartition(detached) => {
+                assert_eq!(detached.name, "events_2024");
+                assert_eq!(detached.parent_name, "events");
+                assert_eq!(
+                    detached.bound,
+                    PartitionBound::Range {
+                        from: vec!["'2024-01-01'".to_string()],
+                        to: vec!["'2024-07-01'".to_string()],
+                    }
+                );
+            }
+            other => panic!("expected DetachPartition first, got {other:?}"),
+        }
+
+        match &ops[1] {
+            MigrationOp::AttachPartition(attached) => {
+                assert_eq!(attached.name, "events_2024");
+                assert_eq!(attached.parent_name, "events");
+                assert_eq!(
+                    attached.bound,
+                    PartitionBound::Range {
+                        from: vec!["'2024-01-01'".to_string()],
+                        to: vec!["'2025-01-01'".to_string()],
+                    }
+                );
+            }
+            other => panic!("expected AttachPartition second, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn changed_partition_parent_emits_detach_from_old_then_attach_to_new() {
+        use crate::model::{Partition, PartitionBound};
+
+        let partition_key = "public.events_2024".to_string();
+
+        let mut from = empty_schema();
+        from.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "events_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "events_old".to_string(),
+                bound: PartitionBound::Default,
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: None,
+            },
+        );
+
+        let mut to = empty_schema();
+        to.partitions.insert(
+            partition_key.clone(),
+            Partition {
+                name: "events_2024".to_string(),
+                schema: "public".to_string(),
+                parent_schema: "public".to_string(),
+                parent_name: "events_new".to_string(),
+                bound: PartitionBound::Default,
+                indexes: Vec::new(),
+                check_constraints: Vec::new(),
+                owner: None,
+            },
+        );
+
+        let ops = compute_diff(&from, &to);
+
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected exactly Detach then Attach, got {ops:?}"
+        );
+
+        match &ops[0] {
+            MigrationOp::DetachPartition(detached) => {
+                assert_eq!(detached.parent_name, "events_old");
+            }
+            other => panic!("expected DetachPartition first, got {other:?}"),
+        }
+
+        match &ops[1] {
+            MigrationOp::AttachPartition(attached) => {
+                assert_eq!(attached.parent_name, "events_new");
+            }
+            other => panic!("expected AttachPartition second, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unchanged_partition_emits_no_detach_or_attach() {
+        use crate::model::{Partition, PartitionBound};
+
+        let partition_key = "public.events_2024".to_string();
+        let partition = Partition {
+            name: "events_2024".to_string(),
+            schema: "public".to_string(),
+            parent_schema: "public".to_string(),
+            parent_name: "events".to_string(),
+            bound: PartitionBound::Default,
+            indexes: Vec::new(),
+            check_constraints: Vec::new(),
+            owner: None,
+        };
+
+        let mut from = empty_schema();
+        from.partitions
+            .insert(partition_key.clone(), partition.clone());
+        let mut to = empty_schema();
+        to.partitions.insert(partition_key, partition);
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "expected no ops, got {ops:?}");
+    }
+
+    #[test]
     fn ignores_partition_owner_change_when_flag_disabled() {
         use crate::model::{Partition, PartitionBound};
 
@@ -4514,6 +4965,121 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         assert_eq!(drop_col_count, 1, "should have exactly 1 DropColumn");
         assert_eq!(alter_policy_count, 0, "AlterPolicy should be filtered out");
         assert_eq!(alter_view_count, 0, "AlterView should be filtered out");
+    }
+
+    #[test]
+    fn drop_column_rebuilds_cross_table_policy_referencing_dropped_column() {
+        // gh#332: a policy on `sampling_upload` references
+        // `sampling_project.entity_id` via a subquery join. Dropping
+        // `entity_id` from `sampling_project` cascade-drops that policy.
+        // The planner must rebuild the cross-table policy (DropPolicy +
+        // CreatePolicy) rather than emit an AlterPolicy that lands after the
+        // cascading DropColumn.
+        use crate::diff::planner::plan_migration;
+        use crate::model::{Policy, PolicyCommand};
+
+        let using_old = "EXISTS (SELECT 1 FROM mrv.sampling_project sp \
+            WHERE sp.id = sampling_project_id AND sp.entity_id IS NOT NULL)";
+        let using_new = "EXISTS (SELECT 1 FROM mrv.sampling_project sp \
+            WHERE sp.id = sampling_project_id AND sp.supplier_id IS NOT NULL)";
+
+        let build_schema = |project_col: &str, upload_using: &str| {
+            let mut schema = empty_schema();
+
+            let mut project = simple_table_with_schema("sampling_project", "mrv");
+            project
+                .columns
+                .insert("id".to_string(), simple_column("id", PgType::Uuid));
+            project.columns.insert(
+                project_col.to_string(),
+                simple_column(project_col, PgType::Uuid),
+            );
+            schema
+                .tables
+                .insert("mrv.sampling_project".to_string(), project);
+
+            let mut upload = simple_table_with_schema("sampling_upload", "mrv");
+            upload
+                .columns
+                .insert("id".to_string(), simple_column("id", PgType::Uuid));
+            upload.columns.insert(
+                "sampling_project_id".to_string(),
+                simple_column("sampling_project_id", PgType::Uuid),
+            );
+            upload.row_level_security = true;
+            upload.policies.push(Policy {
+                name: "sampling_upload_owner_select".to_string(),
+                table_schema: "mrv".to_string(),
+                table: "sampling_upload".to_string(),
+                command: PolicyCommand::Select,
+                roles: vec!["public".to_string()],
+                using_expr: Some(upload_using.to_string()),
+                check_expr: None,
+                comment: None,
+            });
+            schema
+                .tables
+                .insert("mrv.sampling_upload".to_string(), upload);
+
+            schema
+        };
+
+        let from = build_schema("entity_id", using_old);
+        let to = build_schema("supplier_id", using_new);
+
+        let ops = compute_diff(&from, &to);
+        let planned = plan_migration(ops);
+
+        let drop_col_pos = planned
+            .iter()
+            .position(
+                |op| matches!(op, MigrationOp::DropColumn { column, .. } if column == "entity_id"),
+            )
+            .expect("should have DropColumn for entity_id");
+
+        let cross_table_alter_after_drop = planned.iter().enumerate().any(|(index, op)| {
+            index > drop_col_pos
+                && matches!(
+                    op,
+                    MigrationOp::AlterPolicy { name, .. }
+                        if name == "sampling_upload_owner_select"
+                )
+        });
+        assert!(
+            !cross_table_alter_after_drop,
+            "cross-table AlterPolicy must not be placed after the cascading DropColumn"
+        );
+
+        let drop_policy_pos = planned
+            .iter()
+            .position(|op| {
+                matches!(op, MigrationOp::DropPolicy { name, .. } if name == "sampling_upload_owner_select")
+            })
+            .expect("cross-table policy must be rebuilt via DropPolicy");
+        let create_policy_pos = planned
+            .iter()
+            .position(|op| {
+                matches!(op, MigrationOp::CreatePolicy(p) if p.name == "sampling_upload_owner_select")
+            })
+            .expect("cross-table policy must be rebuilt via CreatePolicy");
+
+        assert!(
+            drop_policy_pos < drop_col_pos,
+            "DropPolicy ({drop_policy_pos}) must precede DropColumn ({drop_col_pos})"
+        );
+        assert!(
+            drop_col_pos < create_policy_pos,
+            "DropColumn ({drop_col_pos}) must precede CreatePolicy ({create_policy_pos})"
+        );
+
+        let alter_policy_count = planned
+            .iter()
+            .filter(|op| matches!(op, MigrationOp::AlterPolicy { name, .. } if name == "sampling_upload_owner_select"))
+            .count();
+        assert_eq!(
+            alter_policy_count, 0,
+            "cross-table AlterPolicy must be replaced by a rebuild"
+        );
     }
 
     #[test]

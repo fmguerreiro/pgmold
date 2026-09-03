@@ -394,6 +394,85 @@ async fn baseline_captures_domain() {
 }
 
 #[tokio::test]
+async fn introspect_carries_typmod_through_domain_base_types() {
+    use pgmold::model::PgType;
+
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::raw_sql(
+        r#"
+        CREATE DOMAIN money_amount AS NUMERIC(10, 2);
+        CREATE DOMAIN unbounded_amount AS NUMERIC;
+        CREATE DOMAIN short_name AS VARCHAR(50);
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        schema.domains["public.money_amount"].data_type,
+        PgType::Numeric {
+            precision: Some(10),
+            scale: Some(2)
+        }
+    );
+    assert_eq!(
+        schema.domains["public.unbounded_amount"].data_type,
+        PgType::Numeric {
+            precision: None,
+            scale: None
+        }
+    );
+    assert_eq!(
+        schema.domains["public.short_name"].data_type,
+        PgType::Varchar(Some(50))
+    );
+}
+
+#[tokio::test]
+async fn introspect_maps_domain_over_char_and_user_defined_base_types() {
+    use pgmold::model::PgType;
+
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::raw_sql(
+        r#"
+        CREATE DOMAIN fixed_code AS CHAR(10);
+        CREATE TYPE mood AS ENUM ('happy', 'sad');
+        CREATE DOMAIN mood_domain AS mood;
+        CREATE DOMAIN mood_list AS mood[];
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        schema.domains["public.fixed_code"].data_type,
+        PgType::Char(Some(10))
+    );
+    assert_eq!(
+        schema.domains["public.mood_domain"].data_type,
+        PgType::UserDefined("public.mood".to_string())
+    );
+    assert_eq!(
+        schema.domains["public.mood_list"].data_type,
+        PgType::Array(Box::new(PgType::UserDefined("public.mood".to_string())))
+    );
+}
+
+#[tokio::test]
 async fn baseline_detects_inherited_table() {
     let (_container, url) = setup_postgres().await;
     let connection = PgConnection::new(&url).await.unwrap();

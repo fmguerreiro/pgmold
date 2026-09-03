@@ -1,4 +1,6 @@
-use crate::util::{expressions_semantically_equal, views_semantically_equal};
+use crate::util::{
+    expressions_semantically_equal, views_semantically_equal, views_semantically_equal_with_columns,
+};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -98,7 +100,18 @@ pub enum PendingCommentObjectType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingComment {
     pub object_type: PendingCommentObjectType,
+    /// For top-level kinds (Table, View, Function, ...) this is the object's
+    /// qualified key (`schema.name`) or function signature. For the nested
+    /// kinds (Column, Trigger, Policy, Constraint) this is the *parent's*
+    /// qualified key (`schema.table` / `schema.domain`); the child's own name
+    /// lives in `child_name`. The two fields are never concatenated, so a
+    /// schema, table, or child name containing a literal dot (legal via a
+    /// quoted identifier) routes correctly.
     pub object_key: String,
+    /// `Some(child)` only for the nested kinds Column, Trigger, Policy, and
+    /// Constraint, carrying the column / trigger / policy / constraint name.
+    /// `None` for every top-level kind.
+    pub child_name: Option<String>,
     pub comment: Option<String>,
     /// Only meaningful for `PendingCommentObjectType::Constraint`. `true`
     /// when the source statement used the `ON DOMAIN <domain>` tail rather
@@ -139,6 +152,98 @@ pub struct PendingRevoke {
     pub grantee: String,
     pub privileges: BTreeSet<Privilege>,
     pub grant_option_for: bool,
+}
+
+/// A declared identifier whose original byte length exceeded PostgreSQL's
+/// NAMEDATALEN-1 (63 bytes) before the parser truncated it. Captured at parse
+/// time because the parser rewrites the model to the truncated form (to make
+/// plans converge with `pg_catalog`), which loses the original length. The lint
+/// reads this sidecar to warn the author that PostgreSQL will silently truncate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlongIdentifier {
+    pub kind: String,
+    pub name: String,
+}
+
+/// Removes duplicate overlong-identifier records in place, keyed by
+/// `(kind, name)` to match the dedup the parser applies per file. Used when
+/// merging per-file schemas so a name declared in two sources warns once.
+pub fn dedup_overlong_identifiers(identifiers: &mut Vec<OverlongIdentifier>) {
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    identifiers
+        .retain(|identifier| seen.insert((identifier.kind.clone(), identifier.name.clone())));
+}
+
+/// Parse-time diagnostics carried on `Schema` that are NOT schema state and
+/// therefore must not participate in `Schema` equality. The records hold
+/// PRE-truncation declared names, which `dump` cannot emit (it writes the
+/// truncated 63-byte form), so they inherently cannot survive a dump-reparse.
+/// Including them in `Schema` equality breaks the `parse(dump(parse)) == parse`
+/// round-trip invariant for any identifier that crosses 63 bytes.
+///
+/// The constant `PartialEq`/`Eq`/`Hash` here let `Schema` keep
+/// `#[derive(PartialEq, Eq)]`: the derive automatically covers every real
+/// field (including any added later) while this wrapper makes the diagnostic
+/// invisible to comparison. A hand-rolled `Schema` impl enumerating the other
+/// fields would silently exclude future fields, so it is avoided.
+#[derive(Debug, Clone, Default)]
+pub struct ParseDiagnostics(pub Vec<OverlongIdentifier>);
+
+impl PartialEq for ParseDiagnostics {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for ParseDiagnostics {}
+
+impl std::hash::Hash for ParseDiagnostics {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
+}
+
+impl std::ops::Deref for ParseDiagnostics {
+    type Target = Vec<OverlongIdentifier>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ParseDiagnostics {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<Vec<OverlongIdentifier>> for ParseDiagnostics {
+    fn from(records: Vec<OverlongIdentifier>) -> Self {
+        ParseDiagnostics(records)
+    }
+}
+
+impl IntoIterator for ParseDiagnostics {
+    type Item = OverlongIdentifier;
+    type IntoIter = std::vec::IntoIter<OverlongIdentifier>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl FromIterator<OverlongIdentifier> for ParseDiagnostics {
+    fn from_iter<I: IntoIterator<Item = OverlongIdentifier>>(iter: I) -> Self {
+        ParseDiagnostics(iter.into_iter().collect())
+    }
+}
+
+/// Real, order-sensitive comparison against a bare `Vec`, so existing lint and
+/// merge tests asserting `schema.overlong_identifiers == vec![..]` stay strict.
+/// This does NOT weaken `Schema` equality, which uses the always-equal
+/// `PartialEq for ParseDiagnostics` above.
+impl PartialEq<Vec<OverlongIdentifier>> for ParseDiagnostics {
+    fn eq(&self, other: &Vec<OverlongIdentifier>) -> bool {
+        &self.0 == other
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -192,6 +297,11 @@ pub struct Schema {
     /// emitted via the `ON DOMAIN` form.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub domain_constraint_comments: BTreeMap<String, String>,
+    /// Identifiers declared in the source longer than 63 bytes, captured before
+    /// the parser truncated them. Drives the `warn_identifier_exceeds_namedatalen`
+    /// lint. Not serialized: it is a parse-time diagnostic, not schema state.
+    #[serde(skip)]
+    pub overlong_identifiers: ParseDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -258,6 +368,17 @@ pub enum PgType {
     DoublePrecision,
     Varchar(Option<u32>),
     Char(Option<u32>),
+    /// PostgreSQL `numeric`/`decimal`. `precision`/`scale` both `None` is the
+    /// unconstrained `numeric` (any value); a precision with `scale` `None` is
+    /// never stored here because `numeric(p)` normalizes to `numeric(p, 0)` in
+    /// both parse and introspection, matching PostgreSQL's own typmod encoding.
+    /// `scale` is signed because PostgreSQL 15+ allows negative scale (e.g.
+    /// `numeric(5,-2)` rounds to hundreds), encoded as a signed 11-bit value in
+    /// the low bits of `atttypmod`.
+    Numeric {
+        precision: Option<u32>,
+        scale: Option<i32>,
+    },
     Text,
     Boolean,
     TimestampTz,
@@ -304,6 +425,8 @@ pub enum IndexType {
     Hash,
     Gin,
     Gist,
+    Brin,
+    SpGist,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -799,6 +922,27 @@ impl View {
             && self.materialized == other.materialized
             && views_semantically_equal(&self.query, &other.query)
     }
+
+    /// Like [`View::semantically_equals`], but resolves column references in the
+    /// view bodies against `tables` so that a no-op `CAST(col AS T)` (one whose
+    /// target equals the referenced column's declared type) is treated as
+    /// equivalent to the un-cast form. PostgreSQL elides such casts when storing
+    /// a view, so without this the parsed and introspected bodies never converge.
+    pub fn semantically_equals_with_tables(
+        &self,
+        other: &View,
+        tables: &std::collections::BTreeMap<String, Table>,
+    ) -> bool {
+        self.name == other.name
+            && self.schema == other.schema
+            && self.materialized == other.materialized
+            && views_semantically_equal_with_columns(
+                &self.query,
+                &other.query,
+                tables,
+                &self.schema,
+            )
+    }
 }
 
 /// Mapping from virtual column name (what apps see) to physical column name in the base table.
@@ -1030,6 +1174,67 @@ impl Schema {
             default_privileges: Vec::new(),
             table_constraint_comments: BTreeMap::new(),
             domain_constraint_comments: BTreeMap::new(),
+            overlong_identifiers: ParseDiagnostics::default(),
+        }
+    }
+
+    /// Drops overlong-identifier records whose (truncated) object is no longer
+    /// present in this schema. Filtering (`--include`, `--target-schemas`) removes
+    /// objects but not their sidecar warnings; this re-derives the set against the
+    /// retained model so excluded objects do not produce warnings.
+    pub fn retain_overlong_identifiers_in_model(&mut self) {
+        let records = std::mem::take(&mut self.overlong_identifiers);
+        self.overlong_identifiers = records
+            .into_iter()
+            .filter(|identifier| self.contains_overlong_object(identifier))
+            .collect();
+    }
+
+    fn contains_overlong_object(&self, identifier: &OverlongIdentifier) -> bool {
+        use crate::parser::util::{truncate_to_bytes_raw, PG_MAX_IDENTIFIER_LENGTH};
+        // The parser stores every kind under its truncated form. The record's
+        // `name` is the original (overlong) string, so match against both the full
+        // string and its truncation to stay robust to either storage form.
+        let full = identifier.name.as_str();
+        let truncated = truncate_to_bytes_raw(&identifier.name, PG_MAX_IDENTIFIER_LENGTH);
+        let matches = |name: &str| name == full || name == truncated;
+        match identifier.kind.as_str() {
+            "table" => {
+                self.tables.values().any(|t| matches(&t.name))
+                    || self.partitions.values().any(|p| matches(&p.name))
+            }
+            "column" => self
+                .tables
+                .values()
+                .any(|t| t.columns.values().any(|c| matches(&c.name))),
+            "view" => self.views.values().any(|v| matches(&v.name)),
+            "function" => self.functions.values().any(|f| matches(&f.name)),
+            "enum" => self.enums.values().any(|e| matches(&e.name)),
+            "domain" => self.domains.values().any(|d| matches(&d.name)),
+            "sequence" => self.sequences.values().any(|s| matches(&s.name)),
+            "index" => {
+                self.tables
+                    .values()
+                    .any(|t| t.indexes.iter().any(|i| matches(&i.name)))
+                    || self
+                        .partitions
+                        .values()
+                        .any(|p| p.indexes.iter().any(|i| matches(&i.name)))
+            }
+            "constraint" => self.tables.values().any(|t| {
+                t.foreign_keys.iter().any(|f| matches(&f.name))
+                    || t.check_constraints.iter().any(|c| matches(&c.name))
+            }),
+            "trigger" => self.triggers.values().any(|t| matches(&t.name)),
+            "policy" => {
+                self.tables
+                    .values()
+                    .any(|t| t.policies.iter().any(|p| matches(&p.name)))
+                    || self.pending_policies.iter().any(|p| matches(&p.name))
+            }
+            other => panic!(
+                "unknown overlong-identifier kind {other:?}; every kind produced by the parser must be matched here"
+            ),
         }
     }
 
@@ -1302,12 +1507,14 @@ impl Schema {
                 }
             }
             PendingCommentObjectType::Column => {
-                if let Some((table_key, col_name)) = pc.object_key.rsplit_once('.') {
-                    if let Some(table) = self.tables.get_mut(table_key) {
-                        if let Some(column) = table.columns.get_mut(col_name) {
-                            column.comment = pc.comment.clone();
-                            return true;
-                        }
+                let column_name = pc
+                    .child_name
+                    .as_deref()
+                    .expect("Column pending comment must carry child_name");
+                if let Some(table) = self.tables.get_mut(&pc.object_key) {
+                    if let Some(column) = table.columns.get_mut(column_name) {
+                        column.comment = pc.comment.clone();
+                        return true;
                     }
                 }
                 false
@@ -1369,7 +1576,16 @@ impl Schema {
                 }
             }
             PendingCommentObjectType::Trigger => {
-                if let Some(trigger) = self.triggers.get_mut(&pc.object_key) {
+                let trigger_name = pc
+                    .child_name
+                    .as_deref()
+                    .expect("Trigger pending comment must carry child_name");
+                // The trigger map is keyed by the parent table key with the
+                // trigger name appended, matching `make_trigger_key`. Rebuild
+                // that exact key from the structured parts instead of splitting
+                // a flat string, so a dotted schema/table/trigger name routes.
+                let trigger_key = format!("{}.{}", pc.object_key, trigger_name);
+                if let Some(trigger) = self.triggers.get_mut(&trigger_key) {
                     trigger.comment = pc.comment.clone();
                     true
                 } else {
@@ -1385,49 +1601,53 @@ impl Schema {
                 }
             }
             PendingCommentObjectType::Policy => {
-                // Key encodes schema.table.policy_name. Split off the policy
-                // name (last segment) and resolve the table from the prefix.
-                if let Some((table_key, policy_name)) = pc.object_key.rsplit_once('.') {
-                    if let Some(table) = self.tables.get_mut(table_key) {
-                        if let Some(policy) =
-                            table.policies.iter_mut().find(|p| p.name == policy_name)
-                        {
-                            policy.comment = pc.comment.clone();
-                            return true;
-                        }
+                let policy_name = pc
+                    .child_name
+                    .as_deref()
+                    .expect("Policy pending comment must carry child_name");
+                if let Some(table) = self.tables.get_mut(&pc.object_key) {
+                    if let Some(policy) = table.policies.iter_mut().find(|p| p.name == policy_name)
+                    {
+                        policy.comment = pc.comment.clone();
+                        return true;
                     }
                 }
                 false
             }
             PendingCommentObjectType::Constraint => {
-                // Key encodes schema.parent.constraint_name where parent is
-                // either a table, a partition child, or a domain (when
-                // on_domain). Routed through the matching Schema-level
-                // sidecar map so we do not have to mutate every constraint
-                // variant struct. Partition children share the table sidecar
-                // because PostgreSQL stores constraint comments on the child
-                // relation, and the diff/emit path is parent-kind agnostic.
-                let Some((parent_key, _)) = pc.object_key.rsplit_once('.') else {
-                    return false;
-                };
+                // `object_key` is the parent's qualified key (`schema.parent`)
+                // and `child_name` the constraint name. The parent is either a
+                // table, a partition child, or a domain (when `on_domain`).
+                // Routed through the matching Schema-level sidecar map so we do
+                // not have to mutate every constraint variant struct. Partition
+                // children share the table sidecar because PostgreSQL stores
+                // constraint comments on the child relation, and the diff/emit
+                // path is parent-kind agnostic. The sidecar map key keeps the
+                // flat `parent.constraint` form because introspection populates
+                // the same maps with that shape.
+                let constraint_name = pc
+                    .child_name
+                    .as_deref()
+                    .expect("Constraint pending comment must carry child_name");
+                let sidecar_key = format!("{}.{}", pc.object_key, constraint_name);
                 if pc.on_domain {
-                    if !self.domains.contains_key(parent_key) {
+                    if !self.domains.contains_key(&pc.object_key) {
                         return false;
                     }
                     update_constraint_comment(
                         &mut self.domain_constraint_comments,
-                        &pc.object_key,
+                        &sidecar_key,
                         pc.comment.as_ref(),
                     );
                 } else {
-                    if !self.tables.contains_key(parent_key)
-                        && !self.partitions.contains_key(parent_key)
+                    if !self.tables.contains_key(&pc.object_key)
+                        && !self.partitions.contains_key(&pc.object_key)
                     {
                         return false;
                     }
                     update_constraint_comment(
                         &mut self.table_constraint_comments,
-                        &pc.object_key,
+                        &sidecar_key,
                         pc.comment.as_ref(),
                     );
                 }
@@ -2727,6 +2947,44 @@ mod tests {
             owner: Some("postgres".to_string()),
         };
         assert_eq!(partition.owner, Some("postgres".to_string()));
+    }
+
+    #[test]
+    fn retain_keeps_overlong_partition_recorded_under_table_kind() {
+        // The parser classifies a partition's overlong name under "table" (a partition
+        // is a table). The model-side retain filter must resolve "table" against
+        // partitions too, or a surviving overlong partition would be wrongly suppressed.
+        let long = "p".repeat(64);
+        let truncated = "p".repeat(63);
+        let partition = Partition {
+            schema: "public".to_string(),
+            name: truncated,
+            parent_schema: "public".to_string(),
+            parent_name: "users".to_string(),
+            bound: PartitionBound::Default,
+            indexes: Vec::new(),
+            check_constraints: Vec::new(),
+            owner: None,
+        };
+        let mut schema = Schema::default();
+        schema
+            .partitions
+            .insert(format!("public.{}", "p".repeat(63)), partition);
+        schema.overlong_identifiers = vec![OverlongIdentifier {
+            kind: "table".to_string(),
+            name: long.clone(),
+        }]
+        .into();
+
+        schema.retain_overlong_identifiers_in_model();
+
+        assert_eq!(
+            schema.overlong_identifiers,
+            vec![OverlongIdentifier {
+                kind: "table".to_string(),
+                name: long,
+            }]
+        );
     }
 
     #[test]

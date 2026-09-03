@@ -4,25 +4,137 @@
 #![allow(clippy::wildcard_enum_match_arm)]
 
 use crate::model::*;
-use crate::util::{normalize_type_casts, Result, SchemaError};
+use crate::util::{normalize_type_casts, numeric_typmod_parts, Result, SchemaError};
 use sqlparser::ast::{
-    ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, ForValues, ObjectName,
-    PartitionBoundValue, TimezoneInfo,
+    visit_expressions_mut, ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, Expr,
+    ForValues, Ident, IndexColumn, ObjectName, PartitionBoundValue, TimezoneInfo,
 };
 
+use std::cell::RefCell;
+use std::ops::ControlFlow;
+
 /// PostgreSQL's NAMEDATALEN is 64, so identifiers are truncated to 63 bytes.
-pub(super) const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
+pub(crate) const PG_MAX_IDENTIFIER_LENGTH: usize = 63;
+
+thread_local! {
+    /// Original (pre-truncation) declared identifiers seen during a single parse.
+    /// `truncate_to_bytes` is the single chokepoint every truncating call site
+    /// funnels through (both `truncate_identifier` and `truncated_ident` reach it,
+    /// as does any direct caller), so recording there captures the original length
+    /// the model would otherwise lose regardless of which wrapper the site uses.
+    /// Drained by `take_overlong_identifiers` after each parse.
+    static OVERLONG_IDENTIFIERS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Removes and returns the originals of every identifier that was truncated
+/// during the parse on this thread, clearing the recorder for the next parse.
+pub(super) fn take_overlong_identifiers() -> Vec<String> {
+    OVERLONG_IDENTIFIERS.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
+}
 
 pub(super) fn truncate_identifier(s: &str) -> String {
-    if s.len() <= PG_MAX_IDENTIFIER_LENGTH {
-        s.to_string()
-    } else {
-        s[..PG_MAX_IDENTIFIER_LENGTH].to_string()
+    truncate_to_bytes(s, PG_MAX_IDENTIFIER_LENGTH).to_string()
+}
+
+/// Truncate an identifier that *references* an object or column declared
+/// elsewhere (a foreign-key target, a partition parent, an index column) to
+/// PG's NAMEDATALEN-1. PostgreSQL truncates these the same as the declaration,
+/// so a reference to a >63-byte name must match the truncated form the catalog
+/// actually holds; otherwise it points at a name PG never has, reintroducing
+/// drift. Unlike `truncate_identifier`, this does NOT feed the
+/// overlong-identifier lint: the name is reported at its declaration site, not
+/// at every place it is referenced.
+pub(super) fn truncate_referenced_identifier(s: &str) -> String {
+    truncate_to_bytes_raw(s, PG_MAX_IDENTIFIER_LENGTH).to_string()
+}
+
+/// Truncate a list of referenced column identifiers (FK local or referenced
+/// columns) to the PG-truncated form the catalog holds. See
+/// [`truncate_referenced_identifier`].
+pub(super) fn truncate_referenced_columns(columns: &[Ident]) -> Vec<String> {
+    columns
+        .iter()
+        .map(|column| truncate_referenced_identifier(&column.value))
+        .collect()
+}
+
+/// Resolve an index column entry to its stored form. A bare-column entry
+/// references a column PG truncates at declaration, so the reference is
+/// truncated to match (see [`truncate_referenced_identifier`]). Expression
+/// entries (e.g. `lower(x)`) are kept verbatim: introspection renders those via
+/// `pg_get_indexdef`, not `attname`.
+pub(super) fn truncate_index_column(column: &IndexColumn) -> String {
+    if let Expr::Identifier(ident) = &column.column.expr {
+        return truncate_referenced_identifier(&ident.value);
     }
+    let mut expr = column.column.expr.clone();
+    truncate_identifiers_in_expression(&mut expr);
+    unquote_ident(&expr.to_string()).to_string()
+}
+
+/// Truncate every identifier *reference* inside an index expression (e.g. the
+/// `x` in `lower(x)`) to PG's NAMEDATALEN-1. PostgreSQL truncates the column at
+/// declaration, and `pg_get_indexdef` renders the expression with the truncated
+/// name; a parsed expression over a >63-byte column must match that truncated
+/// form or it drifts forever (perpetual DROP + CREATE INDEX). Only identifier
+/// components are touched; the rest of the expression is left as written.
+fn truncate_identifiers_in_expression(expr: &mut Expr) {
+    let _: ControlFlow<()> = visit_expressions_mut(expr, |node| {
+        match node {
+            Expr::Identifier(ident) => truncate_ident_in_place(ident),
+            Expr::CompoundIdentifier(idents) => {
+                for ident in idents.iter_mut() {
+                    truncate_ident_in_place(ident);
+                }
+            }
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    });
+}
+
+fn truncate_ident_in_place(ident: &mut Ident) {
+    let truncated = truncate_referenced_identifier(&ident.value);
+    if truncated.len() != ident.value.len() {
+        ident.value = truncated;
+    }
+}
+
+/// Truncate `s` to at most `max_bytes` bytes, backing off to the nearest UTF-8 char
+/// boundary at or below the cap. Mirrors PG's `pg_mbcliplen`: never split a codepoint.
+///
+/// This is the single chokepoint for identifier truncation: whenever truncation at
+/// the PG identifier cap actually shortens the input, the original is recorded for the
+/// overlong-identifier lint. Callers that truncate something that is NOT a declared
+/// identifier (display-only formatting, model-side suppression lookups, suffix
+/// disambiguation against an already-recorded base) must use `truncate_to_bytes_raw`
+/// to avoid polluting the recorder.
+pub(crate) fn truncate_to_bytes(s: &str, max_bytes: usize) -> &str {
+    if max_bytes == PG_MAX_IDENTIFIER_LENGTH && s.len() > PG_MAX_IDENTIFIER_LENGTH {
+        OVERLONG_IDENTIFIERS.with(|cell| cell.borrow_mut().push(s.to_string()));
+    }
+    truncate_to_bytes_raw(s, max_bytes)
+}
+
+/// Byte-safe truncation without recording. Use for non-identifier truncation and
+/// for lookups against names that were already recorded at declaration time.
+pub(crate) fn truncate_to_bytes_raw(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 pub(super) fn unquote_ident(s: &str) -> &str {
     s.trim_matches('"')
+}
+
+pub(super) fn truncated_ident(name: &impl std::fmt::Display) -> String {
+    truncate_identifier(unquote_ident(&name.to_string()))
 }
 
 pub(super) fn normalize_expr(expr: &str) -> String {
@@ -40,6 +152,15 @@ pub(super) fn extract_qualified_name(name: &ObjectName) -> (String, String) {
         [table] => ("public".to_string(), table.clone()),
         _ => panic!("Unexpected object name format: {name:?}"),
     }
+}
+
+/// Like [`extract_qualified_name`], but truncates the name part to the form the
+/// catalog holds, for use at sites that *reference* or *look up* an object
+/// declared elsewhere (see [`truncate_referenced_identifier`]). The schema part
+/// is left untruncated, matching declaration sites.
+pub(super) fn extract_qualified_name_truncated(name: &ObjectName) -> (String, String) {
+    let (schema, object_name) = extract_qualified_name(name);
+    (schema, truncate_referenced_identifier(&object_name))
 }
 
 pub(super) fn parse_policy_command(cmd: &Option<CreatePolicyCommand>) -> PolicyCommand {
@@ -97,8 +218,9 @@ pub(super) fn parse_data_type(dt: &DataType) -> Result<PgType> {
         DataType::SmallInt(_) => Ok(PgType::SmallInt),
         DataType::Real | DataType::Float4 => Ok(PgType::Real),
         DataType::DoublePrecision | DataType::Float8 => Ok(PgType::DoublePrecision),
-        DataType::Numeric(_) | DataType::Decimal(_) => {
-            Ok(PgType::BuiltinNamed("numeric".to_string()))
+        DataType::Numeric(info) | DataType::Decimal(info) => {
+            let (precision, scale) = numeric_typmod_parts(info);
+            Ok(PgType::Numeric { precision, scale })
         }
         DataType::Varchar(len) => {
             let size = len.as_ref().and_then(|l| match l {

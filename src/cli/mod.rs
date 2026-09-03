@@ -12,7 +12,7 @@ use pgmold::dump::{generate_dump, generate_split_dump};
 use pgmold::expand_contract::expand_operations;
 use pgmold::filter::{filter_by_target_schemas, filter_schema, Filter, ObjectType};
 use pgmold::lint::locks::detect_lock_hazards;
-use pgmold::lint::{has_errors, lint_migration_plan, LintOptions, LintSeverity};
+use pgmold::lint::{has_errors, lint_migration_plan, lint_schema, LintOptions, LintSeverity};
 use pgmold::migrate::{find_next_migration_number, generate_migration_filename};
 use pgmold::model::Schema;
 use pgmold::pg::connection::PgConnection;
@@ -27,6 +27,7 @@ struct PlanOutput {
     operations: Vec<String>,
     statements: Vec<String>,
     lock_warnings: Vec<String>,
+    identifier_warnings: Vec<String>,
     statement_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     validated: Option<bool>,
@@ -499,6 +500,7 @@ pub async fn run() -> Result<()> {
             let to_schema = filter_by_target_schemas(&load_schema(&[to])?, &target_schemas);
             let ops = plan_migration_checked(compute_diff(&from_schema, &to_schema))?;
             let lock_warnings = detect_lock_hazards(&ops);
+            let identifier_warnings = lint_schema(&to_schema);
             let sql = generate_sql(&ops);
 
             if json {
@@ -506,19 +508,28 @@ pub async fn run() -> Result<()> {
                     operations: ops.iter().map(|op| format!("{op:?}")).collect(),
                     statements: sql.clone(),
                     lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
+                    identifier_warnings: identifier_warnings
+                        .iter()
+                        .map(|w| w.message.clone())
+                        .collect(),
                     statement_count: sql.len(),
                     validated: None,
                     idempotent: None,
                     residual_ops_count: None,
                 };
                 print_json(&output)?;
-            } else if sql.is_empty() {
-                println!("No differences found.");
             } else {
-                println!("Migration plan ({} statements):", sql.len());
-                for statement in &sql {
-                    println!("{statement}");
-                    println!();
+                for warning in &identifier_warnings {
+                    println!("[WARNING] {}: {}", warning.rule, warning.message);
+                }
+                if sql.is_empty() {
+                    println!("No differences found.");
+                } else {
+                    println!("Migration plan ({} statements):", sql.len());
+                    for statement in &sql {
+                        println!("{statement}");
+                        println!();
+                    }
                 }
             }
             Ok(())
@@ -681,6 +692,7 @@ pub async fn run() -> Result<()> {
                 }
             } else {
                 let lock_warnings = detect_lock_hazards(&ops);
+                let identifier_warnings = lint_schema(&filtered_target);
 
                 let sql = generate_sql(&ops);
 
@@ -689,6 +701,10 @@ pub async fn run() -> Result<()> {
                         operations: ops.iter().map(|op| format!("{op:?}")).collect(),
                         statements: sql.clone(),
                         lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
+                        identifier_warnings: identifier_warnings
+                            .iter()
+                            .map(|w| w.message.clone())
+                            .collect(),
                         statement_count: sql.len(),
                         validated: validation_info.as_ref().map(|v| v.success),
                         idempotent: validation_info.as_ref().map(|v| v.idempotent),
@@ -698,6 +714,9 @@ pub async fn run() -> Result<()> {
                 } else {
                     for warning in &lock_warnings {
                         println!("\u{26A0}\u{FE0F}  LOCK WARNING: {}", warning.message);
+                    }
+                    for warning in &identifier_warnings {
+                        println!("[WARNING] {}: {}", warning.rule, warning.message);
                     }
 
                     if sql.is_empty() {
@@ -767,7 +786,8 @@ pub async fn run() -> Result<()> {
             let filtered_db_schema = migration_plan.current_schema;
             let filtered_target = migration_plan.target_schema;
             let lint_options = LintOptions::from_env(allow_destructive);
-            let lint_results = lint_migration_plan(&ops, &lint_options);
+            let mut lint_results = lint_migration_plan(&ops, &lint_options);
+            lint_results.extend(lint_schema(&filtered_target));
 
             if !json {
                 for lint_result in &lint_results {
@@ -992,7 +1012,8 @@ pub async fn run() -> Result<()> {
             ))?;
 
             let lint_options = LintOptions::from_env(false);
-            let results = lint_migration_plan(&ops, &lint_options);
+            let mut results = lint_migration_plan(&ops, &lint_options);
+            results.extend(lint_schema(&target));
 
             let error_count = results
                 .iter()
@@ -1227,7 +1248,8 @@ pub async fn run() -> Result<()> {
 
             let next_number = find_next_migration_number(migrations_path)
                 .map_err(|e| anyhow!("Failed to determine next migration number: {e}"))?;
-            let filename = generate_migration_filename(next_number, &name);
+            let filename =
+                generate_migration_filename(next_number, &name).map_err(|e| anyhow!("{e}"))?;
             let file_path = migrations_path.join(&filename);
 
             let content = sql.join("\n\n");
@@ -1435,6 +1457,29 @@ pub async fn run() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_output_json_includes_identifier_warnings() {
+        let output = PlanOutput {
+            operations: Vec::new(),
+            statements: Vec::new(),
+            lock_warnings: Vec::new(),
+            identifier_warnings: vec![
+                "table identifier \"aaaa\" is 64 bytes; PostgreSQL truncates".to_string(),
+            ],
+            statement_count: 0,
+            validated: None,
+            idempotent: None,
+            residual_ops_count: None,
+        };
+
+        let json = serde_json::to_value(&output).unwrap();
+
+        assert_eq!(
+            json["identifier_warnings"],
+            serde_json::json!(["table identifier \"aaaa\" is 64 bytes; PostgreSQL truncates"])
+        );
+    }
 
     #[test]
     fn parses_exclude_args() {
