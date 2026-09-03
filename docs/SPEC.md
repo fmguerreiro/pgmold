@@ -805,7 +805,7 @@ fn quote_ident(s: &str) -> String {
 |------|----------|---------|
 | `deny_drop_column` | Error | DropColumn without `--allow-destructive` |
 | `deny_drop_table` | Error | DropTable without `--allow-destructive` |
-| `deny_drop_table_in_prod` | Error | DropTable when `PGMOLD_PROD=1` |
+| `deny_drop_table_in_prod` | Error | DropTable when `PGMOLD_PROD=1`; the same production gate takes precedence over `--allow-destructive` for every destructive drop rule (column, table, view, enum, trigger, sequence, unique constraint, schema, extension, domain), each named `deny_drop_<op>_in_prod` |
 | `warn_type_narrowing` | Warning | AlterColumn to smaller type |
 | `warn_set_not_null` | Warning | AlterColumn nullable→NOT NULL |
 
