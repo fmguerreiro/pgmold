@@ -266,6 +266,9 @@ enum Commands {
         zero_downtime: bool,
         #[command(flatten)]
         grants: GrantArgs,
+        /// Allow destructive operations (DROP TABLE, DROP COLUMN, etc.) during --validate
+        #[arg(long)]
+        allow_destructive: bool,
         /// Validate migration against a temporary database before applying (e.g., db:postgres://localhost:5433/tempdb)
         #[arg(long)]
         validate: Option<String>,
@@ -479,8 +482,12 @@ async fn run_validation(
     Ok(validation_result)
 }
 
-fn block_destructive_plan_validation(ops: &[pgmold::diff::MigrationOp], json: bool) -> Result<()> {
-    let lint_options = LintOptions::from_env(false);
+fn block_destructive_plan_validation(
+    ops: &[pgmold::diff::MigrationOp],
+    json: bool,
+    allow_destructive: bool,
+) -> Result<()> {
+    let lint_options = LintOptions::from_env(allow_destructive);
     let lint_results = lint_migration_plan(ops, &lint_options);
 
     if !json {
@@ -579,6 +586,7 @@ pub async fn run() -> Result<()> {
             json,
             zero_downtime,
             grants,
+            allow_destructive,
             validate,
         } => {
             let include_extension_objects = filter.include_extension_objects;
@@ -633,7 +641,7 @@ pub async fn run() -> Result<()> {
             };
 
             let validation_info = if let Some(validate_db_url) = &validate {
-                block_destructive_plan_validation(&ops, json)?;
+                block_destructive_plan_validation(&ops, json, allow_destructive)?;
 
                 let result = run_validation(
                     &ops,
@@ -2411,7 +2419,7 @@ mod tests {
         let ops = vec![pgmold::diff::MigrationOp::DropTable(
             "public.old_table".to_string(),
         )];
-        let result = block_destructive_plan_validation(&ops, false);
+        let result = block_destructive_plan_validation(&ops, false, false);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -2421,8 +2429,36 @@ mod tests {
 
     #[test]
     fn block_destructive_plan_validation_allows_non_destructive_ops() {
-        let ops: Vec<pgmold::diff::MigrationOp> = Vec::new();
-        let result = block_destructive_plan_validation(&ops, false);
-        assert!(result.is_ok());
+        let ops = vec![pgmold::diff::MigrationOp::AddColumn {
+            table: pgmold::model::QualifiedName::new("public", "users"),
+            column: pgmold::model::Column {
+                name: "email".to_string(),
+                data_type: pgmold::model::PgType::Varchar(Some(255)),
+                nullable: true,
+                default: None,
+                comment: None,
+                generated: None,
+            },
+        }];
+        let result = block_destructive_plan_validation(&ops, false, false);
+        assert_eq!(result.unwrap(), ());
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_refuses_drop_table_without_allow_destructive() {
+        let ops = vec![pgmold::diff::MigrationOp::DropTable(
+            "public.old_table".to_string(),
+        )];
+        let result = block_destructive_plan_validation(&ops, false, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_accepts_drop_table_with_allow_destructive() {
+        let ops = vec![pgmold::diff::MigrationOp::DropTable(
+            "public.old_table".to_string(),
+        )];
+        let result = block_destructive_plan_validation(&ops, false, true);
+        assert_eq!(result.unwrap(), ());
     }
 }
