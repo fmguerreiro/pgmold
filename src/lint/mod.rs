@@ -73,7 +73,15 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
 
     match op {
         MigrationOp::DropColumn { table, column } => {
-            if !options.allow_destructive {
+            if options.is_production {
+                results.push(LintResult {
+                    rule: "deny_drop_column_in_prod",
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping column {table}.{column} is not allowed in production (PGMOLD_PROD=1)"
+                    ),
+                });
+            } else if !options.allow_destructive {
                 results.push(LintResult {
                     rule: "deny_drop_column",
                     severity: LintSeverity::Error,
@@ -149,7 +157,20 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         }
 
         MigrationOp::DropView { name, materialized } => {
-            if !options.allow_destructive {
+            if options.is_production {
+                let (rule, view_type) = if *materialized {
+                    ("deny_drop_materialized_view_in_prod", "materialized view")
+                } else {
+                    ("deny_drop_view_in_prod", "view")
+                };
+                results.push(LintResult {
+                    rule,
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping {view_type} {name} is not allowed in production (PGMOLD_PROD=1)"
+                    ),
+                });
+            } else if !options.allow_destructive {
                 let (rule, view_type) = if *materialized {
                     ("deny_drop_materialized_view", "materialized view")
                 } else {
@@ -166,7 +187,15 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         }
 
         MigrationOp::DropEnum(name) => {
-            if !options.allow_destructive {
+            if options.is_production {
+                results.push(LintResult {
+                    rule: "deny_drop_enum_in_prod",
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping enum {name} is not allowed in production (PGMOLD_PROD=1)"
+                    ),
+                });
+            } else if !options.allow_destructive {
                 results.push(LintResult {
                     rule: "deny_drop_enum",
                     severity: LintSeverity::Error,
@@ -180,7 +209,15 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
             target_name,
             name,
         } => {
-            if !options.allow_destructive {
+            if options.is_production {
+                results.push(LintResult {
+                    rule: "deny_drop_trigger_in_prod",
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping trigger \"{target_schema}\".\"{target_name}\".{name} is not allowed in production (PGMOLD_PROD=1)"
+                    ),
+                });
+            } else if !options.allow_destructive {
                 results.push(LintResult {
                     rule: "deny_drop_trigger",
                     severity: LintSeverity::Error,
@@ -192,7 +229,15 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         }
 
         MigrationOp::DropSequence(name) => {
-            if !options.allow_destructive {
+            if options.is_production {
+                results.push(LintResult {
+                    rule: "deny_drop_sequence_in_prod",
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping sequence \"{name}\" is not allowed in production (PGMOLD_PROD=1)"
+                    ),
+                });
+            } else if !options.allow_destructive {
                 results.push(LintResult {
                     rule: "deny_drop_sequence",
                     severity: LintSeverity::Error,
@@ -207,7 +252,15 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
             table,
             constraint_name,
         } => {
-            if !options.allow_destructive {
+            if options.is_production {
+                results.push(LintResult {
+                    rule: "deny_drop_unique_constraint_in_prod",
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping unique constraint \"{constraint_name}\" on \"{table}\" is not allowed in production (PGMOLD_PROD=1)"
+                    ),
+                });
+            } else if !options.allow_destructive {
                 results.push(LintResult {
                     rule: "deny_drop_unique_constraint",
                     severity: LintSeverity::Error,
@@ -231,7 +284,15 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         }
 
         MigrationOp::DropSchema(name) => {
-            if !options.allow_destructive {
+            if options.is_production {
+                results.push(LintResult {
+                    rule: "deny_drop_schema_in_prod",
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping schema \"{name}\" is not allowed in production (PGMOLD_PROD=1)"
+                    ),
+                });
+            } else if !options.allow_destructive {
                 results.push(LintResult {
                     rule: "deny_drop_schema",
                     severity: LintSeverity::Error,
@@ -243,7 +304,15 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         }
 
         MigrationOp::DropExtension(name) => {
-            if !options.allow_destructive {
+            if options.is_production {
+                results.push(LintResult {
+                    rule: "deny_drop_extension_in_prod",
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping extension \"{name}\" is not allowed in production (PGMOLD_PROD=1)"
+                    ),
+                });
+            } else if !options.allow_destructive {
                 results.push(LintResult {
                     rule: "deny_drop_extension",
                     severity: LintSeverity::Error,
@@ -255,7 +324,15 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         }
 
         MigrationOp::DropDomain(name) => {
-            if !options.allow_destructive {
+            if options.is_production {
+                results.push(LintResult {
+                    rule: "deny_drop_domain_in_prod",
+                    severity: LintSeverity::Error,
+                    message: format!(
+                        "Dropping domain \"{name}\" is not allowed in production (PGMOLD_PROD=1)"
+                    ),
+                });
+            } else if !options.allow_destructive {
                 results.push(LintResult {
                     rule: "deny_drop_domain",
                     severity: LintSeverity::Error,
@@ -366,6 +443,22 @@ mod tests {
 
         let results = lint_migration_plan(&ops, &options);
         assert!(!has_errors(&results));
+    }
+
+    #[test]
+    fn blocks_drop_column_in_production() {
+        let ops = vec![MigrationOp::DropColumn {
+            table: QualifiedName::new("public", "users"),
+            column: "email".to_string(),
+        }];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: true,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_column_in_prod");
     }
 
     #[test]
@@ -511,6 +604,22 @@ mod tests {
     }
 
     #[test]
+    fn blocks_drop_view_in_production() {
+        let ops = vec![MigrationOp::DropView {
+            name: "active_users".to_string(),
+            materialized: false,
+        }];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: true,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_view_in_prod");
+    }
+
+    #[test]
     fn blocks_drop_materialized_view_without_flag() {
         let ops = vec![MigrationOp::DropView {
             name: "user_stats".to_string(),
@@ -552,6 +661,19 @@ mod tests {
     }
 
     #[test]
+    fn blocks_drop_enum_in_production() {
+        let ops = vec![MigrationOp::DropEnum("user_role".to_string())];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: true,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_enum_in_prod");
+    }
+
+    #[test]
     fn blocks_drop_trigger_without_flag() {
         let ops = vec![MigrationOp::DropTrigger {
             target_schema: "public".to_string(),
@@ -585,6 +707,23 @@ mod tests {
     }
 
     #[test]
+    fn blocks_drop_trigger_in_production() {
+        let ops = vec![MigrationOp::DropTrigger {
+            target_schema: "public".to_string(),
+            target_name: "users".to_string(),
+            name: "update_timestamp".to_string(),
+        }];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: true,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_trigger_in_prod");
+    }
+
+    #[test]
     fn blocks_drop_sequence_without_flag() {
         let ops = vec![MigrationOp::DropSequence("user_id_seq".to_string())];
         let options = LintOptions {
@@ -607,6 +746,19 @@ mod tests {
 
         let results = lint_migration_plan(&ops, &options);
         assert!(!has_errors(&results));
+    }
+
+    #[test]
+    fn blocks_drop_sequence_in_production() {
+        let ops = vec![MigrationOp::DropSequence("user_id_seq".to_string())];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: true,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_sequence_in_prod");
     }
 
     #[test]
@@ -677,6 +829,22 @@ mod tests {
     }
 
     #[test]
+    fn blocks_drop_unique_constraint_in_production() {
+        let ops = vec![MigrationOp::DropUniqueConstraint {
+            table: QualifiedName::new("auth", "users"),
+            constraint_name: "users_email_unique".to_string(),
+        }];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: true,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_unique_constraint_in_prod");
+    }
+
+    #[test]
     fn blocks_drop_schema_without_flag() {
         let ops = vec![MigrationOp::DropSchema("auth".to_string())];
         let options = LintOptions {
@@ -699,6 +867,19 @@ mod tests {
 
         let results = lint_migration_plan(&ops, &options);
         assert!(!has_errors(&results));
+    }
+
+    #[test]
+    fn blocks_drop_schema_in_production() {
+        let ops = vec![MigrationOp::DropSchema("auth".to_string())];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: true,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_schema_in_prod");
     }
 
     #[test]
@@ -727,6 +908,19 @@ mod tests {
     }
 
     #[test]
+    fn blocks_drop_extension_in_production() {
+        let ops = vec![MigrationOp::DropExtension("uuid-ossp".to_string())];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: true,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_extension_in_prod");
+    }
+
+    #[test]
     fn blocks_drop_domain_without_flag() {
         let ops = vec![MigrationOp::DropDomain("email_address".to_string())];
         let options = LintOptions {
@@ -749,6 +943,19 @@ mod tests {
 
         let results = lint_migration_plan(&ops, &options);
         assert!(!has_errors(&results));
+    }
+
+    #[test]
+    fn blocks_drop_domain_in_production() {
+        let ops = vec![MigrationOp::DropDomain("email_address".to_string())];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: true,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(has_errors(&results));
+        assert_eq!(results[0].rule, "deny_drop_domain_in_prod");
     }
 
     use crate::model::OverlongIdentifier;

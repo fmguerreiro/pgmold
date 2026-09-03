@@ -14,7 +14,8 @@ Invariants for AI agents invoking pgmold CLI.
 ## Safety
 
 - `apply` requires `--allow-destructive` for DROP operations
-- Set `PGMOLD_PROD=1` to block `DROP TABLE` operations in production
+- Set `PGMOLD_PROD=1` to block data-destructive drops (table, partition, column, view, enum, trigger, sequence, unique constraint, schema, extension, domain) in production, taking precedence over `--allow-destructive`
+- Schema-only drops (index, primary key, foreign key, check/exclusion constraint, policy, function, aggregate) are not blocked by `PGMOLD_PROD=1`
 - Use `--validate db:postgres://temp/db` to test migrations on a temporary database before applying
 - Always run `plan` before `apply` — never apply blind
 
