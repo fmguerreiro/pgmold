@@ -3,6 +3,7 @@ pub mod locks;
 use crate::diff::MigrationOp;
 use crate::model::{PgType, Schema};
 use crate::parser::util::{truncate_to_bytes_raw, PG_MAX_IDENTIFIER_LENGTH};
+use crate::util::{Result, SchemaError};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LintOptions {
@@ -10,14 +11,34 @@ pub struct LintOptions {
     pub is_production: bool,
 }
 
+const PGMOLD_PROD_ENV_VAR: &str = "PGMOLD_PROD";
+
 impl LintOptions {
-    pub fn from_env(allow_destructive: bool) -> Self {
-        Self {
+    pub fn from_env(allow_destructive: bool) -> Result<Self> {
+        let is_production =
+            parse_is_production_flag(std::env::var(PGMOLD_PROD_ENV_VAR).ok().as_deref())?;
+        Ok(Self {
             allow_destructive,
-            is_production: std::env::var("PGMOLD_PROD")
-                .map(|v| v == "1")
-                .unwrap_or(false),
-        }
+            is_production,
+        })
+    }
+}
+
+fn parse_is_production_flag(value: Option<&str>) -> Result<bool> {
+    let value = match value {
+        None => return Ok(false),
+        Some(value) => value,
+    };
+    if value.is_empty() {
+        return Ok(false);
+    }
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(SchemaError::ValidationError(format!(
+            "invalid value {value:?} for environment variable {PGMOLD_PROD_ENV_VAR} \
+             (accepted values: 1, true, yes, on, 0, false, no, off)"
+        ))),
     }
 }
 
@@ -1107,5 +1128,39 @@ mod tests {
         });
 
         assert!(!has_errors(&lint_schema(&schema)));
+    }
+
+    #[test]
+    fn parse_is_production_flag_treats_none_as_non_production() {
+        assert!(!parse_is_production_flag(None).unwrap());
+    }
+
+    #[test]
+    fn parse_is_production_flag_treats_empty_string_as_non_production() {
+        assert!(!parse_is_production_flag(Some("")).unwrap());
+    }
+
+    #[test]
+    fn parse_is_production_flag_accepts_truthy_values_case_insensitively() {
+        for value in ["1", "true", "TRUE", "yes", "Yes", "on", "ON"] {
+            assert!(parse_is_production_flag(Some(value)).unwrap(), "{value}");
+        }
+    }
+
+    #[test]
+    fn parse_is_production_flag_accepts_falsey_values_case_insensitively() {
+        for value in ["0", "false", "FALSE", "no", "No", "off", "OFF"] {
+            assert!(!parse_is_production_flag(Some(value)).unwrap(), "{value}");
+        }
+    }
+
+    #[test]
+    fn parse_is_production_flag_rejects_unrecognized_value() {
+        let error = parse_is_production_flag(Some("production"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("production"));
+        assert!(error.contains("PGMOLD_PROD"));
+        assert!(error.contains("1, true, yes, on, 0, false, no, off"));
     }
 }
