@@ -483,16 +483,17 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
 /// diff applies, including clears via `IS NULL` when the source drops a
 /// previously-set comment.
 ///
-/// Keys are `"schema.parent.constraint_name"` where `parent` is a table or
-/// domain. The parent name is split off here and passed through `target`,
-/// while `name` carries the constraint identifier.
+/// The key carries the parent's qualified key and the constraint name as
+/// separate fields. The parent splits into `schema` / `target` here, while
+/// `name` carries the constraint identifier.
 fn diff_constraint_comments(
-    from: &std::collections::BTreeMap<String, String>,
-    to: &std::collections::BTreeMap<String, String>,
+    from: &std::collections::BTreeMap<crate::model::ConstraintCommentKey, String>,
+    to: &std::collections::BTreeMap<crate::model::ConstraintCommentKey, String>,
     on_domain: bool,
     ops: &mut Vec<MigrationOp>,
 ) {
-    let mut keys: std::collections::BTreeSet<&String> = from.keys().collect();
+    let mut keys: std::collections::BTreeSet<&crate::model::ConstraintCommentKey> =
+        from.keys().collect();
     keys.extend(to.keys());
 
     for key in keys {
@@ -501,14 +502,11 @@ fn diff_constraint_comments(
         if from_text == to_text {
             continue;
         }
-        let (parent_key, constraint_name) = key.rsplit_once('.').unwrap_or_else(|| {
-            panic!("constraint comment key {key:?} must encode schema.parent.constraint_name")
-        });
-        let (parent_schema, parent_name) = crate::model::parse_qualified_name(parent_key);
+        let (parent_schema, parent_name) = crate::model::parse_qualified_name(&key.parent_key);
         ops.push(MigrationOp::SetComment {
             object_type: CommentObjectType::Constraint,
             schema: parent_schema,
-            name: constraint_name.to_string(),
+            name: key.constraint_name.clone(),
             arguments: None,
             column: None,
             target: Some(parent_name),
@@ -2264,9 +2262,10 @@ mod tests {
             .tables
             .insert("public.users".to_string(), simple_table("users"));
         if let Some(text) = comment {
-            schema
-                .table_constraint_comments
-                .insert("public.users.users_pkey".to_string(), text.to_string());
+            schema.table_constraint_comments.insert(
+                crate::model::ConstraintCommentKey::new("public.users", "users_pkey"),
+                text.to_string(),
+            );
         }
         schema
     }
@@ -2349,6 +2348,73 @@ mod tests {
     }
 
     #[test]
+    fn dotted_constraint_name_routes_to_parent_not_split_off() {
+        let mut from = empty_schema();
+        let mut to = empty_schema();
+        from.tables
+            .insert("public.users".to_string(), simple_table("users"));
+        to.tables
+            .insert("public.users".to_string(), simple_table("users"));
+        to.table_constraint_comments.insert(
+            crate::model::ConstraintCommentKey::new("public.users", "chk.v2"),
+            "dotted".to_string(),
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                schema,
+                name,
+                target,
+                on_domain,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Constraint);
+                assert_eq!(schema, "public");
+                assert_eq!(name, "chk.v2");
+                assert_eq!(target.as_deref(), Some("users"));
+                assert!(!*on_domain);
+                assert_eq!(comment.as_deref(), Some("dotted"));
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dotted_parent_name_splits_schema_from_target() {
+        let parent_key = "public.orders.v2";
+        let mut from = empty_schema();
+        let mut to = empty_schema();
+        from.tables
+            .insert(parent_key.to_string(), simple_table("orders.v2"));
+        to.tables
+            .insert(parent_key.to_string(), simple_table("orders.v2"));
+        to.table_constraint_comments.insert(
+            crate::model::ConstraintCommentKey::new(parent_key, "orders_chk"),
+            "dotted table".to_string(),
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                schema,
+                name,
+                target,
+                ..
+            } => {
+                assert_eq!(schema, "public");
+                assert_eq!(name, "orders_chk");
+                assert_eq!(target.as_deref(), Some("orders.v2"));
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn detects_added_domain_constraint_comment_with_on_domain_flag() {
         let mut from = empty_schema();
         let mut to = empty_schema();
@@ -2371,7 +2437,7 @@ mod tests {
             .insert("public.amount".to_string(), domain.clone());
         to.domains.insert("public.amount".to_string(), domain);
         to.domain_constraint_comments.insert(
-            "public.amount.amount_positive".to_string(),
+            crate::model::ConstraintCommentKey::new("public.amount", "amount_positive"),
             "must be positive".to_string(),
         );
 

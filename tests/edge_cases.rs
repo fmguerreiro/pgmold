@@ -472,7 +472,10 @@ async fn table_constraint_comment_round_trips_through_apply_and_introspect() {
     assert_eq!(
         after
             .table_constraint_comments
-            .get("public.users.users_id_positive")
+            .get(&pgmold::model::ConstraintCommentKey::new(
+                "public.users",
+                "users_id_positive",
+            ))
             .map(String::as_str),
         Some("must be positive"),
     );
@@ -515,7 +518,10 @@ async fn domain_constraint_comment_round_trips_through_apply_and_introspect() {
     assert_eq!(
         after
             .domain_constraint_comments
-            .get("public.amount.amount_positive")
+            .get(&pgmold::model::ConstraintCommentKey::new(
+                "public.amount",
+                "amount_positive",
+            ))
             .map(String::as_str),
         Some("must be positive"),
     );
@@ -570,7 +576,7 @@ async fn partition_parent_constraint_comment_is_not_duplicated_onto_children() {
         .await
         .unwrap();
 
-    let constraint_comments: Vec<(&String, &String)> = after
+    let constraint_comments: Vec<(&pgmold::model::ConstraintCommentKey, &String)> = after
         .table_constraint_comments
         .iter()
         .filter(|(_, comment)| comment.as_str() == "parent-level sanity check")
@@ -578,7 +584,10 @@ async fn partition_parent_constraint_comment_is_not_duplicated_onto_children() {
     assert_eq!(
         constraint_comments,
         vec![(
-            &"public.measurement.measurement_peak_positive".to_string(),
+            &pgmold::model::ConstraintCommentKey::new(
+                "public.measurement",
+                "measurement_peak_positive"
+            ),
             &"parent-level sanity check".to_string()
         )],
         "parent constraint comment must introspect exactly once, on the parent, \
@@ -652,7 +661,10 @@ async fn partition_child_constraint_comment_round_trips_through_apply_and_intros
     assert_eq!(
         after
             .table_constraint_comments
-            .get("public.measurement_2024.measurement_2024_peak_positive")
+            .get(&pgmold::model::ConstraintCommentKey::new(
+                "public.measurement_2024",
+                "measurement_2024_peak_positive",
+            ))
             .map(String::as_str),
         Some("partition-local sanity check"),
         "introspect must capture COMMENT ON CONSTRAINT on partition child"

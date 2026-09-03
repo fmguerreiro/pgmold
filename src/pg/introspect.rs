@@ -1635,7 +1635,7 @@ async fn introspect_all_policies(
 async fn introspect_table_constraint_comments(
     connection: &PgConnection,
     target_schemas: &[String],
-) -> Result<BTreeMap<String, String>> {
+) -> Result<BTreeMap<ConstraintCommentKey, String>> {
     let rows = sqlx::query(
         r#"
         SELECT
@@ -1665,7 +1665,7 @@ async fn introspect_table_constraint_comments(
         let constraint_name: String = row.get("constraint_name");
         let comment: String = row.get("comment");
         result.insert(
-            format!("{table_schema}.{table_name}.{constraint_name}"),
+            ConstraintCommentKey::new(qualified_name(&table_schema, &table_name), constraint_name),
             comment,
         );
     }
@@ -1679,7 +1679,7 @@ async fn introspect_table_constraint_comments(
 async fn introspect_domain_constraint_comments(
     connection: &PgConnection,
     target_schemas: &[String],
-) -> Result<BTreeMap<String, String>> {
+) -> Result<BTreeMap<ConstraintCommentKey, String>> {
     let rows = sqlx::query(
         r#"
         SELECT
@@ -1709,7 +1709,10 @@ async fn introspect_domain_constraint_comments(
         let constraint_name: String = row.get("constraint_name");
         let comment: String = row.get("comment");
         result.insert(
-            format!("{domain_schema}.{domain_name}.{constraint_name}"),
+            ConstraintCommentKey::new(
+                qualified_name(&domain_schema, &domain_name),
+                constraint_name,
+            ),
             comment,
         );
     }
