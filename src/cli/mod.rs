@@ -487,7 +487,14 @@ fn block_destructive_plan_validation(
     json: bool,
     allow_destructive: bool,
 ) -> Result<()> {
-    let lint_options = LintOptions::from_env(allow_destructive);
+    let lint_options = LintOptions::from_env(allow_destructive).inspect_err(|e| {
+        if json {
+            let _ = print_json(&serde_json::json!({
+                "success": false,
+                "error": e.to_string(),
+            }));
+        }
+    })?;
     let lint_results = lint_migration_plan(ops, &lint_options);
 
     if !json {
