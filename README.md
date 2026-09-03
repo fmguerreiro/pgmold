@@ -490,6 +490,9 @@ cargo test
 
 # Run integration tests (requires Docker)
 cargo test --test integration
+
+# Test with cargo-nextest (caps container-backed integration tests at 4 threads)
+cargo nextest run
 ```
 
 ## License
