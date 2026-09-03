@@ -266,6 +266,9 @@ enum Commands {
         zero_downtime: bool,
         #[command(flatten)]
         grants: GrantArgs,
+        /// Allow destructive operations (DROP TABLE, DROP COLUMN, etc.) during --validate
+        #[arg(long)]
+        allow_destructive: bool,
         /// Validate migration against a temporary database before applying (e.g., db:postgres://localhost:5433/tempdb)
         #[arg(long)]
         validate: Option<String>,
@@ -479,6 +482,53 @@ async fn run_validation(
     Ok(validation_result)
 }
 
+fn block_destructive_plan_validation(
+    ops: &[pgmold::diff::MigrationOp],
+    json: bool,
+    allow_destructive: bool,
+) -> Result<()> {
+    let lint_options = LintOptions::from_env(allow_destructive).inspect_err(|e| {
+        if json {
+            let _ = print_json(&serde_json::json!({
+                "success": false,
+                "error": e.to_string(),
+            }));
+        }
+    })?;
+    let lint_results = lint_migration_plan(ops, &lint_options);
+
+    if !json {
+        for lint_result in &lint_results {
+            let severity = match lint_result.severity {
+                LintSeverity::Error => "ERROR",
+                LintSeverity::Warning => "WARNING",
+            };
+            println!(
+                "[{}] {}: {}",
+                severity, lint_result.rule, lint_result.message
+            );
+        }
+    }
+
+    if has_errors(&lint_results) {
+        let error_count = lint_results
+            .iter()
+            .filter(|r| matches!(r.severity, LintSeverity::Error))
+            .count();
+        if json {
+            let error_msg = format!("Migration blocked by {error_count} lint error(s)");
+            let lint_error_output = serde_json::json!({
+                "success": false,
+                "error": error_msg,
+            });
+            print_json(&lint_error_output)?;
+        }
+        return Err(anyhow!("Migration blocked by {error_count} lint error(s)"));
+    }
+
+    Ok(())
+}
+
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
@@ -543,6 +593,7 @@ pub async fn run() -> Result<()> {
             json,
             zero_downtime,
             grants,
+            allow_destructive,
             validate,
         } => {
             let include_extension_objects = filter.include_extension_objects;
@@ -597,6 +648,8 @@ pub async fn run() -> Result<()> {
             };
 
             let validation_info = if let Some(validate_db_url) = &validate {
+                block_destructive_plan_validation(&ops, json, allow_destructive)?;
+
                 let result = run_validation(
                     &ops,
                     validate_db_url,
@@ -785,7 +838,14 @@ pub async fn run() -> Result<()> {
             let ops = migration_plan.ops;
             let filtered_db_schema = migration_plan.current_schema;
             let filtered_target = migration_plan.target_schema;
-            let lint_options = LintOptions::from_env(allow_destructive);
+            let lint_options = LintOptions::from_env(allow_destructive).inspect_err(|e| {
+                if json {
+                    let _ = print_json(&serde_json::json!({
+                        "success": false,
+                        "error": e.to_string(),
+                    }));
+                }
+            })?;
             let mut lint_results = lint_migration_plan(&ops, &lint_options);
             lint_results.extend(lint_schema(&filtered_target));
 
@@ -1011,7 +1071,14 @@ pub async fn run() -> Result<()> {
                 &grants.excluded_grant_roles(),
             ))?;
 
-            let lint_options = LintOptions::from_env(false);
+            let lint_options = LintOptions::from_env(false).inspect_err(|e| {
+                if json {
+                    let _ = print_json(&serde_json::json!({
+                        "success": false,
+                        "error": e.to_string(),
+                    }));
+                }
+            })?;
             let mut results = lint_migration_plan(&ops, &lint_options);
             results.extend(lint_schema(&target));
 
@@ -1248,7 +1315,8 @@ pub async fn run() -> Result<()> {
 
             let next_number = find_next_migration_number(migrations_path)
                 .map_err(|e| anyhow!("Failed to determine next migration number: {e}"))?;
-            let filename = generate_migration_filename(next_number, &name);
+            let filename =
+                generate_migration_filename(next_number, &name).map_err(|e| anyhow!("{e}"))?;
             let file_path = migrations_path.join(&filename);
 
             let content = sql.join("\n\n");
@@ -2365,5 +2433,53 @@ mod tests {
         } else {
             panic!("Expected Plan command");
         }
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_refuses_on_drop_table() {
+        let ops = vec![pgmold::diff::MigrationOp::DropTable(
+            "public.old_table".to_string(),
+        )];
+        let result = block_destructive_plan_validation(&ops, false, false);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("blocked by 1 lint error"));
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_allows_non_destructive_ops() {
+        let ops = vec![pgmold::diff::MigrationOp::AddColumn {
+            table: pgmold::model::QualifiedName::new("public", "users"),
+            column: pgmold::model::Column {
+                name: "email".to_string(),
+                data_type: pgmold::model::PgType::Varchar(Some(255)),
+                nullable: true,
+                default: None,
+                comment: None,
+                generated: None,
+            },
+        }];
+        let result = block_destructive_plan_validation(&ops, false, false);
+        assert_eq!(result.unwrap(), ());
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_refuses_drop_table_without_allow_destructive() {
+        let ops = vec![pgmold::diff::MigrationOp::DropTable(
+            "public.old_table".to_string(),
+        )];
+        let result = block_destructive_plan_validation(&ops, false, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_accepts_drop_table_with_allow_destructive() {
+        let ops = vec![pgmold::diff::MigrationOp::DropTable(
+            "public.old_table".to_string(),
+        )];
+        let result = block_destructive_plan_validation(&ops, false, true);
+        assert_eq!(result.unwrap(), ());
     }
 }

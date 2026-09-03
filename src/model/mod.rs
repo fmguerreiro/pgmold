@@ -1,5 +1,6 @@
 use crate::util::{
-    expressions_semantically_equal, views_semantically_equal, views_semantically_equal_with_columns,
+    expressions_semantically_equal, views_semantically_equal,
+    views_semantically_equal_with_columns, SchemaError,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;
@@ -424,6 +425,8 @@ pub enum IndexType {
     Hash,
     Gin,
     Gist,
+    Brin,
+    SpGist,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1341,6 +1344,94 @@ impl Schema {
         self.apply_pending_comments(true);
         self.merge_all_grants();
         orphaned
+    }
+
+    /// `observe` reports each merged object so callers can reject duplicates;
+    /// duplicates are never silently overwritten.
+    pub(crate) fn merge_from(
+        &mut self,
+        source: Schema,
+        mut observe: impl FnMut(&str, &str, bool) -> Result<(), SchemaError>,
+    ) -> Result<(), SchemaError> {
+        fn merge_map<V>(
+            target: &mut BTreeMap<String, V>,
+            source: BTreeMap<String, V>,
+            kind: &str,
+            observe: &mut impl FnMut(&str, &str, bool) -> Result<(), SchemaError>,
+        ) -> Result<(), SchemaError> {
+            use std::collections::btree_map::Entry;
+            for (name, value) in source {
+                match target.entry(name) {
+                    Entry::Occupied(entry) => observe(kind, entry.key(), true)?,
+                    Entry::Vacant(entry) => {
+                        observe(kind, entry.key(), false)?;
+                        entry.insert(value);
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        // No `..` rest pattern: a new Schema field must break this match until
+        // it is explicitly merged.
+        let Schema {
+            schemas,
+            extensions,
+            servers,
+            tables,
+            enums,
+            domains,
+            functions,
+            aggregates,
+            views,
+            triggers,
+            sequences,
+            partitions,
+            pending_policies,
+            pending_owners,
+            pending_grants,
+            pending_revokes,
+            pending_comments,
+            default_privileges,
+            table_constraint_comments,
+            domain_constraint_comments,
+            overlong_identifiers,
+        } = source;
+
+        merge_map(&mut self.schemas, schemas, "schema", &mut observe)?;
+        merge_map(&mut self.extensions, extensions, "extension", &mut observe)?;
+        merge_map(&mut self.servers, servers, "server", &mut observe)?;
+        merge_map(&mut self.tables, tables, "table", &mut observe)?;
+        merge_map(&mut self.enums, enums, "enum", &mut observe)?;
+        merge_map(&mut self.domains, domains, "domain", &mut observe)?;
+        merge_map(&mut self.functions, functions, "function", &mut observe)?;
+        merge_map(&mut self.aggregates, aggregates, "aggregate", &mut observe)?;
+        merge_map(&mut self.views, views, "view", &mut observe)?;
+        merge_map(&mut self.triggers, triggers, "trigger", &mut observe)?;
+        merge_map(&mut self.sequences, sequences, "sequence", &mut observe)?;
+        merge_map(&mut self.partitions, partitions, "partition", &mut observe)?;
+        merge_map(
+            &mut self.table_constraint_comments,
+            table_constraint_comments,
+            "constraint comment",
+            &mut observe,
+        )?;
+        merge_map(
+            &mut self.domain_constraint_comments,
+            domain_constraint_comments,
+            "domain constraint comment",
+            &mut observe,
+        )?;
+
+        self.pending_policies.extend(pending_policies);
+        self.pending_owners.extend(pending_owners);
+        self.pending_grants.extend(pending_grants);
+        self.pending_revokes.extend(pending_revokes);
+        self.pending_comments.extend(pending_comments);
+        self.default_privileges.extend(default_privileges);
+        self.overlong_identifiers.extend(overlong_identifiers);
+
+        Ok(())
     }
 
     /// Applies pending ownership assignments to their respective objects.

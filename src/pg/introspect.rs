@@ -1167,7 +1167,13 @@ async fn introspect_all_indexes(
             "hash" => IndexType::Hash,
             "gin" => IndexType::Gin,
             "gist" => IndexType::Gist,
-            _ => panic!("unsupported index type: {am_name}"),
+            "brin" => IndexType::Brin,
+            "spgist" => IndexType::SpGist,
+            other => {
+                return Err(SchemaError::DatabaseError(format!(
+                    "unsupported index access method: {other}"
+                )))
+            }
         };
 
         result

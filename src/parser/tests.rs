@@ -4813,6 +4813,60 @@ fn hash_index_method_is_preserved() {
 }
 
 #[test]
+fn brin_index_method_is_preserved() {
+    let sql = r#"
+        CREATE TABLE public.events (
+            id BIGINT PRIMARY KEY,
+            ts TIMESTAMPTZ
+        );
+        CREATE INDEX "events_ts_idx"
+            ON public.events USING BRIN (ts);
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = &schema.tables["public.events"];
+    let index = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "events_ts_idx")
+        .expect("index should exist");
+    assert_eq!(index.index_type, IndexType::Brin);
+}
+
+#[test]
+fn spgist_index_method_is_preserved() {
+    let sql = r#"
+        CREATE TABLE public.pts (
+            id BIGINT PRIMARY KEY,
+            label TEXT
+        );
+        CREATE INDEX "pts_label_idx"
+            ON public.pts USING SPGIST (label);
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = &schema.tables["public.pts"];
+    let index = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "pts_label_idx")
+        .expect("index should exist");
+    assert_eq!(index.index_type, IndexType::SpGist);
+}
+
+#[test]
+fn unknown_index_access_method_is_a_parse_error_not_a_panic() {
+    let sql = r#"
+        CREATE TABLE public.items (
+            id BIGINT PRIMARY KEY,
+            embedding TEXT
+        );
+        CREATE INDEX "items_embedding_idx"
+            ON public.items USING hnsw (embedding);
+    "#;
+    let err = parse_sql_string(sql).unwrap_err();
+    assert_eq!(err.to_string(), "Parse error: unsupported index type: hnsw");
+}
+
+#[test]
 fn btree_index_method_defaults_when_no_using_clause() {
     let sql = r#"
         CREATE TABLE public.users (
