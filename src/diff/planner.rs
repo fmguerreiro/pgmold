@@ -1061,11 +1061,7 @@ impl MigrationGraph {
                     ..
                 } => {
                     edges_to_add.push((OpKey::CreateSchema(schema_name.clone()), key.clone()));
-                    if let Some(MigrationOp::AlterDefaultPrivileges { revoke: true, .. }) =
-                        self.get_op(key)
-                    {
-                        edges_to_add.push((key.clone(), OpKey::DropSchema(schema_name.clone())));
-                    }
+                    edges_to_add.push((key.clone(), OpKey::DropSchema(schema_name.clone())));
                 }
 
                 // SetComment has no tier edges; without content-aware edges
@@ -2800,56 +2796,60 @@ mod tests {
     fn create_schema_before_alter_default_privileges() {
         use crate::model::{DefaultPrivilegeObjectType, Privilege};
 
-        let ops = vec![
-            MigrationOp::CreateSchema(make_schema("api")),
-            MigrationOp::AlterDefaultPrivileges {
+        let alter = MigrationOp::AlterDefaultPrivileges {
+            target_role: "current_role".to_string(),
+            schema: Some("api".to_string()),
+            object_type: DefaultPrivilegeObjectType::Tables,
+            grantee: "public".to_string(),
+            privileges: vec![Privilege::Select],
+            with_grant_option: false,
+            revoke: false,
+        };
+        let create = MigrationOp::CreateSchema(make_schema("api"));
+
+        for ops in [
+            vec![create.clone(), alter.clone()],
+            vec![alter.clone(), create.clone()],
+        ] {
+            assert_op_position(
+                &plan_migration(ops),
+                "CreateSchema",
+                "AlterDefaultPrivileges",
+                |op| matches!(op, MigrationOp::CreateSchema(_)),
+                |op| matches!(op, MigrationOp::AlterDefaultPrivileges { .. }),
+            );
+        }
+    }
+
+    #[test]
+    fn alter_default_privileges_before_drop_schema() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        for revoke in [false, true] {
+            let alter = MigrationOp::AlterDefaultPrivileges {
                 target_role: "current_role".to_string(),
                 schema: Some("api".to_string()),
                 object_type: DefaultPrivilegeObjectType::Tables,
                 grantee: "public".to_string(),
                 privileges: vec![Privilege::Select],
                 with_grant_option: false,
-                revoke: false,
-            },
-        ];
+                revoke,
+            };
+            let drop = MigrationOp::DropSchema("api".to_string());
 
-        let planned = plan_migration(ops);
-
-        assert_op_position(
-            &planned,
-            "CreateSchema",
-            "AlterDefaultPrivileges",
-            |op| matches!(op, MigrationOp::CreateSchema(_)),
-            |op| matches!(op, MigrationOp::AlterDefaultPrivileges { .. }),
-        );
-    }
-
-    #[test]
-    fn revoke_default_privileges_before_drop_schema() {
-        use crate::model::DefaultPrivilegeObjectType;
-
-        let ops = vec![
-            MigrationOp::AlterDefaultPrivileges {
-                target_role: "current_role".to_string(),
-                schema: Some("api".to_string()),
-                object_type: DefaultPrivilegeObjectType::Tables,
-                grantee: "public".to_string(),
-                privileges: vec![],
-                with_grant_option: false,
-                revoke: true,
-            },
-            MigrationOp::DropSchema("api".to_string()),
-        ];
-
-        let planned = plan_migration(ops);
-
-        assert_op_position(
-            &planned,
-            "AlterDefaultPrivileges",
-            "DropSchema",
-            |op| matches!(op, MigrationOp::AlterDefaultPrivileges { .. }),
-            |op| matches!(op, MigrationOp::DropSchema(_)),
-        );
+            for ops in [
+                vec![alter.clone(), drop.clone()],
+                vec![drop.clone(), alter.clone()],
+            ] {
+                assert_op_position(
+                    &plan_migration(ops),
+                    "AlterDefaultPrivileges",
+                    "DropSchema",
+                    |op| matches!(op, MigrationOp::AlterDefaultPrivileges { .. }),
+                    |op| matches!(op, MigrationOp::DropSchema(_)),
+                );
+            }
+        }
     }
 
     #[test]
