@@ -1182,6 +1182,25 @@ impl<'de> Deserialize<'de> for ConstraintCommentKey {
     }
 }
 
+/// Renders a map key for the duplicate-object diagnostics `merge_from` emits.
+/// `String` keys borrow; structured keys render on demand, so no key type has
+/// to be a string just to be mergeable.
+pub(crate) trait MergeKeyName {
+    fn merge_key_name(&self) -> Cow<'_, str>;
+}
+
+impl MergeKeyName for String {
+    fn merge_key_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed(self)
+    }
+}
+
+impl MergeKeyName for ConstraintCommentKey {
+    fn merge_key_name(&self) -> Cow<'_, str> {
+        Cow::Owned(format!("{}.{}", self.parent_key, self.constraint_name))
+    }
+}
+
 /// Parses a qualified name into (schema, name) tuple.
 /// Defaults to "public" schema if no dot separator found.
 ///
@@ -1353,18 +1372,18 @@ impl Schema {
         source: Schema,
         mut observe: impl FnMut(&str, &str, bool) -> Result<(), SchemaError>,
     ) -> Result<(), SchemaError> {
-        fn merge_map<V>(
-            target: &mut BTreeMap<String, V>,
-            source: BTreeMap<String, V>,
+        fn merge_map<K: Ord + MergeKeyName, V>(
+            target: &mut BTreeMap<K, V>,
+            source: BTreeMap<K, V>,
             kind: &str,
             observe: &mut impl FnMut(&str, &str, bool) -> Result<(), SchemaError>,
         ) -> Result<(), SchemaError> {
             use std::collections::btree_map::Entry;
             for (name, value) in source {
                 match target.entry(name) {
-                    Entry::Occupied(entry) => observe(kind, entry.key(), true)?,
+                    Entry::Occupied(entry) => observe(kind, &entry.key().merge_key_name(), true)?,
                     Entry::Vacant(entry) => {
-                        observe(kind, entry.key(), false)?;
+                        observe(kind, &entry.key().merge_key_name(), false)?;
                         entry.insert(value);
                     }
                 }
