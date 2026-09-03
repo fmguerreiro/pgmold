@@ -3,6 +3,7 @@ pub mod locks;
 use crate::diff::MigrationOp;
 use crate::model::{PgType, Schema};
 use crate::parser::util::{truncate_to_bytes_raw, PG_MAX_IDENTIFIER_LENGTH};
+use crate::util::{Result, SchemaError};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LintOptions {
@@ -10,14 +11,32 @@ pub struct LintOptions {
     pub is_production: bool,
 }
 
+const PGMOLD_PROD_ENV_VAR: &str = "PGMOLD_PROD";
+
 impl LintOptions {
-    pub fn from_env(allow_destructive: bool) -> Self {
-        Self {
+    pub fn from_env(allow_destructive: bool) -> Result<Self> {
+        let is_production = match std::env::var(PGMOLD_PROD_ENV_VAR) {
+            Ok(value) => parse_is_production_flag(&value)?,
+            Err(_) => false,
+        };
+        Ok(Self {
             allow_destructive,
-            is_production: std::env::var("PGMOLD_PROD")
-                .map(|v| v == "1")
-                .unwrap_or(false),
-        }
+            is_production,
+        })
+    }
+}
+
+fn parse_is_production_flag(value: &str) -> Result<bool> {
+    if value.is_empty() {
+        return Ok(false);
+    }
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(SchemaError::ValidationError(format!(
+            "invalid value {value:?} for environment variable {PGMOLD_PROD_ENV_VAR} \
+             (accepted values: 1, true, yes, on, 0, false, no, off)"
+        ))),
     }
 }
 
@@ -319,6 +338,7 @@ mod tests {
     use super::*;
     use crate::diff::ColumnChanges;
     use crate::model::QualifiedName;
+    use std::sync::Mutex;
 
     #[test]
     fn blocks_drop_column_without_flag() {
@@ -845,5 +865,90 @@ mod tests {
         });
 
         assert!(!has_errors(&lint_schema(&schema)));
+    }
+
+    #[test]
+    fn parse_is_production_flag_treats_empty_string_as_non_production() {
+        assert!(!parse_is_production_flag("").unwrap());
+    }
+
+    #[test]
+    fn parse_is_production_flag_accepts_truthy_values_case_insensitively() {
+        for value in ["1", "true", "TRUE", "yes", "Yes", "on", "ON"] {
+            assert!(parse_is_production_flag(value).unwrap(), "{value}");
+        }
+    }
+
+    #[test]
+    fn parse_is_production_flag_accepts_falsey_values_case_insensitively() {
+        for value in ["0", "false", "FALSE", "no", "No", "off", "OFF"] {
+            assert!(!parse_is_production_flag(value).unwrap(), "{value}");
+        }
+    }
+
+    #[test]
+    fn parse_is_production_flag_rejects_unrecognized_value() {
+        let error = parse_is_production_flag("production")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("production"));
+        assert!(error.contains("PGMOLD_PROD"));
+        assert!(error.contains("1, true, yes, on, 0, false, no, off"));
+    }
+
+    static PGMOLD_PROD_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_pgmold_prod_env<T>(value: Option<&str>, test: impl FnOnce() -> T) -> T {
+        let _guard = PGMOLD_PROD_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match value {
+            Some(value) => unsafe { std::env::set_var(PGMOLD_PROD_ENV_VAR, value) },
+            None => unsafe { std::env::remove_var(PGMOLD_PROD_ENV_VAR) },
+        }
+        let result = test();
+        unsafe { std::env::remove_var(PGMOLD_PROD_ENV_VAR) };
+        result
+    }
+
+    #[test]
+    fn from_env_defaults_to_non_production_when_unset() {
+        with_pgmold_prod_env(None, || {
+            let options = LintOptions::from_env(false).unwrap();
+            assert!(!options.is_production);
+        });
+    }
+
+    #[test]
+    fn from_env_defaults_to_non_production_when_empty() {
+        with_pgmold_prod_env(Some(""), || {
+            let options = LintOptions::from_env(false).unwrap();
+            assert!(!options.is_production);
+        });
+    }
+
+    #[test]
+    fn from_env_enables_production_for_truthy_word() {
+        with_pgmold_prod_env(Some("TRUE"), || {
+            let options = LintOptions::from_env(false).unwrap();
+            assert!(options.is_production);
+        });
+    }
+
+    #[test]
+    fn from_env_disables_production_for_falsey_word() {
+        with_pgmold_prod_env(Some("no"), || {
+            let options = LintOptions::from_env(false).unwrap();
+            assert!(!options.is_production);
+        });
+    }
+
+    #[test]
+    fn from_env_errors_on_unrecognized_value() {
+        with_pgmold_prod_env(Some("production"), || {
+            let error = LintOptions::from_env(false).unwrap_err().to_string();
+            assert!(error.contains("production"));
+            assert!(error.contains("PGMOLD_PROD"));
+        });
     }
 }

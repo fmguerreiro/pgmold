@@ -785,7 +785,7 @@ pub async fn run() -> Result<()> {
             let ops = migration_plan.ops;
             let filtered_db_schema = migration_plan.current_schema;
             let filtered_target = migration_plan.target_schema;
-            let lint_options = LintOptions::from_env(allow_destructive);
+            let lint_options = LintOptions::from_env(allow_destructive)?;
             let mut lint_results = lint_migration_plan(&ops, &lint_options);
             lint_results.extend(lint_schema(&filtered_target));
 
@@ -1011,7 +1011,7 @@ pub async fn run() -> Result<()> {
                 &grants.excluded_grant_roles(),
             ))?;
 
-            let lint_options = LintOptions::from_env(false);
+            let lint_options = LintOptions::from_env(false)?;
             let mut results = lint_migration_plan(&ops, &lint_options);
             results.extend(lint_schema(&target));
 
