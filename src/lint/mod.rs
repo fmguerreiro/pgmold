@@ -1126,6 +1126,30 @@ mod tests {
     }
 
     #[test]
+    fn parsed_schema_with_overlong_operator_warns_through_the_full_path() {
+        let long_operator = "o".repeat(70);
+        let sql = format!(
+            "CREATE FUNCTION eq(integer, integer) RETURNS boolean AS $$ SELECT $1 = $2 $$ LANGUAGE sql; \
+             CREATE OPERATOR \"{long_operator}\" (LEFTARG = integer, RIGHTARG = integer, FUNCTION = eq);"
+        );
+        let schema = crate::parser::parse_sql_string(&sql).expect("parse");
+
+        let results = lint_schema(&schema);
+
+        assert_eq!(
+            results,
+            vec![LintResult {
+                rule: "warn_identifier_exceeds_namedatalen",
+                severity: LintSeverity::Warning,
+                message: format!(
+                    "operator identifier \"{long_operator}\" is 70 bytes; PostgreSQL truncates identifiers to 63 bytes and will store it as \"{}\"",
+                    "o".repeat(63)
+                ),
+            }]
+        );
+    }
+
+    #[test]
     fn overlong_identifier_warnings_are_not_errors() {
         let mut schema = Schema::new();
         schema.overlong_identifiers.push(OverlongIdentifier {

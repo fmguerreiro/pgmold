@@ -2282,19 +2282,27 @@ async fn introspect_operators(
 
         let commutator_schema: Option<String> = row.get("commutator_schema");
         let commutator_name: Option<String> = row.get("commutator_name");
-        let commutator = commutator_name.map(|n| qualified_name(&commutator_schema.unwrap(), &n));
+        let commutator = commutator_name
+            .zip(commutator_schema)
+            .map(|(name, schema)| qualified_name(&schema, &name));
 
         let negator_schema: Option<String> = row.get("negator_schema");
         let negator_name: Option<String> = row.get("negator_name");
-        let negator = negator_name.map(|n| qualified_name(&negator_schema.unwrap(), &n));
+        let negator = negator_name
+            .zip(negator_schema)
+            .map(|(name, schema)| qualified_name(&schema, &name));
 
         let restrict_schema: Option<String> = row.get("restrict_schema");
         let restrict_name: Option<String> = row.get("restrict_name");
-        let restrict = restrict_name.map(|n| qualified_name(&restrict_schema.unwrap(), &n));
+        let restrict = restrict_name
+            .zip(restrict_schema)
+            .map(|(name, schema)| qualified_name(&schema, &name));
 
         let join_schema: Option<String> = row.get("join_schema");
         let join_name: Option<String> = row.get("join_name");
-        let join = join_name.map(|n| qualified_name(&join_schema.unwrap(), &n));
+        let join = join_name
+            .zip(join_schema)
+            .map(|(name, schema)| qualified_name(&schema, &name));
 
         let hashes: bool = row.get("hashes");
         let merges: bool = row.get("merges");

@@ -1595,6 +1595,9 @@ fn classify_truncated_name(schema: &Schema, truncated: &str) -> Option<&'static 
     if schema.functions.values().any(|f| f.name == truncated) {
         return Some("function");
     }
+    if schema.operators.values().any(|o| o.name == truncated) {
+        return Some("operator");
+    }
     if schema.enums.values().any(|e| e.name == truncated) {
         return Some("enum");
     }
