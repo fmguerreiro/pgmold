@@ -41,6 +41,8 @@ pub async fn introspect_schema(
         mut all_foreign_keys,
         mut all_check_constraints,
         mut all_exclusion_constraints,
+        mut all_partition_indexes,
+        mut all_partition_check_constraints,
         mut all_rls,
         mut all_force_rls,
         mut all_policies,
@@ -73,6 +75,8 @@ pub async fn introspect_schema(
         introspect_all_foreign_keys(connection, target_schemas),
         introspect_all_check_constraints(connection, target_schemas),
         introspect_all_exclusion_constraints(connection, target_schemas),
+        introspect_all_partition_indexes(connection, target_schemas),
+        introspect_all_partition_check_constraints(connection, target_schemas),
         introspect_all_rls(connection, target_schemas),
         introspect_all_force_rls(connection, target_schemas),
         introspect_all_policies(connection, target_schemas),
@@ -175,6 +179,18 @@ pub async fn introspect_schema(
         if let Some(mut rules) = all_rules.remove(qualified_name) {
             rules.sort();
             table.rules = rules;
+        }
+    }
+
+    for (qualified_name, partition) in &mut schema.partitions {
+        if let Some(mut indexes) = all_partition_indexes.remove(qualified_name) {
+            indexes.sort();
+            partition.indexes = indexes;
+        }
+        if let Some(mut check_constraints) = all_partition_check_constraints.remove(qualified_name)
+        {
+            check_constraints.sort();
+            partition.check_constraints = check_constraints;
         }
     }
 
@@ -1291,6 +1307,151 @@ async fn introspect_all_check_constraints(
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch check constraints: {e}")))?;
+
+    let mut result: BTreeMap<String, Vec<CheckConstraint>> = BTreeMap::new();
+    for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
+        let name: String = row.get("name");
+        let definition: String = row.get("definition");
+
+        let expression = definition
+            .strip_prefix("CHECK (")
+            .and_then(|s| s.strip_suffix(")"))
+            .map(|s| s.to_string())
+            .unwrap_or(definition);
+
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(CheckConstraint { name, expression });
+    }
+
+    Ok(result)
+}
+
+/// Introspect indexes created directly on a partition child (not the ones
+/// PostgreSQL auto-attaches to every partition when an index is created on
+/// the partitioned parent). Partition-local indexes are the only ones that
+/// round-trip through `Partition.indexes` — cascaded child indexes are owned
+/// by the parent's own index and are already covered by `introspect_all_indexes`
+/// diffing the parent table.
+async fn introspect_all_partition_indexes(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<Index>>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS table_schema,
+            t.relname AS table_name,
+            i.relname as index_name,
+            ix.indisunique,
+            am.amname,
+            COALESCE((SELECT array_agg(
+                CASE WHEN ix.indkey[k] = 0
+                     THEN pg_get_indexdef(ix.indexrelid, k + 1, false)
+                     ELSE (SELECT a.attname::text FROM pg_attribute a WHERE a.attrelid = t.oid AND a.attnum = ix.indkey[k])
+                END ORDER BY k
+            ) FROM generate_series(0, array_length(ix.indkey, 1) - 1) AS k), ARRAY[]::text[]) as columns,
+            pg_get_expr(ix.indpred, ix.indrelid) as predicate,
+            (uc.oid IS NOT NULL) AS is_constraint
+        FROM pg_index ix
+        JOIN pg_class t ON t.oid = ix.indrelid
+        JOIN pg_class i ON i.oid = ix.indexrelid
+        JOIN pg_am am ON am.oid = i.relam
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        LEFT JOIN pg_constraint uc ON uc.conindid = ix.indexrelid AND uc.contype = 'u'
+        WHERE n.nspname = ANY($1::text[])
+          AND NOT ix.indisprimary
+          AND t.relkind IN ('r', 'p')
+          AND t.relispartition = true
+          AND NOT EXISTS (
+              SELECT 1 FROM pg_constraint ex
+              WHERE ex.conindid = ix.indexrelid AND ex.contype = 'x'
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM pg_inherits pi WHERE pi.inhrelid = i.oid
+          )
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch partition indexes: {e}")))?;
+
+    let mut result: BTreeMap<String, Vec<Index>> = BTreeMap::new();
+    for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
+        let name: String = row.get("index_name");
+        let unique: bool = row.get("indisunique");
+        let am_name: String = row.get("amname");
+        let columns: Vec<String> = row.get("columns");
+        let predicate: Option<String> = row.get("predicate");
+        let is_constraint: bool = row.get("is_constraint");
+
+        let index_type = match am_name.as_str() {
+            "btree" => IndexType::BTree,
+            "hash" => IndexType::Hash,
+            "gin" => IndexType::Gin,
+            "gist" => IndexType::Gist,
+            "brin" => IndexType::Brin,
+            "spgist" => IndexType::SpGist,
+            other => {
+                return Err(SchemaError::DatabaseError(format!(
+                    "unsupported index access method: {other}"
+                )))
+            }
+        };
+
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(Index {
+                name,
+                columns,
+                unique,
+                index_type,
+                predicate,
+                is_constraint,
+            });
+    }
+
+    Ok(result)
+}
+
+/// Introspect CHECK constraints defined directly on a partition child.
+/// Excludes CHECK constraints a partition inherits automatically from its
+/// parent (`conislocal = false`) — those already round-trip via the parent
+/// table's own `check_constraints`.
+async fn introspect_all_partition_check_constraints(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<CheckConstraint>>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS table_schema,
+            class.relname AS table_name,
+            con.conname as name,
+            pg_get_constraintdef(con.oid) as definition
+        FROM pg_constraint con
+        JOIN pg_class class ON con.conrelid = class.oid
+        JOIN pg_namespace n ON n.oid = class.relnamespace
+        WHERE n.nspname = ANY($1::text[])
+          AND con.contype = 'c'
+          AND class.relkind IN ('r', 'p')
+          AND class.relispartition = true
+          AND con.conislocal = true
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| {
+        SchemaError::DatabaseError(format!("Failed to fetch partition check constraints: {e}"))
+    })?;
 
     let mut result: BTreeMap<String, Vec<CheckConstraint>> = BTreeMap::new();
     for row in rows {

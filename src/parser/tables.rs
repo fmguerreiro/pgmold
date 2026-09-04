@@ -130,7 +130,7 @@ pub(super) fn parse_create_table(
                                 &chk.expr,
                                 &table_cols,
                             );
-                            dedup_check_constraint_name(&base, &table)
+                            dedup_check_constraint_name(&base, &table.check_constraints)
                         }
                     };
                     table.check_constraints.push(CheckConstraint {
@@ -192,7 +192,7 @@ pub(super) fn parse_create_table(
                             table.columns.keys().map(|s| s.as_str()).collect();
                         let base =
                             default_check_constraint_base_name(&table.name, &chk.expr, &table_cols);
-                        dedup_check_constraint_name(&base, &table)
+                        dedup_check_constraint_name(&base, &table.check_constraints)
                     }
                 };
 
@@ -497,9 +497,9 @@ pub(super) fn default_check_constraint_base_name(
 /// scheme: if `base` is free, use it as-is; otherwise try `{base}1`, `{base}2`, ... until
 /// a free slot is found. When the base is at the 63-byte cap, the base is truncated
 /// further so the numeric suffix fits without falling off — Postgres does the same.
-pub(super) fn dedup_check_constraint_name(base: &str, table: &Table) -> String {
+pub(super) fn dedup_check_constraint_name(base: &str, existing: &[CheckConstraint]) -> String {
     let candidate = truncate_identifier(base);
-    if !check_name_taken(&candidate, table) {
+    if !check_name_taken(&candidate, existing) {
         return candidate;
     }
     let mut counter: u32 = 1;
@@ -508,15 +508,15 @@ pub(super) fn dedup_check_constraint_name(base: &str, table: &Table) -> String {
         let max_base = PG_MAX_IDENTIFIER_LENGTH.saturating_sub(suffix.len());
         let truncated_base = truncate_to_bytes_raw(base, max_base);
         let candidate = format!("{truncated_base}{suffix}");
-        if !check_name_taken(&candidate, table) {
+        if !check_name_taken(&candidate, existing) {
             return candidate;
         }
         counter += 1;
     }
 }
 
-fn check_name_taken(name: &str, table: &Table) -> bool {
-    table.check_constraints.iter().any(|c| c.name == name)
+fn check_name_taken(name: &str, existing: &[CheckConstraint]) -> bool {
+    existing.iter().any(|c| c.name == name)
 }
 
 /// Collect the set of known table columns referenced by a CHECK expression, in the order

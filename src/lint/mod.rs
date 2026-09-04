@@ -418,6 +418,8 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         | MigrationOp::CreateVersionView { .. }
         | MigrationOp::DropVersionView { .. }
         | MigrationOp::BackfillHint { .. }
+        | MigrationOp::DetachColumnDomain { .. }
+        | MigrationOp::ReattachColumnDomain { .. }
         | MigrationOp::SetComment { .. } => {}
     }
 

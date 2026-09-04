@@ -52,6 +52,26 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     ),
                 });
             }
+            MigrationOp::DetachColumnDomain { table, column, .. } => {
+                warnings.push(LockWarning {
+                    operation: "DetachColumnDomain".to_string(),
+                    table: table.to_string(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "ALTER COLUMN TYPE acquires ACCESS EXCLUSIVE lock on table {table} (column {column}, detaching from domain for recreate)"
+                    ),
+                });
+            }
+            MigrationOp::ReattachColumnDomain { table, column, .. } => {
+                warnings.push(LockWarning {
+                    operation: "ReattachColumnDomain".to_string(),
+                    table: table.to_string(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "ALTER COLUMN TYPE acquires ACCESS EXCLUSIVE lock on table {table} (column {column}, reattaching recreated domain)"
+                    ),
+                });
+            }
             MigrationOp::AddIndex { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "AddIndex".to_string(),
@@ -339,6 +359,39 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     ),
                 });
             }
+            MigrationOp::DetachPartition(partition) => {
+                use crate::model::qualified_name;
+                let parent = qualified_name(&partition.parent_schema, &partition.parent_name);
+                warnings.push(LockWarning {
+                    operation: "DetachPartition".to_string(),
+                    table: parent.clone(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "DETACH PARTITION acquires ACCESS EXCLUSIVE lock on parent table {parent} (partition {}.{})",
+                        partition.schema, partition.name
+                    ),
+                });
+            }
+            MigrationOp::AttachPartition(partition) => {
+                use crate::model::qualified_name;
+                let parent = qualified_name(&partition.parent_schema, &partition.parent_name);
+                let child = qualified_name(&partition.schema, &partition.name);
+                let message = if partition.check_constraints.is_empty() {
+                    format!(
+                        "ATTACH PARTITION acquires ACCESS EXCLUSIVE lock on parent table {parent} and SHARE UPDATE EXCLUSIVE lock on partition {child}, which is scanned in full to validate the partition bound"
+                    )
+                } else {
+                    format!(
+                        "ATTACH PARTITION acquires ACCESS EXCLUSIVE lock on parent table {parent} and SHARE UPDATE EXCLUSIVE lock on partition {child}; an existing CHECK constraint on {child} may let PostgreSQL skip the full validation scan"
+                    )
+                };
+                warnings.push(LockWarning {
+                    operation: "AttachPartition".to_string(),
+                    table: parent,
+                    lock_level: LockLevel::AccessExclusive,
+                    message,
+                });
+            }
             _ => {}
         }
     }
@@ -351,8 +404,8 @@ mod tests {
     use super::*;
     use crate::diff::ColumnChanges;
     use crate::model::{
-        CheckConstraint, Column, ForeignKey, Index, IndexType, PgType, PrimaryKey, QualifiedName,
-        ReferentialAction,
+        CheckConstraint, Column, ForeignKey, Index, IndexType, Partition, PartitionBound, PgType,
+        PrimaryKey, QualifiedName, ReferentialAction,
     };
 
     #[test]
@@ -819,5 +872,70 @@ mod tests {
         assert_eq!(warnings[0].operation, "AlterSequence");
         assert_eq!(warnings[0].table, "users_id_seq");
         assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
+    }
+
+    fn sample_partition(check_constraints: Vec<CheckConstraint>) -> Partition {
+        Partition {
+            schema: "public".to_string(),
+            name: "orders_2024".to_string(),
+            parent_schema: "public".to_string(),
+            parent_name: "orders".to_string(),
+            bound: PartitionBound::Range {
+                from: vec!["2024-01-01".to_string()],
+                to: vec!["2025-01-01".to_string()],
+            },
+            indexes: Vec::new(),
+            check_constraints,
+            owner: None,
+        }
+    }
+
+    #[test]
+    fn detects_detach_partition_lock() {
+        let ops = vec![MigrationOp::DetachPartition(sample_partition(Vec::new()))];
+        let warnings = detect_lock_hazards(&ops);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].operation, "DetachPartition");
+        assert_eq!(warnings[0].table, "public.orders");
+        assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
+        assert_eq!(
+            warnings[0].message,
+            "DETACH PARTITION acquires ACCESS EXCLUSIVE lock on parent table public.orders (partition public.orders_2024)"
+        );
+    }
+
+    #[test]
+    fn detects_attach_partition_lock_without_check_constraint() {
+        let ops = vec![MigrationOp::AttachPartition(sample_partition(Vec::new()))];
+        let warnings = detect_lock_hazards(&ops);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].operation, "AttachPartition");
+        assert_eq!(warnings[0].table, "public.orders");
+        assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
+        assert_eq!(
+            warnings[0].message,
+            "ATTACH PARTITION acquires ACCESS EXCLUSIVE lock on parent table public.orders and SHARE UPDATE EXCLUSIVE lock on partition public.orders_2024, which is scanned in full to validate the partition bound"
+        );
+    }
+
+    #[test]
+    fn attach_partition_notes_validation_scan_may_be_skipped_with_check_constraint() {
+        let ops = vec![MigrationOp::AttachPartition(sample_partition(vec![
+            CheckConstraint {
+                name: "orders_2024_check".to_string(),
+                expression: "created_at >= '2024-01-01' AND created_at < '2025-01-01'".to_string(),
+            },
+        ]))];
+        let warnings = detect_lock_hazards(&ops);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].operation, "AttachPartition");
+        assert_eq!(warnings[0].lock_level, LockLevel::AccessExclusive);
+        assert_eq!(
+            warnings[0].message,
+            "ATTACH PARTITION acquires ACCESS EXCLUSIVE lock on parent table public.orders and SHARE UPDATE EXCLUSIVE lock on partition public.orders_2024; an existing CHECK constraint on public.orders_2024 may let PostgreSQL skip the full validation scan"
+        );
     }
 }
