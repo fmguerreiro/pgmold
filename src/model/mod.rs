@@ -95,6 +95,7 @@ pub enum PendingCommentObjectType {
     Trigger,
     Extension,
     Policy,
+    Rule,
     Constraint,
 }
 
@@ -268,6 +269,10 @@ pub struct Schema {
     /// Cleared after finalize() is called.
     #[serde(skip)]
     pub pending_policies: Vec<Policy>,
+    /// Rules collected during parsing, awaiting association with tables.
+    /// Cleared after finalize() is called.
+    #[serde(skip)]
+    pub pending_rules: Vec<Rule>,
     /// Ownership assignments collected during parsing, awaiting application to objects.
     /// Cleared after finalize() is called.
     #[serde(skip)]
@@ -344,6 +349,7 @@ pub struct Table {
     #[serde(default)]
     pub force_row_level_security: bool,
     pub policies: Vec<Policy>,
+    pub rules: Vec<Rule>,
     pub partition_by: Option<PartitionKey>,
     pub owner: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -660,6 +666,28 @@ pub struct Policy {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PolicyCommand {
     All,
+    Select,
+    Insert,
+    Update,
+    Delete,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Rule {
+    pub name: String,
+    pub table_schema: String,
+    pub table: String,
+    pub event: RuleEvent,
+    pub instead: bool,
+    pub condition: Option<String>,
+    /// Deparsed action statements. Empty means `DO [INSTEAD] NOTHING`.
+    pub actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RuleEvent {
     Select,
     Insert,
     Update,
@@ -1309,6 +1337,7 @@ impl Schema {
             sequences: BTreeMap::new(),
             partitions: BTreeMap::new(),
             pending_policies: Vec::new(),
+            pending_rules: Vec::new(),
             pending_owners: Vec::new(),
             pending_grants: Vec::new(),
             pending_revokes: Vec::new(),
@@ -1374,6 +1403,12 @@ impl Schema {
                     .any(|t| t.policies.iter().any(|p| matches(&p.name)))
                     || self.pending_policies.iter().any(|p| matches(&p.name))
             }
+            "rule" => {
+                self.tables
+                    .values()
+                    .any(|t| t.rules.iter().any(|r| matches(&r.name)))
+                    || self.pending_rules.iter().any(|r| matches(&r.name))
+            }
             other => panic!(
                 "unknown overlong-identifier kind {other:?}; every kind produced by the parser must be matched here"
             ),
@@ -1405,6 +1440,20 @@ impl Schema {
             }
         }
 
+        let pending_rules = std::mem::take(&mut self.pending_rules);
+        for rule in pending_rules {
+            let table_key = qualified_name(&rule.table_schema, &rule.table);
+            if let Some(table) = self.tables.get_mut(&table_key) {
+                table.rules.push(rule);
+                table.rules.sort();
+            } else {
+                return Err(format!(
+                    "Rule \"{}\" references non-existent table \"{}\"",
+                    rule.name, table_key
+                ));
+            }
+        }
+
         self.apply_pending_owners(false);
         self.apply_pending_grants(false);
         self.apply_pending_revokes(false);
@@ -1429,6 +1478,19 @@ impl Schema {
                 orphaned.push(policy);
             }
         }
+
+        let pending_rules = std::mem::take(&mut self.pending_rules);
+        let mut orphaned_rules = Vec::new();
+        for rule in pending_rules {
+            let table_key = qualified_name(&rule.table_schema, &rule.table);
+            if let Some(table) = self.tables.get_mut(&table_key) {
+                table.rules.push(rule);
+                table.rules.sort();
+            } else {
+                orphaned_rules.push(rule);
+            }
+        }
+        self.pending_rules = orphaned_rules;
 
         self.apply_pending_owners(true);
         self.apply_pending_grants(true);
@@ -1481,6 +1543,7 @@ impl Schema {
             sequences,
             partitions,
             pending_policies,
+            pending_rules,
             pending_owners,
             pending_grants,
             pending_revokes,
@@ -1518,6 +1581,7 @@ impl Schema {
         )?;
 
         self.pending_policies.extend(pending_policies);
+        self.pending_rules.extend(pending_rules);
         self.pending_owners.extend(pending_owners);
         self.pending_grants.extend(pending_grants);
         self.pending_revokes.extend(pending_revokes);
@@ -1841,6 +1905,19 @@ impl Schema {
                     if let Some(policy) = table.policies.iter_mut().find(|p| p.name == policy_name)
                     {
                         policy.comment = pc.comment.clone();
+                        return true;
+                    }
+                }
+                false
+            }
+            PendingCommentObjectType::Rule => {
+                let rule_name = pc
+                    .child_name
+                    .as_deref()
+                    .expect("Rule pending comment must carry child_name");
+                if let Some(table) = self.tables.get_mut(&pc.object_key) {
+                    if let Some(rule) = table.rules.iter_mut().find(|r| r.name == rule_name) {
+                        rule.comment = pc.comment.clone();
                         return true;
                     }
                 }
@@ -2206,6 +2283,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -2228,6 +2306,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -2411,6 +2490,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -2467,6 +2547,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: None,
             grants: Vec::new(),
@@ -2595,6 +2676,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -2617,6 +2699,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -3127,6 +3210,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
@@ -3267,6 +3351,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
@@ -3285,6 +3370,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some("admin".to_string()),
             grants: Vec::new(),
@@ -3308,6 +3394,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
@@ -3337,6 +3424,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: Some("postgres".to_string()),
                 grants: Vec::new(),
@@ -3359,6 +3447,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -3395,6 +3484,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: vec![grant],
@@ -3422,6 +3512,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),

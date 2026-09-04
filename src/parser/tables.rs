@@ -45,6 +45,7 @@ pub(super) fn parse_create_table(
         row_level_security: false,
         force_row_level_security: false,
         policies: Vec::new(),
+        rules: Vec::new(),
         partition_by: partition_by.and_then(parse_partition_by),
         owner: None,
         grants: Vec::new(),

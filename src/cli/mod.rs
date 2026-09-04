@@ -155,10 +155,10 @@ struct FilterArgs {
     /// Exclude objects by name using glob patterns. Matches against both unqualified names (e.g., "users") and qualified names (e.g., "public.users", "auth.users.my_trigger"). Can be repeated.
     #[arg(long, action = ArgAction::Append)]
     exclude: Vec<String>,
-    /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
+    /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,rules,indexes,foreignkeys,checkconstraints)
     #[arg(long, value_delimiter = ',')]
     include_types: Vec<ObjectType>,
-    /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
+    /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,rules,indexes,foreignkeys,checkconstraints)
     #[arg(long, value_delimiter = ',')]
     exclude_types: Vec<ObjectType>,
     /// Include objects owned by extensions (e.g., PostGIS functions)

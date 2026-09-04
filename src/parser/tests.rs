@@ -2005,6 +2005,7 @@ fn domain_round_trip_with_table_using_domain() {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
 
             owner: None,
@@ -2098,6 +2099,78 @@ fn policy_references_nonexistent_table_errors() {
         "Orphaned policy should remain in pending"
     );
     assert_eq!(schema.pending_policies[0].name, "orphan_policy");
+}
+
+#[test]
+fn parses_create_rule_do_instead_nothing() {
+    let sql = r#"
+        CREATE TABLE orders (id BIGINT PRIMARY KEY, status TEXT);
+        CREATE RULE protect_delete AS ON DELETE TO orders DO INSTEAD NOTHING;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.orders").unwrap();
+
+    assert_eq!(table.rules.len(), 1);
+    let rule = &table.rules[0];
+    assert_eq!(rule.name, "protect_delete");
+    assert_eq!(rule.event, crate::model::RuleEvent::Delete);
+    assert!(rule.instead);
+    assert!(rule.condition.is_none());
+    assert!(rule.actions.is_empty());
+}
+
+#[test]
+fn parses_create_rule_with_condition_and_action() {
+    let sql = r#"
+        CREATE TABLE orders (id BIGINT PRIMARY KEY, status TEXT);
+        CREATE TABLE order_audit (order_id BIGINT);
+        CREATE RULE log_status_change AS ON UPDATE TO orders
+            WHERE (NEW.status <> OLD.status)
+            DO ALSO INSERT INTO order_audit (order_id) VALUES (NEW.id);
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.orders").unwrap();
+
+    assert_eq!(table.rules.len(), 1);
+    let rule = &table.rules[0];
+    assert_eq!(rule.name, "log_status_change");
+    assert_eq!(rule.event, crate::model::RuleEvent::Update);
+    assert!(!rule.instead);
+    assert!(rule.condition.is_some());
+    assert_eq!(rule.actions.len(), 1);
+}
+
+#[test]
+fn rule_references_nonexistent_table_errors() {
+    let sql = r#"
+        CREATE RULE orphan_rule AS ON INSERT TO nonexistent_table DO INSTEAD NOTHING;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    assert_eq!(
+        schema.pending_rules.len(),
+        1,
+        "Orphaned rule should remain in pending"
+    );
+    assert_eq!(schema.pending_rules[0].name, "orphan_rule");
+}
+
+#[test]
+fn rule_round_trip_through_dump() {
+    let sql = r#"
+        CREATE TABLE orders (id BIGINT PRIMARY KEY, status TEXT);
+        CREATE RULE protect_delete AS ON DELETE TO orders DO INSTEAD NOTHING;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let fingerprint_before = schema.fingerprint();
+
+    let dumped = crate::dump::generate_dump(&schema, None);
+    let reparsed = parse_sql_string(&dumped).expect("dumped SQL with CREATE RULE should parse");
+    let fingerprint_after = reparsed.fingerprint();
+
+    assert_eq!(
+        fingerprint_before, fingerprint_after,
+        "Rule should round-trip through dump and reparse"
+    );
 }
 
 #[test]
@@ -6584,6 +6657,7 @@ fn dedup_check_constraint_name_does_not_panic_on_multibyte_collision() {
         row_level_security: false,
         force_row_level_security: false,
         policies: Vec::new(),
+        rules: Vec::new(),
         partition_by: None,
         owner: None,
         grants: Vec::new(),

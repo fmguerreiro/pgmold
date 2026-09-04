@@ -597,7 +597,11 @@ async fn partition_local_index_and_check_constraint_roundtrip() {
         partition.check_constraints[0].name,
         "measurement_2024_city_id_check"
     );
-    assert_eq!(partition.check_constraints[0].expression, "city_id > 0");
+    assert_eq!(
+        partition.check_constraints[0].expression,
+        "(city_id > 0)",
+        "pg_get_constraintdef yields CHECK ((expr)); stripping the outer wrapper leaves the inner parens"
+    );
 
     let desired_schema = parse_sql_string(
         r#"

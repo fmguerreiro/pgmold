@@ -18,6 +18,7 @@ pub enum ObjectType {
     Sequences,
     Partitions,
     Policies,
+    Rules,
     Indexes,
     ForeignKeys,
     CheckConstraints,
@@ -41,13 +42,14 @@ impl FromStr for ObjectType {
             "sequences" => Ok(ObjectType::Sequences),
             "partitions" => Ok(ObjectType::Partitions),
             "policies" => Ok(ObjectType::Policies),
+            "rules" => Ok(ObjectType::Rules),
             "indexes" => Ok(ObjectType::Indexes),
             "foreignkeys" => Ok(ObjectType::ForeignKeys),
             "checkconstraints" => Ok(ObjectType::CheckConstraints),
             "defaultprivileges" => Ok(ObjectType::DefaultPrivileges),
             "grants" => Ok(ObjectType::Grants),
             _ => Err(format!(
-                "Invalid object type '{s}'. Valid types: schemas, extensions, tables, enums, domains, functions, views, triggers, sequences, partitions, policies, indexes, foreignkeys, checkconstraints, defaultprivileges, grants"
+                "Invalid object type '{s}'. Valid types: schemas, extensions, tables, enums, domains, functions, views, triggers, sequences, partitions, policies, rules, indexes, foreignkeys, checkconstraints, defaultprivileges, grants"
             )),
         }
     }
@@ -67,6 +69,7 @@ impl fmt::Display for ObjectType {
             ObjectType::Sequences => "sequences",
             ObjectType::Partitions => "partitions",
             ObjectType::Policies => "policies",
+            ObjectType::Rules => "rules",
             ObjectType::Indexes => "indexes",
             ObjectType::ForeignKeys => "foreignkeys",
             ObjectType::CheckConstraints => "checkconstraints",
@@ -91,6 +94,7 @@ impl ObjectType {
             ObjectType::Sequences,
             ObjectType::Partitions,
             ObjectType::Policies,
+            ObjectType::Rules,
             ObjectType::Indexes,
             ObjectType::ForeignKeys,
             ObjectType::CheckConstraints,
@@ -103,6 +107,7 @@ impl ObjectType {
         matches!(
             self,
             ObjectType::Policies
+                | ObjectType::Rules
                 | ObjectType::Indexes
                 | ObjectType::ForeignKeys
                 | ObjectType::CheckConstraints
@@ -205,6 +210,9 @@ fn filter_table(table: &crate::model::Table, filter: &Filter) -> crate::model::T
     if !filter.should_include_type(ObjectType::Policies) {
         result.policies = vec![];
     }
+    if !filter.should_include_type(ObjectType::Rules) {
+        result.rules = vec![];
+    }
     if !filter.should_include_type(ObjectType::Indexes) {
         result.indexes = vec![];
     }
@@ -278,6 +286,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         sequences,
         partitions: filter_field(&schema.partitions, filter, ObjectType::Partitions),
         pending_policies: Vec::new(),
+        pending_rules: Vec::new(),
         pending_owners: Vec::new(),
         pending_grants: Vec::new(),
         pending_revokes: Vec::new(),
@@ -383,6 +392,7 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
             .cloned()
             .collect(),
         pending_policies: Vec::new(),
+        pending_rules: Vec::new(),
         pending_owners: Vec::new(),
         pending_grants: Vec::new(),
         pending_revokes: Vec::new(),
@@ -641,6 +651,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -662,6 +673,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -683,6 +695,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -735,6 +748,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -756,6 +770,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -1199,6 +1214,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -1248,6 +1264,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -1303,6 +1320,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -1465,6 +1483,7 @@ mod tests {
                 check_expr: None,
                 comment: None,
             }],
+            rules: Vec::new(),
             partition_by: None,
 
             owner: None,
@@ -1519,6 +1538,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
 
             owner: None,
@@ -1580,6 +1600,7 @@ mod tests {
                 check_expr: None,
                 comment: None,
             }],
+            rules: Vec::new(),
             partition_by: None,
 
             owner: None,
@@ -1636,6 +1657,7 @@ mod tests {
                 check_expr: None,
                 comment: None,
             }],
+            rules: Vec::new(),
             partition_by: None,
 
             owner: None,
@@ -1706,6 +1728,7 @@ mod tests {
                 check_expr: None,
                 comment: None,
             }],
+            rules: Vec::new(),
             partition_by: None,
 
             owner: None,
@@ -1779,6 +1802,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
 
             owner: None,
@@ -1865,6 +1889,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -1939,6 +1964,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
             owner: None,
             grants: vec![Grant {
@@ -1983,6 +2009,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
                 owner: None,
                 grants: vec![Grant {
@@ -2018,6 +2045,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
             owner: None,
             grants: Vec::new(),

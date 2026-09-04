@@ -9,9 +9,9 @@ operation expresses.
 ## Method
 
 - pgroll operation vocabulary: read directly from pgroll's Go source at
-  tag [`v0.16.0`](https://github.com/xataio/pgroll/tree/v0.16.0) — the
+  tag [`v0.16.0`](https://github.com/xataio/pgroll/tree/v0.16.0), the
   version pinned in the sagri pipeline per RFC 0001's "Spike result"
-  section — specifically
+  section. Specifically,
   [`pkg/migrations/op_common.go`](https://github.com/xataio/pgroll/blob/v0.16.0/pkg/migrations/op_common.go)
   (the `OpName` constant list and `OperationFromName` switch, which is
   pgroll's own authoritative registry of what a migration file may
@@ -29,10 +29,13 @@ operation expresses.
   diffable model). No pgroll operation names were guessed; every row
   below cites the source file backing the verdict.
 
-Verdict legend: **Covered** — pgmold has a `MigrationOp` (or field) that
-expresses the same structural change. **Uncovered** — no such
-`MigrationOp` exists. **N/A** — the pgroll operation is a category
-pgmold does not have an analogue for by design, not by gap.
+Verdict legend:
+
+- **Covered**: pgmold has a `MigrationOp` (or field) that expresses the
+  same structural change.
+- **Uncovered**: no such `MigrationOp` exists.
+- **N/A**: the pgroll operation is a category pgmold does not have an
+  analogue for by design, not by gap.
 
 ## Top-level operations
 
@@ -46,16 +49,16 @@ pgroll's authoritative operation-name registry
 | `rename_table` | **Uncovered** | none | No `Rename*` variant anywhere in `MigrationOp`. pgmold's diff is name-keyed: a table present under the old name and absent under the new name is seen as `DropTable` + `CreateTable`, not a rename. |
 | `add_column` | Covered | `MigrationOp::AddColumn` | |
 | `drop_column` | Covered | `MigrationOp::DropColumn` | |
-| `rename_column` | **Uncovered** | none | Same name-keyed diff problem as `rename_table`. `ColumnChanges` (`src/diff/types.rs`) carries only `data_type` / `nullable` / `default` — no name field. This is the exact v5.4.0 failure mode: diffing `entity_id` -> `supplier_id` yields `DropColumn(entity_id)` + `AddColumn(supplier_id)`. |
-| `alter_column` | Partial (container) | `MigrationOp::AlterColumn { changes: ColumnChanges }` | pgroll's `alter_column` is a container for 8 sub-operations; see breakdown below. The container itself maps 1:1 to pgmold's `AlterColumn`, but pgmold spreads some of pgroll's sub-ops across separate top-level `MigrationOp` variants rather than nesting them (see notes below). |
+| `rename_column` | **Uncovered** | none | Same name-keyed diff problem as `rename_table`. `ColumnChanges` (`src/diff/types.rs`) carries only `data_type` / `nullable` / `default`, no name field. This is the exact v5.4.0 failure mode: diffing `entity_id` -> `supplier_id` yields `DropColumn(entity_id)` + `AddColumn(supplier_id)`. |
+| `alter_column` | Partial (container) | `MigrationOp::AlterColumn { changes: ColumnChanges }` | pgroll's `alter_column` is a container for 8 sub-operations (breakdown below). The container maps 1:1 to pgmold's `AlterColumn`, but pgmold spreads some of pgroll's sub-ops across separate top-level `MigrationOp` variants instead of nesting them. |
 | `create_index` | Covered | `MigrationOp::AddIndex(Index)` | `Index.unique` and `Index.is_constraint` also cover pgroll's `create_constraint(type: unique)` path (see below). |
 | `drop_index` | Covered | `MigrationOp::DropIndex` | |
-| `rename_constraint` | **Uncovered** | none | No `Rename*` variant. `src/parser/mod.rs` does parse `ALTER TABLE ... RENAME CONSTRAINT` and `ALTER INDEX ... RENAME`, but only to apply the rename while building the in-memory model from a hand-written `schema.sql` fragment during parsing — that code path never produces a `MigrationOp` and is unrelated to what the diff engine can emit against a live DB. |
+| `rename_constraint` | **Uncovered** | none | No `Rename*` variant. `src/parser/mod.rs` does parse `ALTER TABLE ... RENAME CONSTRAINT` and `ALTER INDEX ... RENAME`, but only to apply the rename while building the in-memory model from a hand-written `schema.sql` fragment during parsing. That code path never produces a `MigrationOp` and is unrelated to what the diff engine can emit against a live DB. |
 | `drop_constraint` (deprecated upstream, superseded by `drop_multicolumn_constraint`) | Covered | `MigrationOp::DropCheckConstraint` / `DropForeignKey` / `DropUniqueConstraint` | pgroll's own docs mark this op deprecated (`docs/operations/drop_constraint.mdx`); listed for completeness only. |
-| `drop_multicolumn_constraint` | Covered | `MigrationOp::DropCheckConstraint` / `DropForeignKey` / `DropUniqueConstraint` | pgmold's constraint-drop ops are already name-keyed, not column-list-keyed, so multi-column constraints drop the same way single-column ones do — no separate "multi-column" case needed on pgmold's side. Does not cover dropping a `PRIMARY KEY` (pgroll's own doc excludes that case too: "Only CHECK, FOREIGN KEY, and UNIQUE constraints can be dropped"); pgmold's `DropPrimaryKey` is the op for that, orthogonal to this pgroll op. |
-| `create_constraint` | Covered | `MigrationOp::AddCheckConstraint` / `AddForeignKey` / `AddPrimaryKey` / `AddIndex(is_constraint: true, unique: true)` | pgroll's single op with a `type` discriminator (`unique` \| `check` \| `primary_key` \| `foreign_key`) maps to 4 different pgmold variants depending on type. `ForeignKey` (`src/model/mod.rs`) has `on_delete`/`on_update` but no `match_type` or `on_delete_set_columns` — a minor field gap on the FK sub-case, not a structural one. |
+| `drop_multicolumn_constraint` | Covered | `MigrationOp::DropCheckConstraint` / `DropForeignKey` / `DropUniqueConstraint` | pgmold's constraint-drop ops are already name-keyed, not column-list-keyed, so multi-column constraints drop the same way single-column ones do, and no separate "multi-column" case is needed on pgmold's side. Does not cover dropping a `PRIMARY KEY` (pgroll's own doc excludes that case too: "Only CHECK, FOREIGN KEY, and UNIQUE constraints can be dropped"); pgmold's `DropPrimaryKey` is the op for that, orthogonal to this pgroll op. |
+| `create_constraint` | Covered | `MigrationOp::AddCheckConstraint` / `AddForeignKey` / `AddPrimaryKey` / `AddIndex(is_constraint: true, unique: true)` | pgroll's single op with a `type` discriminator (`unique` \| `check` \| `primary_key` \| `foreign_key`) maps to 4 different pgmold variants depending on type. `ForeignKey` (`src/model/mod.rs`) has `on_delete`/`on_update` but no `match_type` or `on_delete_set_columns`, a minor field gap on the FK sub-case, not a structural one. |
 | `set_replica_identity` | **Uncovered** | none | No model field, no `MigrationOp`. `src/parser/mod.rs:554` explicitly lists `AlterTableOperation::ReplicaIdentity { .. }` in the set of `ALTER TABLE` variants pgmold's parser recognizes but does not consume, with an explicit comment that upstream additions to that enum must not silently slip past. Independent of the rename story; low-priority gap. |
-| `sql` (raw SQL escape hatch) | N/A | — | pgmold has no user-facing raw-SQL passthrough op by design: all SQL is generated exclusively by `pg/sqlgen.rs` from typed `MigrationOp`s (RFC 0001's own hard constraint: "no SQL generation outside `pg/sqlgen.rs`"). This is an architectural difference, not a coverage gap — pgmold could not adopt an equivalent without abandoning that constraint. |
+| `sql` (raw SQL escape hatch) | N/A | none | pgmold has no user-facing raw-SQL passthrough op by design: all SQL is generated exclusively by `pg/sqlgen.rs` from typed `MigrationOp`s (RFC 0001's own hard constraint: "no SQL generation outside `pg/sqlgen.rs`"). This is an architectural difference, not a coverage gap, so pgmold could not adopt an equivalent without abandoning that constraint. |
 
 ### `alter_column` sub-operations
 
@@ -84,7 +87,7 @@ Counting each of the 8 `alter_column` sub-operations as its own leaf op
 
 - **22 leaf operations** in scope.
 - **Covered: 17** (77%).
-- **Uncovered: 4** — `rename_table`, `rename_column`, `rename_constraint`,
+- **Uncovered: 4**: `rename_table`, `rename_column`, `rename_constraint`,
   `set_replica_identity`.
 - **N/A: 1** (`sql`, excluded from the 22).
 
@@ -112,7 +115,7 @@ option:
   successfully classify a rename as "needs pgroll" but has no
   `MigrationOp::RenameColumn`/`RenameTable`/`RenameConstraint` to
   generate a `rename_column`/`rename_table`/`rename_constraint` JSON
-  operation from — there is no source-side representation to translate.
+  operation from. There is no source-side representation to translate.
   E's classification step (op -> safe-direct vs. structural-to-pgroll)
   is not reachable for a rename because the diff never produces a
   rename op to classify; it produces a destructive drop+add pair before
@@ -125,11 +128,10 @@ option:
   because under A renames are pgroll's hand-written `sql` migrations and
   pgmold never attempts to express them.
 
-Net: the coverage table confirms, with a concrete count rather than a
-single worked example, that a rename-representation mechanism in pgmold
-(RFC 0001 recommendation item 2, tracked as its own item) is a hard
-prerequisite for E (and for B/C) — independent of, and prior to, any
-"does pgroll's vocabulary cover enough of pgmold's diff space" question.
-Once that prerequisite exists, the 77% baseline coverage on every other
-operation is a reasonable basis for revisiting E, since the remaining
-gap (`set_replica_identity`) is small and unrelated to the rename story.
+A rename-representation mechanism in pgmold (RFC 0001 recommendation
+item 2, tracked as its own item) is therefore a hard prerequisite for
+Option E and Option B/C, independent of whether pgroll's vocabulary
+covers enough of pgmold's diff space. Once it exists, the 77% baseline
+coverage on every other operation is a reasonable basis for revisiting
+Option E, since the remaining gap (`set_replica_identity`) is small and
+unrelated to renames.

@@ -6,8 +6,9 @@ use crate::model::{
     parse_qualified_name, versioned_schema_name, Aggregate, AggregateParallel, ArgMode,
     CheckConstraint, Column, Domain, ExclusionConstraint, ForeignKey, Function, Index, IndexType,
     Operator, Partition, PartitionBound, PartitionStrategy, PgType, Policy, PolicyCommand,
-    Privilege, QualifiedName, ReferentialAction, SecurityType, Sequence, SequenceDataType, Table,
-    Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, VersionView, View, Volatility,
+    Privilege, QualifiedName, ReferentialAction, Rule, RuleEvent, SecurityType, Sequence,
+    SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, VersionView,
+    View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -353,6 +354,16 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             changes,
         } => generate_alter_policy(table, name, changes),
 
+        MigrationOp::CreateRule(rule) => vec![generate_create_rule(rule)],
+
+        MigrationOp::DropRule { table, name } => {
+            vec![format!(
+                "DROP RULE IF EXISTS {} ON {};",
+                quote_ident(name),
+                quote_qualified(&table.schema, &table.name)
+            )]
+        }
+
         // Note: We don't generate ALTER FUNCTION ... OWNER TO for new functions.
         // PostgreSQL automatically sets the owner to the creating user.
         // Changing ownership requires schema ownership which the user may not have.
@@ -674,6 +685,14 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                     let target_name = target.as_deref().unwrap_or("");
                     format!(
                         "POLICY {} ON {}",
+                        quote_ident(name),
+                        quote_qualified(schema, target_name)
+                    )
+                }
+                CommentObjectType::Rule => {
+                    let target_name = target.as_deref().unwrap_or("");
+                    format!(
+                        "RULE {} ON {}",
                         quote_ident(name),
                         quote_qualified(schema, target_name)
                     )
@@ -1330,6 +1349,46 @@ fn format_policy_command(command: &PolicyCommand) -> &'static str {
         PolicyCommand::Insert => "INSERT",
         PolicyCommand::Update => "UPDATE",
         PolicyCommand::Delete => "DELETE",
+    }
+}
+
+fn generate_create_rule(rule: &Rule) -> String {
+    let mut sql = format!(
+        "CREATE RULE {} AS ON {} TO {}",
+        quote_ident(&rule.name),
+        format_rule_event(&rule.event),
+        quote_qualified(&rule.table_schema, &rule.table)
+    );
+
+    if let Some(ref condition) = rule.condition {
+        sql.push_str(&format!(" WHERE {condition}"));
+    }
+
+    sql.push_str(" DO ");
+    if rule.instead {
+        sql.push_str("INSTEAD ");
+    }
+
+    if rule.actions.is_empty() {
+        sql.push_str("NOTHING");
+    } else if rule.actions.len() == 1 {
+        sql.push_str(&rule.actions[0]);
+    } else {
+        sql.push('(');
+        sql.push_str(&rule.actions.join("; "));
+        sql.push(')');
+    }
+
+    sql.push(';');
+    sql
+}
+
+fn format_rule_event(event: &RuleEvent) -> &'static str {
+    match event {
+        RuleEvent::Select => "SELECT",
+        RuleEvent::Insert => "INSERT",
+        RuleEvent::Update => "UPDATE",
+        RuleEvent::Delete => "DELETE",
     }
 }
 
@@ -2090,6 +2149,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
 
             owner: None,
@@ -2666,6 +2726,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
 
             owner: None,

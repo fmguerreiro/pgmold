@@ -198,6 +198,27 @@ fn push_policy_comment_op(
     }
 }
 
+fn push_rule_comment_op(
+    ops: &mut Vec<MigrationOp>,
+    table_schema: &str,
+    rule_name: &str,
+    table_name: &str,
+    comment: &Option<String>,
+) {
+    if let Some(text) = comment {
+        ops.push(MigrationOp::SetComment {
+            object_type: CommentObjectType::Rule,
+            schema: table_schema.to_string(),
+            name: rule_name.to_string(),
+            arguments: None,
+            column: None,
+            target: Some(table_name.to_string()),
+            on_domain: false,
+            comment: Some(text.clone()),
+        });
+    }
+}
+
 fn push_owner_and_grant_ops(ops: &mut Vec<MigrationOp>, info: DumpObjectInfo<'_>) {
     if let Some(ref owner) = info.owner {
         push_owner_op(
@@ -362,6 +383,17 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
                 &policy.name,
                 &table.name,
                 &policy.comment,
+            );
+        }
+
+        for rule in &table.rules {
+            ops.push(MigrationOp::CreateRule(rule.clone()));
+            push_rule_comment_op(
+                &mut ops,
+                &table.schema,
+                &rule.name,
+                &table.name,
+                &rule.comment,
             );
         }
 
@@ -591,7 +623,7 @@ pub fn generate_split_dump(schema: &Schema) -> SplitDump {
             MigrationOp::CreateFunction(_) => function_ops.push(op),
             MigrationOp::CreateView(_) => view_ops.push(op),
             MigrationOp::CreateTrigger(_) => trigger_ops.push(op),
-            MigrationOp::CreatePolicy(_) => policy_ops.push(op),
+            MigrationOp::CreatePolicy(_) | MigrationOp::CreateRule(_) => policy_ops.push(op),
             MigrationOp::GrantPrivileges { .. } | MigrationOp::AlterDefaultPrivileges { .. } => {
                 grant_ops.push(op)
             }
@@ -991,6 +1023,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
             owner: None,
             grants: vec![Grant {
@@ -1126,6 +1159,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
             owner: None,
             grants: vec![Grant {
@@ -1174,6 +1208,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
             owner: None,
             grants: vec![Grant {

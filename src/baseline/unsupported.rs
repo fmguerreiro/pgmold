@@ -5,27 +5,10 @@ use sqlx::Row;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnsupportedObject {
-    CompositeType {
-        schema: String,
-        name: String,
-    },
-    Aggregate {
-        schema: String,
-        name: String,
-    },
-    Rule {
-        schema: String,
-        table: String,
-        name: String,
-    },
-    InheritedTable {
-        schema: String,
-        name: String,
-    },
-    ForeignTable {
-        schema: String,
-        name: String,
-    },
+    CompositeType { schema: String, name: String },
+    Aggregate { schema: String, name: String },
+    InheritedTable { schema: String, name: String },
+    ForeignTable { schema: String, name: String },
 }
 
 impl UnsupportedObject {
@@ -33,7 +16,6 @@ impl UnsupportedObject {
         match self {
             Self::CompositeType { .. } => "composite type",
             Self::Aggregate { .. } => "aggregate",
-            Self::Rule { .. } => "rule",
             Self::InheritedTable { .. } => "inherited table",
             Self::ForeignTable { .. } => "foreign table",
         }
@@ -45,11 +27,6 @@ impl UnsupportedObject {
             | Self::Aggregate { schema, name }
             | Self::InheritedTable { schema, name }
             | Self::ForeignTable { schema, name } => format!("{schema}.{name}"),
-            Self::Rule {
-                schema,
-                table,
-                name,
-            } => format!("{schema}.{table}.{name}"),
         }
     }
 }
@@ -61,7 +38,6 @@ pub async fn detect_unsupported_objects(
     let mut unsupported = Vec::new();
 
     unsupported.extend(detect_composite_types(connection, target_schemas).await?);
-    unsupported.extend(detect_rules(connection, target_schemas).await?);
     unsupported.extend(detect_inherited_tables(connection, target_schemas).await?);
     unsupported.extend(detect_foreign_tables(connection, target_schemas).await?);
 
@@ -95,32 +71,6 @@ async fn detect_composite_types(
         .map(|row| UnsupportedObject::CompositeType {
             schema: row.get("nspname"),
             name: row.get("typname"),
-        })
-        .collect())
-}
-
-async fn detect_rules(
-    connection: &PgConnection,
-    target_schemas: &[String],
-) -> Result<Vec<UnsupportedObject>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT schemaname, tablename, rulename
-        FROM pg_rules
-        WHERE schemaname = ANY($1) AND rulename NOT LIKE '_RETURN'
-        "#,
-    )
-    .bind(target_schemas)
-    .fetch_all(connection.pool())
-    .await
-    .map_err(|e| SchemaError::DatabaseError(format!("Failed to detect rules: {e}")))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| UnsupportedObject::Rule {
-            schema: row.get("schemaname"),
-            table: row.get("tablename"),
-            name: row.get("rulename"),
         })
         .collect())
 }
@@ -190,13 +140,6 @@ mod tests {
             name: "address".into(),
         };
         assert_eq!(composite.kind(), "composite type");
-
-        let rule = UnsupportedObject::Rule {
-            schema: "public".into(),
-            table: "users".into(),
-            name: "protect_users".into(),
-        };
-        assert_eq!(rule.kind(), "rule");
     }
 
     #[test]
@@ -206,12 +149,5 @@ mod tests {
             name: "address".into(),
         };
         assert_eq!(composite.qualified_name(), "analytics.address");
-
-        let rule = UnsupportedObject::Rule {
-            schema: "public".into(),
-            table: "users".into(),
-            name: "protect_users".into(),
-        };
-        assert_eq!(rule.qualified_name(), "public.users.protect_users");
     }
 }
