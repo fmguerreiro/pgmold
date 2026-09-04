@@ -1326,7 +1326,8 @@ mod tests {
             merges: false,
             comment: None,
         };
-        to.operators.insert(qualified_name(&op.schema, &op.signature()), op);
+        to.operators
+            .insert(qualified_name(&op.schema, &op.signature()), op);
 
         let ops = compute_diff(&from, &to);
         assert_eq!(ops.len(), 1);

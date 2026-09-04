@@ -224,7 +224,5 @@ async fn operator_drop_removes_it() {
     let after = introspect_schema(&connection, &["public".to_string()], false)
         .await
         .unwrap();
-    assert!(!after
-        .operators
-        .contains_key("public.#=#(integer, integer)"));
+    assert!(!after.operators.contains_key("public.#=#(integer, integer)"));
 }

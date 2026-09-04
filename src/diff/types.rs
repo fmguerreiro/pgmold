@@ -4,8 +4,7 @@ use crate::model::{
     Aggregate, CheckConstraint, Column, Domain, EnumType, ExclusionConstraint, Extension,
     ForeignKey, Function, Index, Operator, Partition, PgSchema, PgType, Policy, PrimaryKey,
     Privilege, QualifiedName, Rule, Sequence, SequenceDataType, SequenceOwner, Server, Table,
-    Trigger,
-    TriggerEnabled, VersionView, View,
+    Trigger, TriggerEnabled, VersionView, View,
 };
 
 pub struct DiffOptions<'a> {

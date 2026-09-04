@@ -1724,7 +1724,9 @@ fn parse_create_aggregate(stmt: CreateAggregate, schema: &mut Schema) -> Result<
 /// overwhelmingly PostgreSQL builtins resolved via `search_path` (which
 /// always includes `pg_catalog`), unlike the operator's own implementing
 /// FUNCTION, which is virtually always the user's own function.
-fn extract_qualified_name_pg_catalog_default(name: &sqlparser::ast::ObjectName) -> (String, String) {
+fn extract_qualified_name_pg_catalog_default(
+    name: &sqlparser::ast::ObjectName,
+) -> (String, String) {
     let parts: Vec<String> = name
         .0
         .iter()
