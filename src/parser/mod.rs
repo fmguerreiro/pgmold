@@ -167,7 +167,8 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&ci.table_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
 
-                if let Some(table) = schema.tables.get_mut(&tbl_key) {
+                if schema.tables.contains_key(&tbl_key) || schema.partitions.contains_key(&tbl_key)
+                {
                     let index_type = match ci.using {
                         Some(sqlparser::ast::IndexType::BTree) | None => IndexType::BTree,
                         Some(sqlparser::ast::IndexType::GiST) => IndexType::Gist,
@@ -186,15 +187,21 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                             )))
                         }
                     };
-                    table.indexes.push(Index {
+                    let index = Index {
                         name: idx_name,
                         columns: ci.columns.iter().map(truncate_index_column).collect(),
                         unique: ci.unique,
                         index_type,
                         predicate: ci.predicate.as_ref().map(|p| p.to_string()),
                         is_constraint: false,
-                    });
-                    table.indexes.sort();
+                    };
+                    if let Some(table) = schema.tables.get_mut(&tbl_key) {
+                        table.indexes.push(index);
+                        table.indexes.sort();
+                    } else if let Some(partition) = schema.partitions.get_mut(&tbl_key) {
+                        partition.indexes.push(index);
+                        partition.indexes.sort();
+                    }
                 }
             }
             Statement::CreateType {
@@ -342,7 +349,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                                             Some(name) => unquote_ident(&name.to_string()).to_string(),
                                             None => dedup_check_constraint_name(
                                                 &format!("{tbl_name}_check"),
-                                                table,
+                                                &table.check_constraints,
                                             ),
                                         };
 
@@ -414,6 +421,60 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                                     // ADD CONSTRAINT. Listed explicitly so adding a new
                                     // TableConstraint variant upstream forces a compile-time
                                     // review here instead of silent fallthrough.
+                                    | TableConstraint::Index(_)
+                                    | TableConstraint::FulltextOrSpatial(_) => {}
+                                }
+                            } else if let Some(partition) = schema.partitions.get_mut(&tbl_key) {
+                                match constraint {
+                                    TableConstraint::Check(chk) => {
+                                        let constraint_name = match &chk.name {
+                                            Some(name) => unquote_ident(&name.to_string()).to_string(),
+                                            None => dedup_check_constraint_name(
+                                                &format!("{tbl_name}_check"),
+                                                &partition.check_constraints,
+                                            ),
+                                        };
+
+                                        partition.check_constraints.push(CheckConstraint {
+                                            name: truncate_identifier(&constraint_name),
+                                            expression: normalize_expr(&chk.expr.to_string()),
+                                        });
+                                        partition.check_constraints.sort();
+                                    }
+                                    TableConstraint::Unique(uniq) => {
+                                        let constraint_name = uniq
+                                            .name
+                                            .as_ref()
+                                            .map(|n| unquote_ident(&n.to_string()).to_string())
+                                            .unwrap_or_else(|| format!("{tbl_name}_unique"));
+
+                                        partition.indexes.push(Index {
+                                            name: truncate_identifier(&constraint_name),
+                                            columns: uniq
+                                                .columns
+                                                .iter()
+                                                .map(|c| {
+                                                    unquote_ident(&c.column.expr.to_string())
+                                                        .to_string()
+                                                })
+                                                .collect(),
+                                            unique: true,
+                                            index_type: IndexType::BTree,
+                                            predicate: None,
+                                            is_constraint: true,
+                                        });
+                                        partition.indexes.sort();
+                                    }
+                                    // A partition's model has no fields for a primary key or
+                                    // foreign key of its own — those belong to the partitioned
+                                    // parent table and are not tracked per-partition. Index
+                                    // promotion and other constraint shapes below are likewise
+                                    // out of scope for partitions today.
+                                    TableConstraint::PrimaryKey(_)
+                                    | TableConstraint::ForeignKey(_)
+                                    | TableConstraint::PrimaryKeyUsingIndex(_)
+                                    | TableConstraint::UniqueUsingIndex(_)
+                                    | TableConstraint::Exclusion(_)
                                     | TableConstraint::Index(_)
                                     | TableConstraint::FulltextOrSpatial(_) => {}
                                 }

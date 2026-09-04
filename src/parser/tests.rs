@@ -1367,6 +1367,59 @@ FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
 }
 
 #[test]
+fn create_index_on_partition_populates_partition_indexes() {
+    let sql = r#"
+CREATE TABLE measurement (
+city_id INT NOT NULL,
+logdate DATE NOT NULL
+) PARTITION BY RANGE (logdate);
+
+CREATE TABLE measurement_2024 PARTITION OF measurement
+FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+
+CREATE INDEX measurement_2024_city_id_idx ON measurement_2024 (city_id);
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+
+    let partition = schema
+        .partitions
+        .get("public.measurement_2024")
+        .expect("partition should exist");
+    assert_eq!(partition.indexes.len(), 1);
+    assert_eq!(partition.indexes[0].name, "measurement_2024_city_id_idx");
+    assert_eq!(partition.indexes[0].columns, vec!["city_id".to_string()]);
+    assert!(!partition.indexes[0].unique);
+    assert!(!partition.indexes[0].is_constraint);
+}
+
+#[test]
+fn alter_table_add_check_on_partition_populates_partition_check_constraints() {
+    let sql = r#"
+CREATE TABLE measurement (
+city_id INT NOT NULL,
+logdate DATE NOT NULL
+) PARTITION BY RANGE (logdate);
+
+CREATE TABLE measurement_2024 PARTITION OF measurement
+FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+
+ALTER TABLE measurement_2024 ADD CONSTRAINT measurement_2024_city_id_check CHECK (city_id > 0);
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+
+    let partition = schema
+        .partitions
+        .get("public.measurement_2024")
+        .expect("partition should exist");
+    assert_eq!(partition.check_constraints.len(), 1);
+    assert_eq!(
+        partition.check_constraints[0].name,
+        "measurement_2024_city_id_check"
+    );
+    assert_eq!(partition.check_constraints[0].expression, "city_id > 0");
+}
+
+#[test]
 fn partition_of_overlong_parent_truncates_parent_name() {
     let parent = "p".repeat(64);
     let sql = format!(
@@ -6338,7 +6391,7 @@ fn dedup_check_constraint_name_does_not_panic_on_multibyte_collision() {
         grants: Vec::new(),
     };
 
-    let chosen = dedup_check_constraint_name(&base, &table);
+    let chosen = dedup_check_constraint_name(&base, &table.check_constraints);
 
     assert_ne!(chosen, truncate_identifier(&base));
     assert!(chosen.ends_with('1'));
