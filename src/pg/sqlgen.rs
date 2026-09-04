@@ -1233,6 +1233,13 @@ fn quote_qualified_operator(schema: &str, symbol: &str) -> String {
     format!("{}.{}", quote_ident(schema), symbol)
 }
 
+/// Wraps a schema-qualified operator for a `CREATE OPERATOR` definition-list
+/// slot such as `COMMUTATOR`, whose `def_arg` production accepts a qualified
+/// operator only as `OPERATOR(schema.symbol)`.
+fn operator_def_arg(schema: &str, symbol: &str) -> String {
+    format!("OPERATOR({})", quote_qualified_operator(schema, symbol))
+}
+
 fn escape_string(value: &str) -> String {
     value.replace('\'', "''")
 }
@@ -1509,15 +1516,12 @@ fn generate_operator_ddl(op: &Operator) -> String {
         let (schema, symbol) = parse_qualified_name(commutator);
         params.push(format!(
             "COMMUTATOR = {}",
-            quote_qualified_operator(&schema, &symbol)
+            operator_def_arg(&schema, &symbol)
         ));
     }
     if let Some(negator) = &op.negator {
         let (schema, symbol) = parse_qualified_name(negator);
-        params.push(format!(
-            "NEGATOR = {}",
-            quote_qualified_operator(&schema, &symbol)
-        ));
+        params.push(format!("NEGATOR = {}", operator_def_arg(&schema, &symbol)));
     }
     if let Some(restrict) = &op.restrict {
         let (schema, name) = parse_qualified_name(restrict);

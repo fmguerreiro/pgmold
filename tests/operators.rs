@@ -22,7 +22,7 @@ async fn introspects_operator_fields() {
         );
     "#;
 
-    sqlx::query(setup_sql)
+    sqlx::raw_sql(setup_sql)
         .execute(connection.pool())
         .await
         .unwrap();
@@ -63,7 +63,7 @@ async fn introspects_operator_unary_prefix_with_none_left_type() {
         );
     "#;
 
-    sqlx::query(setup_sql)
+    sqlx::raw_sql(setup_sql)
         .execute(connection.pool())
         .await
         .unwrap();
@@ -98,7 +98,7 @@ async fn introspects_operator_comment() {
         COMMENT ON OPERATOR public.#=# (integer, integer) IS 'integer equality';
     "#;
 
-    sqlx::query(setup_sql)
+    sqlx::raw_sql(setup_sql)
         .execute(connection.pool())
         .await
         .unwrap();
@@ -195,7 +195,7 @@ async fn operator_drop_removes_it() {
             RIGHTARG = integer
         );
     "#;
-    sqlx::query(setup_sql)
+    sqlx::raw_sql(setup_sql)
         .execute(connection.pool())
         .await
         .unwrap();
