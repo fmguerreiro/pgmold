@@ -208,7 +208,7 @@ pgmold plan -s sql:schema.sql -d postgres://localhost/mydb \
 
 Available object types:
 - Top-level: `extensions`, `tables`, `enums`, `domains`, `functions`, `views`, `triggers`, `sequences`, `partitions`
-- Nested (within tables): `policies`, `indexes`, `foreignkeys`, `checkconstraints`
+- Nested (within tables): `policies`, `rules`, `indexes`, `foreignkeys`, `checkconstraints`
 
 ### Extension Objects
 

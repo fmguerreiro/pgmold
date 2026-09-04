@@ -18,6 +18,7 @@ pub enum ObjectType {
     Sequences,
     Partitions,
     Policies,
+    Rules,
     Indexes,
     ForeignKeys,
     CheckConstraints,
@@ -41,13 +42,14 @@ impl FromStr for ObjectType {
             "sequences" => Ok(ObjectType::Sequences),
             "partitions" => Ok(ObjectType::Partitions),
             "policies" => Ok(ObjectType::Policies),
+            "rules" => Ok(ObjectType::Rules),
             "indexes" => Ok(ObjectType::Indexes),
             "foreignkeys" => Ok(ObjectType::ForeignKeys),
             "checkconstraints" => Ok(ObjectType::CheckConstraints),
             "defaultprivileges" => Ok(ObjectType::DefaultPrivileges),
             "grants" => Ok(ObjectType::Grants),
             _ => Err(format!(
-                "Invalid object type '{s}'. Valid types: schemas, extensions, tables, enums, domains, functions, views, triggers, sequences, partitions, policies, indexes, foreignkeys, checkconstraints, defaultprivileges, grants"
+                "Invalid object type '{s}'. Valid types: schemas, extensions, tables, enums, domains, functions, views, triggers, sequences, partitions, policies, rules, indexes, foreignkeys, checkconstraints, defaultprivileges, grants"
             )),
         }
     }
@@ -67,6 +69,7 @@ impl fmt::Display for ObjectType {
             ObjectType::Sequences => "sequences",
             ObjectType::Partitions => "partitions",
             ObjectType::Policies => "policies",
+            ObjectType::Rules => "rules",
             ObjectType::Indexes => "indexes",
             ObjectType::ForeignKeys => "foreignkeys",
             ObjectType::CheckConstraints => "checkconstraints",
@@ -91,6 +94,7 @@ impl ObjectType {
             ObjectType::Sequences,
             ObjectType::Partitions,
             ObjectType::Policies,
+            ObjectType::Rules,
             ObjectType::Indexes,
             ObjectType::ForeignKeys,
             ObjectType::CheckConstraints,
@@ -103,6 +107,7 @@ impl ObjectType {
         matches!(
             self,
             ObjectType::Policies
+                | ObjectType::Rules
                 | ObjectType::Indexes
                 | ObjectType::ForeignKeys
                 | ObjectType::CheckConstraints
@@ -204,6 +209,9 @@ fn filter_table(table: &crate::model::Table, filter: &Filter) -> crate::model::T
     let mut result = table.clone();
     if !filter.should_include_type(ObjectType::Policies) {
         result.policies = vec![];
+    }
+    if !filter.should_include_type(ObjectType::Rules) {
+        result.rules = vec![];
     }
     if !filter.should_include_type(ObjectType::Indexes) {
         result.indexes = vec![];
