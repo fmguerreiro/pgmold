@@ -375,6 +375,15 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.tables, &ns.attach_partitions);
         self.edges_all_to_all(&ns.add_columns, &ns.attach_partitions);
 
+        // A partition's own index/check changes are independent of a simultaneous
+        // bound/parent change on the same partition, but still need an explicit
+        // edge: DROP an index/check that predates a DETACH before the DETACH, and
+        // an ADD that targets the re-ATTACHed partition after the ATTACH.
+        self.edges_all_to_all(&ns.drop_indexes, &ns.detach_partitions);
+        self.edges_all_to_all(&ns.drop_checks, &ns.detach_partitions);
+        self.edges_all_to_all(&ns.attach_partitions, &ns.add_indexes);
+        self.edges_all_to_all(&ns.attach_partitions, &ns.add_checks);
+
         self.edges_all_to_all(&ns.tables, &ns.add_columns);
         self.edges_all_to_all(&ns.tables, &ns.add_pks);
         self.edges_all_to_all(&ns.tables, &ns.add_indexes);
@@ -5328,6 +5337,91 @@ mod tests {
             "DropTable",
             |op| matches!(op, MigrationOp::DropPartition(_)),
             |op| matches!(op, MigrationOp::DropTable(_)),
+        );
+    }
+
+    #[test]
+    fn partition_bound_change_orders_around_own_index_and_check_changes() {
+        let from_partition = crate::model::Partition {
+            name: "events_2024".to_string(),
+            schema: "public".to_string(),
+            parent_name: "events".to_string(),
+            parent_schema: "public".to_string(),
+            bound: crate::model::PartitionBound::Range {
+                from: vec!["'2024-01-01'".to_string()],
+                to: vec!["'2024-06-01'".to_string()],
+            },
+            indexes: vec![],
+            check_constraints: vec![],
+            owner: None,
+        };
+        let to_partition = crate::model::Partition {
+            bound: crate::model::PartitionBound::Range {
+                from: vec!["'2024-01-01'".to_string()],
+                to: vec!["'2025-01-01'".to_string()],
+            },
+            ..from_partition.clone()
+        };
+        let table = QualifiedName::new("public", "events_2024");
+        let ops = vec![
+            MigrationOp::AddIndex {
+                table: table.clone(),
+                index: Index {
+                    name: "events_2024_created_idx".to_string(),
+                    columns: vec!["created_at".to_string()],
+                    unique: false,
+                    index_type: IndexType::BTree,
+                    predicate: None,
+                    is_constraint: false,
+                },
+            },
+            MigrationOp::DropIndex {
+                table: table.clone(),
+                index_name: "events_2024_stale_idx".to_string(),
+            },
+            MigrationOp::AddCheckConstraint {
+                table: table.clone(),
+                check_constraint: CheckConstraint {
+                    name: "events_2024_amount_check".to_string(),
+                    expression: "amount > 0".to_string(),
+                },
+            },
+            MigrationOp::DropCheckConstraint {
+                table: table.clone(),
+                constraint_name: "events_2024_stale_check".to_string(),
+            },
+            MigrationOp::AttachPartition(to_partition),
+            MigrationOp::DetachPartition(from_partition),
+        ];
+        let planned = plan_migration(ops);
+
+        assert_op_position(
+            &planned,
+            "DropIndex",
+            "DetachPartition",
+            |op| matches!(op, MigrationOp::DropIndex { .. }),
+            |op| matches!(op, MigrationOp::DetachPartition(_)),
+        );
+        assert_op_position(
+            &planned,
+            "DropCheckConstraint",
+            "DetachPartition",
+            |op| matches!(op, MigrationOp::DropCheckConstraint { .. }),
+            |op| matches!(op, MigrationOp::DetachPartition(_)),
+        );
+        assert_op_position(
+            &planned,
+            "AttachPartition",
+            "AddIndex",
+            |op| matches!(op, MigrationOp::AttachPartition(_)),
+            |op| matches!(op, MigrationOp::AddIndex { .. }),
+        );
+        assert_op_position(
+            &planned,
+            "AttachPartition",
+            "AddCheckConstraint",
+            |op| matches!(op, MigrationOp::AttachPartition(_)),
+            |op| matches!(op, MigrationOp::AddCheckConstraint { .. }),
         );
     }
 
