@@ -22,6 +22,7 @@ pub async fn introspect_schema(
         tables,
         functions,
         aggregates,
+        operators,
         views,
         triggers,
         sequences,
@@ -55,6 +56,7 @@ pub async fn introspect_schema(
         introspect_tables(connection, target_schemas, include_extension_objects),
         introspect_functions(connection, target_schemas, include_extension_objects),
         introspect_aggregates(connection, target_schemas, include_extension_objects),
+        introspect_operators(connection, target_schemas, include_extension_objects),
         introspect_views(connection, target_schemas, include_extension_objects),
         introspect_triggers(connection, target_schemas, include_extension_objects),
         introspect_sequences(connection, target_schemas, include_extension_objects),
@@ -90,6 +92,7 @@ pub async fn introspect_schema(
     schema.tables = tables;
     schema.functions = functions;
     schema.aggregates = aggregates;
+    schema.operators = operators;
     schema.views = views;
     schema.triggers = triggers;
     schema.sequences = sequences;
@@ -2119,6 +2122,111 @@ async fn introspect_aggregates(
     }
 
     Ok(aggregates)
+}
+
+async fn introspect_operators(
+    connection: &PgConnection,
+    target_schemas: &[String],
+    include_extension_objects: bool,
+) -> Result<BTreeMap<String, Operator>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            o.oprname AS name,
+            n.nspname AS schema,
+            CASE WHEN o.oprleft = 0 THEN NULL ELSE pg_catalog.format_type(o.oprleft, NULL) END AS left_type,
+            CASE WHEN o.oprright = 0 THEN NULL ELSE pg_catalog.format_type(o.oprright, NULL) END AS right_type,
+            fnn.nspname AS function_schema,
+            fn.proname AS function_name,
+            comn.nspname AS commutator_schema,
+            com.oprname AS commutator_name,
+            negn.nspname AS negator_schema,
+            neg.oprname AS negator_name,
+            restn.nspname AS restrict_schema,
+            rest.proname AS restrict_name,
+            joinn.nspname AS join_schema,
+            joinp.proname AS join_name,
+            o.oprcanhash AS hashes,
+            o.oprcanmerge AS merges,
+            obj_description(o.oid, 'pg_operator') AS comment
+        FROM pg_operator o
+        JOIN pg_namespace n ON o.oprnamespace = n.oid
+        JOIN pg_proc fn ON o.oprcode = fn.oid
+        JOIN pg_namespace fnn ON fn.pronamespace = fnn.oid
+        LEFT JOIN pg_operator com ON o.oprcom = com.oid
+        LEFT JOIN pg_namespace comn ON com.oprnamespace = comn.oid
+        LEFT JOIN pg_operator neg ON o.oprnegate = neg.oid
+        LEFT JOIN pg_namespace negn ON neg.oprnamespace = negn.oid
+        LEFT JOIN pg_proc rest ON o.oprrest = rest.oid
+        LEFT JOIN pg_namespace restn ON rest.pronamespace = restn.oid
+        LEFT JOIN pg_proc joinp ON o.oprjoin = joinp.oid
+        LEFT JOIN pg_namespace joinn ON joinp.pronamespace = joinn.oid
+        WHERE n.nspname = ANY($1::text[])
+          AND ($2::boolean OR NOT EXISTS (
+              SELECT 1 FROM pg_depend d
+              WHERE d.objid = o.oid
+              AND d.deptype = 'e'
+          ))
+        "#,
+    )
+    .bind(target_schemas)
+    .bind(include_extension_objects)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch operators: {e}")))?;
+
+    let mut operators = BTreeMap::new();
+    for row in rows {
+        let name: String = row.get("name");
+        let schema: String = row.get("schema");
+        let left_type: Option<String> = row.get("left_type");
+        let right_type: Option<String> = row.get("right_type");
+        let left_type = left_type.map(|t| crate::model::normalize_pg_type(&t).into_owned());
+        let right_type = right_type.map(|t| crate::model::normalize_pg_type(&t).into_owned());
+        let function_schema: String = row.get("function_schema");
+        let function_name: String = row.get("function_name");
+
+        let commutator_schema: Option<String> = row.get("commutator_schema");
+        let commutator_name: Option<String> = row.get("commutator_name");
+        let commutator = commutator_name.map(|n| qualified_name(&commutator_schema.unwrap(), &n));
+
+        let negator_schema: Option<String> = row.get("negator_schema");
+        let negator_name: Option<String> = row.get("negator_name");
+        let negator = negator_name.map(|n| qualified_name(&negator_schema.unwrap(), &n));
+
+        let restrict_schema: Option<String> = row.get("restrict_schema");
+        let restrict_name: Option<String> = row.get("restrict_name");
+        let restrict = restrict_name.map(|n| qualified_name(&restrict_schema.unwrap(), &n));
+
+        let join_schema: Option<String> = row.get("join_schema");
+        let join_name: Option<String> = row.get("join_name");
+        let join = join_name.map(|n| qualified_name(&join_schema.unwrap(), &n));
+
+        let hashes: bool = row.get("hashes");
+        let merges: bool = row.get("merges");
+        let comment: Option<String> = row.get("comment");
+
+        let operator = Operator {
+            schema: schema.clone(),
+            name: name.clone(),
+            left_type,
+            right_type,
+            function_schema,
+            function_name,
+            commutator,
+            negator,
+            restrict,
+            join,
+            hashes,
+            merges,
+            comment,
+        };
+
+        let key = qualified_name(&schema, &operator.signature());
+        operators.insert(key, operator);
+    }
+
+    Ok(operators)
 }
 
 /// Splits a function argument list on commas, skipping commas inside

@@ -579,8 +579,8 @@ mod tests {
     use super::*;
     use crate::model::{
         qualified_name, ArgMode, Column, Domain, EnumType, ForeignKey, Function, FunctionArg,
-        Index, IndexType, PgType, ReferentialAction, SecurityType, Sequence, SequenceDataType,
-        View, Volatility,
+        Index, IndexType, Operator, PgType, ReferentialAction, SecurityType, Sequence,
+        SequenceDataType, View, Volatility,
     };
 
     #[test]
@@ -1299,6 +1299,61 @@ mod tests {
             matches!(&ops[1], MigrationOp::CreateFunction(_)),
             "Second op should be CreateFunction, got: {:?}",
             ops[1]
+        );
+    }
+
+    #[test]
+    fn detects_added_operator() {
+        let from = empty_schema();
+        let mut to = empty_schema();
+        let op = Operator {
+            schema: "public".to_string(),
+            name: "#=#".to_string(),
+            left_type: Some("integer".to_string()),
+            right_type: Some("integer".to_string()),
+            function_schema: "public".to_string(),
+            function_name: "custom_eq".to_string(),
+            commutator: None,
+            negator: None,
+            restrict: None,
+            join: None,
+            hashes: false,
+            merges: false,
+            comment: None,
+        };
+        to.operators.insert(qualified_name(&op.schema, &op.signature()), op);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], MigrationOp::CreateOperator(o) if o.name == "#=#"));
+    }
+
+    #[test]
+    fn detects_removed_operator() {
+        let mut from = empty_schema();
+        let op = Operator {
+            schema: "public".to_string(),
+            name: "#=#".to_string(),
+            left_type: Some("integer".to_string()),
+            right_type: Some("integer".to_string()),
+            function_schema: "public".to_string(),
+            function_name: "custom_eq".to_string(),
+            commutator: None,
+            negator: None,
+            restrict: None,
+            join: None,
+            hashes: false,
+            merges: false,
+            comment: None,
+        };
+        from.operators
+            .insert(qualified_name(&op.schema, &op.signature()), op);
+        let to = empty_schema();
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(
+            matches!(&ops[0], MigrationOp::DropOperator { name, args } if name == "public.#=#" && args == "integer, integer")
         );
     }
 

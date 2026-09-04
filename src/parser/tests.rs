@@ -5912,6 +5912,141 @@ CREATE AGGREGATE public.group_concat(text) (
 }
 
 #[test]
+fn create_operator_binary_minimal() {
+    let sql = r#"
+        CREATE FUNCTION public.custom_eq(a integer, b integer) RETURNS boolean
+        LANGUAGE sql AS $$ SELECT a = b $$;
+        CREATE OPERATOR public.#=# (
+            FUNCTION = public.custom_eq,
+            LEFTARG = integer,
+            RIGHTARG = integer
+        );
+    "#;
+    let schema = parse_sql_string(sql).expect("Should parse CREATE OPERATOR");
+    let op = schema
+        .operators
+        .get("public.#=#(integer, integer)")
+        .expect("Operator should be stored under signature key");
+
+    assert_eq!(op.schema, "public");
+    assert_eq!(op.name, "#=#");
+    assert_eq!(op.left_type.as_deref(), Some("integer"));
+    assert_eq!(op.right_type.as_deref(), Some("integer"));
+    assert_eq!(op.function_schema, "public");
+    assert_eq!(op.function_name, "custom_eq");
+    assert!(op.commutator.is_none());
+    assert!(op.negator.is_none());
+    assert!(op.restrict.is_none());
+    assert!(op.join.is_none());
+    assert!(!op.hashes);
+    assert!(!op.merges);
+}
+
+#[test]
+fn create_operator_unary_prefix_omits_leftarg() {
+    let sql = r#"
+        CREATE FUNCTION public.negate(a integer) RETURNS integer
+        LANGUAGE sql AS $$ SELECT -a $$;
+        CREATE OPERATOR public.!! (
+            FUNCTION = public.negate,
+            RIGHTARG = integer
+        );
+    "#;
+    let schema = parse_sql_string(sql).expect("Should parse unary prefix CREATE OPERATOR");
+    let op = schema
+        .operators
+        .get("public.!!(NONE, integer)")
+        .expect("Operator should be stored under signature key");
+
+    assert!(op.left_type.is_none());
+    assert_eq!(op.right_type.as_deref(), Some("integer"));
+    assert_eq!(op.function_schema, "public");
+    assert_eq!(op.function_name, "negate");
+}
+
+#[test]
+fn create_operator_full_options_defaults_unqualified_refs_to_pg_catalog() {
+    let sql = r#"
+        CREATE FUNCTION public.custom_eq(a integer, b integer) RETURNS boolean
+        LANGUAGE sql AS $$ SELECT a = b $$;
+        CREATE OPERATOR public.#=# (
+            FUNCTION = public.custom_eq,
+            LEFTARG = integer,
+            RIGHTARG = integer,
+            COMMUTATOR = #=#,
+            NEGATOR = #<>#,
+            RESTRICT = eqsel,
+            JOIN = eqjoinsel,
+            HASHES,
+            MERGES
+        );
+    "#;
+    let schema = parse_sql_string(sql).expect("Should parse CREATE OPERATOR with full options");
+    let op = schema
+        .operators
+        .get("public.#=#(integer, integer)")
+        .expect("Operator should be stored under signature key");
+
+    assert_eq!(op.commutator.as_deref(), Some("pg_catalog.#=#"));
+    assert_eq!(op.negator.as_deref(), Some("pg_catalog.#<>#"));
+    assert_eq!(op.restrict.as_deref(), Some("pg_catalog.eqsel"));
+    assert_eq!(op.join.as_deref(), Some("pg_catalog.eqjoinsel"));
+    assert!(op.hashes);
+    assert!(op.merges);
+}
+
+#[test]
+fn create_operator_round_trips_through_dump() {
+    use crate::dump::generate_dump;
+    let sql = r#"
+        CREATE FUNCTION mrv.custom_eq(a integer, b integer) RETURNS boolean
+        LANGUAGE sql AS $$ SELECT a = b $$;
+        CREATE OPERATOR mrv.#=# (
+            FUNCTION = mrv.custom_eq,
+            LEFTARG = integer,
+            RIGHTARG = integer,
+            COMMUTATOR = #=#,
+            NEGATOR = #<>#,
+            RESTRICT = eqsel,
+            JOIN = eqjoinsel,
+            HASHES,
+            MERGES
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let dump = generate_dump(&schema, None);
+    let reparsed = parse_sql_string(&dump).unwrap();
+    let op = reparsed
+        .operators
+        .get("mrv.#=#(integer, integer)")
+        .expect("operator should survive roundtrip");
+
+    assert_eq!(op.function_schema, "mrv");
+    assert_eq!(op.function_name, "custom_eq");
+    assert_eq!(op.commutator.as_deref(), Some("pg_catalog.#=#"));
+    assert_eq!(op.negator.as_deref(), Some("pg_catalog.#<>#"));
+    assert_eq!(op.restrict.as_deref(), Some("pg_catalog.eqsel"));
+    assert_eq!(op.join.as_deref(), Some("pg_catalog.eqjoinsel"));
+    assert!(op.hashes);
+    assert!(op.merges);
+}
+
+#[test]
+fn create_operator_passes_strict_mode() {
+    let sql = r#"
+        CREATE FUNCTION public.custom_eq(a integer, b integer) RETURNS boolean
+        LANGUAGE sql AS $$ SELECT a = b $$;
+        CREATE OPERATOR public.#=# (
+            FUNCTION = public.custom_eq,
+            LEFTARG = integer,
+            RIGHTARG = integer
+        );
+    "#;
+    parse_sql_string_with_strict(sql, true)
+        .expect("CREATE OPERATOR is modeled and must not be flagged under --strict");
+}
+
+#[test]
 fn parse_sql_string_with_strict_errors_on_unrecognized() {
     let sql = "\
 CREATE TABLE public.users (id serial);
