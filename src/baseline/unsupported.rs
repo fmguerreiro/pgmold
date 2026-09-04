@@ -5,22 +5,10 @@ use sqlx::Row;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnsupportedObject {
-    CompositeType {
-        schema: String,
-        name: String,
-    },
-    Aggregate {
-        schema: String,
-        name: String,
-    },
-    InheritedTable {
-        schema: String,
-        name: String,
-    },
-    ForeignTable {
-        schema: String,
-        name: String,
-    },
+    CompositeType { schema: String, name: String },
+    Aggregate { schema: String, name: String },
+    InheritedTable { schema: String, name: String },
+    ForeignTable { schema: String, name: String },
 }
 
 impl UnsupportedObject {

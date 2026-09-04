@@ -33,7 +33,12 @@ async fn rule_round_trip_no_diff() {
     let second_diff = compute_diff(&db_schema, &parsed_schema);
     let rule_ops: Vec<_> = second_diff
         .iter()
-        .filter(|op| matches!(op, MigrationOp::CreateRule(_) | MigrationOp::DropRule { .. }))
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateRule(_) | MigrationOp::DropRule { .. }
+            )
+        })
         .collect();
 
     assert!(
@@ -78,7 +83,12 @@ async fn rule_with_condition_and_action_round_trip_no_diff() {
     let second_diff = compute_diff(&db_schema, &parsed_schema);
     let rule_ops: Vec<_> = second_diff
         .iter()
-        .filter(|op| matches!(op, MigrationOp::CreateRule(_) | MigrationOp::DropRule { .. }))
+        .filter(|op| {
+            matches!(
+                op,
+                MigrationOp::CreateRule(_) | MigrationOp::DropRule { .. }
+            )
+        })
         .collect();
 
     assert!(

@@ -1,5 +1,7 @@
 use crate::model::{CheckConstraint, Column, Index, Policy, QualifiedName, Rule, Table};
-use crate::util::{expressions_semantically_equal, optional_expressions_equal, views_semantically_equal};
+use crate::util::{
+    expressions_semantically_equal, optional_expressions_equal, views_semantically_equal,
+};
 
 use super::{ColumnChanges, MigrationOp, PolicyChanges};
 

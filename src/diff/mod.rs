@@ -2285,8 +2285,13 @@ mod tests {
             .insert("public.orders".to_string(), table_with_rule(None));
 
         let ops = compute_diff(&from, &to);
-        assert_eq!(ops.len(), 1);
-        match &ops[0] {
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected CreateTable and CreateRule, got {ops:?}"
+        );
+        assert!(matches!(&ops[0], MigrationOp::CreateTable(table) if table.name == "orders"));
+        match &ops[1] {
             MigrationOp::CreateRule(rule) => assert_eq!(rule.name, "log_orders"),
             other => panic!("expected CreateRule, got {other:?}"),
         }
