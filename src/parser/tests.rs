@@ -4365,6 +4365,69 @@ fn parses_alter_default_privileges_revoke_multi_grantee() {
 }
 
 #[test]
+fn user_host_grantee_is_skipped_from_grantee_to_role_name() {
+    use sqlparser::ast::Ident;
+
+    let user = Ident::new("app_user");
+    let host = Ident::new("%");
+    let grantee = Grantee {
+        grantee_type: GranteesType::None,
+        name: Some(GranteeName::UserHost {
+            user: user.clone(),
+            host: host.clone(),
+        }),
+    };
+
+    assert_eq!(grantee_to_role_name(&grantee), None);
+    assert_eq!(
+        format_user_host_grantee_skip(&user, &host),
+        "warning: pgmold does not model host-qualified grantee 'app_user'@'%' in ALTER DEFAULT PRIVILEGES; dropping this grantee"
+    );
+}
+
+// Exercises the full `apply_alter_default_privileges` path rather than
+// `parse_sql_string`: `PostgreSqlDialect` does not implement
+// `supports_user_host_grantee`, so sqlparser can never produce
+// `GranteeName::UserHost` from real SQL text through pgmold's parser. The
+// variant is still part of the upstream AST pgmold's exhaustive match must
+// handle, so it is constructed directly here.
+#[test]
+fn alter_default_privileges_with_user_host_grantee_skips_without_bogus_role() {
+    use sqlparser::ast::{Ident, ObjectName};
+
+    let mut schema = Schema::new();
+    let adp = AlterDefaultPrivileges {
+        for_roles: vec![Ident::new("admin")],
+        in_schemas: vec![Ident::new("public")],
+        action: AlterDefaultPrivilegesAction::Grant {
+            privileges: Privileges::Actions(vec![Action::Select { columns: None }]),
+            object_type: AlterDefaultPrivilegesObjectType::Tables,
+            grantees: vec![
+                Grantee {
+                    grantee_type: GranteesType::None,
+                    name: Some(GranteeName::UserHost {
+                        user: Ident::new("app_user"),
+                        host: Ident::new("%"),
+                    }),
+                },
+                Grantee {
+                    grantee_type: GranteesType::None,
+                    name: Some(GranteeName::ObjectName(ObjectName::from(vec![Ident::new(
+                        "reporting_user",
+                    )]))),
+                },
+            ],
+            with_grant_option: false,
+        },
+    };
+
+    apply_alter_default_privileges(adp, &mut schema);
+
+    assert_eq!(schema.default_privileges.len(), 1);
+    assert_eq!(schema.default_privileges[0].grantee, "reporting_user");
+}
+
+#[test]
 fn parse_drop_schema() {
     let sql = r#"
 CREATE SCHEMA staging;

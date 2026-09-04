@@ -9,10 +9,6 @@
 //! as errors) so downstream users do not discover them months later as
 //! schema drift.
 //!
-//! `ALTER DEFAULT PRIVILEGES` is included in the safety net even though it
-//! flows through the AST since pgmold-289: the broad recognizer triggers
-//! whenever the statement does not match the AST handler's coverage.
-//!
 //! See pgmold-271 (and gh#246, which was only diagnosable after quiet
 //! failure masked it for months).
 use regex::Regex;
@@ -65,9 +61,6 @@ static ALTER_OWNER_BROAD: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
-
-static ALTER_DEFAULT_PRIVILEGES_BROAD: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?is)\bALTER\s+DEFAULT\s+PRIVILEGES\s+[^;]+;").unwrap());
 
 // Specific claim patterns — one per existing pgmold regex parser. A broad
 // match that overlaps at least one of these is considered "claimed" and
@@ -131,13 +124,6 @@ static ALTER_SEQUENCE_OWNER_CLAIM: LazyLock<Regex> =
 static ALTER_SCHEMA_OWNER_CLAIM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bALTER\s+SCHEMA\s+.+?\s+OWNER\s+TO\s+").unwrap());
 
-// AST-handled since pgmold-289: any well-formed statement is processed by
-// `apply_alter_default_privileges` regardless of role/schema/grantee count
-// or specific privilege list. Treat all `ALTER DEFAULT PRIVILEGES ...;` as
-// claimed; let sqlparser surface true syntactic errors elsewhere.
-static ALTER_DEFAULT_PRIVILEGES_CLAIM: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?is)\bALTER\s+DEFAULT\s+PRIVILEGES\b").unwrap());
-
 struct BroadRecognizer {
     kind: &'static str,
     broad: &'static LazyLock<Regex>,
@@ -188,11 +174,6 @@ static RECOGNIZERS: &[BroadRecognizer] = &[
             &ALTER_SEQUENCE_OWNER_CLAIM,
             &ALTER_SCHEMA_OWNER_CLAIM,
         ],
-    },
-    BroadRecognizer {
-        kind: "ALTER DEFAULT PRIVILEGES",
-        broad: &ALTER_DEFAULT_PRIVILEGES_BROAD,
-        claims: &[&ALTER_DEFAULT_PRIVILEGES_CLAIM],
     },
 ];
 
@@ -404,6 +385,12 @@ COMMENT ON TABLE public.users IS 'a table';
     fn alter_default_privileges_revoke_not_flagged() {
         let sql = "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES FROM public;";
         assert!(find_unrecognized_statements(sql).is_empty());
+    }
+
+    #[test]
+    fn alter_default_privileges_strict_mode_no_finding() {
+        let sql = "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO readonly;";
+        assert!(crate::parser::parse_sql_string_with_strict(sql, true).is_ok());
     }
 
     #[test]

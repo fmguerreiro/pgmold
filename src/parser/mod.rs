@@ -1708,16 +1708,35 @@ fn convert_privileges(
 /// Returns the role names a `Grantee` resolves to. `PUBLIC` is stored as
 /// the literal string `"PUBLIC"` to stay consistent with `pg_default_acl`
 /// introspection, which always emits uppercase `PUBLIC`. Grantees with no
-/// name and host-qualified principals are skipped — they have no
-/// representation in the schema model today.
+/// name are skipped silently — sqlparser never populates this for
+/// `ALTER DEFAULT PRIVILEGES` grantees. Host-qualified principals
+/// (`GranteeName::UserHost`, a MySQL/Redshift-dialect construct with no
+/// PostgreSQL equivalent) are also skipped, since they have no
+/// representation in the schema model today, but the skip is surfaced via
+/// `eprintln!` so it is not silently invisible.
 fn grantee_to_role_name(grantee: &Grantee) -> Option<String> {
     if matches!(grantee.grantee_type, GranteesType::Public) {
         return Some("PUBLIC".to_string());
     }
     match grantee.name.as_ref()? {
         GranteeName::ObjectName(object_name) => Some(strip_ident_quotes(&object_name.to_string())),
-        GranteeName::UserHost { .. } => None,
+        GranteeName::UserHost { user, host } => {
+            eprintln!("{}", format_user_host_grantee_skip(user, host));
+            None
+        }
     }
+}
+
+/// Build the warning message for a `GranteeName::UserHost` grantee dropped
+/// from an `ALTER DEFAULT PRIVILEGES` statement. Broken out so the
+/// formatting is unit-testable without having to capture stderr.
+fn format_user_host_grantee_skip(
+    user: &sqlparser::ast::Ident,
+    host: &sqlparser::ast::Ident,
+) -> String {
+    format!(
+        "warning: pgmold does not model host-qualified grantee '{user}'@'{host}' in ALTER DEFAULT PRIVILEGES; dropping this grantee"
+    )
 }
 
 fn apply_alter_default_privileges(adp: AlterDefaultPrivileges, schema: &mut Schema) {
