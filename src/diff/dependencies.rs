@@ -586,9 +586,7 @@ pub(super) fn generate_column_ops_for_domain_recreate(
     let created_domain_names: HashSet<String> = ops
         .iter()
         .filter_map(|op| match op {
-            MigrationOp::CreateDomain(domain) => {
-                Some(qualified_name(&domain.schema, &domain.name))
-            }
+            MigrationOp::CreateDomain(domain) => Some(qualified_name(&domain.schema, &domain.name)),
             _ => None,
         })
         .collect();
@@ -639,10 +637,10 @@ pub(super) fn generate_column_ops_for_domain_recreate(
 #[cfg(test)]
 mod tests {
     use crate::diff::test_helpers::*;
-    use crate::diff::{compute_diff, MigrationOp};
+    use crate::diff::{compute_diff, generate_column_ops_for_domain_recreate, MigrationOp};
     use crate::model::{
-        qualified_name, ArgMode, Column, Domain, ForeignKey, Function, FunctionArg, PgType,
-        Policy, PolicyCommand, ReferentialAction, Schema, SecurityType, Trigger, TriggerEnabled,
+        qualified_name, ArgMode, Column, Domain, ForeignKey, Function, FunctionArg, PgType, Policy,
+        PolicyCommand, ReferentialAction, Schema, SecurityType, Trigger, TriggerEnabled,
         TriggerEvent, TriggerTiming, View, Volatility,
     };
 
@@ -680,7 +678,8 @@ mod tests {
             "amount".to_string(),
             simple_column("amount", PgType::UserDefined("public.price".to_string())),
         );
-        from.tables.insert("public.orders".to_string(), orders_table);
+        from.tables
+            .insert("public.orders".to_string(), orders_table);
 
         let ops = vec![
             MigrationOp::DropDomain("public.price".to_string()),
@@ -721,18 +720,26 @@ mod tests {
         let mut from = empty_schema();
         from.domains.insert(
             "public.price".to_string(),
-            make_domain("price", "public", PgType::Numeric {
-                precision: Some(10),
-                scale: Some(2),
-            }),
+            make_domain(
+                "price",
+                "public",
+                PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(2),
+                },
+            ),
         );
 
         let ops = vec![
             MigrationOp::DropDomain("public.price".to_string()),
-            MigrationOp::CreateDomain(make_domain("price", "public", PgType::Numeric {
-                precision: Some(12),
-                scale: Some(4),
-            })),
+            MigrationOp::CreateDomain(make_domain(
+                "price",
+                "public",
+                PgType::Numeric {
+                    precision: Some(12),
+                    scale: Some(4),
+                },
+            )),
         ];
 
         let generated = generate_column_ops_for_domain_recreate(&ops, &from);
@@ -751,7 +758,8 @@ mod tests {
             "amount".to_string(),
             simple_column("amount", PgType::UserDefined("public.price".to_string())),
         );
-        from.tables.insert("public.orders".to_string(), orders_table);
+        from.tables
+            .insert("public.orders".to_string(), orders_table);
 
         let ops = vec![MigrationOp::DropDomain("public.price".to_string())];
 
