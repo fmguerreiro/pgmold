@@ -237,6 +237,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
 
     let mut functions = filter_field(&schema.functions, filter, ObjectType::Functions);
     let mut aggregates = filter_field(&schema.aggregates, filter, ObjectType::Functions);
+    let operators = filter_field(&schema.operators, filter, ObjectType::Functions);
     let mut views = filter_field(&schema.views, filter, ObjectType::Views);
     let mut sequences = filter_field(&schema.sequences, filter, ObjectType::Sequences);
     let mut enums = filter_field(&schema.enums, filter, ObjectType::Enums);
@@ -271,6 +272,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         domains,
         functions,
         aggregates,
+        operators,
         views,
         triggers: filter_field(&schema.triggers, filter, ObjectType::Triggers),
         sequences,
@@ -366,6 +368,7 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
         domains: retain_by_schema(&schema.domains, &allowed, |d| &d.schema),
         functions: retain_by_schema(&schema.functions, &allowed, |f| &f.schema),
         aggregates: retain_by_schema(&schema.aggregates, &allowed, |a| &a.schema),
+        operators: retain_by_schema(&schema.operators, &allowed, |o| &o.schema),
         views: retain_by_schema(&schema.views, &allowed, |v| &v.schema),
         triggers: retain_by_schema(&schema.triggers, &allowed, |t| &t.target_schema),
         sequences: retain_by_schema(&schema.sequences, &allowed, |s| &s.schema),
@@ -430,6 +433,12 @@ impl HasName for crate::model::Function {
 }
 
 impl HasName for crate::model::Aggregate {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl HasName for crate::model::Operator {
     fn name(&self) -> &str {
         &self.name
     }

@@ -35,11 +35,12 @@ use sqlparser::ast::{
     AlterFunction, AlterFunctionKind, AlterFunctionOperation, AlterIndexOperation, AlterSchema,
     AlterSchemaOperation, AlterTable, AlterTableOperation, AlterType, AlterTypeAddValue,
     AlterTypeAddValuePosition, AlterTypeOperation, CreateAggregate, CreateAggregateOption,
-    CreateDomain, CreateExtension, CreateFunction, CreateServerStatement, CreateTrigger,
-    CreateView, DeferrableInitial, DropDomain, DropExtension, DropFunction, DropTrigger,
-    FunctionParallel, Grantee, GranteeName, GranteesType, ObjectType, Owner, Privileges,
-    RenameTableNameKind, SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent,
-    TriggerPeriod, TriggerReferencingType, UserDefinedTypeRepresentation,
+    CreateDomain, CreateExtension, CreateFunction, CreateOperator, CreateServerStatement,
+    CreateTrigger, CreateView, DeferrableInitial, DropDomain, DropExtension, DropFunction,
+    DropTrigger, FunctionParallel, Grantee, GranteeName, GranteesType, ObjectType,
+    OperatorOption, Owner, Privileges, RenameTableNameKind, SchemaName, Statement,
+    TableConstraint, TriggerEvent as SqlTriggerEvent, TriggerPeriod, TriggerReferencingType,
+    UserDefinedTypeRepresentation,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -1232,7 +1233,6 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             | Statement::CreateProcedure { .. }
             | Statement::DropProcedure { .. }
             | Statement::CreateMacro { .. }
-            | Statement::CreateOperator(_)
             | Statement::CreateOperatorClass(_)
             | Statement::CreateOperatorFamily(_)
             | Statement::AlterOperator(_)
@@ -1363,6 +1363,9 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             }
             Statement::CreateAggregate(stmt) => {
                 parse_create_aggregate(stmt, &mut schema)?;
+            }
+            Statement::CreateOperator(stmt) => {
+                parse_create_operator(stmt, &mut schema);
             }
             Statement::AlterFunction(alter) => {
                 parse_alter_aggregate_owner(alter, &mut schema);
@@ -1616,6 +1619,94 @@ fn parse_create_aggregate(stmt: CreateAggregate, schema: &mut Schema) -> Result<
     let key = qualified_name(&agg_schema, &aggregate.signature());
     schema.aggregates.insert(key, aggregate);
     Ok(())
+}
+
+/// Like `extract_qualified_name`, but defaults an unqualified identifier to
+/// `pg_catalog` instead of `public`. Used for the COMMUTATOR / NEGATOR /
+/// RESTRICT / JOIN references in `CREATE OPERATOR`: these name *other*,
+/// pre-existing operators and selectivity-estimator functions, which are
+/// overwhelmingly PostgreSQL builtins resolved via `search_path` (which
+/// always includes `pg_catalog`), unlike the operator's own implementing
+/// FUNCTION, which is virtually always the user's own function.
+fn extract_qualified_name_pg_catalog_default(name: &sqlparser::ast::ObjectName) -> (String, String) {
+    let parts: Vec<String> = name
+        .0
+        .iter()
+        .map(|part| unquote_ident(&part.to_string()).to_string())
+        .collect();
+    match parts.as_slice() {
+        [schema, item] => (schema.clone(), item.clone()),
+        [item] => ("pg_catalog".to_string(), item.clone()),
+        _ => panic!("Unexpected object name format: {name:?}"),
+    }
+}
+
+fn parse_create_operator(stmt: CreateOperator, schema: &mut Schema) {
+    let (op_schema, raw_op_name) = extract_qualified_name(&stmt.name);
+    let op_name = truncate_identifier(&raw_op_name);
+    let (function_schema, function_name) = extract_qualified_name(&stmt.function);
+
+    let left_type = stmt
+        .left_arg
+        .as_ref()
+        .map(|dt| canonicalize_pg_type(&dt.to_string()).into_owned());
+    let right_type = stmt
+        .right_arg
+        .as_ref()
+        .map(|dt| canonicalize_pg_type(&dt.to_string()).into_owned());
+
+    let mut commutator: Option<String> = None;
+    let mut negator: Option<String> = None;
+    let mut restrict: Option<String> = None;
+    let mut join: Option<String> = None;
+    let mut hashes = false;
+    let mut merges = false;
+
+    for option in stmt.options {
+        match option {
+            OperatorOption::Commutator(name) => {
+                let (s, n) = extract_qualified_name_pg_catalog_default(&name);
+                commutator = Some(qualified_name(&s, &n));
+            }
+            OperatorOption::Negator(name) => {
+                let (s, n) = extract_qualified_name_pg_catalog_default(&name);
+                negator = Some(qualified_name(&s, &n));
+            }
+            OperatorOption::Restrict(name) => {
+                restrict = name.map(|name| {
+                    let (s, n) = extract_qualified_name_pg_catalog_default(&name);
+                    qualified_name(&s, &n)
+                });
+            }
+            OperatorOption::Join(name) => {
+                join = name.map(|name| {
+                    let (s, n) = extract_qualified_name_pg_catalog_default(&name);
+                    qualified_name(&s, &n)
+                });
+            }
+            OperatorOption::Hashes => hashes = true,
+            OperatorOption::Merges => merges = true,
+        }
+    }
+
+    let operator = Operator {
+        schema: op_schema.clone(),
+        name: op_name,
+        left_type,
+        right_type,
+        function_schema,
+        function_name,
+        commutator,
+        negator,
+        restrict,
+        join,
+        hashes,
+        merges,
+        comment: None,
+    };
+
+    let key = qualified_name(&op_schema, &operator.signature());
+    schema.operators.insert(key, operator);
 }
 
 fn parse_alter_aggregate_owner(alter: AlterFunction, schema: &mut Schema) {

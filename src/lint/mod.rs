@@ -401,6 +401,8 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         | MigrationOp::AlterFunction { .. }
         | MigrationOp::CreateAggregate(_)
         | MigrationOp::DropAggregate { .. }
+        | MigrationOp::CreateOperator(_)
+        | MigrationOp::DropOperator { .. }
         | MigrationOp::CreateView(_)
         | MigrationOp::AlterView { .. }
         | MigrationOp::CreateTrigger(_)

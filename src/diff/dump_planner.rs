@@ -15,6 +15,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut create_partitions = Vec::new();
     let mut create_functions = Vec::new();
     let mut create_aggregates = Vec::new();
+    let mut create_operators = Vec::new();
     let mut create_views = Vec::new();
     let mut create_triggers = Vec::new();
     let mut enable_rls = Vec::new();
@@ -37,6 +38,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::CreatePartition(_) => create_partitions.push(op),
             MigrationOp::CreateFunction(_) => create_functions.push(op),
             MigrationOp::CreateAggregate(_) => create_aggregates.push(op),
+            MigrationOp::CreateOperator(_) => create_operators.push(op),
             MigrationOp::CreateView(_) => create_views.push(op),
             MigrationOp::CreateTrigger(_) => create_triggers.push(op),
             MigrationOp::EnableRls { .. } => enable_rls.push(op),
@@ -80,6 +82,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             | MigrationOp::DropFunction { .. }
             | MigrationOp::AlterFunction { .. }
             | MigrationOp::DropAggregate { .. }
+            | MigrationOp::DropOperator { .. }
             | MigrationOp::DropView { .. }
             | MigrationOp::AlterView { .. }
             | MigrationOp::DropTrigger { .. }
@@ -107,6 +110,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(create_domains);
     result.extend(create_functions);
     result.extend(create_aggregates);
+    result.extend(create_operators);
     result.extend(create_tables);
     result.extend(create_partitions);
     result.extend(create_sequences);

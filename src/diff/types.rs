@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use crate::model::{
     Aggregate, CheckConstraint, Column, Domain, EnumType, ExclusionConstraint, Extension,
-    ForeignKey, Function, Index, Partition, PgSchema, PgType, Policy, PrimaryKey, Privilege,
-    QualifiedName, Sequence, SequenceDataType, SequenceOwner, Server, Table, Trigger,
+    ForeignKey, Function, Index, Operator, Partition, PgSchema, PgType, Policy, PrimaryKey,
+    Privilege, QualifiedName, Sequence, SequenceDataType, SequenceOwner, Server, Table, Trigger,
     TriggerEnabled, VersionView, View,
 };
 
@@ -34,6 +34,9 @@ pub enum CommentObjectType {
     /// `ON <table>` form. The constraint kind itself is not recorded —
     /// PostgreSQL resolves it from `pg_constraint` at apply time.
     Constraint,
+    /// Comment on a user-defined operator, identified by name plus the
+    /// `(lefttype, righttype)` operand list carried in `SetComment.arguments`.
+    Operator,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -193,6 +196,11 @@ pub enum MigrationOp {
     },
     CreateAggregate(Aggregate),
     DropAggregate {
+        name: String,
+        args: String,
+    },
+    CreateOperator(Operator),
+    DropOperator {
         name: String,
         args: String,
     },

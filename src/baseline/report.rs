@@ -11,6 +11,8 @@ pub struct ObjectCounts {
     pub functions: usize,
     #[serde(default)]
     pub aggregates: usize,
+    #[serde(default)]
+    pub operators: usize,
     pub views: usize,
     pub triggers: usize,
     pub sequences: usize,
@@ -24,6 +26,7 @@ impl ObjectCounts {
             tables: schema.tables.len(),
             functions: schema.functions.len(),
             aggregates: schema.aggregates.len(),
+            operators: schema.operators.len(),
             views: schema.views.len(),
             triggers: schema.triggers.len(),
             sequences: schema.sequences.len(),
@@ -36,6 +39,7 @@ impl ObjectCounts {
             + self.tables
             + self.functions
             + self.aggregates
+            + self.operators
             + self.views
             + self.triggers
             + self.sequences
@@ -83,6 +87,7 @@ pub fn generate_text_report(report: &BaselineReport) -> String {
         ("Tables:", report.object_counts.tables),
         ("Functions:", report.object_counts.functions),
         ("Aggregates:", report.object_counts.aggregates),
+        ("Operators:", report.object_counts.operators),
         ("Views:", report.object_counts.views),
         ("Triggers:", report.object_counts.triggers),
         ("Sequences:", report.object_counts.sequences),
@@ -166,6 +171,7 @@ mod tests {
                 tables: 5,
                 functions: 3,
                 aggregates: 0,
+                operators: 0,
                 views: 1,
                 triggers: 2,
                 sequences: 4,
@@ -193,11 +199,12 @@ mod tests {
             tables: 3,
             functions: 4,
             aggregates: 0,
+            operators: 8,
             views: 5,
             triggers: 6,
             sequences: 7,
         };
-        assert_eq!(counts.total(), 28);
+        assert_eq!(counts.total(), 36);
         assert!(!counts.is_empty());
     }
 

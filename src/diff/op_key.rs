@@ -148,6 +148,14 @@ pub(crate) enum OpKey {
         name: String,
         args: String,
     },
+    CreateOperator {
+        name: String,
+        args: String,
+    },
+    DropOperator {
+        name: String,
+        args: String,
+    },
     CreateView(String),
     DropView(String),
     AlterView(String),
@@ -385,6 +393,14 @@ impl OpKey {
                 args: a.args_string(),
             },
             MigrationOp::DropAggregate { name, args } => OpKey::DropAggregate {
+                name: name.clone(),
+                args: args.clone(),
+            },
+            MigrationOp::CreateOperator(o) => OpKey::CreateOperator {
+                name: qualified_name(&o.schema, &o.name),
+                args: o.args_string(),
+            },
+            MigrationOp::DropOperator { name, args } => OpKey::DropOperator {
                 name: name.clone(),
                 args: args.clone(),
             },

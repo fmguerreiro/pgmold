@@ -258,6 +258,8 @@ pub struct Schema {
     pub functions: BTreeMap<String, Function>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub aggregates: BTreeMap<String, Aggregate>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub operators: BTreeMap<String, Operator>,
     pub views: BTreeMap<String, View>,
     pub triggers: BTreeMap<String, Trigger>,
     pub sequences: BTreeMap<String, Sequence>,
@@ -896,6 +898,76 @@ impl Aggregate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Operator {
+    pub schema: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right_type: Option<String>,
+    pub function_schema: String,
+    pub function_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commutator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub negator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restrict: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub join: Option<String>,
+    #[serde(default)]
+    pub hashes: bool,
+    #[serde(default)]
+    pub merges: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
+impl Operator {
+    /// Returns the comma-separated `(lefttype, righttype)` argument list used
+    /// to identify the operator, mirroring `Function::signature` /
+    /// `Aggregate::signature`. A missing operand (unary operator) renders as
+    /// `NONE`, matching PostgreSQL's own `\do` display convention.
+    pub fn args_string(&self) -> String {
+        format!(
+            "{}, {}",
+            self.left_type
+                .as_deref()
+                .map(normalize_pg_type)
+                .unwrap_or(Cow::Borrowed("NONE")),
+            self.right_type
+                .as_deref()
+                .map(normalize_pg_type)
+                .unwrap_or(Cow::Borrowed("NONE")),
+        )
+    }
+
+    /// Returns "name(lefttype, righttype)" used as the BTreeMap key suffix,
+    /// matching `Function::signature` / `Aggregate::signature`.
+    pub fn signature(&self) -> String {
+        format!("{}({})", self.name, self.args_string())
+    }
+
+    /// Compares two operators semantically, ignoring the comment.
+    pub fn semantically_equals(&self, other: &Operator) -> bool {
+        self.schema == other.schema
+            && self.name == other.name
+            && self.left_type.as_deref().map(normalize_pg_type)
+                == other.left_type.as_deref().map(normalize_pg_type)
+            && self.right_type.as_deref().map(normalize_pg_type)
+                == other.right_type.as_deref().map(normalize_pg_type)
+            && self.function_schema == other.function_schema
+            && self.function_name == other.function_name
+            && self.commutator == other.commutator
+            && self.negator == other.negator
+            && self.restrict == other.restrict
+            && self.join == other.join
+            && self.hashes == other.hashes
+            && self.merges == other.merges
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct View {
     pub name: String,
     pub schema: String,
@@ -1231,6 +1303,7 @@ impl Schema {
             domains: BTreeMap::new(),
             functions: BTreeMap::new(),
             aggregates: BTreeMap::new(),
+            operators: BTreeMap::new(),
             views: BTreeMap::new(),
             triggers: BTreeMap::new(),
             sequences: BTreeMap::new(),
@@ -1402,6 +1475,7 @@ impl Schema {
             domains,
             functions,
             aggregates,
+            operators,
             views,
             triggers,
             sequences,
@@ -1425,6 +1499,7 @@ impl Schema {
         merge_map(&mut self.domains, domains, "domain", &mut observe)?;
         merge_map(&mut self.functions, functions, "function", &mut observe)?;
         merge_map(&mut self.aggregates, aggregates, "aggregate", &mut observe)?;
+        merge_map(&mut self.operators, operators, "operator", &mut observe)?;
         merge_map(&mut self.views, views, "view", &mut observe)?;
         merge_map(&mut self.triggers, triggers, "trigger", &mut observe)?;
         merge_map(&mut self.sequences, sequences, "sequence", &mut observe)?;

@@ -462,6 +462,22 @@ pub fn schema_to_create_ops(schema: &Schema) -> Vec<MigrationOp> {
         }
     }
 
+    for operator in schema.operators.values() {
+        ops.push(MigrationOp::CreateOperator(operator.clone()));
+        if let Some(text) = &operator.comment {
+            ops.push(MigrationOp::SetComment {
+                object_type: CommentObjectType::Operator,
+                schema: operator.schema.clone(),
+                name: operator.name.clone(),
+                arguments: Some(operator.args_string()),
+                column: None,
+                target: None,
+                on_domain: false,
+                comment: Some(text.clone()),
+            });
+        }
+    }
+
     for view in schema.views.values() {
         ops.push(MigrationOp::CreateView(view.clone()));
         push_owner_and_grant_ops(

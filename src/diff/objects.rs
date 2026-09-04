@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::model::{
-    parse_qualified_name, qualified_name, EnumType, Grant, QualifiedName, Schema, Sequence, Server,
-    Trigger,
+    parse_qualified_name, qualified_name, EnumType, Grant, Operator, QualifiedName, Schema,
+    Sequence, Server, Trigger,
 };
 use crate::util::{optional_expressions_equal, partition_bounds_equal};
 
@@ -522,6 +522,46 @@ pub(super) fn diff_aggregates(
         |_val| Some(OwnerObjectKind::Aggregate),
         |val| &val.owner,
         |val| &val.grants,
+    );
+    ops
+}
+
+const NO_OWNER: Option<String> = None;
+
+pub(super) fn diff_operators(
+    from: &Schema,
+    to: &Schema,
+    options: &DiffOptions,
+) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+    diff_objects(
+        &mut ops,
+        options,
+        &from.operators,
+        &to.operators,
+        |_key, op| MigrationOp::CreateOperator(op.clone()),
+        |ops, _key, from_op, to_op| {
+            if !from_op.semantically_equals(to_op) {
+                ops.push(MigrationOp::DropOperator {
+                    name: qualified_name(&from_op.schema, &from_op.name),
+                    args: from_op.args_string(),
+                });
+                ops.push(MigrationOp::CreateOperator(to_op.clone()));
+            }
+        },
+        |_key, op| MigrationOp::DropOperator {
+            name: qualified_name(&op.schema, &op.name),
+            args: op.args_string(),
+        },
+        |_key, op| ObjectCoords {
+            schema: op.schema.clone(),
+            name: op.name.clone(),
+            args: Some(op.args_string()),
+        },
+        None,
+        |_val| None,
+        |_val: &Operator| &NO_OWNER,
+        |_val| &[],
     );
     ops
 }

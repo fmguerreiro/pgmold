@@ -5,9 +5,9 @@ use crate::diff::{
 use crate::model::{
     parse_qualified_name, versioned_schema_name, Aggregate, AggregateParallel, ArgMode,
     CheckConstraint, Column, Domain, ExclusionConstraint, ForeignKey, Function, Index, IndexType,
-    Partition, PartitionBound, PartitionStrategy, PgType, Policy, PolicyCommand, Privilege,
-    QualifiedName, ReferentialAction, SecurityType, Sequence, SequenceDataType, Table, Trigger,
-    TriggerEnabled, TriggerEvent, TriggerTiming, VersionView, View, Volatility,
+    Operator, Partition, PartitionBound, PartitionStrategy, PgType, Policy, PolicyCommand,
+    Privilege, QualifiedName, ReferentialAction, SecurityType, Sequence, SequenceDataType, Table,
+    Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, VersionView, View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -354,6 +354,17 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             )]
         }
 
+        MigrationOp::CreateOperator(op) => vec![generate_operator_ddl(op)],
+
+        MigrationOp::DropOperator { name, args } => {
+            let (schema, op_name) = parse_qualified_name(name);
+            vec![format!(
+                "DROP OPERATOR {} ({});",
+                quote_qualified_operator(&schema, &op_name),
+                args
+            )]
+        }
+
         MigrationOp::CreateView(view) => generate_view_ddl(view, false),
 
         MigrationOp::DropView { name, materialized } => {
@@ -651,6 +662,14 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                         quote_ident(name),
                         relation_kind,
                         quote_qualified(schema, target_name)
+                    )
+                }
+                CommentObjectType::Operator => {
+                    let args = arguments.as_deref().unwrap_or("");
+                    format!(
+                        "OPERATOR {} ({})",
+                        quote_qualified_operator(schema, name),
+                        args
                     )
                 }
             };
@@ -1159,6 +1178,14 @@ fn quote_qualified(schema: &str, name: &str) -> String {
     format!("{}.{}", quote_ident(schema), quote_ident(name))
 }
 
+/// Qualifies an operator symbol (`+`, `<=>`, ...) with its schema. Unlike
+/// `quote_qualified`, the operator part is never quoted: it is a sequence of
+/// operator characters, not an identifier, and PostgreSQL's `any_operator`
+/// grammar production does not accept a quoted form.
+fn quote_qualified_operator(schema: &str, symbol: &str) -> String {
+    format!("{}.{}", quote_ident(schema), symbol)
+}
+
 fn escape_string(value: &str) -> String {
     value.replace('\'', "''")
 }
@@ -1376,6 +1403,54 @@ fn generate_aggregate_ddl(agg: &Aggregate) -> String {
         quote_qualified(&agg.schema, &agg.name),
         args,
         options.join(", ")
+    )
+}
+
+fn generate_operator_ddl(op: &Operator) -> String {
+    let mut params = vec![format!(
+        "FUNCTION = {}",
+        quote_qualified(&op.function_schema, &op.function_name)
+    )];
+
+    if let Some(left) = &op.left_type {
+        params.push(format!("LEFTARG = {left}"));
+    }
+    if let Some(right) = &op.right_type {
+        params.push(format!("RIGHTARG = {right}"));
+    }
+    if let Some(commutator) = &op.commutator {
+        let (schema, symbol) = parse_qualified_name(commutator);
+        params.push(format!(
+            "COMMUTATOR = {}",
+            quote_qualified_operator(&schema, &symbol)
+        ));
+    }
+    if let Some(negator) = &op.negator {
+        let (schema, symbol) = parse_qualified_name(negator);
+        params.push(format!(
+            "NEGATOR = {}",
+            quote_qualified_operator(&schema, &symbol)
+        ));
+    }
+    if let Some(restrict) = &op.restrict {
+        let (schema, name) = parse_qualified_name(restrict);
+        params.push(format!("RESTRICT = {}", quote_qualified(&schema, &name)));
+    }
+    if let Some(join) = &op.join {
+        let (schema, name) = parse_qualified_name(join);
+        params.push(format!("JOIN = {}", quote_qualified(&schema, &name)));
+    }
+    if op.hashes {
+        params.push("HASHES".to_string());
+    }
+    if op.merges {
+        params.push("MERGES".to_string());
+    }
+
+    format!(
+        "CREATE OPERATOR {} ({});",
+        quote_qualified_operator(&op.schema, &op.name),
+        params.join(", ")
     )
 }
 
