@@ -7,6 +7,11 @@
   index rename in their history; RFC 0001 (`docs/rfc/0001-pgmold-owns-expand-contract.md`),
   whose Options B, C, and E all list this RFC as a prerequisite
 - Tracked: Beads `pgmold-3po5`
+- Decision, 2026-09-04: authoring surface deferred. `pgmold-3po5` ships the
+  safety gate only, so a rename-shaped drop+add errors at plan time instead of
+  destroying data. No option below is chosen; the Recommendation is the
+  author's argument, not a settled call. Note the inline comment directive
+  cannot serve the `drizzle:` provider, whose SQL is generated.
 
 ## Problem
 
