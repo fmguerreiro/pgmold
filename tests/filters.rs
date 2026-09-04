@@ -1,4 +1,5 @@
 mod common;
+use assert_cmd::Command;
 use common::*;
 use pgmold::dump::generate_dump;
 use pgmold::filter::{filter_schema, Filter};
@@ -423,5 +424,145 @@ async fn extension_objects_excluded_by_default() {
     assert!(
         has_citext_func_included,
         "citext extension functions SHOULD be included when include_extension_objects=true"
+    );
+}
+
+#[tokio::test]
+#[allow(deprecated)] // Command::cargo_bin
+async fn lint_honours_exclude_filter() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE TABLE _internal (id BIGINT NOT NULL PRIMARY KEY, secret TEXT NOT NULL)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema_file =
+        write_sql_temp_file("CREATE TABLE _internal (id BIGINT NOT NULL PRIMARY KEY);");
+    let schema_arg = format!("sql:{}", schema_file.path().display());
+    let database_arg = format!("db:{url}");
+
+    let unfiltered = Command::cargo_bin("pgmold")
+        .unwrap()
+        .args([
+            "lint",
+            "--schema",
+            &schema_arg,
+            "--database",
+            &database_arg,
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let unfiltered_json: serde_json::Value =
+        serde_json::from_str(String::from_utf8(unfiltered.stdout).unwrap().trim()).unwrap();
+    assert_eq!(
+        unfiltered_json["error_count"],
+        serde_json::json!(1),
+        "without --exclude the dropped column must be linted, got: {unfiltered_json}"
+    );
+
+    let filtered = Command::cargo_bin("pgmold")
+        .unwrap()
+        .args([
+            "lint",
+            "--schema",
+            &schema_arg,
+            "--database",
+            &database_arg,
+            "--exclude",
+            "_*",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let filtered_json: serde_json::Value =
+        serde_json::from_str(String::from_utf8(filtered.stdout).unwrap().trim()).unwrap();
+    assert_eq!(
+        filtered_json,
+        serde_json::json!({
+            "results": [],
+            "error_count": 0,
+            "warning_count": 0,
+        })
+    );
+    assert!(filtered.status.success());
+}
+
+#[tokio::test]
+#[allow(deprecated)] // Command::cargo_bin
+async fn migrate_honours_exclude_filter() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query("CREATE TABLE _internal (id BIGINT NOT NULL PRIMARY KEY, secret TEXT NOT NULL)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema_file =
+        write_sql_temp_file("CREATE TABLE _internal (id BIGINT NOT NULL PRIMARY KEY);");
+    let schema_arg = format!("sql:{}", schema_file.path().display());
+    let database_arg = format!("db:{url}");
+    let migrations_dir = tempfile::tempdir().unwrap();
+    let migrations_arg = migrations_dir.path().display().to_string();
+
+    let filtered = Command::cargo_bin("pgmold")
+        .unwrap()
+        .args([
+            "migrate",
+            "--schema",
+            &schema_arg,
+            "--database",
+            &database_arg,
+            "--migrations",
+            &migrations_arg,
+            "--name",
+            "drop_secret",
+            "--exclude",
+            "_*",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let filtered_json: serde_json::Value =
+        serde_json::from_str(String::from_utf8(filtered.stdout).unwrap().trim()).unwrap();
+    assert_eq!(
+        filtered_json,
+        serde_json::json!({
+            "file_path": null,
+            "statement_count": 0,
+            "statements": [],
+        })
+    );
+    assert_eq!(
+        std::fs::read_dir(migrations_dir.path()).unwrap().count(),
+        0,
+        "excluded objects must not produce a migration file"
+    );
+
+    let unfiltered = Command::cargo_bin("pgmold")
+        .unwrap()
+        .args([
+            "migrate",
+            "--schema",
+            &schema_arg,
+            "--database",
+            &database_arg,
+            "--migrations",
+            &migrations_arg,
+            "--name",
+            "drop_secret",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let unfiltered_json: serde_json::Value =
+        serde_json::from_str(String::from_utf8(unfiltered.stdout).unwrap().trim()).unwrap();
+    assert_eq!(
+        unfiltered_json["statement_count"],
+        serde_json::json!(1),
+        "without --exclude the drop must be emitted, got: {unfiltered_json}"
     );
 }
