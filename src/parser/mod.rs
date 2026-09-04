@@ -1730,7 +1730,10 @@ fn grantee_to_role_name(grantee: &Grantee) -> Option<String> {
 /// Build the warning message for a `GranteeName::UserHost` grantee dropped
 /// from an `ALTER DEFAULT PRIVILEGES` statement. Broken out so the
 /// formatting is unit-testable without having to capture stderr.
-fn format_user_host_grantee_skip(user: &sqlparser::ast::Ident, host: &sqlparser::ast::Ident) -> String {
+fn format_user_host_grantee_skip(
+    user: &sqlparser::ast::Ident,
+    host: &sqlparser::ast::Ident,
+) -> String {
     format!(
         "warning: pgmold does not model host-qualified grantee '{user}'@'{host}' in ALTER DEFAULT PRIVILEGES; dropping this grantee"
     )
