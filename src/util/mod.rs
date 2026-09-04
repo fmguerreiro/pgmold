@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use regex::Regex;
 use sqlparser::ast::{
     BinaryOperator, CastKind, DataType, ExactNumberInfo, Expr, GroupByExpr, OrderBy, OrderByExpr,
@@ -941,16 +942,14 @@ fn bound_value_equal(from: &str, to: &str) -> bool {
     }
 }
 
-/// Parses a temporal bound value expression into a UTC instant in nanoseconds.
+/// Parses a temporal bound value expression into a UTC instant.
 ///
 /// Accepts date literals (`'2024-01-01'`), timestamps without offset (assumed to
 /// be UTC, matching the corpus session's `UTC` timezone), and timestamps with an
 /// explicit offset (`'2022-04-01 01:00:00+01'`). Returns `None` for any value
 /// that is not a recognized temporal literal so the caller can fall back to
 /// expression comparison.
-fn parse_temporal_instant(value: &str) -> Option<i64> {
-    use chrono::{DateTime, NaiveDate, NaiveDateTime};
-
+fn parse_temporal_instant(value: &str) -> Option<DateTime<Utc>> {
     let trimmed = value.trim();
     let inner = trimmed
         .strip_prefix('\'')
@@ -958,7 +957,7 @@ fn parse_temporal_instant(value: &str) -> Option<i64> {
         .trim();
 
     if let Ok(parsed) = DateTime::parse_from_str(inner, "%Y-%m-%d %H:%M:%S%#z") {
-        return parsed.timestamp_nanos_opt();
+        return Some(parsed.with_timezone(&Utc));
     }
 
     for format in [
@@ -967,12 +966,12 @@ fn parse_temporal_instant(value: &str) -> Option<i64> {
         "%Y-%m-%dT%H:%M:%S",
     ] {
         if let Ok(parsed) = NaiveDateTime::parse_from_str(inner, format) {
-            return parsed.and_utc().timestamp_nanos_opt();
+            return Some(parsed.and_utc());
         }
     }
 
     if let Ok(date) = NaiveDate::parse_from_str(inner, "%Y-%m-%d") {
-        return date.and_hms_opt(0, 0, 0)?.and_utc().timestamp_nanos_opt();
+        return Some(date.and_hms_opt(0, 0, 0)?.and_utc());
     }
 
     None
@@ -3282,6 +3281,74 @@ fn partition_bound_list_integers_equal() {
         values: vec!["1".to_string(), "2".to_string()],
     };
     assert!(partition_bounds_equal(&parsed, &introspected));
+}
+
+#[test]
+fn partition_bound_far_future_year_equal_despite_different_spelling() {
+    let parsed = PartitionBound::Range {
+        from: vec!["'2300-01-01'".to_string()],
+        to: vec!["'2301-01-01'".to_string()],
+    };
+    let introspected = PartitionBound::Range {
+        from: vec!["'2300-01-01 00:00:00+00'".to_string()],
+        to: vec!["'2301-01-01 00:00:00+00'".to_string()],
+    };
+    assert!(
+        partition_bounds_equal(&parsed, &introspected),
+        "year 2300 bounds outside chrono's nanosecond range must still canonicalize equal"
+    );
+}
+
+#[test]
+fn partition_bound_far_past_year_equal_despite_different_spelling() {
+    let parsed = PartitionBound::Range {
+        from: vec!["'1500-01-01'".to_string()],
+        to: vec!["'1501-01-01'".to_string()],
+    };
+    let introspected = PartitionBound::Range {
+        from: vec!["'1500-01-01 00:00:00+00'".to_string()],
+        to: vec!["'1501-01-01 00:00:00+00'".to_string()],
+    };
+    assert!(
+        partition_bounds_equal(&parsed, &introspected),
+        "year 1500 bounds outside chrono's nanosecond range must still canonicalize equal"
+    );
+}
+
+#[test]
+fn partition_bound_far_future_genuine_change_not_equal() {
+    let narrow = PartitionBound::Range {
+        from: vec!["'2300-01-01'".to_string()],
+        to: vec!["'2301-01-01'".to_string()],
+    };
+    let widened = PartitionBound::Range {
+        from: vec!["'2300-01-01'".to_string()],
+        to: vec!["'2302-01-01'".to_string()],
+    };
+    assert!(
+        !partition_bounds_equal(&narrow, &widened),
+        "a genuine bound widening far outside the nanosecond range must remain unequal"
+    );
+}
+
+#[test]
+fn partition_bound_unparseable_value_falls_back_to_string_comparison() {
+    let same_spelling = PartitionBound::Range {
+        from: vec!["MINVALUE".to_string()],
+        to: vec!["MAXVALUE".to_string()],
+    };
+    let other_spelling = PartitionBound::Range {
+        from: vec!["MINVALUE".to_string()],
+        to: vec!["'2024-01-01'::text".to_string()],
+    };
+    assert!(
+        partition_bounds_equal(&same_spelling, &same_spelling),
+        "identical unparseable bound values must compare equal via string fallback"
+    );
+    assert!(
+        !partition_bounds_equal(&same_spelling, &other_spelling),
+        "differently spelled unparseable bound values must not compare equal"
+    );
 }
 
 #[test]

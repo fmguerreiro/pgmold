@@ -16,10 +16,10 @@ pub use types::{
 };
 
 use dependencies::{
-    dropped_columns, generate_fk_ops_for_type_changes, generate_policy_ops_for_affected_tables,
-    generate_policy_ops_for_cross_table_column_drops, generate_policy_ops_for_function_changes,
-    generate_trigger_ops_for_affected_tables, generate_view_ops_for_affected_tables,
-    tables_with_dropped_columns, type_changed_columns,
+    dropped_columns, generate_column_ops_for_domain_recreate, generate_fk_ops_for_type_changes,
+    generate_policy_ops_for_affected_tables, generate_policy_ops_for_cross_table_column_drops,
+    generate_policy_ops_for_function_changes, generate_trigger_ops_for_affected_tables,
+    generate_view_ops_for_affected_tables, tables_with_dropped_columns, type_changed_columns,
 };
 use grants::diff_default_privileges;
 use objects::{
@@ -55,6 +55,7 @@ pub fn compute_diff_with_flags(
     ops.extend(diff_servers(from, to, &options));
     ops.extend(diff_enums(from, to, &options));
     ops.extend(diff_domains(from, to, &options));
+    ops.extend(generate_column_ops_for_domain_recreate(&ops, from));
     ops.extend(diff_tables(from, to, &options));
     ops.extend(diff_partitions(from, to, &options));
     ops.extend(diff_functions(from, to, &options));

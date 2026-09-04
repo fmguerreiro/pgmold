@@ -538,3 +538,87 @@ async fn changed_partition_bound_detaches_and_reattaches_without_data_loss() {
         "re-plan must converge to empty. Got: {final_ops:?}"
     );
 }
+
+#[tokio::test]
+async fn partition_local_index_and_check_constraint_roundtrip() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE measurement (
+            city_id INT NOT NULL,
+            logdate DATE NOT NULL
+        ) PARTITION BY RANGE (logdate)
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE measurement_2024 PARTITION OF measurement
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query("CREATE INDEX measurement_2024_city_id_idx ON measurement_2024 (city_id)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "ALTER TABLE measurement_2024 ADD CONSTRAINT measurement_2024_city_id_check CHECK (city_id > 0)",
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let partition = schema
+        .partitions
+        .get("public.measurement_2024")
+        .expect("partition should be introspected");
+
+    assert_eq!(partition.indexes.len(), 1);
+    assert_eq!(partition.indexes[0].name, "measurement_2024_city_id_idx");
+    assert_eq!(partition.indexes[0].columns, vec!["city_id".to_string()]);
+    assert!(!partition.indexes[0].is_constraint);
+
+    assert_eq!(partition.check_constraints.len(), 1);
+    assert_eq!(
+        partition.check_constraints[0].name,
+        "measurement_2024_city_id_check"
+    );
+    assert_eq!(partition.check_constraints[0].expression, "city_id > 0");
+
+    let desired_schema = parse_sql_string(
+        r#"
+        CREATE TABLE measurement (
+            city_id INT NOT NULL,
+            logdate DATE NOT NULL
+        ) PARTITION BY RANGE (logdate);
+
+        CREATE TABLE measurement_2024 PARTITION OF measurement
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+
+        CREATE INDEX measurement_2024_city_id_idx ON measurement_2024 (city_id);
+
+        ALTER TABLE measurement_2024 ADD CONSTRAINT measurement_2024_city_id_check CHECK (city_id > 0);
+        "#,
+    )
+    .unwrap();
+
+    let final_ops = compute_diff(&schema, &desired_schema);
+    assert!(
+        final_ops.is_empty(),
+        "introspected partition indexes/checks must match parsed schema. Got: {final_ops:?}"
+    );
+}

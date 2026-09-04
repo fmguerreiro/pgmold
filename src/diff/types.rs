@@ -93,6 +93,24 @@ pub enum MigrationOp {
         name: String,
         changes: DomainChanges,
     },
+    /// Temporarily switches a column off a domain type so `DropDomain` can
+    /// run ahead of a base-type-change recreate: PostgreSQL refuses to drop
+    /// a domain while any column still has it as its type. Carries the
+    /// domain's pre-recreate base type, so the switch is a same-representation
+    /// no-op cast. Paired with `ReattachColumnDomain` after `CreateDomain`.
+    DetachColumnDomain {
+        table: QualifiedName,
+        column: String,
+        data_type: PgType,
+    },
+    /// Restores a column detached by `DetachColumnDomain` back onto its
+    /// domain type once the domain has been recreated with its new base
+    /// type. `domain_type` is the domain's `PgType::UserDefined` reference.
+    ReattachColumnDomain {
+        table: QualifiedName,
+        column: String,
+        domain_type: PgType,
+    },
     CreateTable(Table),
     DropTable(String),
     CreatePartition(Partition),

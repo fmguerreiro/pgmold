@@ -62,8 +62,10 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             | MigrationOp::DetachPartition(_)
             | MigrationOp::AttachPartition(_)
             | MigrationOp::AddColumn { .. }
-            | MigrationOp::DropColumn { .. }
             | MigrationOp::AlterColumn { .. }
+            | MigrationOp::DetachColumnDomain { .. }
+            | MigrationOp::ReattachColumnDomain { .. }
+            | MigrationOp::DropColumn { .. }
             | MigrationOp::AddPrimaryKey { .. }
             | MigrationOp::DropPrimaryKey { .. }
             | MigrationOp::AddIndex { .. }

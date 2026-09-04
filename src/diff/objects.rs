@@ -404,11 +404,8 @@ pub(super) fn diff_partitions(
             }
             // A partition child is a relation in its own right: its partition-local
             // indexes and CHECK constraints reconcile exactly like a table's, and
-            // independently of any bound/parent change above. These fields are not
-            // yet populated by the parser or introspection (pgmold-53bm), so this
-            // path is reachable only from hand-built schemas today; the planner
-            // ordering of these ops relative to a simultaneous DETACH+ATTACH is
-            // deferred to that follow-up, where it can be tested end to end.
+            // independently of any bound/parent change above. The planner orders
+            // these ops relative to a simultaneous DETACH+ATTACH (pgmold-53bm).
             let from_name = QualifiedName::new(&from_partition.schema, &from_partition.name);
             let to_name = QualifiedName::new(&to_partition.schema, &to_partition.name);
             ops.extend(diff_index_lists(

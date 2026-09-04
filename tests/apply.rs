@@ -421,3 +421,110 @@ async fn apply_bigserial_column_on_new_table_still_works() {
         second_result.operations
     );
 }
+
+#[tokio::test]
+async fn apply_domain_base_type_change_with_dependent_column() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let setup_file = write_sql_temp_file(
+        r#"
+        CREATE DOMAIN price AS NUMERIC(10, 2);
+        CREATE TABLE orders (
+            id INT NOT NULL PRIMARY KEY,
+            amount price NOT NULL
+        );
+        "#,
+    );
+    let setup_source = setup_file.path().to_str().unwrap().to_string();
+    apply_migration(
+        &[setup_source],
+        &connection,
+        ApplyOptions {
+            dry_run: false,
+            allow_destructive: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    sqlx::query("INSERT INTO orders (id, amount) VALUES (1, 19.99)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let target_sql = r#"
+        CREATE DOMAIN price AS NUMERIC(12, 4);
+        CREATE TABLE orders (
+            id INT NOT NULL PRIMARY KEY,
+            amount price NOT NULL
+        );
+        "#;
+    let target_file = write_sql_temp_file(target_sql);
+
+    let target_source = target_file.path().to_str().unwrap().to_string();
+    let result = apply_migration(
+        &[target_source],
+        &connection,
+        ApplyOptions {
+            dry_run: false,
+            allow_destructive: true,
+        },
+    )
+    .await
+    .expect("changing a domain's base type while a column depends on it should apply cleanly");
+
+    assert!(result.applied);
+
+    let drop_domain_pos = result
+        .sql_statements
+        .iter()
+        .position(|s| s.contains("DROP DOMAIN"))
+        .expect("DROP DOMAIN statement not found");
+    let create_domain_pos = result
+        .sql_statements
+        .iter()
+        .position(|s| s.contains("CREATE DOMAIN"))
+        .expect("CREATE DOMAIN statement not found");
+    let detach_pos = result
+        .sql_statements
+        .iter()
+        .position(|s| s.contains("ALTER COLUMN \"amount\" TYPE NUMERIC(10,2)"))
+        .expect("detaching ALTER COLUMN TYPE statement not found");
+    let reattach_pos = result
+        .sql_statements
+        .iter()
+        .position(|s| s.contains("ALTER COLUMN \"amount\" TYPE \"public\".\"price\""))
+        .expect("reattaching ALTER COLUMN TYPE statement not found");
+    assert!(
+        detach_pos < drop_domain_pos,
+        "amount must be detached from the domain before DROP DOMAIN: {:#?}",
+        result.sql_statements
+    );
+    assert!(
+        drop_domain_pos < create_domain_pos,
+        "DROP DOMAIN must precede CREATE DOMAIN on a recreate: {:#?}",
+        result.sql_statements
+    );
+    assert!(
+        create_domain_pos < reattach_pos,
+        "amount must be reattached to the domain only after CREATE DOMAIN: {:#?}",
+        result.sql_statements
+    );
+
+    let row: (String,) = sqlx::query_as("SELECT amount::text FROM orders WHERE id = 1")
+        .fetch_one(connection.pool())
+        .await
+        .unwrap();
+    assert_eq!(row.0, "19.9900");
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+    let desired = parse_sql_string(target_sql).unwrap();
+    let final_diff = compute_diff(&schema, &desired);
+    assert!(
+        final_diff.is_empty(),
+        "apply should converge, but the remaining diff was: {final_diff:?}"
+    );
+}
