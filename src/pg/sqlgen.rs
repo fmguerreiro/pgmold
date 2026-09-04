@@ -172,6 +172,34 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             changes,
         } => generate_alter_column(table, column, changes),
 
+        MigrationOp::DetachColumnDomain {
+            table,
+            column,
+            data_type,
+        } => generate_alter_column(
+            table,
+            column,
+            &ColumnChanges {
+                data_type: Some(data_type.clone()),
+                nullable: None,
+                default: None,
+            },
+        ),
+
+        MigrationOp::ReattachColumnDomain {
+            table,
+            column,
+            domain_type,
+        } => generate_alter_column(
+            table,
+            column,
+            &ColumnChanges {
+                data_type: Some(domain_type.clone()),
+                nullable: None,
+                default: None,
+            },
+        ),
+
         MigrationOp::AddPrimaryKey { table, primary_key } => {
             vec![format!(
                 "ALTER TABLE {} ADD PRIMARY KEY ({});",

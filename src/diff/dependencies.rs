@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::model::{parse_qualified_name, qualified_name, Policy, QualifiedName, Schema};
+use crate::model::{parse_qualified_name, qualified_name, PgType, Policy, QualifiedName, Schema};
 use crate::parser::{
     extract_column_references, extract_function_references, extract_table_references,
 };
@@ -554,15 +554,210 @@ fn function_names_match(dropped_name: &str, referenced_name: &str) -> bool {
     dropped_func == ref_func
 }
 
+/// Generate detach/reattach ops for columns typed by a domain whose base
+/// type is being changed (`DropDomain` + `CreateDomain` for the same
+/// qualified name in the same migration). PostgreSQL refuses to `DROP
+/// DOMAIN` while any column still has it as its type, so each dependent
+/// column is switched to the domain's pre-recreate base type ahead of the
+/// drop, then switched back onto the domain (now backed by its new base
+/// type) once the recreate lands.
+///
+/// Dependents are derived from the actual column types in `from` (an exact
+/// `PgType::UserDefined` match against the recreated domain's qualified
+/// name), not from any naming convention.
+pub(super) fn generate_column_ops_for_domain_recreate(
+    ops: &[MigrationOp],
+    from: &Schema,
+) -> Vec<MigrationOp> {
+    let mut additional_ops = Vec::new();
+
+    let dropped_domains: HashSet<&str> = ops
+        .iter()
+        .filter_map(|op| match op {
+            MigrationOp::DropDomain(name) => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    if dropped_domains.is_empty() {
+        return additional_ops;
+    }
+
+    let created_domain_names: HashSet<String> = ops
+        .iter()
+        .filter_map(|op| match op {
+            MigrationOp::CreateDomain(domain) => {
+                Some(qualified_name(&domain.schema, &domain.name))
+            }
+            _ => None,
+        })
+        .collect();
+
+    let recreated_domains: HashSet<&str> = dropped_domains
+        .into_iter()
+        .filter(|name| created_domain_names.contains(*name))
+        .collect();
+
+    if recreated_domains.is_empty() {
+        return additional_ops;
+    }
+
+    for table in from.tables.values() {
+        let table_qname = QualifiedName::new(&table.schema, &table.name);
+        for (column_name, column) in &table.columns {
+            let PgType::UserDefined(type_name) = &column.data_type else {
+                continue;
+            };
+            let qualified_domain = if type_name.contains('.') {
+                type_name.clone()
+            } else {
+                format!("{}.{}", table.schema, type_name)
+            };
+            if !recreated_domains.contains(qualified_domain.as_str()) {
+                continue;
+            }
+            let Some(from_domain) = from.domains.get(&qualified_domain) else {
+                continue;
+            };
+
+            additional_ops.push(MigrationOp::DetachColumnDomain {
+                table: table_qname.clone(),
+                column: column_name.clone(),
+                data_type: from_domain.data_type.clone(),
+            });
+            additional_ops.push(MigrationOp::ReattachColumnDomain {
+                table: table_qname.clone(),
+                column: column_name.clone(),
+                domain_type: PgType::UserDefined(qualified_domain.clone()),
+            });
+        }
+    }
+
+    additional_ops
+}
+
 #[cfg(test)]
 mod tests {
     use crate::diff::test_helpers::*;
     use crate::diff::{compute_diff, MigrationOp};
     use crate::model::{
-        qualified_name, ArgMode, Column, ForeignKey, Function, FunctionArg, PgType, Policy,
-        PolicyCommand, ReferentialAction, Schema, SecurityType, Trigger, TriggerEnabled,
+        qualified_name, ArgMode, Column, Domain, ForeignKey, Function, FunctionArg, PgType,
+        Policy, PolicyCommand, ReferentialAction, Schema, SecurityType, Trigger, TriggerEnabled,
         TriggerEvent, TriggerTiming, View, Volatility,
     };
+
+    fn make_domain(name: &str, schema: &str, data_type: PgType) -> Domain {
+        Domain {
+            schema: schema.to_string(),
+            name: name.to_string(),
+            data_type,
+            default: None,
+            not_null: false,
+            collation: None,
+            check_constraints: Vec::new(),
+            owner: None,
+            grants: Vec::new(),
+            comment: None,
+        }
+    }
+
+    #[test]
+    fn generates_detach_reattach_ops_for_column_on_domain_recreate() {
+        let mut from = empty_schema();
+        from.domains.insert(
+            "public.price".to_string(),
+            make_domain(
+                "price",
+                "public",
+                PgType::Numeric {
+                    precision: Some(10),
+                    scale: Some(2),
+                },
+            ),
+        );
+        let mut orders_table = simple_table("orders");
+        orders_table.columns.insert(
+            "amount".to_string(),
+            simple_column("amount", PgType::UserDefined("public.price".to_string())),
+        );
+        from.tables.insert("public.orders".to_string(), orders_table);
+
+        let ops = vec![
+            MigrationOp::DropDomain("public.price".to_string()),
+            MigrationOp::CreateDomain(make_domain(
+                "price",
+                "public",
+                PgType::Numeric {
+                    precision: Some(12),
+                    scale: Some(4),
+                },
+            )),
+        ];
+
+        let generated = generate_column_ops_for_domain_recreate(&ops, &from);
+
+        assert_eq!(
+            generated,
+            vec![
+                MigrationOp::DetachColumnDomain {
+                    table: crate::model::QualifiedName::new("public", "orders"),
+                    column: "amount".to_string(),
+                    data_type: PgType::Numeric {
+                        precision: Some(10),
+                        scale: Some(2),
+                    },
+                },
+                MigrationOp::ReattachColumnDomain {
+                    table: crate::model::QualifiedName::new("public", "orders"),
+                    column: "amount".to_string(),
+                    domain_type: PgType::UserDefined("public.price".to_string()),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn no_column_ops_when_domain_recreate_has_no_dependent_columns() {
+        let mut from = empty_schema();
+        from.domains.insert(
+            "public.price".to_string(),
+            make_domain("price", "public", PgType::Numeric {
+                precision: Some(10),
+                scale: Some(2),
+            }),
+        );
+
+        let ops = vec![
+            MigrationOp::DropDomain("public.price".to_string()),
+            MigrationOp::CreateDomain(make_domain("price", "public", PgType::Numeric {
+                precision: Some(12),
+                scale: Some(4),
+            })),
+        ];
+
+        let generated = generate_column_ops_for_domain_recreate(&ops, &from);
+        assert!(generated.is_empty());
+    }
+
+    #[test]
+    fn no_column_ops_when_domain_only_dropped_not_recreated() {
+        let mut from = empty_schema();
+        from.domains.insert(
+            "public.price".to_string(),
+            make_domain("price", "public", PgType::Text),
+        );
+        let mut orders_table = simple_table("orders");
+        orders_table.columns.insert(
+            "amount".to_string(),
+            simple_column("amount", PgType::UserDefined("public.price".to_string())),
+        );
+        from.tables.insert("public.orders".to_string(), orders_table);
+
+        let ops = vec![MigrationOp::DropDomain("public.price".to_string())];
+
+        let generated = generate_column_ops_for_domain_recreate(&ops, &from);
+        assert!(generated.is_empty());
+    }
 
     #[test]
     fn generates_fk_ops_for_column_type_changes() {

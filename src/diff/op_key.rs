@@ -66,6 +66,14 @@ pub(crate) enum OpKey {
         table: QualifiedName,
         column: String,
     },
+    DetachColumnDomain {
+        table: QualifiedName,
+        column: String,
+    },
+    ReattachColumnDomain {
+        table: QualifiedName,
+        column: String,
+    },
     AddPrimaryKey {
         table: QualifiedName,
     },
@@ -281,6 +289,16 @@ impl OpKey {
                 table: table.clone(),
                 column: column.clone(),
             },
+            MigrationOp::DetachColumnDomain { table, column, .. } => OpKey::DetachColumnDomain {
+                table: table.clone(),
+                column: column.clone(),
+            },
+            MigrationOp::ReattachColumnDomain { table, column, .. } => {
+                OpKey::ReattachColumnDomain {
+                    table: table.clone(),
+                    column: column.clone(),
+                }
+            }
             MigrationOp::AddPrimaryKey { table, .. } => OpKey::AddPrimaryKey {
                 table: table.clone(),
             },

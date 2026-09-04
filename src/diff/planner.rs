@@ -55,6 +55,8 @@ struct NodeSets {
     views: Vec<NodeIndex>,
     version_views: Vec<NodeIndex>,
     alter_columns: Vec<NodeIndex>,
+    detach_column_domains: Vec<NodeIndex>,
+    reattach_column_domains: Vec<NodeIndex>,
     alter_views: Vec<NodeIndex>,
     alter_sequences: Vec<NodeIndex>,
     drop_functions: Vec<NodeIndex>,
@@ -117,6 +119,10 @@ impl NodeSets {
             views: graph.nodes_matching(|k| matches!(k, OpKey::CreateView(_))),
             version_views: graph.nodes_matching(|k| matches!(k, OpKey::CreateVersionView { .. })),
             alter_columns: graph.nodes_matching(|k| matches!(k, OpKey::AlterColumn { .. })),
+            detach_column_domains: graph
+                .nodes_matching(|k| matches!(k, OpKey::DetachColumnDomain { .. })),
+            reattach_column_domains: graph
+                .nodes_matching(|k| matches!(k, OpKey::ReattachColumnDomain { .. })),
             alter_views: graph.nodes_matching(|k| matches!(k, OpKey::AlterView(_))),
             alter_sequences: graph.nodes_matching(|k| matches!(k, OpKey::AlterSequence(_))),
             drop_functions: graph.nodes_matching(|k| matches!(k, OpKey::DropFunction { .. })),
@@ -209,6 +215,7 @@ impl MigrationGraph {
         self.add_rls_policy_trigger_view_edges(&ns);
         self.add_drop_edges(&ns);
         self.add_alter_column_edges(&ns);
+        self.add_domain_recreate_edges(&ns);
         self.add_drop_column_edges(&ns);
         self.add_modification_pattern_edges(&ns);
         self.add_creates_before_final_drops_edges(&ns);
@@ -458,6 +465,37 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.alter_columns, &ns.triggers);
         self.edges_all_to_all(&ns.alter_columns, &ns.views);
         self.edges_all_to_all(&ns.alter_columns, &ns.alter_views);
+
+        // DetachColumnDomain/ReattachColumnDomain are ALTER COLUMN TYPE under
+        // the hood (see add_domain_recreate_edges for the domain-specific
+        // ordering), so they carry the same FK/index/policy/trigger/view
+        // dependency shape as a regular AlterColumn.
+        self.edges_all_to_all(&ns.drop_fks, &ns.detach_column_domains);
+        self.edges_all_to_all(&ns.drop_indexes, &ns.detach_column_domains);
+        self.edges_all_to_all(&ns.drop_policies, &ns.detach_column_domains);
+        self.edges_all_to_all(&ns.drop_triggers, &ns.detach_column_domains);
+        self.edges_all_to_all(&ns.drop_views, &ns.detach_column_domains);
+
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.add_fks);
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.add_indexes);
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.policies);
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.alter_policies);
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.triggers);
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.views);
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.alter_views);
+    }
+
+    /// Domain base-type recreate: a dependent column must be detached from
+    /// the domain before it is dropped, and reattached only after it has
+    /// been recreated. Also orders `DropDomain` before `CreateDomain` for a
+    /// same-name recreate, mirroring the DropFunction → CreateFunction
+    /// modification pattern (domains are otherwise unordered relative to
+    /// their own recreate, since `add_creates_before_final_drops_edges`
+    /// only constrains domains against *other* objects' final drops).
+    fn add_domain_recreate_edges(&mut self, ns: &NodeSets) {
+        self.edges_all_to_all(&ns.detach_column_domains, &ns.drop_domains);
+        self.edges_all_to_all(&ns.domains, &ns.reattach_column_domains);
+        self.edges_all_to_all(&ns.drop_domains, &ns.domains);
     }
 
     /// DROP COLUMN dependencies: drop dependent objects before dropping column, recreate after.
@@ -522,6 +560,8 @@ impl MigrationGraph {
             &ns.force_rls,
             &ns.version_views,
             &ns.alter_columns,
+            &ns.detach_column_domains,
+            &ns.reattach_column_domains,
             &ns.alter_sequences,
         ]
         .into_iter()
@@ -530,15 +570,18 @@ impl MigrationGraph {
         .collect();
 
         // Final drops (not temporary drops for modifications)
-        // Note: DropFK, DropIndex, DropPolicy, DropTrigger, DropView, DropFunction
-        // are excluded because they may need to happen before alters/creates
+        // Note: DropFK, DropIndex, DropPolicy, DropTrigger, DropView, DropFunction,
+        // and DropDomain are excluded because they may need to happen before
+        // alters/creates. DropDomain in particular must precede the matching
+        // CreateDomain on a base-type-change recreate (add_domain_recreate_edges);
+        // its remaining ordering against unrelated final drops still holds via
+        // add_drop_edges (drop_tables -> drop_domains -> drop_extensions).
         let final_drops: Vec<NodeIndex> = [
             &ns.drop_columns,
             &ns.drop_pks,
             &ns.drop_tables,
             &ns.drop_partitions,
             &ns.drop_sequences,
-            &ns.drop_domains,
             &ns.drop_enums,
             &ns.drop_servers,
             &ns.drop_extensions,
@@ -5452,6 +5495,77 @@ mod tests {
         );
     }
 
+    #[test]
+    fn domain_recreate_detaches_and_reattaches_dependent_column_around_drop() {
+        // A base-type change on "price" recreates the domain (Drop + Create)
+        // while "orders.amount" still depends on it. The dependent column
+        // must be switched off the domain before DropDomain runs, and only
+        // switched back once CreateDomain has landed, so DROP DOMAIN never
+        // executes while a column still references it.
+        let table = QualifiedName::new("public", "orders");
+        let old_domain = Domain {
+            data_type: PgType::Numeric {
+                precision: Some(10),
+                scale: Some(2),
+            },
+            ..make_domain("price", "public")
+        };
+        let new_domain = Domain {
+            data_type: PgType::Numeric {
+                precision: Some(12),
+                scale: Some(4),
+            },
+            ..make_domain("price", "public")
+        };
+
+        let ops = vec![
+            MigrationOp::ReattachColumnDomain {
+                table: table.clone(),
+                column: "amount".to_string(),
+                domain_type: PgType::UserDefined("public.price".to_string()),
+            },
+            MigrationOp::CreateDomain(new_domain),
+            MigrationOp::DropDomain("public.price".to_string()),
+            MigrationOp::DetachColumnDomain {
+                table: table.clone(),
+                column: "amount".to_string(),
+                data_type: old_domain.data_type.clone(),
+            },
+        ];
+
+        let planned = plan_migration(ops);
+
+        let detach_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DetachColumnDomain { .. }))
+            .expect("DetachColumnDomain must appear in plan");
+        let drop_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropDomain(_)))
+            .expect("DropDomain must appear in plan");
+        let create_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateDomain(_)))
+            .expect("CreateDomain must appear in plan");
+        let reattach_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::ReattachColumnDomain { .. }))
+            .expect("ReattachColumnDomain must appear in plan");
+
+        assert!(
+            detach_pos < drop_pos,
+            "DetachColumnDomain (at {detach_pos}) must precede DropDomain (at {drop_pos}): the column must no longer reference the domain when it is dropped.\nPlan: {planned:#?}"
+        );
+        assert!(
+            drop_pos < create_pos,
+            "DropDomain (at {drop_pos}) must precede CreateDomain (at {create_pos}) on a recreate.\nPlan: {planned:#?}"
+        );
+        assert!(
+            create_pos < reattach_pos,
+            "CreateDomain (at {create_pos}) must precede ReattachColumnDomain (at {reattach_pos}).\nPlan: {planned:#?}"
+        );
+    }
+
     // --- Complex multi-object scenarios ---
 
     #[test]
@@ -7120,3 +7234,4 @@ mod tests {
         );
     }
 }
+

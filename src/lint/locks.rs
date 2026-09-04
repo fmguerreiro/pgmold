@@ -52,6 +52,26 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     ),
                 });
             }
+            MigrationOp::DetachColumnDomain { table, column, .. } => {
+                warnings.push(LockWarning {
+                    operation: "DetachColumnDomain".to_string(),
+                    table: table.to_string(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "ALTER COLUMN TYPE acquires ACCESS EXCLUSIVE lock on table {table} (column {column}, detaching from domain for recreate)"
+                    ),
+                });
+            }
+            MigrationOp::ReattachColumnDomain { table, column, .. } => {
+                warnings.push(LockWarning {
+                    operation: "ReattachColumnDomain".to_string(),
+                    table: table.to_string(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "ALTER COLUMN TYPE acquires ACCESS EXCLUSIVE lock on table {table} (column {column}, reattaching recreated domain)"
+                    ),
+                });
+            }
             MigrationOp::AddIndex { table, .. } => {
                 warnings.push(LockWarning {
                     operation: "AddIndex".to_string(),
