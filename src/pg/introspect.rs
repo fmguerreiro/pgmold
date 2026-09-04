@@ -2,6 +2,9 @@ use crate::model::*;
 use crate::pg::connection::PgConnection;
 use crate::pg::sqlgen::strip_ident_quotes;
 use crate::util::{normalize_sql_whitespace, Result, SchemaError};
+use sqlparser::ast::{CreateRule, RuleAction, Statement};
+use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::parser::Parser;
 use sqlx::Row;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -43,6 +46,7 @@ pub async fn introspect_schema(
         mut all_rls,
         mut all_force_rls,
         mut all_policies,
+        mut all_rules,
         default_privileges,
         table_constraint_comments,
         domain_constraint_comments,
@@ -76,6 +80,7 @@ pub async fn introspect_schema(
         introspect_all_rls(connection, target_schemas),
         introspect_all_force_rls(connection, target_schemas),
         introspect_all_policies(connection, target_schemas),
+        introspect_all_rules(connection, target_schemas),
         introspect_default_privileges(connection, target_schemas),
         introspect_table_constraint_comments(connection, target_schemas),
         introspect_domain_constraint_comments(connection, target_schemas),
@@ -170,6 +175,10 @@ pub async fn introspect_schema(
         if let Some(mut policies) = all_policies.remove(qualified_name) {
             policies.sort();
             table.policies = policies;
+        }
+        if let Some(mut rules) = all_rules.remove(qualified_name) {
+            rules.sort();
+            table.rules = rules;
         }
     }
 
@@ -589,6 +598,7 @@ async fn introspect_tables(
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some(owner),
             grants: Vec::new(),
@@ -1878,6 +1888,90 @@ async fn introspect_domain_constraint_comments(
         );
     }
     Ok(result)
+}
+
+async fn introspect_all_rules(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<Rule>>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS table_schema,
+            c.relname AS table_name,
+            r.rulename AS name,
+            r.ev_type AS event,
+            r.is_instead AS instead,
+            pg_get_expr(r.ev_qual, r.ev_class) AS condition,
+            pg_get_ruledef(r.oid) AS definition,
+            obj_description(r.oid, 'pg_rewrite') AS comment
+        FROM pg_rewrite r
+        JOIN pg_class c ON r.ev_class = c.oid
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE n.nspname = ANY($1::text[])
+          AND c.relkind IN ('r', 'p')
+          AND c.relispartition = false
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch rules: {e}")))?;
+
+    let dialect = PostgreSqlDialect {};
+    let mut result: BTreeMap<String, Vec<Rule>> = BTreeMap::new();
+    for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
+        let name: String = row.get("name");
+        let event: i8 = row.get::<i8, _>("event");
+        let instead: bool = row.get("instead");
+        let condition: Option<String> = row.get("condition");
+        let definition: String = row.get("definition");
+        let comment: Option<String> = row.get("comment");
+
+        let statements = Parser::parse_sql(&dialect, &definition).map_err(|e| {
+            SchemaError::DatabaseError(format!(
+                "Failed to parse introspected definition of rule \"{name}\": {e}"
+            ))
+        })?;
+        let Some(Statement::CreateRule(CreateRule { action, .. })) = statements.into_iter().next()
+        else {
+            return Err(SchemaError::DatabaseError(format!(
+                "pg_get_ruledef for rule \"{name}\" did not produce a CREATE RULE statement: {definition}"
+            )));
+        };
+        let actions = match action {
+            RuleAction::Nothing => Vec::new(),
+            RuleAction::Statements(stmts) => stmts.iter().map(|s| s.to_string()).collect(),
+        };
+
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(Rule {
+                name,
+                table: table_name,
+                table_schema,
+                event: map_rule_event(pg_char(event)),
+                instead,
+                condition,
+                actions,
+                comment,
+            });
+    }
+
+    Ok(result)
+}
+
+fn map_rule_event(cmd: char) -> RuleEvent {
+    match cmd {
+        '1' => RuleEvent::Select,
+        '2' => RuleEvent::Update,
+        '3' => RuleEvent::Insert,
+        '4' => RuleEvent::Delete,
+        _ => panic!("Unknown rule event code from PostgreSQL: '{cmd}'"),
+    }
 }
 
 fn map_policy_command(cmd: char) -> PolicyCommand {

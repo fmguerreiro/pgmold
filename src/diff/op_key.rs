@@ -136,6 +136,14 @@ pub(crate) enum OpKey {
         table: QualifiedName,
         name: String,
     },
+    CreateRule {
+        table: QualifiedName,
+        name: String,
+    },
+    DropRule {
+        table: QualifiedName,
+        name: String,
+    },
     CreateFunction {
         name: String,
         args: String,
@@ -383,6 +391,14 @@ impl OpKey {
                 name: name.clone(),
             },
             MigrationOp::AlterPolicy { table, name, .. } => OpKey::AlterPolicy {
+                table: table.clone(),
+                name: name.clone(),
+            },
+            MigrationOp::CreateRule(r) => OpKey::CreateRule {
+                table: QualifiedName::new(&r.table_schema, &r.table),
+                name: r.name.clone(),
+            },
+            MigrationOp::DropRule { table, name } => OpKey::DropRule {
                 table: table.clone(),
                 name: name.clone(),
             },

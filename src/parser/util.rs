@@ -7,7 +7,8 @@ use crate::model::*;
 use crate::util::{normalize_type_casts, numeric_typmod_parts, Result, SchemaError};
 use sqlparser::ast::{
     visit_expressions_mut, ArrayElemTypeDef, CharacterLength, CreatePolicyCommand, DataType, Expr,
-    ForValues, Ident, IndexColumn, ObjectName, PartitionBoundValue, TimezoneInfo,
+    ForValues, Ident, IndexColumn, ObjectName, PartitionBoundValue, RuleEvent as SqlRuleEvent,
+    TimezoneInfo,
 };
 
 use std::cell::RefCell;
@@ -171,6 +172,15 @@ pub(super) fn parse_policy_command(cmd: &Option<CreatePolicyCommand>) -> PolicyC
         Some(CreatePolicyCommand::Update) => PolicyCommand::Update,
         Some(CreatePolicyCommand::Delete) => PolicyCommand::Delete,
         None => PolicyCommand::All,
+    }
+}
+
+pub(super) fn parse_rule_event(event: &SqlRuleEvent) -> RuleEvent {
+    match event {
+        SqlRuleEvent::Select => RuleEvent::Select,
+        SqlRuleEvent::Insert => RuleEvent::Insert,
+        SqlRuleEvent::Update => RuleEvent::Update,
+        SqlRuleEvent::Delete => RuleEvent::Delete,
     }
 }
 

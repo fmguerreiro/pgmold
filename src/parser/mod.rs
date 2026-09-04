@@ -35,11 +35,12 @@ use sqlparser::ast::{
     AlterFunction, AlterFunctionKind, AlterFunctionOperation, AlterIndexOperation, AlterSchema,
     AlterSchemaOperation, AlterTable, AlterTableOperation, AlterType, AlterTypeAddValue,
     AlterTypeAddValuePosition, AlterTypeOperation, CreateAggregate, CreateAggregateOption,
-    CreateDomain, CreateExtension, CreateFunction, CreateServerStatement, CreateTrigger,
-    CreateView, DeferrableInitial, DropDomain, DropExtension, DropFunction, DropTrigger,
-    FunctionParallel, Grantee, GranteeName, GranteesType, ObjectType, Owner, Privileges,
-    RenameTableNameKind, SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent,
-    TriggerPeriod, TriggerReferencingType, UserDefinedTypeRepresentation,
+    CreateDomain, CreateExtension, CreateFunction, CreateRule, CreateServerStatement,
+    CreateTrigger, CreateView, DeferrableInitial, DropDomain, DropExtension, DropFunction,
+    DropTrigger, FunctionParallel, Grantee, GranteeName, GranteesType, ObjectType, Owner,
+    Privileges, RenameTableNameKind, RuleAction, SchemaName, Statement, TableConstraint,
+    TriggerEvent as SqlTriggerEvent, TriggerPeriod, TriggerReferencingType,
+    UserDefinedTypeRepresentation,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -61,9 +62,9 @@ use tables::{
 };
 use util::{
     extract_qualified_name, extract_qualified_name_truncated, normalize_expr, parse_data_type,
-    parse_for_values, parse_for_values_required, parse_policy_command, take_overlong_identifiers,
-    truncate_identifier, truncate_index_column, truncate_referenced_columns,
-    truncate_referenced_identifier, truncated_ident, unquote_ident,
+    parse_for_values, parse_for_values_required, parse_policy_command, parse_rule_event,
+    take_overlong_identifiers, truncate_identifier, truncate_index_column,
+    truncate_referenced_columns, truncate_referenced_identifier, truncated_ident, unquote_ident,
 };
 
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
@@ -258,6 +259,34 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     comment: None,
                 };
                 schema.pending_policies.push(policy);
+            }
+            Statement::CreateRule(CreateRule {
+                name,
+                event,
+                table,
+                condition,
+                instead,
+                action,
+            }) => {
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&table);
+                let rule = Rule {
+                    name: truncated_ident(&name),
+                    table_schema: tbl_schema,
+                    table: tbl_name,
+                    event: parse_rule_event(&event),
+                    instead,
+                    condition: condition
+                        .as_ref()
+                        .map(|e: &sqlparser::ast::Expr| normalize_expr(&e.to_string())),
+                    actions: match &action {
+                        RuleAction::Nothing => Vec::new(),
+                        RuleAction::Statements(stmts) => {
+                            stmts.iter().map(|s| s.to_string()).collect()
+                        }
+                    },
+                    comment: None,
+                };
+                schema.pending_rules.push(rule);
             }
             Statement::AlterTable(AlterTable {
                 name, operations, ..
@@ -1314,7 +1343,6 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             | Statement::CreateCast(_)
             | Statement::CreateConversion(_)
             | Statement::CreateLanguage(_)
-            | Statement::CreateRule(_)
             | Statement::CreateStatistics(_)
             | Statement::CreateAccessMethod(_)
             | Statement::CreateEventTrigger(_)
@@ -1538,6 +1566,14 @@ fn classify_truncated_name(schema: &Schema, truncated: &str) -> Option<&'static 
         || schema.pending_policies.iter().any(|p| p.name == truncated)
     {
         return Some("policy");
+    }
+    if schema
+        .tables
+        .values()
+        .any(|t| t.rules.iter().any(|r| r.name == truncated))
+        || schema.pending_rules.iter().any(|r| r.name == truncated)
+    {
+        return Some("rule");
     }
     if schema
         .tables

@@ -1,5 +1,7 @@
-use crate::model::{CheckConstraint, Column, Index, Policy, QualifiedName, Table};
-use crate::util::{expressions_semantically_equal, optional_expressions_equal};
+use crate::model::{CheckConstraint, Column, Index, Policy, QualifiedName, Rule, Table};
+use crate::util::{
+    expressions_semantically_equal, optional_expressions_equal, views_semantically_equal,
+};
 
 use super::{ColumnChanges, MigrationOp, PolicyChanges};
 
@@ -420,4 +422,73 @@ pub(super) fn compute_policy_changes(from: &Policy, to: &Policy) -> PolicyChange
         check_expr: (!optional_expressions_equal(&from.check_expr, &to.check_expr))
             .then(|| to.check_expr.clone()),
     }
+}
+
+/// PostgreSQL only supports `ALTER RULE ... RENAME TO`; a rule's event,
+/// condition, or action can only change via drop and recreate. A rule is
+/// therefore either unchanged or replaced wholesale, never altered in place.
+pub(super) fn diff_rules(from_table: &Table, to_table: &Table) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+    let qualified_table_name = QualifiedName::new(&to_table.schema, &to_table.name);
+
+    for rule in &to_table.rules {
+        match from_table.rules.iter().find(|r| r.name == rule.name) {
+            Some(from_rule) if rules_semantically_equal(from_rule, rule) => {}
+            Some(_) => {
+                ops.push(MigrationOp::DropRule {
+                    table: qualified_table_name.clone(),
+                    name: rule.name.clone(),
+                });
+                ops.push(MigrationOp::CreateRule(rule.clone()));
+            }
+            None => {
+                ops.push(MigrationOp::CreateRule(rule.clone()));
+            }
+        }
+    }
+
+    for rule in &from_table.rules {
+        if !to_table.rules.iter().any(|r| r.name == rule.name) {
+            ops.push(MigrationOp::DropRule {
+                table: QualifiedName::new(&from_table.schema, &from_table.name),
+                name: rule.name.clone(),
+            });
+        }
+    }
+
+    ops
+}
+
+fn rules_semantically_equal(from: &Rule, to: &Rule) -> bool {
+    from.event == to.event
+        && from.instead == to.instead
+        && optional_expressions_equal(&from.condition, &to.condition)
+        && rule_actions_semantically_equal(&from.actions, &to.actions)
+}
+
+/// Compares two rule action bodies by joining each into a single `;`-terminated
+/// statement sequence and reusing the multi-statement comparison view
+/// definitions already rely on (`views_semantically_equal`), rather than
+/// writing a second SQL-statement normalizer.
+fn rule_actions_semantically_equal(from: &[String], to: &[String]) -> bool {
+    if from.is_empty() || to.is_empty() {
+        return from.is_empty() == to.is_empty();
+    }
+    let from_sql = join_rule_actions(from);
+    let to_sql = join_rule_actions(to);
+    views_semantically_equal(&from_sql, &to_sql)
+}
+
+fn join_rule_actions(actions: &[String]) -> String {
+    actions
+        .iter()
+        .map(|action| {
+            if action.trim_end().ends_with(';') {
+                action.clone()
+            } else {
+                format!("{action};")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

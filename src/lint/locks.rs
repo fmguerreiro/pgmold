@@ -256,6 +256,27 @@ pub fn detect_lock_hazards(ops: &[MigrationOp]) -> Vec<LockWarning> {
                     ),
                 });
             }
+            MigrationOp::CreateRule(rule) => {
+                warnings.push(LockWarning {
+                    operation: "CreateRule".to_string(),
+                    table: format!("{}.{}", rule.table_schema, rule.table),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "CREATE RULE acquires ACCESS EXCLUSIVE lock on table {}.{}",
+                        rule.table_schema, rule.table
+                    ),
+                });
+            }
+            MigrationOp::DropRule { table, name } => {
+                warnings.push(LockWarning {
+                    operation: "DropRule".to_string(),
+                    table: table.to_string(),
+                    lock_level: LockLevel::AccessExclusive,
+                    message: format!(
+                        "DROP RULE acquires ACCESS EXCLUSIVE lock on table {table} (rule {name})"
+                    ),
+                });
+            }
             MigrationOp::CreateTrigger(trigger) => {
                 use crate::model::qualified_name;
                 let table = qualified_name(&trigger.target_schema, &trigger.target_name);

@@ -120,6 +120,7 @@ fn diff_produces_drop_exclusion_constraint_when_removed() {
         row_level_security: false,
         force_row_level_security: false,
         policies: vec![],
+        rules: vec![],
         partition_by: None,
         owner: None,
         grants: vec![],
