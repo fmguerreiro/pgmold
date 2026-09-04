@@ -23,8 +23,7 @@ use crate::model::{
 use crate::util::{Result, SchemaError};
 
 use super::util::{
-    extract_qualified_name, extract_qualified_name_truncated, truncate_referenced_identifier,
-    unquote_ident,
+    extract_qualified_name_truncated, truncate_referenced_identifier, unquote_ident,
 };
 
 /// Parameters captured from `Statement::Comment` and forwarded to the
@@ -207,15 +206,25 @@ pub(super) fn apply_comment_statement(
             );
         }
         CommentObject::Rule => {
-            let target = match partner_table {
-                Some(rel) => {
-                    let (rs, rn) = extract_qualified_name(rel);
-                    format!("{object_name} ON {rs}.{rn}")
-                }
-                None => object_name.to_string(),
+            let rule_parts = object_name_parts(object_name);
+            if rule_parts.len() != 1 {
+                return Err(SchemaError::ParseError(format!(
+                    "COMMENT ON RULE expects an unqualified rule name, got {object_name}"
+                )));
+            }
+            let rule_name = truncate_referenced_identifier(&rule_parts.into_iter().next().unwrap());
+            let Some(partner_table) = partner_table else {
+                return Err(SchemaError::ParseError(
+                    "COMMENT ON RULE missing ON <table> tail".into(),
+                ));
             };
-            eprintln!(
-                "warning: pgmold does not model COMMENT ON RULE; dropping comment on {target}"
+            let (table_schema, table_name) = extract_qualified_name_truncated(partner_table);
+            push_nested(
+                schema,
+                PendingCommentObjectType::Rule,
+                qualified_name(&table_schema, &table_name),
+                rule_name,
+                comment,
             );
         }
         CommentObject::Policy => {

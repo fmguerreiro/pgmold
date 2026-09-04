@@ -99,6 +99,8 @@ static COMMENT_ON_EXTENSION_CLAIM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bCOMMENT\s+ON\s+EXTENSION\s+").unwrap());
 static COMMENT_ON_POLICY_CLAIM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bCOMMENT\s+ON\s+POLICY\s+").unwrap());
+static COMMENT_ON_RULE_CLAIM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)\bCOMMENT\s+ON\s+RULE\s+").unwrap());
 static COMMENT_ON_CONSTRAINT_CLAIM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)\bCOMMENT\s+ON\s+CONSTRAINT\s+").unwrap());
 
@@ -162,6 +164,7 @@ static RECOGNIZERS: &[BroadRecognizer] = &[
             &COMMENT_ON_TRIGGER_CLAIM,
             &COMMENT_ON_EXTENSION_CLAIM,
             &COMMENT_ON_POLICY_CLAIM,
+            &COMMENT_ON_RULE_CLAIM,
             &COMMENT_ON_CONSTRAINT_CLAIM,
         ],
     },

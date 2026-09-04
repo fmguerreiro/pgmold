@@ -28,7 +28,7 @@ use objects::{
 };
 use table_elements::{
     diff_check_constraints, diff_columns, diff_exclusion_constraints, diff_force_rls,
-    diff_foreign_keys, diff_indexes, diff_policies, diff_primary_keys, diff_rls,
+    diff_foreign_keys, diff_indexes, diff_policies, diff_primary_keys, diff_rls, diff_rules,
 };
 
 pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
@@ -73,6 +73,7 @@ pub fn compute_diff_with_flags(
             ops.extend(diff_rls(from_table, to_table));
             ops.extend(diff_force_rls(from_table, to_table));
             ops.extend(diff_policies(from_table, to_table));
+            ops.extend(diff_rules(from_table, to_table));
         } else {
             if to_table.row_level_security {
                 ops.push(MigrationOp::EnableRls {
@@ -86,6 +87,9 @@ pub fn compute_diff_with_flags(
             }
             for policy in &to_table.policies {
                 ops.push(MigrationOp::CreatePolicy(policy.clone()));
+            }
+            for rule in &to_table.rules {
+                ops.push(MigrationOp::CreateRule(rule.clone()));
             }
         }
     }
@@ -551,6 +555,7 @@ pub(super) mod test_helpers {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: None,
             grants: Vec::new(),
@@ -2250,6 +2255,88 @@ mod tests {
         let mut from = empty_schema();
         from.tables
             .insert("public.users".to_string(), table_with_policy(Some("k/v")));
+        let to = from.clone();
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "no migration ops expected, got {ops:?}");
+    }
+
+    fn table_with_rule(condition: Option<&str>) -> crate::model::Table {
+        let mut t = simple_table("orders");
+        t.rules.push(crate::model::Rule {
+            name: "log_orders".to_string(),
+            table_schema: "public".to_string(),
+            table: "orders".to_string(),
+            event: crate::model::RuleEvent::Insert,
+            instead: false,
+            condition: condition.map(|s| s.to_string()),
+            actions: vec!["SELECT 1".to_string()],
+            comment: None,
+        });
+        t
+    }
+
+    #[test]
+    fn diff_creates_rule_for_new_table() {
+        let from = empty_schema();
+        let mut to = empty_schema();
+        to.tables
+            .insert("public.orders".to_string(), table_with_rule(None));
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::CreateRule(rule) => assert_eq!(rule.name, "log_orders"),
+            other => panic!("expected CreateRule, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn diff_drops_rule_removed_from_table() {
+        let mut from = empty_schema();
+        from.tables
+            .insert("public.orders".to_string(), table_with_rule(None));
+        let mut to = empty_schema();
+        to.tables
+            .insert("public.orders".to_string(), simple_table("orders"));
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::DropRule { table, name } => {
+                assert_eq!(table.to_string(), "public.orders");
+                assert_eq!(name, "log_orders");
+            }
+            other => panic!("expected DropRule, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn diff_recreates_rule_when_condition_changes() {
+        let mut from = empty_schema();
+        from.tables
+            .insert("public.orders".to_string(), table_with_rule(None));
+        let mut to = empty_schema();
+        to.tables.insert(
+            "public.orders".to_string(),
+            table_with_rule(Some("status = 'active'")),
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 2, "expected DropRule + CreateRule, got {ops:?}");
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::DropRule { name, .. } if name == "log_orders")));
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::CreateRule(r) if r.name == "log_orders")));
+    }
+
+    #[test]
+    fn no_op_when_rule_unchanged() {
+        let mut from = empty_schema();
+        from.tables
+            .insert("public.orders".to_string(), table_with_rule(None));
         let to = from.clone();
 
         let ops = compute_diff(&from, &to);

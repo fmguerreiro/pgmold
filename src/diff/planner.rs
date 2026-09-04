@@ -51,6 +51,7 @@ struct NodeSets {
     force_rls: Vec<NodeIndex>,
     policies: Vec<NodeIndex>,
     alter_policies: Vec<NodeIndex>,
+    rules: Vec<NodeIndex>,
     triggers: Vec<NodeIndex>,
     views: Vec<NodeIndex>,
     version_views: Vec<NodeIndex>,
@@ -63,6 +64,7 @@ struct NodeSets {
     drop_checks: Vec<NodeIndex>,
     drop_exclusions: Vec<NodeIndex>,
     drop_policies: Vec<NodeIndex>,
+    drop_rules: Vec<NodeIndex>,
     drop_triggers: Vec<NodeIndex>,
     drop_views: Vec<NodeIndex>,
     drop_columns: Vec<NodeIndex>,
@@ -113,6 +115,7 @@ impl NodeSets {
                 .nodes_matching(|k| matches!(k, OpKey::ForceRls { .. } | OpKey::NoForceRls { .. })),
             policies: graph.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. })),
             alter_policies: graph.nodes_matching(|k| matches!(k, OpKey::AlterPolicy { .. })),
+            rules: graph.nodes_matching(|k| matches!(k, OpKey::CreateRule { .. })),
             triggers: graph.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. })),
             views: graph.nodes_matching(|k| matches!(k, OpKey::CreateView(_))),
             version_views: graph.nodes_matching(|k| matches!(k, OpKey::CreateVersionView { .. })),
@@ -126,6 +129,7 @@ impl NodeSets {
             drop_exclusions: graph
                 .nodes_matching(|k| matches!(k, OpKey::DropExclusionConstraint { .. })),
             drop_policies: graph.nodes_matching(|k| matches!(k, OpKey::DropPolicy { .. })),
+            drop_rules: graph.nodes_matching(|k| matches!(k, OpKey::DropRule { .. })),
             drop_triggers: graph.nodes_matching(|k| matches!(k, OpKey::DropTrigger { .. })),
             drop_views: graph.nodes_matching(|k| matches!(k, OpKey::DropView(_))),
             drop_columns: graph.nodes_matching(|k| matches!(k, OpKey::DropColumn { .. })),
@@ -377,6 +381,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.tables, &ns.enable_rls);
         self.edges_all_to_all(&ns.tables, &ns.force_rls);
         self.edges_all_to_all(&ns.tables, &ns.policies);
+        self.edges_all_to_all(&ns.tables, &ns.rules);
         self.edges_all_to_all(&ns.tables, &ns.triggers);
         self.edges_all_to_all(&ns.tables, &ns.views);
         self.edges_all_to_all(&ns.tables, &ns.alter_sequences);
@@ -413,6 +418,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.drop_checks, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_exclusions, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_policies, &ns.drop_tables);
+        self.edges_all_to_all(&ns.drop_rules, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_triggers, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_pks, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_columns, &ns.drop_tables);
@@ -1168,6 +1174,16 @@ impl MigrationGraph {
                                 key.clone(),
                             ));
                         }
+                        CommentObjectType::Rule => {
+                            let target_name = require(target, "Rule", "target");
+                            edges_to_add.push((
+                                OpKey::CreateRule {
+                                    table: QualifiedName::new(schema, &target_name),
+                                    name: name.clone(),
+                                },
+                                key.clone(),
+                            ));
+                        }
                         CommentObjectType::Constraint => {
                             // Each `COMMENT ON CONSTRAINT name ON [DOMAIN] tgt`
                             // depends on the constraint existing. The
@@ -1340,7 +1356,8 @@ fn drop_targets_table(other: &OpKey, table: &QualifiedName) -> bool {
         | OpKey::DropIndex { table: t, .. }
         | OpKey::DropCheckConstraint { table: t, .. }
         | OpKey::DropColumn { table: t, .. }
-        | OpKey::DropPolicy { table: t, .. } => t == table,
+        | OpKey::DropPolicy { table: t, .. }
+        | OpKey::DropRule { table: t, .. } => t == table,
         OpKey::DropTrigger { target: t, .. } => t == table,
         _ => false,
     }
@@ -2915,6 +2932,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: None,
             grants: Vec::new(),
@@ -3336,6 +3354,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
             owner: None,
             grants: vec![],

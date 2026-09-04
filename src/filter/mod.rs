@@ -276,6 +276,7 @@ pub fn filter_schema(schema: &Schema, filter: &Filter) -> Schema {
         sequences,
         partitions: filter_field(&schema.partitions, filter, ObjectType::Partitions),
         pending_policies: Vec::new(),
+        pending_rules: Vec::new(),
         pending_owners: Vec::new(),
         pending_grants: Vec::new(),
         pending_revokes: Vec::new(),
@@ -380,6 +381,7 @@ pub fn filter_by_target_schemas(schema: &Schema, target_schemas: &[String]) -> S
             .cloned()
             .collect(),
         pending_policies: Vec::new(),
+        pending_rules: Vec::new(),
         pending_owners: Vec::new(),
         pending_grants: Vec::new(),
         pending_revokes: Vec::new(),
@@ -632,6 +634,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -653,6 +656,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -674,6 +678,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -726,6 +731,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -747,6 +753,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -1190,6 +1197,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -1239,6 +1247,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -1294,6 +1303,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
 
                 owner: None,
@@ -1456,6 +1466,7 @@ mod tests {
                 check_expr: None,
                 comment: None,
             }],
+            rules: Vec::new(),
             partition_by: None,
 
             owner: None,
@@ -1510,6 +1521,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
 
             owner: None,
@@ -1571,6 +1583,7 @@ mod tests {
                 check_expr: None,
                 comment: None,
             }],
+            rules: Vec::new(),
             partition_by: None,
 
             owner: None,
@@ -1627,6 +1640,7 @@ mod tests {
                 check_expr: None,
                 comment: None,
             }],
+            rules: Vec::new(),
             partition_by: None,
 
             owner: None,
@@ -1697,6 +1711,7 @@ mod tests {
                 check_expr: None,
                 comment: None,
             }],
+            rules: Vec::new(),
             partition_by: None,
 
             owner: None,
@@ -1770,6 +1785,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
 
             owner: None,
@@ -1856,6 +1872,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -1930,6 +1947,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
             owner: None,
             grants: vec![Grant {
@@ -1974,6 +1992,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: vec![],
+                rules: vec![],
                 partition_by: None,
                 owner: None,
                 grants: vec![Grant {
@@ -2009,6 +2028,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
             owner: None,
             grants: Vec::new(),

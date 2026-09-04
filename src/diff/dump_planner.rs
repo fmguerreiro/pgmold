@@ -19,6 +19,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     let mut create_triggers = Vec::new();
     let mut enable_rls = Vec::new();
     let mut create_policies = Vec::new();
+    let mut create_rules = Vec::new();
     let mut alter_owners = Vec::new();
     let mut grant_privileges = Vec::new();
     let mut alter_default_privileges = Vec::new();
@@ -42,6 +43,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             MigrationOp::EnableRls { .. } => enable_rls.push(op),
             MigrationOp::ForceRls { .. } => enable_rls.push(op),
             MigrationOp::CreatePolicy(_) => create_policies.push(op),
+            MigrationOp::CreateRule(_) => create_rules.push(op),
             MigrationOp::AlterOwner { .. } => alter_owners.push(op),
             MigrationOp::GrantPrivileges { .. } => grant_privileges.push(op),
             MigrationOp::AlterDefaultPrivileges { .. } => alter_default_privileges.push(op),
@@ -77,6 +79,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
             | MigrationOp::NoForceRls { .. }
             | MigrationOp::DropPolicy { .. }
             | MigrationOp::AlterPolicy { .. }
+            | MigrationOp::DropRule { .. }
             | MigrationOp::DropFunction { .. }
             | MigrationOp::AlterFunction { .. }
             | MigrationOp::DropAggregate { .. }
@@ -112,6 +115,7 @@ pub(crate) fn plan_dump(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
     result.extend(create_sequences);
     result.extend(enable_rls);
     result.extend(create_policies);
+    result.extend(create_rules);
     result.extend(create_views);
     result.extend(create_triggers);
     result.extend(alter_owners);

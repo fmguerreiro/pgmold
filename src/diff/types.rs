@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::model::{
     Aggregate, CheckConstraint, Column, Domain, EnumType, ExclusionConstraint, Extension,
     ForeignKey, Function, Index, Partition, PgSchema, PgType, Policy, PrimaryKey, Privilege,
-    QualifiedName, Sequence, SequenceDataType, SequenceOwner, Server, Table, Trigger,
+    QualifiedName, Rule, Sequence, SequenceDataType, SequenceOwner, Server, Table, Trigger,
     TriggerEnabled, VersionView, View,
 };
 
@@ -28,6 +28,7 @@ pub enum CommentObjectType {
     Trigger,
     Extension,
     Policy,
+    Rule,
     /// Comment on a named PK/FK/CHECK/UNIQUE/EXCLUDE constraint. The
     /// `target` field on `SetComment` carries the parent relation name and
     /// `on_domain` distinguishes the `ON DOMAIN <name>` form from the
@@ -180,6 +181,11 @@ pub enum MigrationOp {
         table: QualifiedName,
         name: String,
         changes: PolicyChanges,
+    },
+    CreateRule(Rule),
+    DropRule {
+        table: QualifiedName,
+        name: String,
     },
     CreateFunction(Function),
     DropFunction {

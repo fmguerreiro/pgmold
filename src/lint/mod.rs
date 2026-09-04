@@ -396,6 +396,8 @@ fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
         | MigrationOp::CreatePolicy(_)
         | MigrationOp::DropPolicy { .. }
         | MigrationOp::AlterPolicy { .. }
+        | MigrationOp::CreateRule(_)
+        | MigrationOp::DropRule { .. }
         | MigrationOp::CreateFunction(_)
         | MigrationOp::DropFunction { .. }
         | MigrationOp::AlterFunction { .. }
