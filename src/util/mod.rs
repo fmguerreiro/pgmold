@@ -981,6 +981,21 @@ fn parse_temporal_instant(value: &str) -> Option<DateTime<Utc>> {
 fn normalize_statement(stmt: &Statement, cast_context: CastContext) -> Statement {
     match stmt {
         Statement::Query(query) => Statement::Query(Box::new(normalize_query(query, cast_context))),
+        Statement::Insert(insert) => {
+            let mut normalized = insert.clone();
+            normalized.table = match &insert.table {
+                sqlparser::ast::TableObject::TableName(name) => {
+                    sqlparser::ast::TableObject::TableName(normalize_object_name(name))
+                }
+                other => other.clone(),
+            };
+            normalized.columns = insert.columns.iter().map(normalize_object_name).collect();
+            normalized.source = insert
+                .source
+                .as_ref()
+                .map(|query| Box::new(normalize_query(query, cast_context)));
+            Statement::Insert(normalized)
+        }
         other => other.clone(),
     }
 }
@@ -1089,6 +1104,18 @@ fn normalize_set_expr(body: &SetExpr, cast_context: CastContext) -> SetExpr {
             left: Box::new(normalize_set_expr(left, cast_context)),
             right: Box::new(normalize_set_expr(right, cast_context)),
         },
+        SetExpr::Values(values) => SetExpr::Values(sqlparser::ast::Values {
+            rows: values
+                .rows
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|expr| normalize_expr(expr, cast_context))
+                        .collect()
+                })
+                .collect(),
+            ..values.clone()
+        }),
         other => other.clone(),
     }
 }

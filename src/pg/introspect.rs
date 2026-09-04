@@ -1905,7 +1905,6 @@ async fn introspect_all_rules(
             r.rulename AS name,
             r.ev_type AS event,
             r.is_instead AS instead,
-            pg_get_expr(r.ev_qual, r.ev_class) AS condition,
             pg_get_ruledef(r.oid) AS definition,
             obj_description(r.oid, 'pg_rewrite') AS comment
         FROM pg_rewrite r
@@ -1929,7 +1928,6 @@ async fn introspect_all_rules(
         let name: String = row.get("name");
         let event: i8 = row.get::<i8, _>("event");
         let instead: bool = row.get("instead");
-        let condition: Option<String> = row.get("condition");
         let definition: String = row.get("definition");
         let comment: Option<String> = row.get("comment");
 
@@ -1938,12 +1936,15 @@ async fn introspect_all_rules(
                 "Failed to parse introspected definition of rule \"{name}\": {e}"
             ))
         })?;
-        let Some(Statement::CreateRule(CreateRule { action, .. })) = statements.into_iter().next()
+        let Some(Statement::CreateRule(CreateRule {
+            action, condition, ..
+        })) = statements.into_iter().next()
         else {
             return Err(SchemaError::DatabaseError(format!(
                 "pg_get_ruledef for rule \"{name}\" did not produce a CREATE RULE statement: {definition}"
             )));
         };
+        let condition = condition.map(|expr| crate::util::normalize_type_casts(&expr.to_string()));
         let actions = match action {
             RuleAction::Nothing => Vec::new(),
             RuleAction::Statements(stmts) => stmts.iter().map(|s| s.to_string()).collect(),
