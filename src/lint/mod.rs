@@ -1,7 +1,9 @@
 pub mod locks;
 
+use std::collections::BTreeMap;
+
 use crate::diff::MigrationOp;
-use crate::model::{PgType, Schema};
+use crate::model::{PgType, QualifiedName, Schema};
 use crate::parser::util::{truncate_to_bytes_raw, PG_MAX_IDENTIFIER_LENGTH};
 use crate::util::{Result, SchemaError};
 
@@ -9,17 +11,19 @@ use crate::util::{Result, SchemaError};
 pub struct LintOptions {
     pub allow_destructive: bool,
     pub is_production: bool,
+    pub allow_drop_add_pair: bool,
 }
 
 const PGMOLD_PROD_ENV_VAR: &str = "PGMOLD_PROD";
 
 impl LintOptions {
-    pub fn from_env(allow_destructive: bool) -> Result<Self> {
+    pub fn from_env(allow_destructive: bool, allow_drop_add_pair: bool) -> Result<Self> {
         let is_production =
             parse_is_production_flag(std::env::var(PGMOLD_PROD_ENV_VAR).ok().as_deref())?;
         Ok(Self {
             allow_destructive,
             is_production,
+            allow_drop_add_pair,
         })
     }
 }
@@ -56,7 +60,9 @@ pub struct LintResult {
 }
 
 pub fn lint_migration_plan(ops: &[MigrationOp], options: &LintOptions) -> Vec<LintResult> {
-    ops.iter().flat_map(|op| lint_op(op, options)).collect()
+    let mut results: Vec<LintResult> = ops.iter().flat_map(|op| lint_op(op, options)).collect();
+    results.extend(lint_drop_add_pairs(ops, options));
+    results
 }
 
 /// Warns for every declared identifier in the source schema whose byte length
@@ -87,6 +93,55 @@ pub fn has_errors(results: &[LintResult]) -> bool {
     results
         .iter()
         .any(|r| matches!(r.severity, LintSeverity::Error))
+}
+
+/// Flags a plan that drops and adds columns on the same table in the same
+/// run: today that shape is either an unrelated drop and add, or a rename
+/// pgmold has no directive for, and it cannot tell which. Emitting the pair
+/// as-is would destroy the dropped column's data if it was actually a
+/// rename, so this blocks unless the author explicitly acknowledges the
+/// pair with `--allow-drop-add-pair`.
+fn lint_drop_add_pairs(ops: &[MigrationOp], options: &LintOptions) -> Vec<LintResult> {
+    if options.allow_drop_add_pair {
+        return Vec::new();
+    }
+
+    let mut dropped_columns: BTreeMap<QualifiedName, Vec<String>> = BTreeMap::new();
+    let mut added_columns: BTreeMap<QualifiedName, Vec<String>> = BTreeMap::new();
+
+    for op in ops {
+        match op {
+            MigrationOp::DropColumn { table, column } => {
+                dropped_columns
+                    .entry(table.clone())
+                    .or_default()
+                    .push(column.clone());
+            }
+            MigrationOp::AddColumn { table, column } => {
+                added_columns
+                    .entry(table.clone())
+                    .or_default()
+                    .push(column.name.clone());
+            }
+            _ => {}
+        }
+    }
+
+    dropped_columns
+        .into_iter()
+        .filter_map(|(table, dropped)| {
+            let added = added_columns.get(&table)?;
+            let dropped_list = dropped.join(", ");
+            let added_list = added.join(", ");
+            Some(LintResult {
+                rule: "deny_drop_add_column_pair",
+                severity: LintSeverity::Error,
+                message: format!(
+                    "Table {table} drops column(s) {dropped_list} and adds column(s) {added_list} in the same plan; pgmold cannot tell a rename from an unrelated drop and add, and if this is a rename the drop would destroy that column's data. Pass --allow-drop-add-pair if this is not a rename and the drop is intentional."
+                ),
+            })
+        })
+        .collect()
 }
 
 fn lint_op(op: &MigrationOp, options: &LintOptions) -> Vec<LintResult> {
@@ -439,7 +494,7 @@ fn is_type_narrowing(new_type: &PgType) -> bool {
 mod tests {
     use super::*;
     use crate::diff::ColumnChanges;
-    use crate::model::QualifiedName;
+    use crate::model::{Column, QualifiedName, Table};
 
     #[test]
     fn blocks_drop_column_without_flag() {
@@ -450,6 +505,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: false,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -466,6 +522,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -481,6 +538,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: true,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -494,6 +552,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: false,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -507,6 +566,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: true,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -520,6 +580,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: false,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -533,6 +594,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -545,6 +607,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: true,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -608,6 +671,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: false,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -624,6 +688,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -639,6 +704,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: true,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -655,6 +721,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: false,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -668,6 +735,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: false,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -681,6 +749,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -693,6 +762,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: true,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -710,6 +780,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: false,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -727,6 +798,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -743,6 +815,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: true,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -756,6 +829,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: false,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -769,6 +843,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -781,6 +856,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: true,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -833,6 +909,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: false,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -849,6 +926,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -864,6 +942,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: true,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -877,6 +956,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: false,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -890,6 +970,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -902,6 +983,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: true,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -915,6 +997,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: false,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -928,6 +1011,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -940,6 +1024,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: true,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -953,6 +1038,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: false,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -966,6 +1052,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: false,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -978,6 +1065,7 @@ mod tests {
         let options = LintOptions {
             allow_destructive: true,
             is_production: true,
+            allow_drop_add_pair: false,
         };
 
         let results = lint_migration_plan(&ops, &options);
@@ -1192,5 +1280,201 @@ mod tests {
         assert!(error.contains("production"));
         assert!(error.contains("PGMOLD_PROD"));
         assert!(error.contains("1, true, yes, on, 0, false, no, off"));
+    }
+
+    fn example_column(name: &str) -> Column {
+        Column {
+            name: name.to_string(),
+            data_type: PgType::Uuid,
+            nullable: false,
+            default: None,
+            comment: None,
+            generated: None,
+        }
+    }
+
+    #[test]
+    fn drop_add_pair_on_same_table_is_hard_error() {
+        let ops = vec![
+            MigrationOp::DropColumn {
+                table: QualifiedName::new("public", "suppliers"),
+                column: "entity_id".to_string(),
+            },
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "suppliers"),
+                column: example_column("supplier_id"),
+            },
+        ];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+            allow_drop_add_pair: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert_eq!(
+            results,
+            vec![LintResult {
+                rule: "deny_drop_add_column_pair",
+                severity: LintSeverity::Error,
+                message: "Table public.suppliers drops column(s) entity_id and adds column(s) supplier_id in the same plan; pgmold cannot tell a rename from an unrelated drop and add, and if this is a rename the drop would destroy that column's data. Pass --allow-drop-add-pair if this is not a rename and the drop is intentional.".to_string(),
+            }]
+        );
+        assert!(has_errors(&results));
+    }
+
+    #[test]
+    fn drop_add_pair_on_different_tables_does_not_fire() {
+        let ops = vec![
+            MigrationOp::DropColumn {
+                table: QualifiedName::new("public", "suppliers"),
+                column: "entity_id".to_string(),
+            },
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "customers"),
+                column: example_column("customer_id"),
+            },
+        ];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+            allow_drop_add_pair: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!results
+            .iter()
+            .any(|result| result.rule == "deny_drop_add_column_pair"));
+    }
+
+    #[test]
+    fn drop_add_pair_with_multiple_columns_produces_one_result() {
+        let ops = vec![
+            MigrationOp::DropColumn {
+                table: QualifiedName::new("public", "suppliers"),
+                column: "entity_id".to_string(),
+            },
+            MigrationOp::DropColumn {
+                table: QualifiedName::new("public", "suppliers"),
+                column: "legacy_code".to_string(),
+            },
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "suppliers"),
+                column: example_column("supplier_id"),
+            },
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "suppliers"),
+                column: example_column("supplier_code"),
+            },
+        ];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+            allow_drop_add_pair: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert_eq!(
+            results,
+            vec![LintResult {
+                rule: "deny_drop_add_column_pair",
+                severity: LintSeverity::Error,
+                message: "Table public.suppliers drops column(s) entity_id, legacy_code and adds column(s) supplier_id, supplier_code in the same plan; pgmold cannot tell a rename from an unrelated drop and add, and if this is a rename the drop would destroy that column's data. Pass --allow-drop-add-pair if this is not a rename and the drop is intentional.".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn only_drops_do_not_trigger_drop_add_pair() {
+        let ops = vec![MigrationOp::DropColumn {
+            table: QualifiedName::new("public", "suppliers"),
+            column: "entity_id".to_string(),
+        }];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+            allow_drop_add_pair: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!results
+            .iter()
+            .any(|result| result.rule == "deny_drop_add_column_pair"));
+    }
+
+    #[test]
+    fn only_adds_do_not_trigger_drop_add_pair() {
+        let ops = vec![MigrationOp::AddColumn {
+            table: QualifiedName::new("public", "suppliers"),
+            column: example_column("supplier_id"),
+        }];
+        let options = LintOptions {
+            allow_destructive: false,
+            is_production: false,
+            allow_drop_add_pair: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!results
+            .iter()
+            .any(|result| result.rule == "deny_drop_add_column_pair"));
+    }
+
+    #[test]
+    fn drop_table_and_create_table_of_different_table_does_not_trigger_drop_add_pair() {
+        let ops = vec![
+            MigrationOp::DropTable("public.old_table".to_string()),
+            MigrationOp::CreateTable(Table {
+                schema: "public".to_string(),
+                name: "new_table".to_string(),
+                columns: BTreeMap::new(),
+                indexes: Vec::new(),
+                primary_key: None,
+                foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
+                exclusion_constraints: Vec::new(),
+                comment: None,
+                row_level_security: false,
+                force_row_level_security: false,
+                policies: Vec::new(),
+                rules: Vec::new(),
+                partition_by: None,
+                owner: None,
+                grants: Vec::new(),
+            }),
+        ];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+            allow_drop_add_pair: false,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert!(!results
+            .iter()
+            .any(|result| result.rule == "deny_drop_add_column_pair"));
+    }
+
+    #[test]
+    fn allow_drop_add_pair_flag_clears_the_only_error() {
+        let ops = vec![
+            MigrationOp::DropColumn {
+                table: QualifiedName::new("public", "suppliers"),
+                column: "entity_id".to_string(),
+            },
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "suppliers"),
+                column: example_column("supplier_id"),
+            },
+        ];
+        let options = LintOptions {
+            allow_destructive: true,
+            is_production: false,
+            allow_drop_add_pair: true,
+        };
+
+        let results = lint_migration_plan(&ops, &options);
+        assert_eq!(results, Vec::new());
+        assert!(!has_errors(&results));
     }
 }

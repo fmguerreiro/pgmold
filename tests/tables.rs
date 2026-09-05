@@ -108,6 +108,7 @@ async fn drop_column_blocked() {
     let lint_options = LintOptions {
         allow_destructive: false,
         is_production: false,
+        allow_drop_add_pair: false,
     };
     let lint_results = lint_migration_plan(&ops, &lint_options);
 
