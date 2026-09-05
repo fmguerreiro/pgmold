@@ -122,9 +122,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             )]
         }
 
-        MigrationOp::CreatePartition(partition) => {
-            vec![generate_create_partition(partition)]
-        }
+        MigrationOp::CreatePartition(partition) => generate_create_partition(partition),
 
         MigrationOp::DropPartition(name) => {
             let (schema, partition_name) = parse_qualified_name(name);
@@ -902,12 +900,40 @@ fn format_partition_bound(bound: &PartitionBound) -> String {
     }
 }
 
-fn generate_create_partition(partition: &Partition) -> String {
+fn generate_create_partition(partition: &Partition) -> Vec<String> {
     let partition_name = quote_qualified(&partition.schema, &partition.name);
     let parent_name = quote_qualified(&partition.parent_schema, &partition.parent_name);
     let bound_clause = format_partition_bound(&partition.bound);
 
-    format!("CREATE TABLE {partition_name} PARTITION OF {parent_name} {bound_clause};")
+    let mut statements = vec![format!(
+        "CREATE TABLE {partition_name} PARTITION OF {parent_name} {bound_clause};"
+    )];
+
+    for index in &partition.indexes {
+        if index.is_constraint {
+            statements.push(generate_add_unique_constraint(
+                &partition.schema,
+                &partition.name,
+                index,
+            ));
+        } else {
+            statements.push(generate_create_index(
+                &partition.schema,
+                &partition.name,
+                index,
+            ));
+        }
+    }
+
+    for check_constraint in &partition.check_constraints {
+        statements.push(generate_add_check_constraint(
+            &partition.schema,
+            &partition.name,
+            check_constraint,
+        ));
+    }
+
+    statements
 }
 
 fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {

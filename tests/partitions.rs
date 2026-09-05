@@ -626,3 +626,133 @@ async fn partition_local_index_and_check_constraint_roundtrip() {
         "introspected partition indexes/checks must match parsed schema. Got: {final_ops:?}"
     );
 }
+
+#[tokio::test]
+async fn partition_new_partition_local_index_converges_without_parent_index() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    let desired_schema = parse_sql_string(
+        r#"
+        CREATE TABLE measurement (
+            city_id INT NOT NULL,
+            logdate DATE NOT NULL
+        ) PARTITION BY RANGE (logdate);
+
+        CREATE TABLE measurement_2024 PARTITION OF measurement
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+
+        CREATE INDEX measurement_2024_city_id_idx ON measurement_2024 (city_id);
+        "#,
+    )
+    .unwrap();
+
+    let current_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let ops = compute_diff(&current_schema, &desired_schema);
+    let sql = generate_sql(&ops);
+    for stmt in &sql {
+        sqlx::query(stmt)
+            .execute(connection.pool())
+            .await
+            .unwrap_or_else(|_| panic!("Failed to execute: {stmt}"));
+    }
+
+    let after_schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let partition = after_schema
+        .partitions
+        .get("public.measurement_2024")
+        .expect("partition should exist after migration");
+
+    assert_eq!(partition.indexes.len(), 1);
+    assert_eq!(partition.indexes[0].name, "measurement_2024_city_id_idx");
+    assert_eq!(partition.indexes[0].columns, vec!["city_id".to_string()]);
+
+    let final_ops = compute_diff(&after_schema, &desired_schema);
+    assert!(
+        final_ops.is_empty(),
+        "a partition-local index declared on a brand new partition with no matching parent \
+         index must round-trip through a single apply cycle. Got: {final_ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn partition_cascaded_parent_index_not_duplicated_into_partition_indexes() {
+    let (_container, url) = setup_postgres().await;
+    let connection = PgConnection::new(&url).await.unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE measurement (
+            city_id INT NOT NULL,
+            logdate DATE NOT NULL
+        ) PARTITION BY RANGE (logdate)
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        CREATE TABLE measurement_2024 PARTITION OF measurement
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')
+        "#,
+    )
+    .execute(connection.pool())
+    .await
+    .unwrap();
+
+    sqlx::query("CREATE INDEX measurement_city_id_idx ON measurement (city_id)")
+        .execute(connection.pool())
+        .await
+        .unwrap();
+
+    let schema = introspect_schema(&connection, &["public".to_string()], false)
+        .await
+        .unwrap();
+
+    let table = schema
+        .tables
+        .get("public.measurement")
+        .expect("partitioned parent should be introspected");
+    assert_eq!(table.indexes.len(), 1);
+    assert_eq!(table.indexes[0].name, "measurement_city_id_idx");
+
+    let partition = schema
+        .partitions
+        .get("public.measurement_2024")
+        .expect("partition should be introspected");
+    assert!(
+        partition.indexes.is_empty(),
+        "a cascaded child index auto-attached from the parent's partitioned index must not be \
+         duplicated into Partition.indexes. Got: {:?}",
+        partition.indexes
+    );
+
+    let desired_schema = parse_sql_string(
+        r#"
+        CREATE TABLE measurement (
+            city_id INT NOT NULL,
+            logdate DATE NOT NULL
+        ) PARTITION BY RANGE (logdate);
+
+        CREATE TABLE measurement_2024 PARTITION OF measurement
+            FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+
+        CREATE INDEX measurement_city_id_idx ON measurement (city_id);
+        "#,
+    )
+    .unwrap();
+
+    let final_ops = compute_diff(&schema, &desired_schema);
+    assert!(
+        final_ops.is_empty(),
+        "cascaded partition index handling must still converge. Got: {final_ops:?}"
+    );
+}
