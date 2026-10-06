@@ -1,10 +1,11 @@
-<p align="center">
-  <img src="logo.png" alt="pgmold" width="200">
-</p>
-
-# pgmold
-
-PostgreSQL schema-as-code management tool. Define schemas in native PostgreSQL DDL, diff against live databases, plan migrations, and apply them safely.
+<div align="center">
+  <a href="https://github.com/fmguerreiro/pgmold">
+    <img src="logo.png" alt="pgmold" width="96" height="96" />
+  </a>
+  <h1>pgmold</h1>
+  <p><em>PostgreSQL schema-as-code: define, diff, plan, and safely apply migrations.</em></p>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4c1.svg" alt="MIT License" /></a>
+</div>
 
 ## Features
 
