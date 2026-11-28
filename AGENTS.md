@@ -14,8 +14,11 @@ Invariants for AI agents invoking pgmold CLI.
 ## Safety
 
 - `apply` requires `--allow-destructive` for DROP operations
-- Set `PGMOLD_PROD=1` to block `DROP TABLE` operations in production
+- A plan that drops and adds columns on the same table in the same run (rename-shaped drop+add) is a hard lint error; `--allow-destructive` does not clear it, only `--allow-drop-add-pair` does
+- Set `PGMOLD_PROD=1` to block data-destructive drops (table, partition, column, view, enum, trigger, sequence, unique constraint, schema, extension, domain) in production, taking precedence over `--allow-destructive`
+- Schema-only drops (index, primary key, foreign key, check/exclusion constraint, policy, function, aggregate) are not blocked by `PGMOLD_PROD=1`
 - Use `--validate db:postgres://temp/db` to test migrations on a temporary database before applying
+- `plan --validate` executes the migration DDL against the given database and honors the same destructive gate as `apply`; pass `--allow-destructive` when the plan contains drops
 - Always run `plan` before `apply` — never apply blind
 
 ## Context Window Protection
@@ -56,3 +59,50 @@ pgmold apply --schema sql:schema.sql --json --allow-destructive
 # 6. Verify convergence
 pgmold drift --schema sql:schema.sql --json
 ```
+
+<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
+## Beads Issue Tracker
+
+This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
+
+### Quick Reference
+
+```bash
+bd ready              # Find available work
+bd show <id>          # View issue details
+bd update <id> --claim  # Claim work
+bd close <id>         # Complete work
+```
+
+### Rules
+
+- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
+- Run `bd prime` for detailed command reference and session close protocol
+- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+
+## Session Completion
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **PUSH TO REMOTE** - This is MANDATORY:
+   ```bash
+   git pull --rebase
+   bd dolt push
+   git push
+   git status  # MUST show "up to date with origin"
+   ```
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until `git push` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds
+<!-- END BEADS INTEGRATION -->

@@ -121,6 +121,11 @@ pgmold lint -s sql:schema.sql -d postgres://localhost/mydb
 | `-s, --schema <SOURCE>` | Schema source (repeatable) |
 | `-d, --database <URL>` | PostgreSQL connection string |
 | `--target-schemas <LIST>` | Comma-separated PostgreSQL schemas (default: `public`) |
+| `--include <PATTERN>` | Include objects matching glob pattern (repeatable) |
+| `--exclude <PATTERN>` | Exclude objects matching glob pattern (repeatable) |
+| `--include-types <TYPES>` | Include only these object types (comma-separated) |
+| `--exclude-types <TYPES>` | Exclude these object types (comma-separated) |
+| `--include-extension-objects` | Include objects owned by extensions |
 | `--manage-ownership` | Include ownership management (`ALTER ... OWNER TO`) |
 | `--no-manage-grants` | Disable grant/revoke management |
 | `--exclude-grants-for-role <ROLE>` | Exclude grants for a specific role (repeatable) |
@@ -147,6 +152,11 @@ Auto-detects the next migration number in the output directory.
 | `-m, --migrations <DIR>` | Directory for migration files |
 | `-n, --name <NAME>` | Migration name/description |
 | `--target-schemas <LIST>` | Comma-separated PostgreSQL schemas (default: `public`) |
+| `--include <PATTERN>` | Include objects matching glob pattern (repeatable) |
+| `--exclude <PATTERN>` | Exclude objects matching glob pattern (repeatable) |
+| `--include-types <TYPES>` | Include only these object types (comma-separated) |
+| `--exclude-types <TYPES>` | Exclude these object types (comma-separated) |
+| `--include-extension-objects` | Include objects owned by extensions |
 | `--manage-ownership` | Include ownership management (`ALTER ... OWNER TO`) |
 | `--no-manage-grants` | Disable grant/revoke management |
 | `--exclude-grants-for-role <ROLE>` | Exclude grants for a specific role (repeatable) |

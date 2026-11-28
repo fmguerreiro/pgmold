@@ -9,7 +9,13 @@ CLAUDE.md
 .auto-claude/
 .worktrees/
 notes/
+thoughts/
 .DS_Store
 
 # Python (scripts/sanitize_schema.py)
 __pycache__/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

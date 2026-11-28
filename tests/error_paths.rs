@@ -8,6 +8,7 @@ use pgmold::provider::load_schema_from_sources;
 const NON_DESTRUCTIVE_LINT: LintOptions = LintOptions {
     allow_destructive: false,
     is_production: false,
+    allow_drop_add_pair: false,
 };
 
 #[test]

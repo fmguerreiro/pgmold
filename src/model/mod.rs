@@ -1,7 +1,8 @@
 use crate::util::{
-    expressions_semantically_equal, views_semantically_equal, views_semantically_equal_with_columns,
+    expressions_semantically_equal, views_semantically_equal,
+    views_semantically_equal_with_columns, SchemaError,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -94,6 +95,7 @@ pub enum PendingCommentObjectType {
     Trigger,
     Extension,
     Policy,
+    Rule,
     Constraint,
 }
 
@@ -257,6 +259,8 @@ pub struct Schema {
     pub functions: BTreeMap<String, Function>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub aggregates: BTreeMap<String, Aggregate>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub operators: BTreeMap<String, Operator>,
     pub views: BTreeMap<String, View>,
     pub triggers: BTreeMap<String, Trigger>,
     pub sequences: BTreeMap<String, Sequence>,
@@ -265,6 +269,10 @@ pub struct Schema {
     /// Cleared after finalize() is called.
     #[serde(skip)]
     pub pending_policies: Vec<Policy>,
+    /// Rules collected during parsing, awaiting association with tables.
+    /// Cleared after finalize() is called.
+    #[serde(skip)]
+    pub pending_rules: Vec<Rule>,
     /// Ownership assignments collected during parsing, awaiting application to objects.
     /// Cleared after finalize() is called.
     #[serde(skip)]
@@ -283,20 +291,19 @@ pub struct Schema {
     pub pending_comments: Vec<PendingComment>,
     pub default_privileges: Vec<DefaultPrivilege>,
     /// Comments on named table constraints (PK, FK, CHECK, UNIQUE, EXCLUDE)
-    /// keyed as `"schema.table.constraint_name"`. Stored as a Schema-level
-    /// sidecar so adding the field does not require changing every
-    /// `Table` / `ForeignKey` / `CheckConstraint` / `Index` constructor in
-    /// the codebase. The constraint kind is irrelevant for emitting
+    /// keyed by the parent's qualified key plus the constraint name. Stored
+    /// as a Schema-level sidecar so adding the field does not require changing
+    /// every `Table` / `ForeignKey` / `CheckConstraint` / `Index` constructor
+    /// in the codebase. The constraint kind is irrelevant for emitting
     /// `COMMENT ON CONSTRAINT name ON tbl IS '...'` because PostgreSQL
     /// resolves the kind from `pg_constraint`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub table_constraint_comments: BTreeMap<String, String>,
-    /// Comments on named CHECK constraints attached to domains, keyed as
-    /// `"schema.domain.constraint_name"`. Mirrors
+    pub table_constraint_comments: BTreeMap<ConstraintCommentKey, String>,
+    /// Comments on named CHECK constraints attached to domains. Mirrors
     /// `table_constraint_comments` but resolved against `domains` and
     /// emitted via the `ON DOMAIN` form.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub domain_constraint_comments: BTreeMap<String, String>,
+    pub domain_constraint_comments: BTreeMap<ConstraintCommentKey, String>,
     /// Identifiers declared in the source longer than 63 bytes, captured before
     /// the parser truncated them. Drives the `warn_identifier_exceeds_namedatalen`
     /// lint. Not serialized: it is a parse-time diagnostic, not schema state.
@@ -342,6 +349,7 @@ pub struct Table {
     #[serde(default)]
     pub force_row_level_security: bool,
     pub policies: Vec<Policy>,
+    pub rules: Vec<Rule>,
     pub partition_by: Option<PartitionKey>,
     pub owner: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -425,6 +433,8 @@ pub enum IndexType {
     Hash,
     Gin,
     Gist,
+    Brin,
+    SpGist,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -662,6 +672,28 @@ pub enum PolicyCommand {
     Delete,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Rule {
+    pub name: String,
+    pub table_schema: String,
+    pub table: String,
+    pub event: RuleEvent,
+    pub instead: bool,
+    pub condition: Option<String>,
+    /// Deparsed action statements. Empty means `DO [INSTEAD] NOTHING`.
+    pub actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RuleEvent {
+    Select,
+    Insert,
+    Update,
+    Delete,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Function {
     pub name: String,
@@ -890,6 +922,76 @@ impl Aggregate {
             && self.finalfunc_name == other.finalfunc_name
             && self.initcond == other.initcond
             && self.parallel == other.parallel
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Operator {
+    pub schema: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right_type: Option<String>,
+    pub function_schema: String,
+    pub function_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commutator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub negator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restrict: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub join: Option<String>,
+    #[serde(default)]
+    pub hashes: bool,
+    #[serde(default)]
+    pub merges: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
+impl Operator {
+    /// Returns the comma-separated `(lefttype, righttype)` argument list used
+    /// to identify the operator, mirroring `Function::signature` /
+    /// `Aggregate::signature`. A missing operand (unary operator) renders as
+    /// `NONE`, matching PostgreSQL's own `\do` display convention.
+    pub fn args_string(&self) -> String {
+        format!(
+            "{}, {}",
+            self.left_type
+                .as_deref()
+                .map(normalize_pg_type)
+                .unwrap_or(Cow::Borrowed("NONE")),
+            self.right_type
+                .as_deref()
+                .map(normalize_pg_type)
+                .unwrap_or(Cow::Borrowed("NONE")),
+        )
+    }
+
+    /// Returns "name(lefttype, righttype)" used as the BTreeMap key suffix,
+    /// matching `Function::signature` / `Aggregate::signature`.
+    pub fn signature(&self) -> String {
+        format!("{}({})", self.name, self.args_string())
+    }
+
+    /// Compares two operators semantically, ignoring the comment.
+    pub fn semantically_equals(&self, other: &Operator) -> bool {
+        self.schema == other.schema
+            && self.name == other.name
+            && self.left_type.as_deref().map(normalize_pg_type)
+                == other.left_type.as_deref().map(normalize_pg_type)
+            && self.right_type.as_deref().map(normalize_pg_type)
+                == other.right_type.as_deref().map(normalize_pg_type)
+            && self.function_schema == other.function_schema
+            && self.function_name == other.function_name
+            && self.commutator == other.commutator
+            && self.negator == other.negator
+            && self.restrict == other.restrict
+            && self.join == other.join
+            && self.hashes == other.hashes
+            && self.merges == other.merges
     }
 }
 
@@ -1130,6 +1232,75 @@ pub fn qualified_name(schema: &str, name: &str) -> String {
     format!("{schema}.{name}")
 }
 
+/// Key for the constraint-comment sidecar maps. Holds the parent's qualified
+/// key (`schema.parent`) and the constraint name as separate fields so a
+/// dotted constraint name or dotted table name (legal via quoted identifiers)
+/// routes unambiguously. Packing both into one dot-joined string and
+/// re-splitting with `rsplit_once('.')` misroutes such identifiers, the same
+/// bug class fixed for column/policy/trigger pending comments in pgmold-298.
+/// The schema/name split inside `parent_key` follows the same convention as
+/// the `tables` / `partitions` / `domains` map keys, so a dotted schema name
+/// remains a pre-existing, codebase-wide ambiguity this struct does not touch.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ConstraintCommentKey {
+    /// The parent's qualified key, identical to the key under which the parent
+    /// lives in `tables` / `partitions` / `domains` (`schema.parent`).
+    pub parent_key: String,
+    /// The constraint's unqualified name.
+    pub constraint_name: String,
+}
+
+impl ConstraintCommentKey {
+    pub fn new(parent_key: impl Into<String>, constraint_name: impl Into<String>) -> Self {
+        Self {
+            parent_key: parent_key.into(),
+            constraint_name: constraint_name.into(),
+        }
+    }
+}
+
+// Serialized as a JSON two-element array string so the key survives
+// `serde_json` (which requires map keys to be strings) without reintroducing
+// the dot-join ambiguity the struct exists to remove.
+impl Serialize for ConstraintCommentKey {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let encoded = serde_json::to_string(&(&self.parent_key, &self.constraint_name))
+            .map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&encoded)
+    }
+}
+
+impl<'de> Deserialize<'de> for ConstraintCommentKey {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let encoded = String::deserialize(deserializer)?;
+        let (parent_key, constraint_name): (String, String) =
+            serde_json::from_str(&encoded).map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            parent_key,
+            constraint_name,
+        })
+    }
+}
+
+/// Renders a map key for the duplicate-object diagnostics `merge_from` emits.
+/// `String` keys borrow; structured keys render on demand, so no key type has
+/// to be a string just to be mergeable.
+pub(crate) trait MergeKeyName {
+    fn merge_key_name(&self) -> Cow<'_, str>;
+}
+
+impl MergeKeyName for String {
+    fn merge_key_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed(self)
+    }
+}
+
+impl MergeKeyName for ConstraintCommentKey {
+    fn merge_key_name(&self) -> Cow<'_, str> {
+        Cow::Owned(format!("{}.{}", self.parent_key, self.constraint_name))
+    }
+}
+
 /// Parses a qualified name into (schema, name) tuple.
 /// Defaults to "public" schema if no dot separator found.
 ///
@@ -1160,11 +1331,13 @@ impl Schema {
             domains: BTreeMap::new(),
             functions: BTreeMap::new(),
             aggregates: BTreeMap::new(),
+            operators: BTreeMap::new(),
             views: BTreeMap::new(),
             triggers: BTreeMap::new(),
             sequences: BTreeMap::new(),
             partitions: BTreeMap::new(),
             pending_policies: Vec::new(),
+            pending_rules: Vec::new(),
             pending_owners: Vec::new(),
             pending_grants: Vec::new(),
             pending_revokes: Vec::new(),
@@ -1230,6 +1403,12 @@ impl Schema {
                     .any(|t| t.policies.iter().any(|p| matches(&p.name)))
                     || self.pending_policies.iter().any(|p| matches(&p.name))
             }
+            "rule" => {
+                self.tables
+                    .values()
+                    .any(|t| t.rules.iter().any(|r| matches(&r.name)))
+                    || self.pending_rules.iter().any(|r| matches(&r.name))
+            }
             other => panic!(
                 "unknown overlong-identifier kind {other:?}; every kind produced by the parser must be matched here"
             ),
@@ -1261,6 +1440,20 @@ impl Schema {
             }
         }
 
+        let pending_rules = std::mem::take(&mut self.pending_rules);
+        for rule in pending_rules {
+            let table_key = qualified_name(&rule.table_schema, &rule.table);
+            if let Some(table) = self.tables.get_mut(&table_key) {
+                table.rules.push(rule);
+                table.rules.sort();
+            } else {
+                return Err(format!(
+                    "Rule \"{}\" references non-existent table \"{}\"",
+                    rule.name, table_key
+                ));
+            }
+        }
+
         self.apply_pending_owners(false);
         self.apply_pending_grants(false);
         self.apply_pending_revokes(false);
@@ -1286,12 +1479,117 @@ impl Schema {
             }
         }
 
+        let pending_rules = std::mem::take(&mut self.pending_rules);
+        let mut orphaned_rules = Vec::new();
+        for rule in pending_rules {
+            let table_key = qualified_name(&rule.table_schema, &rule.table);
+            if let Some(table) = self.tables.get_mut(&table_key) {
+                table.rules.push(rule);
+                table.rules.sort();
+            } else {
+                orphaned_rules.push(rule);
+            }
+        }
+        self.pending_rules = orphaned_rules;
+
         self.apply_pending_owners(true);
         self.apply_pending_grants(true);
         self.apply_pending_revokes(true);
         self.apply_pending_comments(true);
         self.merge_all_grants();
         orphaned
+    }
+
+    /// `observe` reports each merged object so callers can reject duplicates;
+    /// duplicates are never silently overwritten.
+    pub(crate) fn merge_from(
+        &mut self,
+        source: Schema,
+        mut observe: impl FnMut(&str, &str, bool) -> Result<(), SchemaError>,
+    ) -> Result<(), SchemaError> {
+        fn merge_map<K: Ord + MergeKeyName, V>(
+            target: &mut BTreeMap<K, V>,
+            source: BTreeMap<K, V>,
+            kind: &str,
+            observe: &mut impl FnMut(&str, &str, bool) -> Result<(), SchemaError>,
+        ) -> Result<(), SchemaError> {
+            use std::collections::btree_map::Entry;
+            for (name, value) in source {
+                match target.entry(name) {
+                    Entry::Occupied(entry) => observe(kind, &entry.key().merge_key_name(), true)?,
+                    Entry::Vacant(entry) => {
+                        observe(kind, &entry.key().merge_key_name(), false)?;
+                        entry.insert(value);
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        // No `..` rest pattern: a new Schema field must break this match until
+        // it is explicitly merged.
+        let Schema {
+            schemas,
+            extensions,
+            servers,
+            tables,
+            enums,
+            domains,
+            functions,
+            aggregates,
+            operators,
+            views,
+            triggers,
+            sequences,
+            partitions,
+            pending_policies,
+            pending_rules,
+            pending_owners,
+            pending_grants,
+            pending_revokes,
+            pending_comments,
+            default_privileges,
+            table_constraint_comments,
+            domain_constraint_comments,
+            overlong_identifiers,
+        } = source;
+
+        merge_map(&mut self.schemas, schemas, "schema", &mut observe)?;
+        merge_map(&mut self.extensions, extensions, "extension", &mut observe)?;
+        merge_map(&mut self.servers, servers, "server", &mut observe)?;
+        merge_map(&mut self.tables, tables, "table", &mut observe)?;
+        merge_map(&mut self.enums, enums, "enum", &mut observe)?;
+        merge_map(&mut self.domains, domains, "domain", &mut observe)?;
+        merge_map(&mut self.functions, functions, "function", &mut observe)?;
+        merge_map(&mut self.aggregates, aggregates, "aggregate", &mut observe)?;
+        merge_map(&mut self.operators, operators, "operator", &mut observe)?;
+        merge_map(&mut self.views, views, "view", &mut observe)?;
+        merge_map(&mut self.triggers, triggers, "trigger", &mut observe)?;
+        merge_map(&mut self.sequences, sequences, "sequence", &mut observe)?;
+        merge_map(&mut self.partitions, partitions, "partition", &mut observe)?;
+        merge_map(
+            &mut self.table_constraint_comments,
+            table_constraint_comments,
+            "constraint comment",
+            &mut observe,
+        )?;
+        merge_map(
+            &mut self.domain_constraint_comments,
+            domain_constraint_comments,
+            "domain constraint comment",
+            &mut observe,
+        )?;
+
+        self.pending_policies.extend(pending_policies);
+        self.pending_rules.extend(pending_rules);
+        self.pending_owners.extend(pending_owners);
+        self.pending_grants.extend(pending_grants);
+        self.pending_revokes.extend(pending_revokes);
+        self.pending_comments.extend(pending_comments);
+        self.default_privileges.extend(default_privileges);
+        self.overlong_identifiers.extend(overlong_identifiers);
+
+        Ok(())
     }
 
     /// Applies pending ownership assignments to their respective objects.
@@ -1612,6 +1910,19 @@ impl Schema {
                 }
                 false
             }
+            PendingCommentObjectType::Rule => {
+                let rule_name = pc
+                    .child_name
+                    .as_deref()
+                    .expect("Rule pending comment must carry child_name");
+                if let Some(table) = self.tables.get_mut(&pc.object_key) {
+                    if let Some(rule) = table.rules.iter_mut().find(|r| r.name == rule_name) {
+                        rule.comment = pc.comment.clone();
+                        return true;
+                    }
+                }
+                false
+            }
             PendingCommentObjectType::Constraint => {
                 // `object_key` is the parent's qualified key (`schema.parent`)
                 // and `child_name` the constraint name. The parent is either a
@@ -1620,21 +1931,21 @@ impl Schema {
                 // not have to mutate every constraint variant struct. Partition
                 // children share the table sidecar because PostgreSQL stores
                 // constraint comments on the child relation, and the diff/emit
-                // path is parent-kind agnostic. The sidecar map key keeps the
-                // flat `parent.constraint` form because introspection populates
-                // the same maps with that shape.
+                // path is parent-kind agnostic. The sidecar map keys the parent
+                // and constraint names separately so a dotted identifier routes
+                // unambiguously, matching how introspection populates the maps.
                 let constraint_name = pc
                     .child_name
                     .as_deref()
                     .expect("Constraint pending comment must carry child_name");
-                let sidecar_key = format!("{}.{}", pc.object_key, constraint_name);
+                let sidecar_key = ConstraintCommentKey::new(pc.object_key.clone(), constraint_name);
                 if pc.on_domain {
                     if !self.domains.contains_key(&pc.object_key) {
                         return false;
                     }
                     update_constraint_comment(
                         &mut self.domain_constraint_comments,
-                        &sidecar_key,
+                        sidecar_key,
                         pc.comment.as_ref(),
                     );
                 } else {
@@ -1645,7 +1956,7 @@ impl Schema {
                     }
                     update_constraint_comment(
                         &mut self.table_constraint_comments,
-                        &sidecar_key,
+                        sidecar_key,
                         pc.comment.as_ref(),
                     );
                 }
@@ -1665,15 +1976,11 @@ impl Schema {
         let tables = &self.tables;
         let partitions = &self.partitions;
         self.table_constraint_comments.retain(|key, _| {
-            key.rsplit_once('.').is_some_and(|(parent, _)| {
-                tables.contains_key(parent) || partitions.contains_key(parent)
-            })
+            tables.contains_key(&key.parent_key) || partitions.contains_key(&key.parent_key)
         });
         let domains = &self.domains;
-        self.domain_constraint_comments.retain(|key, _| {
-            key.rsplit_once('.')
-                .is_some_and(|(parent, _)| domains.contains_key(parent))
-        });
+        self.domain_constraint_comments
+            .retain(|key, _| domains.contains_key(&key.parent_key));
     }
 
     fn merge_all_grants(&mut self) {
@@ -1729,16 +2036,16 @@ pub fn revoke_from_grants(
 }
 
 fn update_constraint_comment(
-    sidecar: &mut BTreeMap<String, String>,
-    key: &str,
+    sidecar: &mut BTreeMap<ConstraintCommentKey, String>,
+    key: ConstraintCommentKey,
     comment: Option<&String>,
 ) {
     match comment {
         Some(text) => {
-            sidecar.insert(key.to_string(), text.clone());
+            sidecar.insert(key, text.clone());
         }
         None => {
-            sidecar.remove(key);
+            sidecar.remove(&key);
         }
     }
 }
@@ -1976,6 +2283,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -1998,6 +2306,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -2120,6 +2429,43 @@ mod tests {
     }
 
     #[test]
+    fn constraint_comment_key_serializes_as_json_array_string() {
+        let key = ConstraintCommentKey::new("public.users", "users_pkey");
+        let encoded = serde_json::to_string(&key).unwrap();
+        assert_eq!(encoded, r#""[\"public.users\",\"users_pkey\"]""#);
+        let decoded: ConstraintCommentKey = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, key);
+    }
+
+    #[test]
+    fn constraint_comment_key_round_trips_dotted_identifiers_through_serde() {
+        // A constraint name and a quoted table name each carrying a literal dot:
+        // the flat dot-joined string this struct replaced could not round-trip
+        // these without misrouting.
+        let key = ConstraintCommentKey::new("public.tbl.with.dots", "chk.v2");
+        let decoded: ConstraintCommentKey =
+            serde_json::from_str(&serde_json::to_string(&key).unwrap()).unwrap();
+        assert_eq!(decoded.parent_key, "public.tbl.with.dots");
+        assert_eq!(decoded.constraint_name, "chk.v2");
+    }
+
+    #[test]
+    fn schema_with_constraint_comments_round_trips_through_serde() {
+        let mut schema = Schema::new();
+        schema.table_constraint_comments.insert(
+            ConstraintCommentKey::new("public.users", "users_pkey"),
+            "primary key".to_string(),
+        );
+        schema.domain_constraint_comments.insert(
+            ConstraintCommentKey::new("public.amount", "amount_positive"),
+            "must be positive".to_string(),
+        );
+        let restored: Schema =
+            serde_json::from_str(&serde_json::to_string(&schema).unwrap()).unwrap();
+        assert_eq!(restored, schema);
+    }
+
+    #[test]
     fn parse_qualified_name_defaults_to_public() {
         assert_eq!(
             parse_qualified_name("users"),
@@ -2144,6 +2490,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -2200,6 +2547,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: None,
             grants: Vec::new(),
@@ -2328,6 +2676,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -2350,6 +2699,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -2860,6 +3210,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
@@ -3000,6 +3351,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
@@ -3018,6 +3370,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some("admin".to_string()),
             grants: Vec::new(),
@@ -3041,6 +3394,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),
@@ -3070,6 +3424,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: Some("postgres".to_string()),
                 grants: Vec::new(),
@@ -3092,6 +3447,7 @@ mod tests {
                 row_level_security: false,
                 force_row_level_security: false,
                 policies: Vec::new(),
+                rules: Vec::new(),
                 partition_by: None,
                 owner: None,
                 grants: Vec::new(),
@@ -3128,6 +3484,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: vec![grant],
@@ -3155,6 +3512,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some("postgres".to_string()),
             grants: Vec::new(),

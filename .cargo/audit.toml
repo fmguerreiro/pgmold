@@ -6,4 +6,6 @@ ignore = [
     "RUSTSEC-2025-0111",
     # rand unsound with custom global logger — pgmold does not register a custom logger
     "RUSTSEC-2026-0097",
+    # SQLite is not enabled; sqlx records its optional dependency in Cargo.lock.
+    "RUSTSEC-2026-0459",
 ]

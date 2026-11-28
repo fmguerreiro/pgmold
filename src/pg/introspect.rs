@@ -2,6 +2,9 @@ use crate::model::*;
 use crate::pg::connection::PgConnection;
 use crate::pg::sqlgen::strip_ident_quotes;
 use crate::util::{normalize_sql_whitespace, Result, SchemaError};
+use sqlparser::ast::{CreateRule, RuleAction, Statement};
+use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::parser::Parser;
 use sqlx::Row;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,6 +25,7 @@ pub async fn introspect_schema(
         tables,
         functions,
         aggregates,
+        operators,
         views,
         triggers,
         sequences,
@@ -38,9 +42,12 @@ pub async fn introspect_schema(
         mut all_foreign_keys,
         mut all_check_constraints,
         mut all_exclusion_constraints,
+        mut all_partition_indexes,
+        mut all_partition_check_constraints,
         mut all_rls,
         mut all_force_rls,
         mut all_policies,
+        mut all_rules,
         default_privileges,
         table_constraint_comments,
         domain_constraint_comments,
@@ -53,6 +60,7 @@ pub async fn introspect_schema(
         introspect_tables(connection, target_schemas, include_extension_objects),
         introspect_functions(connection, target_schemas, include_extension_objects),
         introspect_aggregates(connection, target_schemas, include_extension_objects),
+        introspect_operators(connection, target_schemas, include_extension_objects),
         introspect_views(connection, target_schemas, include_extension_objects),
         introspect_triggers(connection, target_schemas, include_extension_objects),
         introspect_sequences(connection, target_schemas, include_extension_objects),
@@ -69,9 +77,12 @@ pub async fn introspect_schema(
         introspect_all_foreign_keys(connection, target_schemas),
         introspect_all_check_constraints(connection, target_schemas),
         introspect_all_exclusion_constraints(connection, target_schemas),
+        introspect_all_partition_indexes(connection, target_schemas),
+        introspect_all_partition_check_constraints(connection, target_schemas),
         introspect_all_rls(connection, target_schemas),
         introspect_all_force_rls(connection, target_schemas),
         introspect_all_policies(connection, target_schemas),
+        introspect_all_rules(connection, target_schemas),
         introspect_default_privileges(connection, target_schemas),
         introspect_table_constraint_comments(connection, target_schemas),
         introspect_domain_constraint_comments(connection, target_schemas),
@@ -86,6 +97,7 @@ pub async fn introspect_schema(
     schema.tables = tables;
     schema.functions = functions;
     schema.aggregates = aggregates;
+    schema.operators = operators;
     schema.views = views;
     schema.triggers = triggers;
     schema.sequences = sequences;
@@ -166,6 +178,22 @@ pub async fn introspect_schema(
         if let Some(mut policies) = all_policies.remove(qualified_name) {
             policies.sort();
             table.policies = policies;
+        }
+        if let Some(mut rules) = all_rules.remove(qualified_name) {
+            rules.sort();
+            table.rules = rules;
+        }
+    }
+
+    for (qualified_name, partition) in &mut schema.partitions {
+        if let Some(mut indexes) = all_partition_indexes.remove(qualified_name) {
+            indexes.sort();
+            partition.indexes = indexes;
+        }
+        if let Some(mut check_constraints) = all_partition_check_constraints.remove(qualified_name)
+        {
+            check_constraints.sort();
+            partition.check_constraints = check_constraints;
         }
     }
 
@@ -573,6 +601,7 @@ async fn introspect_tables(
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: Some(owner),
             grants: Vec::new(),
@@ -1167,7 +1196,13 @@ async fn introspect_all_indexes(
             "hash" => IndexType::Hash,
             "gin" => IndexType::Gin,
             "gist" => IndexType::Gist,
-            _ => panic!("unsupported index type: {am_name}"),
+            "brin" => IndexType::Brin,
+            "spgist" => IndexType::SpGist,
+            other => {
+                return Err(SchemaError::DatabaseError(format!(
+                    "unsupported index access method: {other}"
+                )))
+            }
         };
 
         result
@@ -1275,6 +1310,151 @@ async fn introspect_all_check_constraints(
     .fetch_all(connection.pool())
     .await
     .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch check constraints: {e}")))?;
+
+    let mut result: BTreeMap<String, Vec<CheckConstraint>> = BTreeMap::new();
+    for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
+        let name: String = row.get("name");
+        let definition: String = row.get("definition");
+
+        let expression = definition
+            .strip_prefix("CHECK (")
+            .and_then(|s| s.strip_suffix(")"))
+            .map(|s| s.to_string())
+            .unwrap_or(definition);
+
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(CheckConstraint { name, expression });
+    }
+
+    Ok(result)
+}
+
+/// Introspect indexes created directly on a partition child (not the ones
+/// PostgreSQL auto-attaches to every partition when an index is created on
+/// the partitioned parent). Partition-local indexes are the only ones that
+/// round-trip through `Partition.indexes` — cascaded child indexes are owned
+/// by the parent's own index and are already covered by `introspect_all_indexes`
+/// diffing the parent table.
+async fn introspect_all_partition_indexes(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<Index>>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS table_schema,
+            t.relname AS table_name,
+            i.relname as index_name,
+            ix.indisunique,
+            am.amname,
+            COALESCE((SELECT array_agg(
+                CASE WHEN ix.indkey[k] = 0
+                     THEN pg_get_indexdef(ix.indexrelid, k + 1, false)
+                     ELSE (SELECT a.attname::text FROM pg_attribute a WHERE a.attrelid = t.oid AND a.attnum = ix.indkey[k])
+                END ORDER BY k
+            ) FROM generate_series(0, array_length(ix.indkey, 1) - 1) AS k), ARRAY[]::text[]) as columns,
+            pg_get_expr(ix.indpred, ix.indrelid) as predicate,
+            (uc.oid IS NOT NULL) AS is_constraint
+        FROM pg_index ix
+        JOIN pg_class t ON t.oid = ix.indrelid
+        JOIN pg_class i ON i.oid = ix.indexrelid
+        JOIN pg_am am ON am.oid = i.relam
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        LEFT JOIN pg_constraint uc ON uc.conindid = ix.indexrelid AND uc.contype = 'u'
+        WHERE n.nspname = ANY($1::text[])
+          AND NOT ix.indisprimary
+          AND t.relkind IN ('r', 'p')
+          AND t.relispartition = true
+          AND NOT EXISTS (
+              SELECT 1 FROM pg_constraint ex
+              WHERE ex.conindid = ix.indexrelid AND ex.contype = 'x'
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM pg_inherits pi WHERE pi.inhrelid = i.oid
+          )
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch partition indexes: {e}")))?;
+
+    let mut result: BTreeMap<String, Vec<Index>> = BTreeMap::new();
+    for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
+        let name: String = row.get("index_name");
+        let unique: bool = row.get("indisunique");
+        let am_name: String = row.get("amname");
+        let columns: Vec<String> = row.get("columns");
+        let predicate: Option<String> = row.get("predicate");
+        let is_constraint: bool = row.get("is_constraint");
+
+        let index_type = match am_name.as_str() {
+            "btree" => IndexType::BTree,
+            "hash" => IndexType::Hash,
+            "gin" => IndexType::Gin,
+            "gist" => IndexType::Gist,
+            "brin" => IndexType::Brin,
+            "spgist" => IndexType::SpGist,
+            other => {
+                return Err(SchemaError::DatabaseError(format!(
+                    "unsupported index access method: {other}"
+                )))
+            }
+        };
+
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(Index {
+                name,
+                columns,
+                unique,
+                index_type,
+                predicate,
+                is_constraint,
+            });
+    }
+
+    Ok(result)
+}
+
+/// Introspect CHECK constraints defined directly on a partition child.
+/// Excludes CHECK constraints a partition inherits automatically from its
+/// parent (`conislocal = false`) — those already round-trip via the parent
+/// table's own `check_constraints`.
+async fn introspect_all_partition_check_constraints(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<CheckConstraint>>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS table_schema,
+            class.relname AS table_name,
+            con.conname as name,
+            pg_get_constraintdef(con.oid) as definition
+        FROM pg_constraint con
+        JOIN pg_class class ON con.conrelid = class.oid
+        JOIN pg_namespace n ON n.oid = class.relnamespace
+        WHERE n.nspname = ANY($1::text[])
+          AND con.contype = 'c'
+          AND class.relkind IN ('r', 'p')
+          AND class.relispartition = true
+          AND con.conislocal = true
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| {
+        SchemaError::DatabaseError(format!("Failed to fetch partition check constraints: {e}"))
+    })?;
 
     let mut result: BTreeMap<String, Vec<CheckConstraint>> = BTreeMap::new();
     for row in rows {
@@ -1629,7 +1809,7 @@ async fn introspect_all_policies(
 async fn introspect_table_constraint_comments(
     connection: &PgConnection,
     target_schemas: &[String],
-) -> Result<BTreeMap<String, String>> {
+) -> Result<BTreeMap<ConstraintCommentKey, String>> {
     let rows = sqlx::query(
         r#"
         SELECT
@@ -1659,7 +1839,7 @@ async fn introspect_table_constraint_comments(
         let constraint_name: String = row.get("constraint_name");
         let comment: String = row.get("comment");
         result.insert(
-            format!("{table_schema}.{table_name}.{constraint_name}"),
+            ConstraintCommentKey::new(qualified_name(&table_schema, &table_name), constraint_name),
             comment,
         );
     }
@@ -1673,7 +1853,7 @@ async fn introspect_table_constraint_comments(
 async fn introspect_domain_constraint_comments(
     connection: &PgConnection,
     target_schemas: &[String],
-) -> Result<BTreeMap<String, String>> {
+) -> Result<BTreeMap<ConstraintCommentKey, String>> {
     let rows = sqlx::query(
         r#"
         SELECT
@@ -1703,11 +1883,99 @@ async fn introspect_domain_constraint_comments(
         let constraint_name: String = row.get("constraint_name");
         let comment: String = row.get("comment");
         result.insert(
-            format!("{domain_schema}.{domain_name}.{constraint_name}"),
+            ConstraintCommentKey::new(
+                qualified_name(&domain_schema, &domain_name),
+                constraint_name,
+            ),
             comment,
         );
     }
     Ok(result)
+}
+
+async fn introspect_all_rules(
+    connection: &PgConnection,
+    target_schemas: &[String],
+) -> Result<BTreeMap<String, Vec<Rule>>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            n.nspname AS table_schema,
+            c.relname AS table_name,
+            r.rulename AS name,
+            r.ev_type AS event,
+            r.is_instead AS instead,
+            pg_get_ruledef(r.oid) AS definition,
+            obj_description(r.oid, 'pg_rewrite') AS comment
+        FROM pg_rewrite r
+        JOIN pg_class c ON r.ev_class = c.oid
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE n.nspname = ANY($1::text[])
+          AND c.relkind IN ('r', 'p')
+          AND c.relispartition = false
+        "#,
+    )
+    .bind(target_schemas)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch rules: {e}")))?;
+
+    let dialect = PostgreSqlDialect {};
+    let mut result: BTreeMap<String, Vec<Rule>> = BTreeMap::new();
+    for row in rows {
+        let table_schema: String = row.get("table_schema");
+        let table_name: String = row.get("table_name");
+        let name: String = row.get("name");
+        let event: i8 = row.get::<i8, _>("event");
+        let instead: bool = row.get("instead");
+        let definition: String = row.get("definition");
+        let comment: Option<String> = row.get("comment");
+
+        let statements = Parser::parse_sql(&dialect, &definition).map_err(|e| {
+            SchemaError::DatabaseError(format!(
+                "Failed to parse introspected definition of rule \"{name}\": {e}"
+            ))
+        })?;
+        let Some(Statement::CreateRule(CreateRule {
+            action, condition, ..
+        })) = statements.into_iter().next()
+        else {
+            return Err(SchemaError::DatabaseError(format!(
+                "pg_get_ruledef for rule \"{name}\" did not produce a CREATE RULE statement: {definition}"
+            )));
+        };
+        let condition = condition.map(|expr| crate::util::normalize_type_casts(&expr.to_string()));
+        let actions = match action {
+            RuleAction::Nothing => Vec::new(),
+            RuleAction::Statements(stmts) => stmts.iter().map(|s| s.to_string()).collect(),
+        };
+
+        result
+            .entry(qualified_name(&table_schema, &table_name))
+            .or_default()
+            .push(Rule {
+                name,
+                table: table_name,
+                table_schema,
+                event: map_rule_event(pg_char(event)),
+                instead,
+                condition,
+                actions,
+                comment,
+            });
+    }
+
+    Ok(result)
+}
+
+fn map_rule_event(cmd: char) -> RuleEvent {
+    match cmd {
+        '1' => RuleEvent::Select,
+        '2' => RuleEvent::Update,
+        '3' => RuleEvent::Insert,
+        '4' => RuleEvent::Delete,
+        _ => panic!("Unknown rule event code from PostgreSQL: '{cmd}'"),
+    }
 }
 
 fn map_policy_command(cmd: char) -> PolicyCommand {
@@ -1949,6 +2217,119 @@ async fn introspect_aggregates(
     }
 
     Ok(aggregates)
+}
+
+async fn introspect_operators(
+    connection: &PgConnection,
+    target_schemas: &[String],
+    include_extension_objects: bool,
+) -> Result<BTreeMap<String, Operator>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            o.oprname AS name,
+            n.nspname AS schema,
+            CASE WHEN o.oprleft = 0 THEN NULL ELSE pg_catalog.format_type(o.oprleft, NULL) END AS left_type,
+            CASE WHEN o.oprright = 0 THEN NULL ELSE pg_catalog.format_type(o.oprright, NULL) END AS right_type,
+            fnn.nspname AS function_schema,
+            fn.proname AS function_name,
+            comn.nspname AS commutator_schema,
+            com.oprname AS commutator_name,
+            negn.nspname AS negator_schema,
+            neg.oprname AS negator_name,
+            restn.nspname AS restrict_schema,
+            rest.proname AS restrict_name,
+            joinn.nspname AS join_schema,
+            joinp.proname AS join_name,
+            o.oprcanhash AS hashes,
+            o.oprcanmerge AS merges,
+            obj_description(o.oid, 'pg_operator') AS comment
+        FROM pg_operator o
+        JOIN pg_namespace n ON o.oprnamespace = n.oid
+        JOIN pg_proc fn ON o.oprcode = fn.oid
+        JOIN pg_namespace fnn ON fn.pronamespace = fnn.oid
+        LEFT JOIN pg_operator com ON o.oprcom = com.oid
+        LEFT JOIN pg_namespace comn ON com.oprnamespace = comn.oid
+        LEFT JOIN pg_operator neg ON o.oprnegate = neg.oid
+        LEFT JOIN pg_namespace negn ON neg.oprnamespace = negn.oid
+        LEFT JOIN pg_proc rest ON o.oprrest = rest.oid
+        LEFT JOIN pg_namespace restn ON rest.pronamespace = restn.oid
+        LEFT JOIN pg_proc joinp ON o.oprjoin = joinp.oid
+        LEFT JOIN pg_namespace joinn ON joinp.pronamespace = joinn.oid
+        WHERE n.nspname = ANY($1::text[])
+          AND ($2::boolean OR NOT EXISTS (
+              SELECT 1 FROM pg_depend d
+              WHERE d.objid = o.oid
+              AND d.deptype = 'e'
+          ))
+        "#,
+    )
+    .bind(target_schemas)
+    .bind(include_extension_objects)
+    .fetch_all(connection.pool())
+    .await
+    .map_err(|e| SchemaError::DatabaseError(format!("Failed to fetch operators: {e}")))?;
+
+    let mut operators = BTreeMap::new();
+    for row in rows {
+        let name: String = row.get("name");
+        let schema: String = row.get("schema");
+        let left_type: Option<String> = row.get("left_type");
+        let right_type: Option<String> = row.get("right_type");
+        let left_type = left_type.map(|t| crate::model::normalize_pg_type(&t).into_owned());
+        let right_type = right_type.map(|t| crate::model::normalize_pg_type(&t).into_owned());
+        let function_schema: String = row.get("function_schema");
+        let function_name: String = row.get("function_name");
+
+        let commutator_schema: Option<String> = row.get("commutator_schema");
+        let commutator_name: Option<String> = row.get("commutator_name");
+        let commutator = commutator_name
+            .zip(commutator_schema)
+            .map(|(name, schema)| qualified_name(&schema, &name));
+
+        let negator_schema: Option<String> = row.get("negator_schema");
+        let negator_name: Option<String> = row.get("negator_name");
+        let negator = negator_name
+            .zip(negator_schema)
+            .map(|(name, schema)| qualified_name(&schema, &name));
+
+        let restrict_schema: Option<String> = row.get("restrict_schema");
+        let restrict_name: Option<String> = row.get("restrict_name");
+        let restrict = restrict_name
+            .zip(restrict_schema)
+            .map(|(name, schema)| qualified_name(&schema, &name));
+
+        let join_schema: Option<String> = row.get("join_schema");
+        let join_name: Option<String> = row.get("join_name");
+        let join = join_name
+            .zip(join_schema)
+            .map(|(name, schema)| qualified_name(&schema, &name));
+
+        let hashes: bool = row.get("hashes");
+        let merges: bool = row.get("merges");
+        let comment: Option<String> = row.get("comment");
+
+        let operator = Operator {
+            schema: schema.clone(),
+            name: name.clone(),
+            left_type,
+            right_type,
+            function_schema,
+            function_name,
+            commutator,
+            negator,
+            restrict,
+            join,
+            hashes,
+            merges,
+            comment,
+        };
+
+        let key = qualified_name(&schema, &operator.signature());
+        operators.insert(key, operator);
+    }
+
+    Ok(operators)
 }
 
 /// Splits a function argument list on commas, skipping commas inside

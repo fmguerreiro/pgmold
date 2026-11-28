@@ -40,29 +40,6 @@ fn load_sql_source(path: &str) -> Result<Schema> {
     load_schema_sources(&[path.to_string()])
 }
 
-fn merge_collection<V>(
-    target: &mut std::collections::BTreeMap<String, V>,
-    source: std::collections::BTreeMap<String, V>,
-    object_type: &str,
-) -> Result<()> {
-    use std::collections::btree_map::Entry;
-
-    for (name, value) in source {
-        match target.entry(name) {
-            Entry::Occupied(entry) => {
-                return Err(SchemaError::ParseError(format!(
-                    "Duplicate {object_type} \"{}\" from multiple sources",
-                    entry.key()
-                )));
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(value);
-            }
-        }
-    }
-    Ok(())
-}
-
 fn merge_schemas(schemas: Vec<Schema>) -> Result<Schema> {
     if schemas.is_empty() {
         return Err(SchemaError::ParseError("No schemas to merge".to_string()));
@@ -77,26 +54,15 @@ fn merge_schemas(schemas: Vec<Schema>) -> Result<Schema> {
     let mut merged = Schema::new();
 
     for schema in schemas {
-        merge_collection(&mut merged.tables, schema.tables, "table")?;
-        merge_collection(&mut merged.enums, schema.enums, "enum")?;
-        merge_collection(&mut merged.functions, schema.functions, "function")?;
-        merge_collection(&mut merged.aggregates, schema.aggregates, "aggregate")?;
-        merge_collection(&mut merged.views, schema.views, "view")?;
-        merge_collection(&mut merged.triggers, schema.triggers, "trigger")?;
-        merge_collection(&mut merged.sequences, schema.sequences, "sequence")?;
-        merge_collection(&mut merged.domains, schema.domains, "domain")?;
-        merge_collection(&mut merged.extensions, schema.extensions, "extension")?;
-        merge_collection(&mut merged.schemas, schema.schemas, "schema")?;
-        merge_collection(&mut merged.partitions, schema.partitions, "partition")?;
-
-        merged.pending_policies.extend(schema.pending_policies);
-        merged.pending_owners.extend(schema.pending_owners);
-        merged.pending_grants.extend(schema.pending_grants);
-        merged.pending_revokes.extend(schema.pending_revokes);
-        merged.pending_comments.extend(schema.pending_comments);
-        merged
-            .overlong_identifiers
-            .extend(schema.overlong_identifiers);
+        merged.merge_from(schema, |kind, name, already_present| {
+            if already_present {
+                Err(SchemaError::ParseError(format!(
+                    "Duplicate {kind} \"{name}\" from multiple sources"
+                )))
+            } else {
+                Ok(())
+            }
+        })?;
     }
 
     dedup_overlong_identifiers(&mut merged.overlong_identifiers);

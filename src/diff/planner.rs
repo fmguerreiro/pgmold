@@ -37,6 +37,8 @@ struct NodeSets {
     alter_functions: Vec<NodeIndex>,
     aggregates: Vec<NodeIndex>,
     drop_aggregates: Vec<NodeIndex>,
+    operators: Vec<NodeIndex>,
+    drop_operators: Vec<NodeIndex>,
     tables: Vec<NodeIndex>,
     partitions: Vec<NodeIndex>,
     detach_partitions: Vec<NodeIndex>,
@@ -51,10 +53,13 @@ struct NodeSets {
     force_rls: Vec<NodeIndex>,
     policies: Vec<NodeIndex>,
     alter_policies: Vec<NodeIndex>,
+    rules: Vec<NodeIndex>,
     triggers: Vec<NodeIndex>,
     views: Vec<NodeIndex>,
     version_views: Vec<NodeIndex>,
     alter_columns: Vec<NodeIndex>,
+    detach_column_domains: Vec<NodeIndex>,
+    reattach_column_domains: Vec<NodeIndex>,
     alter_views: Vec<NodeIndex>,
     alter_sequences: Vec<NodeIndex>,
     drop_functions: Vec<NodeIndex>,
@@ -63,6 +68,7 @@ struct NodeSets {
     drop_checks: Vec<NodeIndex>,
     drop_exclusions: Vec<NodeIndex>,
     drop_policies: Vec<NodeIndex>,
+    drop_rules: Vec<NodeIndex>,
     drop_triggers: Vec<NodeIndex>,
     drop_views: Vec<NodeIndex>,
     drop_columns: Vec<NodeIndex>,
@@ -97,6 +103,8 @@ impl NodeSets {
             alter_functions: graph.nodes_matching(|k| matches!(k, OpKey::AlterFunction { .. })),
             aggregates: graph.nodes_matching(|k| matches!(k, OpKey::CreateAggregate { .. })),
             drop_aggregates: graph.nodes_matching(|k| matches!(k, OpKey::DropAggregate { .. })),
+            operators: graph.nodes_matching(|k| matches!(k, OpKey::CreateOperator { .. })),
+            drop_operators: graph.nodes_matching(|k| matches!(k, OpKey::DropOperator { .. })),
             tables: graph.nodes_matching(|k| matches!(k, OpKey::CreateTable(_))),
             partitions: graph.nodes_matching(|k| matches!(k, OpKey::CreatePartition(_))),
             detach_partitions: graph.nodes_matching(|k| matches!(k, OpKey::DetachPartition(_))),
@@ -113,10 +121,15 @@ impl NodeSets {
                 .nodes_matching(|k| matches!(k, OpKey::ForceRls { .. } | OpKey::NoForceRls { .. })),
             policies: graph.nodes_matching(|k| matches!(k, OpKey::CreatePolicy { .. })),
             alter_policies: graph.nodes_matching(|k| matches!(k, OpKey::AlterPolicy { .. })),
+            rules: graph.nodes_matching(|k| matches!(k, OpKey::CreateRule { .. })),
             triggers: graph.nodes_matching(|k| matches!(k, OpKey::CreateTrigger { .. })),
             views: graph.nodes_matching(|k| matches!(k, OpKey::CreateView(_))),
             version_views: graph.nodes_matching(|k| matches!(k, OpKey::CreateVersionView { .. })),
             alter_columns: graph.nodes_matching(|k| matches!(k, OpKey::AlterColumn { .. })),
+            detach_column_domains: graph
+                .nodes_matching(|k| matches!(k, OpKey::DetachColumnDomain { .. })),
+            reattach_column_domains: graph
+                .nodes_matching(|k| matches!(k, OpKey::ReattachColumnDomain { .. })),
             alter_views: graph.nodes_matching(|k| matches!(k, OpKey::AlterView(_))),
             alter_sequences: graph.nodes_matching(|k| matches!(k, OpKey::AlterSequence(_))),
             drop_functions: graph.nodes_matching(|k| matches!(k, OpKey::DropFunction { .. })),
@@ -126,6 +139,7 @@ impl NodeSets {
             drop_exclusions: graph
                 .nodes_matching(|k| matches!(k, OpKey::DropExclusionConstraint { .. })),
             drop_policies: graph.nodes_matching(|k| matches!(k, OpKey::DropPolicy { .. })),
+            drop_rules: graph.nodes_matching(|k| matches!(k, OpKey::DropRule { .. })),
             drop_triggers: graph.nodes_matching(|k| matches!(k, OpKey::DropTrigger { .. })),
             drop_views: graph.nodes_matching(|k| matches!(k, OpKey::DropView(_))),
             drop_columns: graph.nodes_matching(|k| matches!(k, OpKey::DropColumn { .. })),
@@ -209,6 +223,7 @@ impl MigrationGraph {
         self.add_rls_policy_trigger_view_edges(&ns);
         self.add_drop_edges(&ns);
         self.add_alter_column_edges(&ns);
+        self.add_domain_recreate_edges(&ns);
         self.add_drop_column_edges(&ns);
         self.add_modification_pattern_edges(&ns);
         self.add_creates_before_final_drops_edges(&ns);
@@ -222,6 +237,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.schemas, &ns.sequences);
         self.edges_all_to_all(&ns.schemas, &ns.functions);
         self.edges_all_to_all(&ns.schemas, &ns.aggregates);
+        self.edges_all_to_all(&ns.schemas, &ns.operators);
         self.edges_all_to_all(&ns.schemas, &ns.views);
         self.edges_all_to_all(&ns.version_schemas, &ns.version_views);
 
@@ -259,6 +275,9 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.enums, &ns.aggregates);
         self.edges_all_to_all(&ns.domains, &ns.aggregates);
         self.edges_all_to_all(&ns.add_enum_values, &ns.aggregates);
+        self.edges_all_to_all(&ns.enums, &ns.operators);
+        self.edges_all_to_all(&ns.domains, &ns.operators);
+        self.edges_all_to_all(&ns.add_enum_values, &ns.operators);
     }
 
     /// Tier 3: Sequences and functions before tables.
@@ -266,6 +285,9 @@ impl MigrationGraph {
     /// to avoid introducing cycles.
     fn add_function_edges(&mut self, ns: &NodeSets) {
         self.edges_all_to_all(&ns.sequences, &ns.tables);
+        // OWNED BY metadata alone misses nextval() defaults on existing tables.
+        self.edges_all_to_all(&ns.sequences, &ns.add_columns);
+        self.edges_all_to_all(&ns.sequences, &ns.alter_sequences);
 
         // Pre-compute each table's direct FK dependencies, used to expand the skip set
         // through transitive FK closure. If a function depends on table T (via SETOF or
@@ -365,6 +387,15 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.tables, &ns.attach_partitions);
         self.edges_all_to_all(&ns.add_columns, &ns.attach_partitions);
 
+        // A partition's own index/check changes are independent of a simultaneous
+        // bound/parent change on the same partition, but still need an explicit
+        // edge: DROP an index/check that predates a DETACH before the DETACH, and
+        // an ADD that targets the re-ATTACHed partition after the ATTACH.
+        self.edges_all_to_all(&ns.drop_indexes, &ns.detach_partitions);
+        self.edges_all_to_all(&ns.drop_checks, &ns.detach_partitions);
+        self.edges_all_to_all(&ns.attach_partitions, &ns.add_indexes);
+        self.edges_all_to_all(&ns.attach_partitions, &ns.add_checks);
+
         self.edges_all_to_all(&ns.tables, &ns.add_columns);
         self.edges_all_to_all(&ns.tables, &ns.add_pks);
         self.edges_all_to_all(&ns.tables, &ns.add_indexes);
@@ -374,9 +405,12 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.tables, &ns.enable_rls);
         self.edges_all_to_all(&ns.tables, &ns.force_rls);
         self.edges_all_to_all(&ns.tables, &ns.policies);
+        self.edges_all_to_all(&ns.tables, &ns.rules);
         self.edges_all_to_all(&ns.tables, &ns.triggers);
         self.edges_all_to_all(&ns.tables, &ns.views);
         self.edges_all_to_all(&ns.tables, &ns.alter_sequences);
+        // ALTER SEQUENCE ... OWNED BY needs the target column to already exist.
+        self.edges_all_to_all(&ns.add_columns, &ns.alter_sequences);
     }
 
     /// Tier 5: Table elements — columns before indexes, FKs, checks, views, policies, triggers.
@@ -408,6 +442,7 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.drop_checks, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_exclusions, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_policies, &ns.drop_tables);
+        self.edges_all_to_all(&ns.drop_rules, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_triggers, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_pks, &ns.drop_tables);
         self.edges_all_to_all(&ns.drop_columns, &ns.drop_tables);
@@ -418,6 +453,9 @@ impl MigrationGraph {
 
         // Aggregates depend on their SFUNC function, so drop aggregates before dropping functions.
         self.edges_all_to_all(&ns.drop_aggregates, &ns.drop_functions);
+        // Operators depend on their backing function, so drop operators before
+        // dropping functions.
+        self.edges_all_to_all(&ns.drop_operators, &ns.drop_functions);
         // Views can reference aggregates; drop views before aggregates they consumed.
         self.edges_all_to_all(&ns.drop_views, &ns.drop_aggregates);
 
@@ -453,6 +491,37 @@ impl MigrationGraph {
         self.edges_all_to_all(&ns.alter_columns, &ns.triggers);
         self.edges_all_to_all(&ns.alter_columns, &ns.views);
         self.edges_all_to_all(&ns.alter_columns, &ns.alter_views);
+
+        // DetachColumnDomain/ReattachColumnDomain are ALTER COLUMN TYPE under
+        // the hood (see add_domain_recreate_edges for the domain-specific
+        // ordering), so they carry the same FK/index/policy/trigger/view
+        // dependency shape as a regular AlterColumn.
+        self.edges_all_to_all(&ns.drop_fks, &ns.detach_column_domains);
+        self.edges_all_to_all(&ns.drop_indexes, &ns.detach_column_domains);
+        self.edges_all_to_all(&ns.drop_policies, &ns.detach_column_domains);
+        self.edges_all_to_all(&ns.drop_triggers, &ns.detach_column_domains);
+        self.edges_all_to_all(&ns.drop_views, &ns.detach_column_domains);
+
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.add_fks);
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.add_indexes);
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.policies);
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.alter_policies);
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.triggers);
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.views);
+        self.edges_all_to_all(&ns.reattach_column_domains, &ns.alter_views);
+    }
+
+    /// Domain base-type recreate: a dependent column must be detached from
+    /// the domain before it is dropped, and reattached only after it has
+    /// been recreated. Also orders `DropDomain` before `CreateDomain` for a
+    /// same-name recreate, mirroring the DropFunction → CreateFunction
+    /// modification pattern (domains are otherwise unordered relative to
+    /// their own recreate, since `add_creates_before_final_drops_edges`
+    /// only constrains domains against *other* objects' final drops).
+    fn add_domain_recreate_edges(&mut self, ns: &NodeSets) {
+        self.edges_all_to_all(&ns.detach_column_domains, &ns.drop_domains);
+        self.edges_all_to_all(&ns.domains, &ns.reattach_column_domains);
+        self.edges_all_to_all(&ns.drop_domains, &ns.domains);
     }
 
     /// DROP COLUMN dependencies: drop dependent objects before dropping column, recreate after.
@@ -517,6 +586,8 @@ impl MigrationGraph {
             &ns.force_rls,
             &ns.version_views,
             &ns.alter_columns,
+            &ns.detach_column_domains,
+            &ns.reattach_column_domains,
             &ns.alter_sequences,
         ]
         .into_iter()
@@ -525,15 +596,18 @@ impl MigrationGraph {
         .collect();
 
         // Final drops (not temporary drops for modifications)
-        // Note: DropFK, DropIndex, DropPolicy, DropTrigger, DropView, DropFunction
-        // are excluded because they may need to happen before alters/creates
+        // Note: DropFK, DropIndex, DropPolicy, DropTrigger, DropView, DropFunction,
+        // and DropDomain are excluded because they may need to happen before
+        // alters/creates. DropDomain in particular must precede the matching
+        // CreateDomain on a base-type-change recreate (add_domain_recreate_edges);
+        // its remaining ordering against unrelated final drops still holds via
+        // add_drop_edges (drop_tables -> drop_domains -> drop_extensions).
         let final_drops: Vec<NodeIndex> = [
             &ns.drop_columns,
             &ns.drop_pks,
             &ns.drop_tables,
             &ns.drop_partitions,
             &ns.drop_sequences,
-            &ns.drop_domains,
             &ns.drop_enums,
             &ns.drop_servers,
             &ns.drop_extensions,
@@ -706,6 +780,26 @@ impl MigrationGraph {
                                     if *other_name == finalfunc {
                                         edges_to_add.push((other_key.clone(), key.clone()));
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // CreateOperator depends on the function implementing it. The
+                // operator's own OpKey::CreateOperator is the consumer; the
+                // referenced function's CreateFunction op (if any matches by
+                // qualified name) is the producer.
+                OpKey::CreateOperator { .. } => {
+                    if let Some(MigrationOp::CreateOperator(op)) = self.get_op(key) {
+                        let function = qualified_name(&op.function_schema, &op.function_name);
+                        for other_key in &keys {
+                            if let OpKey::CreateFunction {
+                                name: other_name, ..
+                            } = other_key
+                            {
+                                if *other_name == function {
+                                    edges_to_add.push((other_key.clone(), key.clone()));
                                 }
                             }
                         }
@@ -1051,6 +1145,14 @@ impl MigrationGraph {
                     );
                 }
 
+                OpKey::AlterDefaultPrivileges {
+                    schema: Some(schema_name),
+                    ..
+                } => {
+                    edges_to_add.push((OpKey::CreateSchema(schema_name.clone()), key.clone()));
+                    edges_to_add.push((key.clone(), OpKey::DropSchema(schema_name.clone())));
+                }
+
                 // SetComment has no tier edges; without content-aware edges
                 // topological sort may place COMMENT ON before the CREATE it
                 // targets. Each variant maps to the producer op for its target.
@@ -1120,6 +1222,16 @@ impl MigrationGraph {
                                 key.clone(),
                             ));
                         }
+                        CommentObjectType::Operator => {
+                            let args = require(arguments, "Operator", "arguments");
+                            edges_to_add.push((
+                                OpKey::CreateOperator {
+                                    name: qualified,
+                                    args,
+                                },
+                                key.clone(),
+                            ));
+                        }
                         // pgmold currently models every user-defined type under
                         // `OpKey::CreateEnum`. Range/composite/base types are not
                         // in the model yet; if they arrive, add a matching op kind.
@@ -1149,6 +1261,16 @@ impl MigrationGraph {
                             let target_name = require(target, "Policy", "target");
                             edges_to_add.push((
                                 OpKey::CreatePolicy {
+                                    table: QualifiedName::new(schema, &target_name),
+                                    name: name.clone(),
+                                },
+                                key.clone(),
+                            ));
+                        }
+                        CommentObjectType::Rule => {
+                            let target_name = require(target, "Rule", "target");
+                            edges_to_add.push((
+                                OpKey::CreateRule {
                                     table: QualifiedName::new(schema, &target_name),
                                     name: name.clone(),
                                 },
@@ -1327,7 +1449,8 @@ fn drop_targets_table(other: &OpKey, table: &QualifiedName) -> bool {
         | OpKey::DropIndex { table: t, .. }
         | OpKey::DropCheckConstraint { table: t, .. }
         | OpKey::DropColumn { table: t, .. }
-        | OpKey::DropPolicy { table: t, .. } => t == table,
+        | OpKey::DropPolicy { table: t, .. }
+        | OpKey::DropRule { table: t, .. } => t == table,
         OpKey::DropTrigger { target: t, .. } => t == table,
         _ => false,
     }
@@ -1465,7 +1588,7 @@ pub fn plan_migration(ops: Vec<MigrationOp>) -> Vec<MigrationOp> {
 mod tests {
     use super::*;
     use crate::diff::test_helpers::simple_table_with_fks;
-    use crate::diff::{ColumnChanges, OwnerObjectKind, PolicyChanges};
+    use crate::diff::{ColumnChanges, OwnerObjectKind, PolicyChanges, SequenceChanges};
     use crate::model::*;
     use std::collections::BTreeMap;
 
@@ -1880,6 +2003,171 @@ mod tests {
         assert!(
             create_table_pos < alter_seq_pos,
             "AlterSequence (setting OWNED BY) must come after CreateTable"
+        );
+    }
+
+    #[test]
+    fn sequence_created_before_serial_column_added_to_existing_table() {
+        let sequence = Sequence {
+            name: "test_outbox_seq_seq".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            owner: None,
+            grants: Vec::new(),
+            cache: Some(1),
+            owned_by: Some(SequenceOwner {
+                table_schema: "public".to_string(),
+                table_name: "test_outbox".to_string(),
+                column_name: "seq".to_string(),
+            }),
+            comment: None,
+        };
+        let table = QualifiedName::new("public", "test_outbox");
+        let ops = vec![
+            MigrationOp::AddIndex {
+                table: table.clone(),
+                index: Index {
+                    name: "idx_test_outbox_unprocessed".to_string(),
+                    columns: vec!["seq".to_string()],
+                    unique: false,
+                    index_type: IndexType::BTree,
+                    predicate: Some("processed_at IS NULL".to_string()),
+                    is_constraint: false,
+                },
+            },
+            MigrationOp::AddColumn {
+                table,
+                column: Column {
+                    name: "seq".to_string(),
+                    data_type: PgType::BigInt,
+                    nullable: true,
+                    default: Some("nextval('test_outbox_seq_seq'::regclass)".to_string()),
+                    comment: None,
+                    generated: None,
+                },
+            },
+            MigrationOp::CreateSequence(sequence),
+        ];
+
+        let result = plan_migration(ops);
+
+        let create_sequence_pos = result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateSequence(_)))
+            .expect("CreateSequence should exist");
+        let add_column_pos = result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddColumn { .. }))
+            .expect("AddColumn should exist");
+        let alter_sequence_pos = result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AlterSequence { .. }))
+            .expect("AlterSequence should exist");
+        let add_index_pos = result
+            .iter()
+            .position(|op| matches!(op, MigrationOp::AddIndex { .. }))
+            .expect("AddIndex should exist");
+
+        assert!(
+            create_sequence_pos < add_column_pos,
+            "CreateSequence must come before AddColumn using its nextval default"
+        );
+        assert!(
+            add_column_pos < alter_sequence_pos,
+            "AddColumn must come before AlterSequence sets OWNED BY"
+        );
+        assert!(
+            add_column_pos < add_index_pos,
+            "AddColumn must come before AddIndex using the column"
+        );
+    }
+
+    #[test]
+    fn create_sequence_before_add_column_referencing_nextval() {
+        let seq = Sequence {
+            name: "s".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            owner: None,
+            grants: Vec::new(),
+            cache: Some(1),
+            owned_by: None,
+            comment: None,
+        };
+
+        let ops = vec![
+            MigrationOp::CreateSequence(seq),
+            MigrationOp::AddColumn {
+                table: QualifiedName::new("public", "t"),
+                column: Column {
+                    name: "c".to_string(),
+                    data_type: PgType::BigInt,
+                    nullable: true,
+                    default: Some("nextval('public.s'::regclass)".to_string()),
+                    comment: None,
+                    generated: None,
+                },
+            },
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreateSequence",
+            "AddColumn",
+            |op| matches!(op, MigrationOp::CreateSequence(_)),
+            |op| matches!(op, MigrationOp::AddColumn { .. }),
+        );
+    }
+
+    #[test]
+    fn create_sequence_before_alter_sequence_owned_by_existing_column() {
+        let seq = Sequence {
+            name: "s".to_string(),
+            schema: "public".to_string(),
+            data_type: SequenceDataType::BigInt,
+            start: Some(1),
+            increment: Some(1),
+            min_value: Some(1),
+            max_value: Some(9223372036854775807),
+            cycle: false,
+            owner: None,
+            grants: Vec::new(),
+            cache: Some(1),
+            owned_by: None,
+            comment: None,
+        };
+
+        let ops = vec![
+            MigrationOp::CreateSequence(seq),
+            MigrationOp::AlterSequence {
+                name: "public.s".to_string(),
+                changes: SequenceChanges {
+                    owned_by: Some(Some(SequenceOwner {
+                        table_schema: "public".to_string(),
+                        table_name: "t".to_string(),
+                        column_name: "c".to_string(),
+                    })),
+                    ..Default::default()
+                },
+            },
+        ];
+        let planned = plan_migration(ops);
+        assert_op_position(
+            &planned,
+            "CreateSequence",
+            "AlterSequence",
+            |op| matches!(op, MigrationOp::CreateSequence(_)),
+            |op| matches!(op, MigrationOp::AlterSequence { .. }),
         );
     }
 
@@ -2615,6 +2903,66 @@ mod tests {
     }
 
     #[test]
+    fn create_schema_before_alter_default_privileges() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        let alter = MigrationOp::AlterDefaultPrivileges {
+            target_role: "current_role".to_string(),
+            schema: Some("api".to_string()),
+            object_type: DefaultPrivilegeObjectType::Tables,
+            grantee: "public".to_string(),
+            privileges: vec![Privilege::Select],
+            with_grant_option: false,
+            revoke: false,
+        };
+        let create = MigrationOp::CreateSchema(make_schema("api"));
+
+        for ops in [
+            vec![create.clone(), alter.clone()],
+            vec![alter.clone(), create.clone()],
+        ] {
+            assert_op_position(
+                &plan_migration(ops),
+                "CreateSchema",
+                "AlterDefaultPrivileges",
+                |op| matches!(op, MigrationOp::CreateSchema(_)),
+                |op| matches!(op, MigrationOp::AlterDefaultPrivileges { .. }),
+            );
+        }
+    }
+
+    #[test]
+    fn alter_default_privileges_before_drop_schema() {
+        use crate::model::{DefaultPrivilegeObjectType, Privilege};
+
+        for revoke in [false, true] {
+            let alter = MigrationOp::AlterDefaultPrivileges {
+                target_role: "current_role".to_string(),
+                schema: Some("api".to_string()),
+                object_type: DefaultPrivilegeObjectType::Tables,
+                grantee: "public".to_string(),
+                privileges: vec![Privilege::Select],
+                with_grant_option: false,
+                revoke,
+            };
+            let drop = MigrationOp::DropSchema("api".to_string());
+
+            for ops in [
+                vec![alter.clone(), drop.clone()],
+                vec![drop.clone(), alter.clone()],
+            ] {
+                assert_op_position(
+                    &plan_migration(ops),
+                    "AlterDefaultPrivileges",
+                    "DropSchema",
+                    |op| matches!(op, MigrationOp::AlterDefaultPrivileges { .. }),
+                    |op| matches!(op, MigrationOp::DropSchema(_)),
+                );
+            }
+        }
+    }
+
+    #[test]
     fn grant_privileges_on_sequence_after_create_sequence() {
         // Grant on a sequence must come after the sequence is created
         // Bug report: pgmold executes GRANT before CREATE SEQUENCE
@@ -2677,6 +3025,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: None,
             grants: Vec::new(),
@@ -3098,6 +3447,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
             owner: None,
             grants: vec![],
@@ -5051,6 +5401,91 @@ mod tests {
     }
 
     #[test]
+    fn partition_bound_change_orders_around_own_index_and_check_changes() {
+        let from_partition = crate::model::Partition {
+            name: "events_2024".to_string(),
+            schema: "public".to_string(),
+            parent_name: "events".to_string(),
+            parent_schema: "public".to_string(),
+            bound: crate::model::PartitionBound::Range {
+                from: vec!["'2024-01-01'".to_string()],
+                to: vec!["'2024-06-01'".to_string()],
+            },
+            indexes: vec![],
+            check_constraints: vec![],
+            owner: None,
+        };
+        let to_partition = crate::model::Partition {
+            bound: crate::model::PartitionBound::Range {
+                from: vec!["'2024-01-01'".to_string()],
+                to: vec!["'2025-01-01'".to_string()],
+            },
+            ..from_partition.clone()
+        };
+        let table = QualifiedName::new("public", "events_2024");
+        let ops = vec![
+            MigrationOp::AddIndex {
+                table: table.clone(),
+                index: Index {
+                    name: "events_2024_created_idx".to_string(),
+                    columns: vec!["created_at".to_string()],
+                    unique: false,
+                    index_type: IndexType::BTree,
+                    predicate: None,
+                    is_constraint: false,
+                },
+            },
+            MigrationOp::DropIndex {
+                table: table.clone(),
+                index_name: "events_2024_stale_idx".to_string(),
+            },
+            MigrationOp::AddCheckConstraint {
+                table: table.clone(),
+                check_constraint: CheckConstraint {
+                    name: "events_2024_amount_check".to_string(),
+                    expression: "amount > 0".to_string(),
+                },
+            },
+            MigrationOp::DropCheckConstraint {
+                table: table.clone(),
+                constraint_name: "events_2024_stale_check".to_string(),
+            },
+            MigrationOp::AttachPartition(to_partition),
+            MigrationOp::DetachPartition(from_partition),
+        ];
+        let planned = plan_migration(ops);
+
+        assert_op_position(
+            &planned,
+            "DropIndex",
+            "DetachPartition",
+            |op| matches!(op, MigrationOp::DropIndex { .. }),
+            |op| matches!(op, MigrationOp::DetachPartition(_)),
+        );
+        assert_op_position(
+            &planned,
+            "DropCheckConstraint",
+            "DetachPartition",
+            |op| matches!(op, MigrationOp::DropCheckConstraint { .. }),
+            |op| matches!(op, MigrationOp::DetachPartition(_)),
+        );
+        assert_op_position(
+            &planned,
+            "AttachPartition",
+            "AddIndex",
+            |op| matches!(op, MigrationOp::AttachPartition(_)),
+            |op| matches!(op, MigrationOp::AddIndex { .. }),
+        );
+        assert_op_position(
+            &planned,
+            "AttachPartition",
+            "AddCheckConstraint",
+            |op| matches!(op, MigrationOp::AttachPartition(_)),
+            |op| matches!(op, MigrationOp::AddCheckConstraint { .. }),
+        );
+    }
+
+    #[test]
     fn drop_view_before_drop_table() {
         let ops = vec![
             MigrationOp::DropTable("public.users".to_string()),
@@ -5211,6 +5646,77 @@ mod tests {
             "CreateView",
             |op| matches!(op, MigrationOp::DropView { .. }),
             |op| matches!(op, MigrationOp::CreateView(_)),
+        );
+    }
+
+    #[test]
+    fn domain_recreate_detaches_and_reattaches_dependent_column_around_drop() {
+        // A base-type change on "price" recreates the domain (Drop + Create)
+        // while "orders.amount" still depends on it. The dependent column
+        // must be switched off the domain before DropDomain runs, and only
+        // switched back once CreateDomain has landed, so DROP DOMAIN never
+        // executes while a column still references it.
+        let table = QualifiedName::new("public", "orders");
+        let old_domain = Domain {
+            data_type: PgType::Numeric {
+                precision: Some(10),
+                scale: Some(2),
+            },
+            ..make_domain("price", "public")
+        };
+        let new_domain = Domain {
+            data_type: PgType::Numeric {
+                precision: Some(12),
+                scale: Some(4),
+            },
+            ..make_domain("price", "public")
+        };
+
+        let ops = vec![
+            MigrationOp::ReattachColumnDomain {
+                table: table.clone(),
+                column: "amount".to_string(),
+                domain_type: PgType::UserDefined("public.price".to_string()),
+            },
+            MigrationOp::CreateDomain(new_domain),
+            MigrationOp::DropDomain("public.price".to_string()),
+            MigrationOp::DetachColumnDomain {
+                table: table.clone(),
+                column: "amount".to_string(),
+                data_type: old_domain.data_type.clone(),
+            },
+        ];
+
+        let planned = plan_migration(ops);
+
+        let detach_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DetachColumnDomain { .. }))
+            .expect("DetachColumnDomain must appear in plan");
+        let drop_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::DropDomain(_)))
+            .expect("DropDomain must appear in plan");
+        let create_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::CreateDomain(_)))
+            .expect("CreateDomain must appear in plan");
+        let reattach_pos = planned
+            .iter()
+            .position(|op| matches!(op, MigrationOp::ReattachColumnDomain { .. }))
+            .expect("ReattachColumnDomain must appear in plan");
+
+        assert!(
+            detach_pos < drop_pos,
+            "DetachColumnDomain (at {detach_pos}) must precede DropDomain (at {drop_pos}): the column must no longer reference the domain when it is dropped.\nPlan: {planned:#?}"
+        );
+        assert!(
+            drop_pos < create_pos,
+            "DropDomain (at {drop_pos}) must precede CreateDomain (at {create_pos}) on a recreate.\nPlan: {planned:#?}"
+        );
+        assert!(
+            create_pos < reattach_pos,
+            "CreateDomain (at {create_pos}) must precede ReattachColumnDomain (at {reattach_pos}).\nPlan: {planned:#?}"
         );
     }
 

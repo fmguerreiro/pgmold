@@ -66,6 +66,14 @@ pub(crate) enum OpKey {
         table: QualifiedName,
         column: String,
     },
+    DetachColumnDomain {
+        table: QualifiedName,
+        column: String,
+    },
+    ReattachColumnDomain {
+        table: QualifiedName,
+        column: String,
+    },
     AddPrimaryKey {
         table: QualifiedName,
     },
@@ -128,6 +136,14 @@ pub(crate) enum OpKey {
         table: QualifiedName,
         name: String,
     },
+    CreateRule {
+        table: QualifiedName,
+        name: String,
+    },
+    DropRule {
+        table: QualifiedName,
+        name: String,
+    },
     CreateFunction {
         name: String,
         args: String,
@@ -145,6 +161,14 @@ pub(crate) enum OpKey {
         args: String,
     },
     DropAggregate {
+        name: String,
+        args: String,
+    },
+    CreateOperator {
+        name: String,
+        args: String,
+    },
+    DropOperator {
         name: String,
         args: String,
     },
@@ -281,6 +305,16 @@ impl OpKey {
                 table: table.clone(),
                 column: column.clone(),
             },
+            MigrationOp::DetachColumnDomain { table, column, .. } => OpKey::DetachColumnDomain {
+                table: table.clone(),
+                column: column.clone(),
+            },
+            MigrationOp::ReattachColumnDomain { table, column, .. } => {
+                OpKey::ReattachColumnDomain {
+                    table: table.clone(),
+                    column: column.clone(),
+                }
+            }
             MigrationOp::AddPrimaryKey { table, .. } => OpKey::AddPrimaryKey {
                 table: table.clone(),
             },
@@ -368,6 +402,14 @@ impl OpKey {
                 table: table.clone(),
                 name: name.clone(),
             },
+            MigrationOp::CreateRule(r) => OpKey::CreateRule {
+                table: QualifiedName::new(&r.table_schema, &r.table),
+                name: r.name.clone(),
+            },
+            MigrationOp::DropRule { table, name } => OpKey::DropRule {
+                table: table.clone(),
+                name: name.clone(),
+            },
             MigrationOp::CreateFunction(f) => OpKey::CreateFunction {
                 name: qualified_name(&f.schema, &f.name),
                 args: f.args_string(),
@@ -385,6 +427,14 @@ impl OpKey {
                 args: a.args_string(),
             },
             MigrationOp::DropAggregate { name, args } => OpKey::DropAggregate {
+                name: name.clone(),
+                args: args.clone(),
+            },
+            MigrationOp::CreateOperator(o) => OpKey::CreateOperator {
+                name: qualified_name(&o.schema, &o.name),
+                args: o.args_string(),
+            },
+            MigrationOp::DropOperator { name, args } => OpKey::DropOperator {
                 name: name.clone(),
                 args: args.clone(),
             },

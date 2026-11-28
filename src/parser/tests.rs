@@ -1367,6 +1367,59 @@ FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
 }
 
 #[test]
+fn create_index_on_partition_populates_partition_indexes() {
+    let sql = r#"
+CREATE TABLE measurement (
+city_id INT NOT NULL,
+logdate DATE NOT NULL
+) PARTITION BY RANGE (logdate);
+
+CREATE TABLE measurement_2024 PARTITION OF measurement
+FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+
+CREATE INDEX measurement_2024_city_id_idx ON measurement_2024 (city_id);
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+
+    let partition = schema
+        .partitions
+        .get("public.measurement_2024")
+        .expect("partition should exist");
+    assert_eq!(partition.indexes.len(), 1);
+    assert_eq!(partition.indexes[0].name, "measurement_2024_city_id_idx");
+    assert_eq!(partition.indexes[0].columns, vec!["city_id".to_string()]);
+    assert!(!partition.indexes[0].unique);
+    assert!(!partition.indexes[0].is_constraint);
+}
+
+#[test]
+fn alter_table_add_check_on_partition_populates_partition_check_constraints() {
+    let sql = r#"
+CREATE TABLE measurement (
+city_id INT NOT NULL,
+logdate DATE NOT NULL
+) PARTITION BY RANGE (logdate);
+
+CREATE TABLE measurement_2024 PARTITION OF measurement
+FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+
+ALTER TABLE measurement_2024 ADD CONSTRAINT measurement_2024_city_id_check CHECK (city_id > 0);
+"#;
+    let schema = parse_sql_string(sql).unwrap();
+
+    let partition = schema
+        .partitions
+        .get("public.measurement_2024")
+        .expect("partition should exist");
+    assert_eq!(partition.check_constraints.len(), 1);
+    assert_eq!(
+        partition.check_constraints[0].name,
+        "measurement_2024_city_id_check"
+    );
+    assert_eq!(partition.check_constraints[0].expression, "city_id > 0");
+}
+
+#[test]
 fn partition_of_overlong_parent_truncates_parent_name() {
     let parent = "p".repeat(64);
     let sql = format!(
@@ -1952,6 +2005,7 @@ fn domain_round_trip_with_table_using_domain() {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
 
             owner: None,
@@ -2045,6 +2099,78 @@ fn policy_references_nonexistent_table_errors() {
         "Orphaned policy should remain in pending"
     );
     assert_eq!(schema.pending_policies[0].name, "orphan_policy");
+}
+
+#[test]
+fn parses_create_rule_do_instead_nothing() {
+    let sql = r#"
+        CREATE TABLE orders (id BIGINT PRIMARY KEY, status TEXT);
+        CREATE RULE protect_delete AS ON DELETE TO orders DO INSTEAD NOTHING;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.orders").unwrap();
+
+    assert_eq!(table.rules.len(), 1);
+    let rule = &table.rules[0];
+    assert_eq!(rule.name, "protect_delete");
+    assert_eq!(rule.event, crate::model::RuleEvent::Delete);
+    assert!(rule.instead);
+    assert!(rule.condition.is_none());
+    assert!(rule.actions.is_empty());
+}
+
+#[test]
+fn parses_create_rule_with_condition_and_action() {
+    let sql = r#"
+        CREATE TABLE orders (id BIGINT PRIMARY KEY, status TEXT);
+        CREATE TABLE order_audit (order_id BIGINT);
+        CREATE RULE log_status_change AS ON UPDATE TO orders
+            WHERE (NEW.status <> OLD.status)
+            DO ALSO INSERT INTO order_audit (order_id) VALUES (NEW.id);
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = schema.tables.get("public.orders").unwrap();
+
+    assert_eq!(table.rules.len(), 1);
+    let rule = &table.rules[0];
+    assert_eq!(rule.name, "log_status_change");
+    assert_eq!(rule.event, crate::model::RuleEvent::Update);
+    assert!(!rule.instead);
+    assert!(rule.condition.is_some());
+    assert_eq!(rule.actions.len(), 1);
+}
+
+#[test]
+fn rule_references_nonexistent_table_errors() {
+    let sql = r#"
+        CREATE RULE orphan_rule AS ON INSERT TO nonexistent_table DO INSTEAD NOTHING;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    assert_eq!(
+        schema.pending_rules.len(),
+        1,
+        "Orphaned rule should remain in pending"
+    );
+    assert_eq!(schema.pending_rules[0].name, "orphan_rule");
+}
+
+#[test]
+fn rule_round_trip_through_dump() {
+    let sql = r#"
+        CREATE TABLE orders (id BIGINT PRIMARY KEY, status TEXT);
+        CREATE RULE protect_delete AS ON DELETE TO orders DO INSTEAD NOTHING;
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let fingerprint_before = schema.fingerprint();
+
+    let dumped = crate::dump::generate_dump(&schema, None);
+    let reparsed = parse_sql_string(&dumped).expect("dumped SQL with CREATE RULE should parse");
+    let fingerprint_after = reparsed.fingerprint();
+
+    assert_eq!(
+        fingerprint_before, fingerprint_after,
+        "Rule should round-trip through dump and reparse"
+    );
 }
 
 #[test]
@@ -2930,7 +3056,10 @@ fn comment_on_overlong_constraint_name_attaches() {
     assert_eq!(
         schema
             .table_constraint_comments
-            .get(&format!("public.tbl.{}", "k".repeat(63)))
+            .get(&crate::model::ConstraintCommentKey::new(
+                "public.tbl",
+                "k".repeat(63),
+            ))
             .map(String::as_str),
         Some("hi")
     );
@@ -3200,7 +3329,10 @@ fn comment_on_constraint_on_table_captures_text() {
     assert_eq!(
         schema
             .table_constraint_comments
-            .get("public.users.users_email_chk")
+            .get(&crate::model::ConstraintCommentKey::new(
+                "public.users",
+                "users_email_chk",
+            ))
             .map(String::as_str),
         Some("positive id"),
     );
@@ -3218,9 +3350,9 @@ fn comment_on_constraint_null_clears_comment() {
         COMMENT ON CONSTRAINT users_id_chk ON public.users IS NULL;
     "#;
     let schema = parse_sql_string(sql).unwrap();
-    assert!(!schema
-        .table_constraint_comments
-        .contains_key("public.users.users_id_chk"));
+    assert!(!schema.table_constraint_comments.contains_key(
+        &crate::model::ConstraintCommentKey::new("public.users", "users_id_chk",)
+    ));
 }
 
 #[test]
@@ -3233,7 +3365,10 @@ fn comment_on_constraint_on_domain_captures_text() {
     assert_eq!(
         schema
             .domain_constraint_comments
-            .get("public.amount.amount_positive")
+            .get(&crate::model::ConstraintCommentKey::new(
+                "public.amount",
+                "amount_positive",
+            ))
             .map(String::as_str),
         Some("must be positive"),
     );
@@ -3256,7 +3391,10 @@ fn comment_on_constraint_roundtrips_through_dump() {
     assert_eq!(
         reparsed
             .table_constraint_comments
-            .get("public.users.users_id_chk")
+            .get(&crate::model::ConstraintCommentKey::new(
+                "public.users",
+                "users_id_chk",
+            ))
             .map(String::as_str),
         Some("positive id"),
     );
@@ -3275,7 +3413,10 @@ fn comment_on_constraint_on_domain_roundtrips_through_dump() {
     assert_eq!(
         reparsed
             .domain_constraint_comments
-            .get("public.amount.amount_positive")
+            .get(&crate::model::ConstraintCommentKey::new(
+                "public.amount",
+                "amount_positive",
+            ))
             .map(String::as_str),
         Some("must be positive"),
     );
@@ -4350,6 +4491,69 @@ fn parses_alter_default_privileges_revoke_multi_grantee() {
 }
 
 #[test]
+fn user_host_grantee_is_skipped_from_grantee_to_role_name() {
+    use sqlparser::ast::Ident;
+
+    let user = Ident::new("app_user");
+    let host = Ident::new("%");
+    let grantee = Grantee {
+        grantee_type: GranteesType::None,
+        name: Some(GranteeName::UserHost {
+            user: user.clone(),
+            host: host.clone(),
+        }),
+    };
+
+    assert_eq!(grantee_to_role_name(&grantee), None);
+    assert_eq!(
+        format_user_host_grantee_skip(&user, &host),
+        "warning: pgmold does not model host-qualified grantee 'app_user'@'%' in ALTER DEFAULT PRIVILEGES; dropping this grantee"
+    );
+}
+
+// Exercises the full `apply_alter_default_privileges` path rather than
+// `parse_sql_string`: `PostgreSqlDialect` does not implement
+// `supports_user_host_grantee`, so sqlparser can never produce
+// `GranteeName::UserHost` from real SQL text through pgmold's parser. The
+// variant is still part of the upstream AST pgmold's exhaustive match must
+// handle, so it is constructed directly here.
+#[test]
+fn alter_default_privileges_with_user_host_grantee_skips_without_bogus_role() {
+    use sqlparser::ast::{Ident, ObjectName};
+
+    let mut schema = Schema::new();
+    let adp = AlterDefaultPrivileges {
+        for_roles: vec![Ident::new("admin")],
+        in_schemas: vec![Ident::new("public")],
+        action: AlterDefaultPrivilegesAction::Grant {
+            privileges: Privileges::Actions(vec![Action::Select { columns: None }]),
+            object_type: AlterDefaultPrivilegesObjectType::Tables,
+            grantees: vec![
+                Grantee {
+                    grantee_type: GranteesType::None,
+                    name: Some(GranteeName::UserHost {
+                        user: Ident::new("app_user"),
+                        host: Ident::new("%"),
+                    }),
+                },
+                Grantee {
+                    grantee_type: GranteesType::None,
+                    name: Some(GranteeName::ObjectName(ObjectName::from(vec![Ident::new(
+                        "reporting_user",
+                    )]))),
+                },
+            ],
+            with_grant_option: false,
+        },
+    };
+
+    apply_alter_default_privileges(adp, &mut schema);
+
+    assert_eq!(schema.default_privileges.len(), 1);
+    assert_eq!(schema.default_privileges[0].grantee, "reporting_user");
+}
+
+#[test]
 fn parse_drop_schema() {
     let sql = r#"
 CREATE SCHEMA staging;
@@ -4795,6 +4999,60 @@ fn hash_index_method_is_preserved() {
         .find(|i| i.name == "sessions_token_idx")
         .expect("index should exist");
     assert_eq!(index.index_type, IndexType::Hash);
+}
+
+#[test]
+fn brin_index_method_is_preserved() {
+    let sql = r#"
+        CREATE TABLE public.events (
+            id BIGINT PRIMARY KEY,
+            ts TIMESTAMPTZ
+        );
+        CREATE INDEX "events_ts_idx"
+            ON public.events USING BRIN (ts);
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = &schema.tables["public.events"];
+    let index = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "events_ts_idx")
+        .expect("index should exist");
+    assert_eq!(index.index_type, IndexType::Brin);
+}
+
+#[test]
+fn spgist_index_method_is_preserved() {
+    let sql = r#"
+        CREATE TABLE public.pts (
+            id BIGINT PRIMARY KEY,
+            label TEXT
+        );
+        CREATE INDEX "pts_label_idx"
+            ON public.pts USING SPGIST (label);
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let table = &schema.tables["public.pts"];
+    let index = table
+        .indexes
+        .iter()
+        .find(|i| i.name == "pts_label_idx")
+        .expect("index should exist");
+    assert_eq!(index.index_type, IndexType::SpGist);
+}
+
+#[test]
+fn unknown_index_access_method_is_a_parse_error_not_a_panic() {
+    let sql = r#"
+        CREATE TABLE public.items (
+            id BIGINT PRIMARY KEY,
+            embedding TEXT
+        );
+        CREATE INDEX "items_embedding_idx"
+            ON public.items USING hnsw (embedding);
+    "#;
+    let err = parse_sql_string(sql).unwrap_err();
+    assert_eq!(err.to_string(), "Parse error: unsupported index type: hnsw");
 }
 
 #[test]
@@ -5727,6 +5985,141 @@ CREATE AGGREGATE public.group_concat(text) (
 }
 
 #[test]
+fn create_operator_binary_minimal() {
+    let sql = r#"
+        CREATE FUNCTION public.custom_eq(a integer, b integer) RETURNS boolean
+        LANGUAGE sql AS $$ SELECT a = b $$;
+        CREATE OPERATOR public.#=# (
+            FUNCTION = public.custom_eq,
+            LEFTARG = integer,
+            RIGHTARG = integer
+        );
+    "#;
+    let schema = parse_sql_string(sql).expect("Should parse CREATE OPERATOR");
+    let op = schema
+        .operators
+        .get("public.#=#(integer, integer)")
+        .expect("Operator should be stored under signature key");
+
+    assert_eq!(op.schema, "public");
+    assert_eq!(op.name, "#=#");
+    assert_eq!(op.left_type.as_deref(), Some("integer"));
+    assert_eq!(op.right_type.as_deref(), Some("integer"));
+    assert_eq!(op.function_schema, "public");
+    assert_eq!(op.function_name, "custom_eq");
+    assert!(op.commutator.is_none());
+    assert!(op.negator.is_none());
+    assert!(op.restrict.is_none());
+    assert!(op.join.is_none());
+    assert!(!op.hashes);
+    assert!(!op.merges);
+}
+
+#[test]
+fn create_operator_unary_prefix_omits_leftarg() {
+    let sql = r#"
+        CREATE FUNCTION public.negate(a integer) RETURNS integer
+        LANGUAGE sql AS $$ SELECT -a $$;
+        CREATE OPERATOR public.!! (
+            FUNCTION = public.negate,
+            RIGHTARG = integer
+        );
+    "#;
+    let schema = parse_sql_string(sql).expect("Should parse unary prefix CREATE OPERATOR");
+    let op = schema
+        .operators
+        .get("public.!!(NONE, integer)")
+        .expect("Operator should be stored under signature key");
+
+    assert!(op.left_type.is_none());
+    assert_eq!(op.right_type.as_deref(), Some("integer"));
+    assert_eq!(op.function_schema, "public");
+    assert_eq!(op.function_name, "negate");
+}
+
+#[test]
+fn create_operator_full_options_defaults_unqualified_refs_to_pg_catalog() {
+    let sql = r#"
+        CREATE FUNCTION public.custom_eq(a integer, b integer) RETURNS boolean
+        LANGUAGE sql AS $$ SELECT a = b $$;
+        CREATE OPERATOR public.#=# (
+            FUNCTION = public.custom_eq,
+            LEFTARG = integer,
+            RIGHTARG = integer,
+            COMMUTATOR = #=#,
+            NEGATOR = #<>#,
+            RESTRICT = eqsel,
+            JOIN = eqjoinsel,
+            HASHES,
+            MERGES
+        );
+    "#;
+    let schema = parse_sql_string(sql).expect("Should parse CREATE OPERATOR with full options");
+    let op = schema
+        .operators
+        .get("public.#=#(integer, integer)")
+        .expect("Operator should be stored under signature key");
+
+    assert_eq!(op.commutator.as_deref(), Some("pg_catalog.#=#"));
+    assert_eq!(op.negator.as_deref(), Some("pg_catalog.#<>#"));
+    assert_eq!(op.restrict.as_deref(), Some("pg_catalog.eqsel"));
+    assert_eq!(op.join.as_deref(), Some("pg_catalog.eqjoinsel"));
+    assert!(op.hashes);
+    assert!(op.merges);
+}
+
+#[test]
+fn create_operator_round_trips_through_dump() {
+    use crate::dump::generate_dump;
+    let sql = r#"
+        CREATE FUNCTION mrv.custom_eq(a integer, b integer) RETURNS boolean
+        LANGUAGE sql AS $$ SELECT a = b $$;
+        CREATE OPERATOR mrv.#=# (
+            FUNCTION = mrv.custom_eq,
+            LEFTARG = integer,
+            RIGHTARG = integer,
+            COMMUTATOR = #=#,
+            NEGATOR = #<>#,
+            RESTRICT = eqsel,
+            JOIN = eqjoinsel,
+            HASHES,
+            MERGES
+        );
+    "#;
+    let schema = parse_sql_string(sql).unwrap();
+    let dump = generate_dump(&schema, None);
+    let reparsed = parse_sql_string(&dump).unwrap();
+    let op = reparsed
+        .operators
+        .get("mrv.#=#(integer, integer)")
+        .expect("operator should survive roundtrip");
+
+    assert_eq!(op.function_schema, "mrv");
+    assert_eq!(op.function_name, "custom_eq");
+    assert_eq!(op.commutator.as_deref(), Some("pg_catalog.#=#"));
+    assert_eq!(op.negator.as_deref(), Some("pg_catalog.#<>#"));
+    assert_eq!(op.restrict.as_deref(), Some("pg_catalog.eqsel"));
+    assert_eq!(op.join.as_deref(), Some("pg_catalog.eqjoinsel"));
+    assert!(op.hashes);
+    assert!(op.merges);
+}
+
+#[test]
+fn create_operator_passes_strict_mode() {
+    let sql = r#"
+        CREATE FUNCTION public.custom_eq(a integer, b integer) RETURNS boolean
+        LANGUAGE sql AS $$ SELECT a = b $$;
+        CREATE OPERATOR public.#=# (
+            FUNCTION = public.custom_eq,
+            LEFTARG = integer,
+            RIGHTARG = integer
+        );
+    "#;
+    parse_sql_string_with_strict(sql, true)
+        .expect("CREATE OPERATOR is modeled and must not be flagged under --strict");
+}
+
+#[test]
 fn parse_sql_string_with_strict_errors_on_unrecognized() {
     let sql = "\
 CREATE TABLE public.users (id serial);
@@ -6264,12 +6657,13 @@ fn dedup_check_constraint_name_does_not_panic_on_multibyte_collision() {
         row_level_security: false,
         force_row_level_security: false,
         policies: Vec::new(),
+        rules: Vec::new(),
         partition_by: None,
         owner: None,
         grants: Vec::new(),
     };
 
-    let chosen = dedup_check_constraint_name(&base, &table);
+    let chosen = dedup_check_constraint_name(&base, &table.check_constraints);
 
     assert_ne!(chosen, truncate_identifier(&base));
     assert!(chosen.ends_with('1'));

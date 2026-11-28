@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use regex::Regex;
 use sqlparser::ast::{
     BinaryOperator, CastKind, DataType, ExactNumberInfo, Expr, GroupByExpr, OrderBy, OrderByExpr,
@@ -149,9 +150,11 @@ pub fn sanitize_connection_error(connection_url: &str, error_message: &str) -> S
     match extract_password(connection_url) {
         Some(password) if password.len() >= 3 => {
             let mut result = error_message.replace(&password, "****");
-            let decoded = simple_percent_decode(&password);
-            if decoded != password {
-                result = result.replace(&decoded, "****");
+            // Invalid UTF-8 has no decoded form that could appear in a driver message.
+            if let Some(decoded) = simple_percent_decode(&password) {
+                if decoded != password {
+                    result = result.replace(&decoded, "****");
+                }
             }
             result
         }
@@ -161,7 +164,8 @@ pub fn sanitize_connection_error(connection_url: &str, error_message: &str) -> S
 
 /// Decodes percent-encoded bytes in a string (e.g., `%40` → `@`).
 /// Collects raw bytes first then converts to UTF-8 to handle multi-byte sequences.
-fn simple_percent_decode(input: &str) -> String {
+/// Returns `None` when the decoded bytes are not valid UTF-8.
+fn simple_percent_decode(input: &str) -> Option<String> {
     let mut raw_bytes = Vec::with_capacity(input.len());
     let bytes = input.as_bytes();
     let mut i = 0;
@@ -176,7 +180,7 @@ fn simple_percent_decode(input: &str) -> String {
         raw_bytes.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8(raw_bytes).expect("percent-decoded bytes are valid UTF-8")
+    String::from_utf8(raw_bytes).ok()
 }
 
 /// Strips dollar-quote delimiters from a function body.
@@ -938,16 +942,14 @@ fn bound_value_equal(from: &str, to: &str) -> bool {
     }
 }
 
-/// Parses a temporal bound value expression into a UTC instant in nanoseconds.
+/// Parses a temporal bound value expression into a UTC instant.
 ///
 /// Accepts date literals (`'2024-01-01'`), timestamps without offset (assumed to
 /// be UTC, matching the corpus session's `UTC` timezone), and timestamps with an
 /// explicit offset (`'2022-04-01 01:00:00+01'`). Returns `None` for any value
 /// that is not a recognized temporal literal so the caller can fall back to
 /// expression comparison.
-fn parse_temporal_instant(value: &str) -> Option<i64> {
-    use chrono::{DateTime, NaiveDate, NaiveDateTime};
-
+fn parse_temporal_instant(value: &str) -> Option<DateTime<Utc>> {
     let trimmed = value.trim();
     let inner = trimmed
         .strip_prefix('\'')
@@ -955,7 +957,7 @@ fn parse_temporal_instant(value: &str) -> Option<i64> {
         .trim();
 
     if let Ok(parsed) = DateTime::parse_from_str(inner, "%Y-%m-%d %H:%M:%S%#z") {
-        return parsed.timestamp_nanos_opt();
+        return Some(parsed.with_timezone(&Utc));
     }
 
     for format in [
@@ -964,12 +966,12 @@ fn parse_temporal_instant(value: &str) -> Option<i64> {
         "%Y-%m-%dT%H:%M:%S",
     ] {
         if let Ok(parsed) = NaiveDateTime::parse_from_str(inner, format) {
-            return parsed.and_utc().timestamp_nanos_opt();
+            return Some(parsed.and_utc());
         }
     }
 
     if let Ok(date) = NaiveDate::parse_from_str(inner, "%Y-%m-%d") {
-        return date.and_hms_opt(0, 0, 0)?.and_utc().timestamp_nanos_opt();
+        return Some(date.and_hms_opt(0, 0, 0)?.and_utc());
     }
 
     None
@@ -979,6 +981,21 @@ fn parse_temporal_instant(value: &str) -> Option<i64> {
 fn normalize_statement(stmt: &Statement, cast_context: CastContext) -> Statement {
     match stmt {
         Statement::Query(query) => Statement::Query(Box::new(normalize_query(query, cast_context))),
+        Statement::Insert(insert) => {
+            let mut normalized = insert.clone();
+            normalized.table = match &insert.table {
+                sqlparser::ast::TableObject::TableName(name) => {
+                    sqlparser::ast::TableObject::TableName(normalize_object_name(name))
+                }
+                other => other.clone(),
+            };
+            normalized.columns = insert.columns.iter().map(normalize_object_name).collect();
+            normalized.source = insert
+                .source
+                .as_ref()
+                .map(|query| Box::new(normalize_query(query, cast_context)));
+            Statement::Insert(normalized)
+        }
         other => other.clone(),
     }
 }
@@ -1087,6 +1104,18 @@ fn normalize_set_expr(body: &SetExpr, cast_context: CastContext) -> SetExpr {
             left: Box::new(normalize_set_expr(left, cast_context)),
             right: Box::new(normalize_set_expr(right, cast_context)),
         },
+        SetExpr::Values(values) => SetExpr::Values(sqlparser::ast::Values {
+            rows: values
+                .rows
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|expr| normalize_expr(expr, cast_context))
+                        .collect()
+                })
+                .collect(),
+            ..values.clone()
+        }),
         other => other.clone(),
     }
 }
@@ -2456,9 +2485,18 @@ mod tests {
 
     #[test]
     fn simple_percent_decode_multibyte_utf8() {
-        assert_eq!(super::simple_percent_decode("%C3%A9"), "\u{00e9}");
+        assert_eq!(super::simple_percent_decode("%C3%A9").unwrap(), "\u{00e9}");
     }
 
+    #[test]
+    fn sanitize_connection_error_scrubs_password_whose_escapes_decode_to_invalid_utf8() {
+        let url = "postgres://user:p%FFss@localhost/db";
+        let error = "authentication failed for user \"user\" (password was p%FFss)";
+        assert_eq!(
+            sanitize_connection_error(url, error),
+            "authentication failed for user \"user\" (password was ****)"
+        );
+    }
     // Normalization edge-case: two different qualified columns whose trailing segment matches
     // (e.g. a."id" vs b."id") should NOT compare equal when the surrounding context
     // distinguishes them. The 2-part collapsing reduces each to its bare last segment, but
@@ -3270,6 +3308,74 @@ fn partition_bound_list_integers_equal() {
         values: vec!["1".to_string(), "2".to_string()],
     };
     assert!(partition_bounds_equal(&parsed, &introspected));
+}
+
+#[test]
+fn partition_bound_far_future_year_equal_despite_different_spelling() {
+    let parsed = PartitionBound::Range {
+        from: vec!["'2300-01-01'".to_string()],
+        to: vec!["'2301-01-01'".to_string()],
+    };
+    let introspected = PartitionBound::Range {
+        from: vec!["'2300-01-01 00:00:00+00'".to_string()],
+        to: vec!["'2301-01-01 00:00:00+00'".to_string()],
+    };
+    assert!(
+        partition_bounds_equal(&parsed, &introspected),
+        "year 2300 bounds outside chrono's nanosecond range must still canonicalize equal"
+    );
+}
+
+#[test]
+fn partition_bound_far_past_year_equal_despite_different_spelling() {
+    let parsed = PartitionBound::Range {
+        from: vec!["'1500-01-01'".to_string()],
+        to: vec!["'1501-01-01'".to_string()],
+    };
+    let introspected = PartitionBound::Range {
+        from: vec!["'1500-01-01 00:00:00+00'".to_string()],
+        to: vec!["'1501-01-01 00:00:00+00'".to_string()],
+    };
+    assert!(
+        partition_bounds_equal(&parsed, &introspected),
+        "year 1500 bounds outside chrono's nanosecond range must still canonicalize equal"
+    );
+}
+
+#[test]
+fn partition_bound_far_future_genuine_change_not_equal() {
+    let narrow = PartitionBound::Range {
+        from: vec!["'2300-01-01'".to_string()],
+        to: vec!["'2301-01-01'".to_string()],
+    };
+    let widened = PartitionBound::Range {
+        from: vec!["'2300-01-01'".to_string()],
+        to: vec!["'2302-01-01'".to_string()],
+    };
+    assert!(
+        !partition_bounds_equal(&narrow, &widened),
+        "a genuine bound widening far outside the nanosecond range must remain unequal"
+    );
+}
+
+#[test]
+fn partition_bound_unparseable_value_falls_back_to_string_comparison() {
+    let same_spelling = PartitionBound::Range {
+        from: vec!["MINVALUE".to_string()],
+        to: vec!["MAXVALUE".to_string()],
+    };
+    let other_spelling = PartitionBound::Range {
+        from: vec!["MINVALUE".to_string()],
+        to: vec!["'2024-01-01'::text".to_string()],
+    };
+    assert!(
+        partition_bounds_equal(&same_spelling, &same_spelling),
+        "identical unparseable bound values must compare equal via string fallback"
+    );
+    assert!(
+        !partition_bounds_equal(&same_spelling, &other_spelling),
+        "differently spelled unparseable bound values must not compare equal"
+    );
 }
 
 #[test]

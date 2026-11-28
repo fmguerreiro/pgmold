@@ -35,11 +35,12 @@ use sqlparser::ast::{
     AlterFunction, AlterFunctionKind, AlterFunctionOperation, AlterIndexOperation, AlterSchema,
     AlterSchemaOperation, AlterTable, AlterTableOperation, AlterType, AlterTypeAddValue,
     AlterTypeAddValuePosition, AlterTypeOperation, CreateAggregate, CreateAggregateOption,
-    CreateDomain, CreateExtension, CreateFunction, CreateServerStatement, CreateTrigger,
-    CreateView, DeferrableInitial, DropDomain, DropExtension, DropFunction, DropTrigger,
-    FunctionParallel, Grantee, GranteeName, GranteesType, ObjectType, Owner, Privileges,
-    RenameTableNameKind, SchemaName, Statement, TableConstraint, TriggerEvent as SqlTriggerEvent,
-    TriggerPeriod, TriggerReferencingType, UserDefinedTypeRepresentation,
+    CreateDomain, CreateExtension, CreateFunction, CreateOperator, CreateRule,
+    CreateServerStatement, CreateTrigger, CreateView, DeferrableInitial, DropDomain, DropExtension,
+    DropFunction, DropTrigger, FunctionParallel, Grantee, GranteeName, GranteesType, ObjectType,
+    OperatorOption, Owner, Privileges, RenameTableNameKind, RuleAction, SchemaName, Statement,
+    TableConstraint, TriggerEvent as SqlTriggerEvent, TriggerPeriod, TriggerReferencingType,
+    UserDefinedTypeRepresentation,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -61,9 +62,9 @@ use tables::{
 };
 use util::{
     extract_qualified_name, extract_qualified_name_truncated, normalize_expr, parse_data_type,
-    parse_for_values, parse_for_values_required, parse_policy_command, take_overlong_identifiers,
-    truncate_identifier, truncate_index_column, truncate_referenced_columns,
-    truncate_referenced_identifier, truncated_ident, unquote_ident,
+    parse_for_values, parse_for_values_required, parse_policy_command, parse_rule_event,
+    take_overlong_identifiers, truncate_identifier, truncate_index_column,
+    truncate_referenced_columns, truncate_referenced_identifier, truncated_ident, unquote_ident,
 };
 
 pub fn parse_sql_file(path: &str) -> Result<Schema> {
@@ -167,23 +168,41 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                 let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&ci.table_name);
                 let tbl_key = qualified_name(&tbl_schema, &tbl_name);
 
-                if let Some(table) = schema.tables.get_mut(&tbl_key) {
+                if schema.tables.contains_key(&tbl_key) || schema.partitions.contains_key(&tbl_key)
+                {
                     let index_type = match ci.using {
                         Some(sqlparser::ast::IndexType::BTree) | None => IndexType::BTree,
                         Some(sqlparser::ast::IndexType::GiST) => IndexType::Gist,
                         Some(sqlparser::ast::IndexType::GIN) => IndexType::Gin,
                         Some(sqlparser::ast::IndexType::Hash) => IndexType::Hash,
-                        Some(using) => panic!("unsupported index type: {using:?}"),
+                        Some(sqlparser::ast::IndexType::BRIN) => IndexType::Brin,
+                        Some(sqlparser::ast::IndexType::SPGiST) => IndexType::SpGist,
+                        Some(sqlparser::ast::IndexType::Bloom) => {
+                            return Err(SchemaError::ParseError(
+                                "unsupported index type: BLOOM".into(),
+                            ))
+                        }
+                        Some(sqlparser::ast::IndexType::Custom(ident)) => {
+                            return Err(SchemaError::ParseError(format!(
+                                "unsupported index type: {ident}"
+                            )))
+                        }
                     };
-                    table.indexes.push(Index {
+                    let index = Index {
                         name: idx_name,
                         columns: ci.columns.iter().map(truncate_index_column).collect(),
                         unique: ci.unique,
                         index_type,
                         predicate: ci.predicate.as_ref().map(|p| p.to_string()),
                         is_constraint: false,
-                    });
-                    table.indexes.sort();
+                    };
+                    if let Some(table) = schema.tables.get_mut(&tbl_key) {
+                        table.indexes.push(index);
+                        table.indexes.sort();
+                    } else if let Some(partition) = schema.partitions.get_mut(&tbl_key) {
+                        partition.indexes.push(index);
+                        partition.indexes.sort();
+                    }
                 }
             }
             Statement::CreateType {
@@ -240,6 +259,34 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                     comment: None,
                 };
                 schema.pending_policies.push(policy);
+            }
+            Statement::CreateRule(CreateRule {
+                name,
+                event,
+                table,
+                condition,
+                instead,
+                action,
+            }) => {
+                let (tbl_schema, tbl_name) = extract_qualified_name_truncated(&table);
+                let rule = Rule {
+                    name: truncated_ident(&name),
+                    table_schema: tbl_schema,
+                    table: tbl_name,
+                    event: parse_rule_event(&event),
+                    instead,
+                    condition: condition
+                        .as_ref()
+                        .map(|e: &sqlparser::ast::Expr| normalize_expr(&e.to_string())),
+                    actions: match &action {
+                        RuleAction::Nothing => Vec::new(),
+                        RuleAction::Statements(stmts) => {
+                            stmts.iter().map(|s| s.to_string()).collect()
+                        }
+                    },
+                    comment: None,
+                };
+                schema.pending_rules.push(rule);
             }
             Statement::AlterTable(AlterTable {
                 name, operations, ..
@@ -331,7 +378,7 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                                             Some(name) => unquote_ident(&name.to_string()).to_string(),
                                             None => dedup_check_constraint_name(
                                                 &format!("{tbl_name}_check"),
-                                                table,
+                                                &table.check_constraints,
                                             ),
                                         };
 
@@ -403,6 +450,60 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
                                     // ADD CONSTRAINT. Listed explicitly so adding a new
                                     // TableConstraint variant upstream forces a compile-time
                                     // review here instead of silent fallthrough.
+                                    | TableConstraint::Index(_)
+                                    | TableConstraint::FulltextOrSpatial(_) => {}
+                                }
+                            } else if let Some(partition) = schema.partitions.get_mut(&tbl_key) {
+                                match constraint {
+                                    TableConstraint::Check(chk) => {
+                                        let constraint_name = match &chk.name {
+                                            Some(name) => unquote_ident(&name.to_string()).to_string(),
+                                            None => dedup_check_constraint_name(
+                                                &format!("{tbl_name}_check"),
+                                                &partition.check_constraints,
+                                            ),
+                                        };
+
+                                        partition.check_constraints.push(CheckConstraint {
+                                            name: truncate_identifier(&constraint_name),
+                                            expression: normalize_expr(&chk.expr.to_string()),
+                                        });
+                                        partition.check_constraints.sort();
+                                    }
+                                    TableConstraint::Unique(uniq) => {
+                                        let constraint_name = uniq
+                                            .name
+                                            .as_ref()
+                                            .map(|n| unquote_ident(&n.to_string()).to_string())
+                                            .unwrap_or_else(|| format!("{tbl_name}_unique"));
+
+                                        partition.indexes.push(Index {
+                                            name: truncate_identifier(&constraint_name),
+                                            columns: uniq
+                                                .columns
+                                                .iter()
+                                                .map(|c| {
+                                                    unquote_ident(&c.column.expr.to_string())
+                                                        .to_string()
+                                                })
+                                                .collect(),
+                                            unique: true,
+                                            index_type: IndexType::BTree,
+                                            predicate: None,
+                                            is_constraint: true,
+                                        });
+                                        partition.indexes.sort();
+                                    }
+                                    // A partition's model has no fields for a primary key or
+                                    // foreign key of its own — those belong to the partitioned
+                                    // parent table and are not tracked per-partition. Index
+                                    // promotion and other constraint shapes below are likewise
+                                    // out of scope for partitions today.
+                                    TableConstraint::PrimaryKey(_)
+                                    | TableConstraint::ForeignKey(_)
+                                    | TableConstraint::PrimaryKeyUsingIndex(_)
+                                    | TableConstraint::UniqueUsingIndex(_)
+                                    | TableConstraint::Exclusion(_)
                                     | TableConstraint::Index(_)
                                     | TableConstraint::FulltextOrSpatial(_) => {}
                                 }
@@ -1221,7 +1322,6 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             | Statement::CreateProcedure { .. }
             | Statement::DropProcedure { .. }
             | Statement::CreateMacro { .. }
-            | Statement::CreateOperator(_)
             | Statement::CreateOperatorClass(_)
             | Statement::CreateOperatorFamily(_)
             | Statement::AlterOperator(_)
@@ -1242,7 +1342,6 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             | Statement::CreateCast(_)
             | Statement::CreateConversion(_)
             | Statement::CreateLanguage(_)
-            | Statement::CreateRule(_)
             | Statement::CreateStatistics(_)
             | Statement::CreateAccessMethod(_)
             | Statement::CreateEventTrigger(_)
@@ -1352,6 +1451,9 @@ fn parse_sql_string_inner(sql: &str) -> Result<Schema> {
             }
             Statement::CreateAggregate(stmt) => {
                 parse_create_aggregate(stmt, &mut schema)?;
+            }
+            Statement::CreateOperator(stmt) => {
+                parse_create_operator(stmt, &mut schema);
             }
             Statement::AlterFunction(alter) => {
                 parse_alter_aggregate_owner(alter, &mut schema);
@@ -1470,6 +1572,14 @@ fn classify_truncated_name(schema: &Schema, truncated: &str) -> Option<&'static 
     if schema
         .tables
         .values()
+        .any(|t| t.rules.iter().any(|r| r.name == truncated))
+        || schema.pending_rules.iter().any(|r| r.name == truncated)
+    {
+        return Some("rule");
+    }
+    if schema
+        .tables
+        .values()
         .any(|t| t.columns.values().any(|c| c.name == truncated))
     {
         return Some("column");
@@ -1484,6 +1594,9 @@ fn classify_truncated_name(schema: &Schema, truncated: &str) -> Option<&'static 
     }
     if schema.functions.values().any(|f| f.name == truncated) {
         return Some("function");
+    }
+    if schema.operators.values().any(|o| o.name == truncated) {
+        return Some("operator");
     }
     if schema.enums.values().any(|e| e.name == truncated) {
         return Some("enum");
@@ -1607,6 +1720,96 @@ fn parse_create_aggregate(stmt: CreateAggregate, schema: &mut Schema) -> Result<
     Ok(())
 }
 
+/// Like `extract_qualified_name`, but defaults an unqualified identifier to
+/// `pg_catalog` instead of `public`. Used for the COMMUTATOR / NEGATOR /
+/// RESTRICT / JOIN references in `CREATE OPERATOR`: these name *other*,
+/// pre-existing operators and selectivity-estimator functions, which are
+/// overwhelmingly PostgreSQL builtins resolved via `search_path` (which
+/// always includes `pg_catalog`), unlike the operator's own implementing
+/// FUNCTION, which is virtually always the user's own function.
+fn extract_qualified_name_pg_catalog_default(
+    name: &sqlparser::ast::ObjectName,
+) -> (String, String) {
+    let parts: Vec<String> = name
+        .0
+        .iter()
+        .map(|part| unquote_ident(&part.to_string()).to_string())
+        .collect();
+    match parts.as_slice() {
+        [schema, item] => (schema.clone(), item.clone()),
+        [item] => ("pg_catalog".to_string(), item.clone()),
+        _ => panic!("Unexpected object name format: {name:?}"),
+    }
+}
+
+fn parse_create_operator(stmt: CreateOperator, schema: &mut Schema) {
+    let (op_schema, raw_op_name) = extract_qualified_name(&stmt.name);
+    let op_name = truncate_identifier(&raw_op_name);
+    let (function_schema, function_name) = extract_qualified_name(&stmt.function);
+
+    let left_type = stmt
+        .left_arg
+        .as_ref()
+        .map(|dt| canonicalize_pg_type(&dt.to_string()).into_owned());
+    let right_type = stmt
+        .right_arg
+        .as_ref()
+        .map(|dt| canonicalize_pg_type(&dt.to_string()).into_owned());
+
+    let mut commutator: Option<String> = None;
+    let mut negator: Option<String> = None;
+    let mut restrict: Option<String> = None;
+    let mut join: Option<String> = None;
+    let mut hashes = false;
+    let mut merges = false;
+
+    for option in stmt.options {
+        match option {
+            OperatorOption::Commutator(name) => {
+                let (s, n) = extract_qualified_name_pg_catalog_default(&name);
+                commutator = Some(qualified_name(&s, &n));
+            }
+            OperatorOption::Negator(name) => {
+                let (s, n) = extract_qualified_name_pg_catalog_default(&name);
+                negator = Some(qualified_name(&s, &n));
+            }
+            OperatorOption::Restrict(name) => {
+                restrict = name.map(|name| {
+                    let (s, n) = extract_qualified_name_pg_catalog_default(&name);
+                    qualified_name(&s, &n)
+                });
+            }
+            OperatorOption::Join(name) => {
+                join = name.map(|name| {
+                    let (s, n) = extract_qualified_name_pg_catalog_default(&name);
+                    qualified_name(&s, &n)
+                });
+            }
+            OperatorOption::Hashes => hashes = true,
+            OperatorOption::Merges => merges = true,
+        }
+    }
+
+    let operator = Operator {
+        schema: op_schema.clone(),
+        name: op_name,
+        left_type,
+        right_type,
+        function_schema,
+        function_name,
+        commutator,
+        negator,
+        restrict,
+        join,
+        hashes,
+        merges,
+        comment: None,
+    };
+
+    let key = qualified_name(&op_schema, &operator.signature());
+    schema.operators.insert(key, operator);
+}
+
 fn parse_alter_aggregate_owner(alter: AlterFunction, schema: &mut Schema) {
     if !matches!(alter.kind, AlterFunctionKind::Aggregate) {
         return;
@@ -1697,16 +1900,35 @@ fn convert_privileges(
 /// Returns the role names a `Grantee` resolves to. `PUBLIC` is stored as
 /// the literal string `"PUBLIC"` to stay consistent with `pg_default_acl`
 /// introspection, which always emits uppercase `PUBLIC`. Grantees with no
-/// name and host-qualified principals are skipped — they have no
-/// representation in the schema model today.
+/// name are skipped silently — sqlparser never populates this for
+/// `ALTER DEFAULT PRIVILEGES` grantees. Host-qualified principals
+/// (`GranteeName::UserHost`, a MySQL/Redshift-dialect construct with no
+/// PostgreSQL equivalent) are also skipped, since they have no
+/// representation in the schema model today, but the skip is surfaced via
+/// `eprintln!` so it is not silently invisible.
 fn grantee_to_role_name(grantee: &Grantee) -> Option<String> {
     if matches!(grantee.grantee_type, GranteesType::Public) {
         return Some("PUBLIC".to_string());
     }
     match grantee.name.as_ref()? {
         GranteeName::ObjectName(object_name) => Some(strip_ident_quotes(&object_name.to_string())),
-        GranteeName::UserHost { .. } => None,
+        GranteeName::UserHost { user, host } => {
+            eprintln!("{}", format_user_host_grantee_skip(user, host));
+            None
+        }
     }
+}
+
+/// Build the warning message for a `GranteeName::UserHost` grantee dropped
+/// from an `ALTER DEFAULT PRIVILEGES` statement. Broken out so the
+/// formatting is unit-testable without having to capture stderr.
+fn format_user_host_grantee_skip(
+    user: &sqlparser::ast::Ident,
+    host: &sqlparser::ast::Ident,
+) -> String {
+    format!(
+        "warning: pgmold does not model host-qualified grantee '{user}'@'{host}' in ALTER DEFAULT PRIVILEGES; dropping this grantee"
+    )
 }
 
 fn apply_alter_default_privileges(adp: AlterDefaultPrivileges, schema: &mut Schema) {

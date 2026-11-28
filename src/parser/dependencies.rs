@@ -241,15 +241,19 @@ fn format_extract_table_references_failure(
 
 /// Heuristic detector for PL/pgSQL function bodies.
 ///
-/// A plpgsql body starts with either a `DECLARE` block (variable
-/// declarations) or a bare `BEGIN` block (statements). The keyword must
-/// be standalone — terminated by whitespace or punctuation — so that
-/// identifiers like `beginner_id` or `declared_level` do not match.
+/// A plpgsql body starts with a `DECLARE` block (variable declarations), a
+/// bare `BEGIN` block (statements), or a compiler directive line such as
+/// `#variable_conflict`. The `DECLARE`/`BEGIN` keyword must be standalone —
+/// terminated by whitespace or punctuation — so that identifiers like
+/// `beginner_id` or `declared_level` do not match.
 ///
 /// Used to suppress warnings in `extract_table_references` for bodies that
 /// sqlparser cannot and should not parse as raw SQL.
 fn is_plpgsql_body(body: &str) -> bool {
     let trimmed = body.trim_start();
+    if trimmed.starts_with('#') {
+        return true;
+    }
     ["DECLARE", "BEGIN"].iter().any(|keyword| {
         trimmed
             .get(..keyword.len())
@@ -1135,6 +1139,19 @@ mod tests {
         assert!(!is_plpgsql_body("  SELECT 1  "));
         assert!(!is_plpgsql_body(""));
         assert!(!is_plpgsql_body("   \n\t  "));
+    }
+
+    #[test]
+    fn is_plpgsql_body_detects_hash_directives() {
+        assert!(is_plpgsql_body(
+            "#variable_conflict use_column\nDECLARE\n    v uuid;\nBEGIN\n    NULL;\nEND"
+        ));
+        assert!(is_plpgsql_body(
+            "#print_strict_params on\nBEGIN\n    NULL;\nEND"
+        ));
+        assert!(is_plpgsql_body(
+            "  \n#variable_conflict use_column\nDECLARE\nBEGIN\nEND"
+        ));
     }
 
     #[test]

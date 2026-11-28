@@ -6,13 +6,15 @@ use serde::Serialize;
 use sqlx::Executor;
 
 use pgmold::check::{check_schema, has_errors as check_has_errors, IssueSeverity};
-use pgmold::diff::{compute_diff, planner::plan_migration_checked};
+use pgmold::diff::{compute_diff, planner::plan_migration_checked, MigrationOp};
 use pgmold::drift::detect_drift;
 use pgmold::dump::{generate_dump, generate_split_dump};
 use pgmold::expand_contract::expand_operations;
 use pgmold::filter::{filter_by_target_schemas, filter_schema, Filter, ObjectType};
-use pgmold::lint::locks::detect_lock_hazards;
-use pgmold::lint::{has_errors, lint_migration_plan, lint_schema, LintOptions, LintSeverity};
+use pgmold::lint::locks::{detect_lock_hazards, LockWarning};
+use pgmold::lint::{
+    has_errors, lint_migration_plan, lint_schema, LintOptions, LintResult, LintSeverity,
+};
 use pgmold::migrate::{find_next_migration_number, generate_migration_filename};
 use pgmold::model::Schema;
 use pgmold::pg::connection::PgConnection;
@@ -35,6 +37,30 @@ struct PlanOutput {
     idempotent: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     residual_ops_count: Option<usize>,
+}
+
+impl PlanOutput {
+    fn new(
+        ops: &[MigrationOp],
+        sql: Vec<String>,
+        lock_warnings: &[LockWarning],
+        identifier_warnings: &[LintResult],
+        validation: Option<&ValidationResult>,
+    ) -> Self {
+        Self {
+            operations: ops.iter().map(|op| format!("{op:?}")).collect(),
+            statement_count: sql.len(),
+            statements: sql,
+            lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
+            identifier_warnings: identifier_warnings
+                .iter()
+                .map(|w| w.message.clone())
+                .collect(),
+            validated: validation.map(|v| v.success),
+            idempotent: validation.map(|v| v.idempotent),
+            residual_ops_count: validation.map(|v| v.residual_ops.len()),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -155,10 +181,10 @@ struct FilterArgs {
     /// Exclude objects by name using glob patterns. Matches against both unqualified names (e.g., "users") and qualified names (e.g., "public.users", "auth.users.my_trigger"). Can be repeated.
     #[arg(long, action = ArgAction::Append)]
     exclude: Vec<String>,
-    /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
+    /// Include only these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,rules,indexes,foreignkeys,checkconstraints)
     #[arg(long, value_delimiter = ',')]
     include_types: Vec<ObjectType>,
-    /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,indexes,foreignkeys,checkconstraints)
+    /// Exclude these object types (comma-separated: extensions,tables,enums,domains,functions,views,triggers,sequences,partitions,policies,rules,indexes,foreignkeys,checkconstraints)
     #[arg(long, value_delimiter = ',')]
     exclude_types: Vec<ObjectType>,
     /// Include objects owned by extensions (e.g., PostGIS functions)
@@ -266,6 +292,12 @@ enum Commands {
         zero_downtime: bool,
         #[command(flatten)]
         grants: GrantArgs,
+        /// Allow destructive operations (DROP TABLE, DROP COLUMN, etc.) during --validate
+        #[arg(long)]
+        allow_destructive: bool,
+        /// Allow a plan that drops and adds columns on the same table in the same run. This shape is either an unrelated drop and add, or a rename pgmold cannot express, and pgmold cannot tell which.
+        #[arg(long)]
+        allow_drop_add_pair: bool,
         /// Validate migration against a temporary database before applying (e.g., db:postgres://localhost:5433/tempdb)
         #[arg(long)]
         validate: Option<String>,
@@ -285,6 +317,9 @@ enum Commands {
         /// Allow destructive operations (DROP TABLE, DROP COLUMN, etc.)
         #[arg(long)]
         allow_destructive: bool,
+        /// Allow a plan that drops and adds columns on the same table in the same run. This shape is either an unrelated drop and add, or a rename pgmold cannot express, and pgmold cannot tell which.
+        #[arg(long)]
+        allow_drop_add_pair: bool,
         /// Target PostgreSQL schemas to compare (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
         target_schemas: Vec<String>,
@@ -317,6 +352,8 @@ enum Commands {
         /// Target PostgreSQL schemas (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
         target_schemas: Vec<String>,
+        #[command(flatten)]
+        filter: FilterArgs,
         #[command(flatten)]
         grants: GrantArgs,
         /// Output lint results as JSON
@@ -378,6 +415,8 @@ enum Commands {
         /// Target PostgreSQL schemas (comma-separated)
         #[arg(long, default_value = "public", value_delimiter = ',')]
         target_schemas: Vec<String>,
+        #[command(flatten)]
+        filter: FilterArgs,
         #[command(flatten)]
         grants: GrantArgs,
         /// Output result as JSON
@@ -479,6 +518,55 @@ async fn run_validation(
     Ok(validation_result)
 }
 
+fn block_destructive_plan_validation(
+    ops: &[pgmold::diff::MigrationOp],
+    json: bool,
+    allow_destructive: bool,
+    allow_drop_add_pair: bool,
+) -> Result<()> {
+    let lint_options =
+        LintOptions::from_env(allow_destructive, allow_drop_add_pair).inspect_err(|e| {
+            if json {
+                let _ = print_json(&serde_json::json!({
+                    "success": false,
+                    "error": e.to_string(),
+                }));
+            }
+        })?;
+    let lint_results = lint_migration_plan(ops, &lint_options);
+
+    if !json {
+        for lint_result in &lint_results {
+            let severity = match lint_result.severity {
+                LintSeverity::Error => "ERROR",
+                LintSeverity::Warning => "WARNING",
+            };
+            println!(
+                "[{}] {}: {}",
+                severity, lint_result.rule, lint_result.message
+            );
+        }
+    }
+
+    if has_errors(&lint_results) {
+        let error_count = lint_results
+            .iter()
+            .filter(|r| matches!(r.severity, LintSeverity::Error))
+            .count();
+        if json {
+            let error_msg = format!("Migration blocked by {error_count} lint error(s)");
+            let lint_error_output = serde_json::json!({
+                "success": false,
+                "error": error_msg,
+            });
+            print_json(&lint_error_output)?;
+        }
+        return Err(anyhow!("Migration blocked by {error_count} lint error(s)"));
+    }
+
+    Ok(())
+}
+
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
@@ -504,19 +592,7 @@ pub async fn run() -> Result<()> {
             let sql = generate_sql(&ops);
 
             if json {
-                let output = PlanOutput {
-                    operations: ops.iter().map(|op| format!("{op:?}")).collect(),
-                    statements: sql.clone(),
-                    lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
-                    identifier_warnings: identifier_warnings
-                        .iter()
-                        .map(|w| w.message.clone())
-                        .collect(),
-                    statement_count: sql.len(),
-                    validated: None,
-                    idempotent: None,
-                    residual_ops_count: None,
-                };
+                let output = PlanOutput::new(&ops, sql, &lock_warnings, &identifier_warnings, None);
                 print_json(&output)?;
             } else {
                 for warning in &identifier_warnings {
@@ -543,6 +619,8 @@ pub async fn run() -> Result<()> {
             json,
             zero_downtime,
             grants,
+            allow_destructive,
+            allow_drop_add_pair,
             validate,
         } => {
             let include_extension_objects = filter.include_extension_objects;
@@ -597,6 +675,13 @@ pub async fn run() -> Result<()> {
             };
 
             let validation_info = if let Some(validate_db_url) = &validate {
+                block_destructive_plan_validation(
+                    &ops,
+                    json,
+                    allow_destructive,
+                    allow_drop_add_pair,
+                )?;
+
                 let result = run_validation(
                     &ops,
                     validate_db_url,
@@ -697,19 +782,13 @@ pub async fn run() -> Result<()> {
                 let sql = generate_sql(&ops);
 
                 if json {
-                    let output = PlanOutput {
-                        operations: ops.iter().map(|op| format!("{op:?}")).collect(),
-                        statements: sql.clone(),
-                        lock_warnings: lock_warnings.iter().map(|w| w.message.clone()).collect(),
-                        identifier_warnings: identifier_warnings
-                            .iter()
-                            .map(|w| w.message.clone())
-                            .collect(),
-                        statement_count: sql.len(),
-                        validated: validation_info.as_ref().map(|v| v.success),
-                        idempotent: validation_info.as_ref().map(|v| v.idempotent),
-                        residual_ops_count: validation_info.as_ref().map(|v| v.residual_ops.len()),
-                    };
+                    let output = PlanOutput::new(
+                        &ops,
+                        sql,
+                        &lock_warnings,
+                        &identifier_warnings,
+                        validation_info.as_ref(),
+                    );
                     print_json(&output)?;
                 } else {
                     for warning in &lock_warnings {
@@ -740,6 +819,7 @@ pub async fn run() -> Result<()> {
             database,
             dry_run,
             allow_destructive,
+            allow_drop_add_pair,
             target_schemas,
             filter,
             grants,
@@ -785,7 +865,15 @@ pub async fn run() -> Result<()> {
             let ops = migration_plan.ops;
             let filtered_db_schema = migration_plan.current_schema;
             let filtered_target = migration_plan.target_schema;
-            let lint_options = LintOptions::from_env(allow_destructive);
+            let lint_options = LintOptions::from_env(allow_destructive, allow_drop_add_pair)
+                .inspect_err(|e| {
+                    if json {
+                        let _ = print_json(&serde_json::json!({
+                            "success": false,
+                            "error": e.to_string(),
+                        }));
+                    }
+                })?;
             let mut lint_results = lint_migration_plan(&ops, &lint_options);
             lint_results.extend(lint_schema(&filtered_target));
 
@@ -990,28 +1078,43 @@ pub async fn run() -> Result<()> {
             schema,
             database,
             target_schemas,
+            filter,
             grants,
             json,
         } => {
-            let target = load_schema(&schema)?;
-            let target = filter_by_target_schemas(&target, &target_schemas);
+            let plan_options = PlanOptions {
+                manage_ownership: grants.manage_ownership,
+                manage_grants: grants.manage_grants(),
+                excluded_grant_roles: grants.excluded_grant_roles(),
+                include_extension_objects: filter.include_extension_objects,
+                exclude_unmanaged_partitions: filter.exclude_unmanaged_partitions,
+            };
+            let filter = filter.to_filter()?;
 
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
-            let current = introspect_schema(&connection, &target_schemas, false)
-                .await
-                .map_err(|e| anyhow!("{e}"))?;
-            let ops = plan_migration_checked(pgmold::diff::compute_diff_with_flags(
-                &current,
-                &target,
-                grants.manage_ownership,
-                grants.manage_grants(),
-                &grants.excluded_grant_roles(),
-            ))?;
+            let migration_plan = compute_migration_plan(
+                &schema,
+                &connection,
+                &target_schemas,
+                &filter,
+                &plan_options,
+            )
+            .await
+            .map_err(|e| anyhow!("{e}"))?;
+            let ops = migration_plan.ops;
+            let target = migration_plan.target_schema;
 
-            let lint_options = LintOptions::from_env(false);
+            let lint_options = LintOptions::from_env(false, false).inspect_err(|e| {
+                if json {
+                    let _ = print_json(&serde_json::json!({
+                        "success": false,
+                        "error": e.to_string(),
+                    }));
+                }
+            })?;
             let mut results = lint_migration_plan(&ops, &lint_options);
             results.extend(lint_schema(&target));
 
@@ -1206,26 +1309,33 @@ pub async fn run() -> Result<()> {
             migrations,
             name,
             target_schemas,
+            filter,
             grants,
             json,
         } => {
-            let target = load_schema(&schema)?;
-            let target = filter_by_target_schemas(&target, &target_schemas);
+            let plan_options = PlanOptions {
+                manage_ownership: grants.manage_ownership,
+                manage_grants: grants.manage_grants(),
+                excluded_grant_roles: grants.excluded_grant_roles(),
+                include_extension_objects: filter.include_extension_objects,
+                exclude_unmanaged_partitions: filter.exclude_unmanaged_partitions,
+            };
+            let filter = filter.to_filter()?;
+
             let db_url = parse_db_source(&database)?;
             let connection = PgConnection::new(&db_url)
                 .await
                 .map_err(|e| anyhow!("{e}"))?;
-            let current = introspect_schema(&connection, &target_schemas, false)
-                .await
-                .map_err(|e| anyhow!("{e}"))?;
-
-            let ops = plan_migration_checked(pgmold::diff::compute_diff_with_flags(
-                &current,
-                &target,
-                grants.manage_ownership,
-                grants.manage_grants(),
-                &grants.excluded_grant_roles(),
-            ))?;
+            let migration_plan = compute_migration_plan(
+                &schema,
+                &connection,
+                &target_schemas,
+                &filter,
+                &plan_options,
+            )
+            .await
+            .map_err(|e| anyhow!("{e}"))?;
+            let ops = migration_plan.ops;
             let sql = generate_sql(&ops);
 
             if sql.is_empty() {
@@ -1248,7 +1358,8 @@ pub async fn run() -> Result<()> {
 
             let next_number = find_next_migration_number(migrations_path)
                 .map_err(|e| anyhow!("Failed to determine next migration number: {e}"))?;
-            let filename = generate_migration_filename(next_number, &name);
+            let filename =
+                generate_migration_filename(next_number, &name).map_err(|e| anyhow!("{e}"))?;
             let file_path = migrations_path.join(&filename);
 
             let content = sql.join("\n\n");
@@ -1373,14 +1484,14 @@ pub async fn run() -> Result<()> {
                     description: "Lint schema or migration plan for issues".into(),
                     supports_json: true,
                     requires_database: true,
-                    supports_filters: false,
+                    supports_filters: true,
                 },
                 CommandDescription {
                     name: "migrate".into(),
                     description: "Generate a numbered migration file from schema diff".into(),
                     supports_json: true,
                     requires_database: true,
-                    supports_filters: false,
+                    supports_filters: true,
                 },
                 CommandDescription {
                     name: "check".into(),
@@ -1459,18 +1570,17 @@ mod tests {
 
     #[test]
     fn plan_output_json_includes_identifier_warnings() {
-        let output = PlanOutput {
-            operations: Vec::new(),
-            statements: Vec::new(),
-            lock_warnings: Vec::new(),
-            identifier_warnings: vec![
-                "table identifier \"aaaa\" is 64 bytes; PostgreSQL truncates".to_string(),
-            ],
-            statement_count: 0,
-            validated: None,
-            idempotent: None,
-            residual_ops_count: None,
-        };
+        let output = PlanOutput::new(
+            &[],
+            Vec::new(),
+            &[],
+            &[LintResult {
+                rule: "identifier_length",
+                severity: LintSeverity::Warning,
+                message: "table identifier \"aaaa\" is 64 bytes; PostgreSQL truncates".to_string(),
+            }],
+            None,
+        );
 
         let json = serde_json::to_value(&output).unwrap();
 
@@ -2365,5 +2475,103 @@ mod tests {
         } else {
             panic!("Expected Plan command");
         }
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_refuses_on_drop_table() {
+        let ops = vec![pgmold::diff::MigrationOp::DropTable(
+            "public.old_table".to_string(),
+        )];
+        let result = block_destructive_plan_validation(&ops, false, false, false);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("blocked by 1 lint error"));
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_allows_non_destructive_ops() {
+        let ops = vec![pgmold::diff::MigrationOp::AddColumn {
+            table: pgmold::model::QualifiedName::new("public", "users"),
+            column: pgmold::model::Column {
+                name: "email".to_string(),
+                data_type: pgmold::model::PgType::Varchar(Some(255)),
+                nullable: true,
+                default: None,
+                comment: None,
+                generated: None,
+            },
+        }];
+        let result = block_destructive_plan_validation(&ops, false, false, false);
+        assert_eq!(result.unwrap(), ());
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_refuses_drop_table_without_allow_destructive() {
+        let ops = vec![pgmold::diff::MigrationOp::DropTable(
+            "public.old_table".to_string(),
+        )];
+        let result = block_destructive_plan_validation(&ops, false, false, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_accepts_drop_table_with_allow_destructive() {
+        let ops = vec![pgmold::diff::MigrationOp::DropTable(
+            "public.old_table".to_string(),
+        )];
+        let result = block_destructive_plan_validation(&ops, false, true, false);
+        assert_eq!(result.unwrap(), ());
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_refuses_drop_add_pair_even_with_allow_destructive() {
+        let ops = vec![
+            pgmold::diff::MigrationOp::DropColumn {
+                table: pgmold::model::QualifiedName::new("public", "suppliers"),
+                column: "entity_id".to_string(),
+            },
+            pgmold::diff::MigrationOp::AddColumn {
+                table: pgmold::model::QualifiedName::new("public", "suppliers"),
+                column: pgmold::model::Column {
+                    name: "supplier_id".to_string(),
+                    data_type: pgmold::model::PgType::Uuid,
+                    nullable: false,
+                    default: None,
+                    comment: None,
+                    generated: None,
+                },
+            },
+        ];
+        let result = block_destructive_plan_validation(&ops, false, true, false);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("blocked by 1 lint error"));
+    }
+
+    #[test]
+    fn block_destructive_plan_validation_accepts_drop_add_pair_with_allow_flag() {
+        let ops = vec![
+            pgmold::diff::MigrationOp::DropColumn {
+                table: pgmold::model::QualifiedName::new("public", "suppliers"),
+                column: "entity_id".to_string(),
+            },
+            pgmold::diff::MigrationOp::AddColumn {
+                table: pgmold::model::QualifiedName::new("public", "suppliers"),
+                column: pgmold::model::Column {
+                    name: "supplier_id".to_string(),
+                    data_type: pgmold::model::PgType::Uuid,
+                    nullable: false,
+                    default: None,
+                    comment: None,
+                    generated: None,
+                },
+            },
+        ];
+        let result = block_destructive_plan_validation(&ops, false, true, true);
+        assert_eq!(result.unwrap(), ());
     }
 }

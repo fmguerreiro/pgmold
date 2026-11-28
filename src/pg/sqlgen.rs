@@ -5,9 +5,10 @@ use crate::diff::{
 use crate::model::{
     parse_qualified_name, versioned_schema_name, Aggregate, AggregateParallel, ArgMode,
     CheckConstraint, Column, Domain, ExclusionConstraint, ForeignKey, Function, Index, IndexType,
-    Partition, PartitionBound, PartitionStrategy, PgType, Policy, PolicyCommand, Privilege,
-    QualifiedName, ReferentialAction, SecurityType, Sequence, SequenceDataType, Table, Trigger,
-    TriggerEnabled, TriggerEvent, TriggerTiming, VersionView, View, Volatility,
+    Operator, Partition, PartitionBound, PartitionStrategy, PgType, Policy, PolicyCommand,
+    Privilege, QualifiedName, ReferentialAction, Rule, RuleEvent, SecurityType, Sequence,
+    SequenceDataType, Table, Trigger, TriggerEnabled, TriggerEvent, TriggerTiming, VersionView,
+    View, Volatility,
 };
 
 pub fn generate_sql(ops: &[MigrationOp]) -> Vec<String> {
@@ -121,9 +122,7 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             )]
         }
 
-        MigrationOp::CreatePartition(partition) => {
-            vec![generate_create_partition(partition)]
-        }
+        MigrationOp::CreatePartition(partition) => generate_create_partition(partition),
 
         MigrationOp::DropPartition(name) => {
             let (schema, partition_name) = parse_qualified_name(name);
@@ -171,6 +170,34 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             column,
             changes,
         } => generate_alter_column(table, column, changes),
+
+        MigrationOp::DetachColumnDomain {
+            table,
+            column,
+            data_type,
+        } => generate_alter_column(
+            table,
+            column,
+            &ColumnChanges {
+                data_type: Some(data_type.clone()),
+                nullable: None,
+                default: None,
+            },
+        ),
+
+        MigrationOp::ReattachColumnDomain {
+            table,
+            column,
+            domain_type,
+        } => generate_alter_column(
+            table,
+            column,
+            &ColumnChanges {
+                data_type: Some(domain_type.clone()),
+                nullable: None,
+                default: None,
+            },
+        ),
 
         MigrationOp::AddPrimaryKey { table, primary_key } => {
             vec![format!(
@@ -325,6 +352,16 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             changes,
         } => generate_alter_policy(table, name, changes),
 
+        MigrationOp::CreateRule(rule) => vec![generate_create_rule(rule)],
+
+        MigrationOp::DropRule { table, name } => {
+            vec![format!(
+                "DROP RULE IF EXISTS {} ON {};",
+                quote_ident(name),
+                quote_qualified(&table.schema, &table.name)
+            )]
+        }
+
         // Note: We don't generate ALTER FUNCTION ... OWNER TO for new functions.
         // PostgreSQL automatically sets the owner to the creating user.
         // Changing ownership requires schema ownership which the user may not have.
@@ -350,6 +387,17 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
             vec![format!(
                 "DROP AGGREGATE {}({});",
                 quote_qualified(&schema, &agg_name),
+                args
+            )]
+        }
+
+        MigrationOp::CreateOperator(op) => vec![generate_operator_ddl(op)],
+
+        MigrationOp::DropOperator { name, args } => {
+            let (schema, op_name) = parse_qualified_name(name);
+            vec![format!(
+                "DROP OPERATOR {} ({});",
+                quote_qualified_operator(&schema, &op_name),
                 args
             )]
         }
@@ -639,6 +687,14 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                         quote_qualified(schema, target_name)
                     )
                 }
+                CommentObjectType::Rule => {
+                    let target_name = target.as_deref().unwrap_or("");
+                    format!(
+                        "RULE {} ON {}",
+                        quote_ident(name),
+                        quote_qualified(schema, target_name)
+                    )
+                }
                 CommentObjectType::Constraint => {
                     let target_name = target.as_deref().unwrap_or_else(|| {
                         panic!(
@@ -651,6 +707,14 @@ fn generate_op_sql(op: &MigrationOp) -> Vec<String> {
                         quote_ident(name),
                         relation_kind,
                         quote_qualified(schema, target_name)
+                    )
+                }
+                CommentObjectType::Operator => {
+                    let args = arguments.as_deref().unwrap_or("");
+                    format!(
+                        "OPERATOR {} ({})",
+                        quote_qualified_operator(schema, name),
+                        args
                     )
                 }
             };
@@ -836,12 +900,40 @@ fn format_partition_bound(bound: &PartitionBound) -> String {
     }
 }
 
-fn generate_create_partition(partition: &Partition) -> String {
+fn generate_create_partition(partition: &Partition) -> Vec<String> {
     let partition_name = quote_qualified(&partition.schema, &partition.name);
     let parent_name = quote_qualified(&partition.parent_schema, &partition.parent_name);
     let bound_clause = format_partition_bound(&partition.bound);
 
-    format!("CREATE TABLE {partition_name} PARTITION OF {parent_name} {bound_clause};")
+    let mut statements = vec![format!(
+        "CREATE TABLE {partition_name} PARTITION OF {parent_name} {bound_clause};"
+    )];
+
+    for index in &partition.indexes {
+        if index.is_constraint {
+            statements.push(generate_add_unique_constraint(
+                &partition.schema,
+                &partition.name,
+                index,
+            ));
+        } else {
+            statements.push(generate_create_index(
+                &partition.schema,
+                &partition.name,
+                index,
+            ));
+        }
+    }
+
+    for check_constraint in &partition.check_constraints {
+        statements.push(generate_add_check_constraint(
+            &partition.schema,
+            &partition.name,
+            check_constraint,
+        ));
+    }
+
+    statements
 }
 
 fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {
@@ -851,6 +943,8 @@ fn generate_create_index(schema: &str, table: &str, index: &Index) -> String {
         IndexType::Hash => " USING hash",
         IndexType::Gin => " USING gin",
         IndexType::Gist => " USING gist",
+        IndexType::Brin => " USING brin",
+        IndexType::SpGist => " USING spgist",
     };
 
     let where_clause = index
@@ -1157,6 +1251,21 @@ fn quote_qualified(schema: &str, name: &str) -> String {
     format!("{}.{}", quote_ident(schema), quote_ident(name))
 }
 
+/// Qualifies an operator symbol (`+`, `<=>`, ...) with its schema. Unlike
+/// `quote_qualified`, the operator part is never quoted: it is a sequence of
+/// operator characters, not an identifier, and PostgreSQL's `any_operator`
+/// grammar production does not accept a quoted form.
+fn quote_qualified_operator(schema: &str, symbol: &str) -> String {
+    format!("{}.{}", quote_ident(schema), symbol)
+}
+
+/// Wraps a schema-qualified operator for a `CREATE OPERATOR` definition-list
+/// slot such as `COMMUTATOR`, whose `def_arg` production accepts a qualified
+/// operator only as `OPERATOR(schema.symbol)`.
+fn operator_def_arg(schema: &str, symbol: &str) -> String {
+    format!("OPERATOR({})", quote_qualified_operator(schema, symbol))
+}
+
 fn escape_string(value: &str) -> String {
     value.replace('\'', "''")
 }
@@ -1276,6 +1385,46 @@ fn format_policy_command(command: &PolicyCommand) -> &'static str {
     }
 }
 
+fn generate_create_rule(rule: &Rule) -> String {
+    let mut sql = format!(
+        "CREATE RULE {} AS ON {} TO {}",
+        quote_ident(&rule.name),
+        format_rule_event(&rule.event),
+        quote_qualified(&rule.table_schema, &rule.table)
+    );
+
+    if let Some(ref condition) = rule.condition {
+        sql.push_str(&format!(" WHERE {condition}"));
+    }
+
+    sql.push_str(" DO ");
+    if rule.instead {
+        sql.push_str("INSTEAD ");
+    }
+
+    if rule.actions.is_empty() {
+        sql.push_str("NOTHING");
+    } else if rule.actions.len() == 1 {
+        sql.push_str(&rule.actions[0]);
+    } else {
+        sql.push('(');
+        sql.push_str(&rule.actions.join("; "));
+        sql.push(')');
+    }
+
+    sql.push(';');
+    sql
+}
+
+fn format_rule_event(event: &RuleEvent) -> &'static str {
+    match event {
+        RuleEvent::Select => "SELECT",
+        RuleEvent::Insert => "INSERT",
+        RuleEvent::Update => "UPDATE",
+        RuleEvent::Delete => "DELETE",
+    }
+}
+
 fn generate_function_ddl(func: &Function, replace: bool) -> String {
     let create_stmt = if replace {
         "CREATE OR REPLACE FUNCTION"
@@ -1374,6 +1523,51 @@ fn generate_aggregate_ddl(agg: &Aggregate) -> String {
         quote_qualified(&agg.schema, &agg.name),
         args,
         options.join(", ")
+    )
+}
+
+fn generate_operator_ddl(op: &Operator) -> String {
+    let mut params = vec![format!(
+        "FUNCTION = {}",
+        quote_qualified(&op.function_schema, &op.function_name)
+    )];
+
+    if let Some(left) = &op.left_type {
+        params.push(format!("LEFTARG = {left}"));
+    }
+    if let Some(right) = &op.right_type {
+        params.push(format!("RIGHTARG = {right}"));
+    }
+    if let Some(commutator) = &op.commutator {
+        let (schema, symbol) = parse_qualified_name(commutator);
+        params.push(format!(
+            "COMMUTATOR = {}",
+            operator_def_arg(&schema, &symbol)
+        ));
+    }
+    if let Some(negator) = &op.negator {
+        let (schema, symbol) = parse_qualified_name(negator);
+        params.push(format!("NEGATOR = {}", operator_def_arg(&schema, &symbol)));
+    }
+    if let Some(restrict) = &op.restrict {
+        let (schema, name) = parse_qualified_name(restrict);
+        params.push(format!("RESTRICT = {}", quote_qualified(&schema, &name)));
+    }
+    if let Some(join) = &op.join {
+        let (schema, name) = parse_qualified_name(join);
+        params.push(format!("JOIN = {}", quote_qualified(&schema, &name)));
+    }
+    if op.hashes {
+        params.push("HASHES".to_string());
+    }
+    if op.merges {
+        params.push("MERGES".to_string());
+    }
+
+    format!(
+        "CREATE OPERATOR {} ({});",
+        quote_qualified_operator(&op.schema, &op.name),
+        params.join(", ")
     )
 }
 
@@ -1985,6 +2179,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
 
             owner: None,
@@ -2561,6 +2756,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: vec![],
+            rules: vec![],
             partition_by: None,
 
             owner: None,

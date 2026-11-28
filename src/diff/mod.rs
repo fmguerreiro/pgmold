@@ -16,19 +16,20 @@ pub use types::{
 };
 
 use dependencies::{
-    dropped_columns, generate_fk_ops_for_type_changes, generate_policy_ops_for_affected_tables,
-    generate_policy_ops_for_cross_table_column_drops, generate_policy_ops_for_function_changes,
-    generate_trigger_ops_for_affected_tables, generate_view_ops_for_affected_tables,
-    tables_with_dropped_columns, type_changed_columns,
+    dropped_columns, generate_column_ops_for_domain_recreate, generate_fk_ops_for_type_changes,
+    generate_policy_ops_for_affected_tables, generate_policy_ops_for_cross_table_column_drops,
+    generate_policy_ops_for_function_changes, generate_trigger_ops_for_affected_tables,
+    generate_view_ops_for_affected_tables, tables_with_dropped_columns, type_changed_columns,
 };
 use grants::diff_default_privileges;
 use objects::{
-    diff_aggregates, diff_domains, diff_enums, diff_extensions, diff_functions, diff_partitions,
-    diff_schemas, diff_sequences, diff_servers, diff_tables, diff_triggers, diff_views,
+    diff_aggregates, diff_domains, diff_enums, diff_extensions, diff_functions, diff_operators,
+    diff_partitions, diff_schemas, diff_sequences, diff_servers, diff_tables, diff_triggers,
+    diff_views,
 };
 use table_elements::{
     diff_check_constraints, diff_columns, diff_exclusion_constraints, diff_force_rls,
-    diff_foreign_keys, diff_indexes, diff_policies, diff_primary_keys, diff_rls,
+    diff_foreign_keys, diff_indexes, diff_policies, diff_primary_keys, diff_rls, diff_rules,
 };
 
 pub fn compute_diff(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
@@ -54,10 +55,12 @@ pub fn compute_diff_with_flags(
     ops.extend(diff_servers(from, to, &options));
     ops.extend(diff_enums(from, to, &options));
     ops.extend(diff_domains(from, to, &options));
+    ops.extend(generate_column_ops_for_domain_recreate(&ops, from));
     ops.extend(diff_tables(from, to, &options));
     ops.extend(diff_partitions(from, to, &options));
     ops.extend(diff_functions(from, to, &options));
     ops.extend(diff_aggregates(from, to, &options));
+    ops.extend(diff_operators(from, to, &options));
     ops.extend(diff_views(from, to, &options));
     ops.extend(diff_triggers(from, to));
     ops.extend(diff_sequences(from, to, &options));
@@ -73,6 +76,7 @@ pub fn compute_diff_with_flags(
             ops.extend(diff_rls(from_table, to_table));
             ops.extend(diff_force_rls(from_table, to_table));
             ops.extend(diff_policies(from_table, to_table));
+            ops.extend(diff_rules(from_table, to_table));
         } else {
             if to_table.row_level_security {
                 ops.push(MigrationOp::EnableRls {
@@ -86,6 +90,9 @@ pub fn compute_diff_with_flags(
             }
             for policy in &to_table.policies {
                 ops.push(MigrationOp::CreatePolicy(policy.clone()));
+            }
+            for rule in &to_table.rules {
+                ops.push(MigrationOp::CreateRule(rule.clone()));
             }
         }
     }
@@ -483,16 +490,17 @@ fn diff_comments(from: &Schema, to: &Schema) -> Vec<MigrationOp> {
 /// diff applies, including clears via `IS NULL` when the source drops a
 /// previously-set comment.
 ///
-/// Keys are `"schema.parent.constraint_name"` where `parent` is a table or
-/// domain. The parent name is split off here and passed through `target`,
-/// while `name` carries the constraint identifier.
+/// The key carries the parent's qualified key and the constraint name as
+/// separate fields. The parent splits into `schema` / `target` here, while
+/// `name` carries the constraint identifier.
 fn diff_constraint_comments(
-    from: &std::collections::BTreeMap<String, String>,
-    to: &std::collections::BTreeMap<String, String>,
+    from: &std::collections::BTreeMap<crate::model::ConstraintCommentKey, String>,
+    to: &std::collections::BTreeMap<crate::model::ConstraintCommentKey, String>,
     on_domain: bool,
     ops: &mut Vec<MigrationOp>,
 ) {
-    let mut keys: std::collections::BTreeSet<&String> = from.keys().collect();
+    let mut keys: std::collections::BTreeSet<&crate::model::ConstraintCommentKey> =
+        from.keys().collect();
     keys.extend(to.keys());
 
     for key in keys {
@@ -501,14 +509,11 @@ fn diff_constraint_comments(
         if from_text == to_text {
             continue;
         }
-        let (parent_key, constraint_name) = key.rsplit_once('.').unwrap_or_else(|| {
-            panic!("constraint comment key {key:?} must encode schema.parent.constraint_name")
-        });
-        let (parent_schema, parent_name) = crate::model::parse_qualified_name(parent_key);
+        let (parent_schema, parent_name) = crate::model::parse_qualified_name(&key.parent_key);
         ops.push(MigrationOp::SetComment {
             object_type: CommentObjectType::Constraint,
             schema: parent_schema,
-            name: constraint_name.to_string(),
+            name: key.constraint_name.clone(),
             arguments: None,
             column: None,
             target: Some(parent_name),
@@ -553,6 +558,7 @@ pub(super) mod test_helpers {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
             owner: None,
             grants: Vec::new(),
@@ -578,8 +584,8 @@ mod tests {
     use super::*;
     use crate::model::{
         qualified_name, ArgMode, Column, Domain, EnumType, ForeignKey, Function, FunctionArg,
-        Index, IndexType, PgType, ReferentialAction, SecurityType, Sequence, SequenceDataType,
-        View, Volatility,
+        Index, IndexType, Operator, PgType, ReferentialAction, SecurityType, Sequence,
+        SequenceDataType, View, Volatility,
     };
 
     #[test]
@@ -1096,7 +1102,7 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "auth.my_func"),
             "DropFunction should use qualified name with schema, got: {:?}",
-            &ops[0]
+            ops[0]
         );
     }
 
@@ -1160,12 +1166,12 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { name, .. } if name == "public.my_func"),
             "First op should be DropFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
         assert!(
             matches!(&ops[1], MigrationOp::CreateFunction(f) if f.name == "my_func"),
             "Second op should be CreateFunction, got: {:?}",
-            &ops[1]
+            ops[1]
         );
     }
 
@@ -1228,7 +1234,7 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::AlterFunction { name, .. } if name == "public.my_func"),
             "Should be AlterFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
     }
 
@@ -1292,12 +1298,68 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { .. }),
             "First op should be DropFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
         assert!(
             matches!(&ops[1], MigrationOp::CreateFunction(_)),
             "Second op should be CreateFunction, got: {:?}",
-            &ops[1]
+            ops[1]
+        );
+    }
+
+    #[test]
+    fn detects_added_operator() {
+        let from = empty_schema();
+        let mut to = empty_schema();
+        let op = Operator {
+            schema: "public".to_string(),
+            name: "#=#".to_string(),
+            left_type: Some("integer".to_string()),
+            right_type: Some("integer".to_string()),
+            function_schema: "public".to_string(),
+            function_name: "custom_eq".to_string(),
+            commutator: None,
+            negator: None,
+            restrict: None,
+            join: None,
+            hashes: false,
+            merges: false,
+            comment: None,
+        };
+        to.operators
+            .insert(qualified_name(&op.schema, &op.signature()), op);
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], MigrationOp::CreateOperator(o) if o.name == "#=#"));
+    }
+
+    #[test]
+    fn detects_removed_operator() {
+        let mut from = empty_schema();
+        let op = Operator {
+            schema: "public".to_string(),
+            name: "#=#".to_string(),
+            left_type: Some("integer".to_string()),
+            right_type: Some("integer".to_string()),
+            function_schema: "public".to_string(),
+            function_name: "custom_eq".to_string(),
+            commutator: None,
+            negator: None,
+            restrict: None,
+            join: None,
+            hashes: false,
+            merges: false,
+            comment: None,
+        };
+        from.operators
+            .insert(qualified_name(&op.schema, &op.signature()), op);
+        let to = empty_schema();
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        assert!(
+            matches!(&ops[0], MigrationOp::DropOperator { name, args } if name == "public.#=#" && args == "integer, integer")
         );
     }
 
@@ -1361,12 +1423,12 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropFunction { .. }),
             "First op should be DropFunction, got: {:?}",
-            &ops[0]
+            ops[0]
         );
         assert!(
             matches!(&ops[1], MigrationOp::CreateFunction(_)),
             "Second op should be CreateFunction, got: {:?}",
-            &ops[1]
+            ops[1]
         );
     }
 
@@ -1392,7 +1454,7 @@ mod tests {
         assert!(
             matches!(&ops[0], MigrationOp::DropView { name, .. } if name == "reporting.my_view"),
             "DropView should use qualified name with schema, got: {:?}",
-            &ops[0]
+            ops[0]
         );
     }
 
@@ -2258,15 +2320,103 @@ mod tests {
         assert!(ops.is_empty(), "no migration ops expected, got {ops:?}");
     }
 
+    fn table_with_rule(condition: Option<&str>) -> crate::model::Table {
+        let mut t = simple_table("orders");
+        t.rules.push(crate::model::Rule {
+            name: "log_orders".to_string(),
+            table_schema: "public".to_string(),
+            table: "orders".to_string(),
+            event: crate::model::RuleEvent::Insert,
+            instead: false,
+            condition: condition.map(|s| s.to_string()),
+            actions: vec!["SELECT 1".to_string()],
+            comment: None,
+        });
+        t
+    }
+
+    #[test]
+    fn diff_creates_rule_for_new_table() {
+        let from = empty_schema();
+        let mut to = empty_schema();
+        to.tables
+            .insert("public.orders".to_string(), table_with_rule(None));
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected CreateTable and CreateRule, got {ops:?}"
+        );
+        assert!(matches!(&ops[0], MigrationOp::CreateTable(table) if table.name == "orders"));
+        match &ops[1] {
+            MigrationOp::CreateRule(rule) => assert_eq!(rule.name, "log_orders"),
+            other => panic!("expected CreateRule, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn diff_drops_rule_removed_from_table() {
+        let mut from = empty_schema();
+        from.tables
+            .insert("public.orders".to_string(), table_with_rule(None));
+        let mut to = empty_schema();
+        to.tables
+            .insert("public.orders".to_string(), simple_table("orders"));
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::DropRule { table, name } => {
+                assert_eq!(table.to_string(), "public.orders");
+                assert_eq!(name, "log_orders");
+            }
+            other => panic!("expected DropRule, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn diff_recreates_rule_when_condition_changes() {
+        let mut from = empty_schema();
+        from.tables
+            .insert("public.orders".to_string(), table_with_rule(None));
+        let mut to = empty_schema();
+        to.tables.insert(
+            "public.orders".to_string(),
+            table_with_rule(Some("status = 'active'")),
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 2, "expected DropRule + CreateRule, got {ops:?}");
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::DropRule { name, .. } if name == "log_orders")));
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, MigrationOp::CreateRule(r) if r.name == "log_orders")));
+    }
+
+    #[test]
+    fn no_op_when_rule_unchanged() {
+        let mut from = empty_schema();
+        from.tables
+            .insert("public.orders".to_string(), table_with_rule(None));
+        let to = from.clone();
+
+        let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "no migration ops expected, got {ops:?}");
+    }
+
     fn schema_with_table_constraint_comment(comment: Option<&str>) -> crate::model::Schema {
         let mut schema = empty_schema();
         schema
             .tables
             .insert("public.users".to_string(), simple_table("users"));
         if let Some(text) = comment {
-            schema
-                .table_constraint_comments
-                .insert("public.users.users_pkey".to_string(), text.to_string());
+            schema.table_constraint_comments.insert(
+                crate::model::ConstraintCommentKey::new("public.users", "users_pkey"),
+                text.to_string(),
+            );
         }
         schema
     }
@@ -2349,6 +2499,73 @@ mod tests {
     }
 
     #[test]
+    fn dotted_constraint_name_routes_to_parent_not_split_off() {
+        let mut from = empty_schema();
+        let mut to = empty_schema();
+        from.tables
+            .insert("public.users".to_string(), simple_table("users"));
+        to.tables
+            .insert("public.users".to_string(), simple_table("users"));
+        to.table_constraint_comments.insert(
+            crate::model::ConstraintCommentKey::new("public.users", "chk.v2"),
+            "dotted".to_string(),
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                object_type,
+                schema,
+                name,
+                target,
+                on_domain,
+                comment,
+                ..
+            } => {
+                assert_eq!(*object_type, CommentObjectType::Constraint);
+                assert_eq!(schema, "public");
+                assert_eq!(name, "chk.v2");
+                assert_eq!(target.as_deref(), Some("users"));
+                assert!(!*on_domain);
+                assert_eq!(comment.as_deref(), Some("dotted"));
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dotted_parent_name_splits_schema_from_target() {
+        let parent_key = "public.orders.v2";
+        let mut from = empty_schema();
+        let mut to = empty_schema();
+        from.tables
+            .insert(parent_key.to_string(), simple_table("orders.v2"));
+        to.tables
+            .insert(parent_key.to_string(), simple_table("orders.v2"));
+        to.table_constraint_comments.insert(
+            crate::model::ConstraintCommentKey::new(parent_key, "orders_chk"),
+            "dotted table".to_string(),
+        );
+
+        let ops = compute_diff(&from, &to);
+        assert_eq!(ops.len(), 1);
+        match &ops[0] {
+            MigrationOp::SetComment {
+                schema,
+                name,
+                target,
+                ..
+            } => {
+                assert_eq!(schema, "public");
+                assert_eq!(name, "orders_chk");
+                assert_eq!(target.as_deref(), Some("orders.v2"));
+            }
+            other => panic!("expected SetComment, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn detects_added_domain_constraint_comment_with_on_domain_flag() {
         let mut from = empty_schema();
         let mut to = empty_schema();
@@ -2371,7 +2588,7 @@ mod tests {
             .insert("public.amount".to_string(), domain.clone());
         to.domains.insert("public.amount".to_string(), domain);
         to.domain_constraint_comments.insert(
-            "public.amount.amount_positive".to_string(),
+            crate::model::ConstraintCommentKey::new("public.amount", "amount_positive"),
             "must be positive".to_string(),
         );
 
@@ -4621,6 +4838,189 @@ CREATE TRIGGER "on_user_role_change" AFTER INSERT OR UPDATE OR DELETE ON "public
         to.partitions.insert(partition_key, partition);
 
         let ops = compute_diff(&from, &to);
+        assert!(ops.is_empty(), "expected no ops, got {ops:?}");
+    }
+
+    fn partition_with(
+        indexes: Vec<crate::model::Index>,
+        check_constraints: Vec<crate::model::CheckConstraint>,
+    ) -> crate::model::Partition {
+        crate::model::Partition {
+            name: "events_2024".to_string(),
+            schema: "public".to_string(),
+            parent_schema: "public".to_string(),
+            parent_name: "events".to_string(),
+            bound: crate::model::PartitionBound::Default,
+            indexes,
+            check_constraints,
+            owner: None,
+        }
+    }
+
+    fn partition_index(name: &str, columns: Vec<&str>) -> crate::model::Index {
+        crate::model::Index {
+            name: name.to_string(),
+            columns: columns.into_iter().map(String::from).collect(),
+            unique: false,
+            index_type: crate::model::IndexType::BTree,
+            predicate: None,
+            is_constraint: false,
+        }
+    }
+
+    fn partition_check(name: &str, expression: &str) -> crate::model::CheckConstraint {
+        crate::model::CheckConstraint {
+            name: name.to_string(),
+            expression: expression.to_string(),
+        }
+    }
+
+    fn diff_one_partition(
+        from_partition: crate::model::Partition,
+        to_partition: crate::model::Partition,
+    ) -> Vec<MigrationOp> {
+        let key = "public.events_2024".to_string();
+        let mut from = empty_schema();
+        from.partitions.insert(key.clone(), from_partition);
+        let mut to = empty_schema();
+        to.partitions.insert(key, to_partition);
+        compute_diff(&from, &to)
+    }
+
+    #[test]
+    fn added_partition_index_emits_add_index() {
+        let ops = diff_one_partition(
+            partition_with(Vec::new(), Vec::new()),
+            partition_with(
+                vec![partition_index("events_2024_logdate_idx", vec!["logdate"])],
+                Vec::new(),
+            ),
+        );
+        assert_eq!(ops.len(), 1, "expected one AddIndex, got {ops:?}");
+        match &ops[0] {
+            MigrationOp::AddIndex { table, index } => {
+                assert_eq!(table.to_string(), "public.events_2024");
+                assert_eq!(index.name, "events_2024_logdate_idx");
+                assert_eq!(index.columns, vec!["logdate".to_string()]);
+            }
+            other => panic!("expected AddIndex, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn changed_partition_index_emits_drop_then_add() {
+        let ops = diff_one_partition(
+            partition_with(
+                vec![partition_index("events_2024_idx", vec!["logdate"])],
+                Vec::new(),
+            ),
+            partition_with(
+                vec![partition_index("events_2024_idx", vec!["city_id"])],
+                Vec::new(),
+            ),
+        );
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected DropIndex then AddIndex, got {ops:?}"
+        );
+        match &ops[0] {
+            MigrationOp::DropIndex { table, index_name } => {
+                assert_eq!(table.to_string(), "public.events_2024");
+                assert_eq!(index_name, "events_2024_idx");
+            }
+            other => panic!("expected DropIndex first, got {other:?}"),
+        }
+        match &ops[1] {
+            MigrationOp::AddIndex { index, .. } => {
+                assert_eq!(index.columns, vec!["city_id".to_string()]);
+            }
+            other => panic!("expected AddIndex second, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn removed_partition_index_emits_drop_index() {
+        let ops = diff_one_partition(
+            partition_with(
+                vec![partition_index("events_2024_idx", vec!["logdate"])],
+                Vec::new(),
+            ),
+            partition_with(Vec::new(), Vec::new()),
+        );
+        assert_eq!(ops.len(), 1, "expected one DropIndex, got {ops:?}");
+        match &ops[0] {
+            MigrationOp::DropIndex { table, index_name } => {
+                assert_eq!(table.to_string(), "public.events_2024");
+                assert_eq!(index_name, "events_2024_idx");
+            }
+            other => panic!("expected DropIndex, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn added_partition_check_constraint_emits_add() {
+        let check = partition_check("events_2024_peak_positive", "peaktemp > 0");
+        let ops = diff_one_partition(
+            partition_with(Vec::new(), Vec::new()),
+            partition_with(Vec::new(), vec![check]),
+        );
+        assert_eq!(ops.len(), 1, "expected one AddCheckConstraint, got {ops:?}");
+        match &ops[0] {
+            MigrationOp::AddCheckConstraint {
+                table,
+                check_constraint,
+            } => {
+                assert_eq!(table.to_string(), "public.events_2024");
+                assert_eq!(check_constraint.name, "events_2024_peak_positive");
+            }
+            other => panic!("expected AddCheckConstraint, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn changed_partition_check_constraint_emits_drop_then_add() {
+        let ops = diff_one_partition(
+            partition_with(
+                Vec::new(),
+                vec![partition_check("events_2024_chk", "peaktemp > 0")],
+            ),
+            partition_with(
+                Vec::new(),
+                vec![partition_check("events_2024_chk", "peaktemp > 10")],
+            ),
+        );
+        assert_eq!(
+            ops.len(),
+            2,
+            "expected DropCheckConstraint then AddCheckConstraint, got {ops:?}"
+        );
+        match &ops[0] {
+            MigrationOp::DropCheckConstraint {
+                table,
+                constraint_name,
+            } => {
+                assert_eq!(table.to_string(), "public.events_2024");
+                assert_eq!(constraint_name, "events_2024_chk");
+            }
+            other => panic!("expected DropCheckConstraint first, got {other:?}"),
+        }
+        match &ops[1] {
+            MigrationOp::AddCheckConstraint {
+                check_constraint, ..
+            } => {
+                assert_eq!(check_constraint.expression, "peaktemp > 10");
+            }
+            other => panic!("expected AddCheckConstraint second, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unchanged_partition_index_and_check_emit_no_ops() {
+        let index = partition_index("events_2024_idx", vec!["logdate"]);
+        let check = partition_check("events_2024_chk", "peaktemp > 0");
+        let partition = partition_with(vec![index], vec![check]);
+        let ops = diff_one_partition(partition.clone(), partition);
         assert!(ops.is_empty(), "expected no ops, got {ops:?}");
     }
 

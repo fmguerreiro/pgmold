@@ -76,6 +76,7 @@ mod tests {
             row_level_security: false,
             force_row_level_security: false,
             policies: Vec::new(),
+            rules: Vec::new(),
             partition_by: None,
 
             owner: None,

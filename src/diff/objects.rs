@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 
 use crate::model::{
-    parse_qualified_name, qualified_name, EnumType, Grant, Schema, Sequence, Server, Trigger,
+    parse_qualified_name, qualified_name, EnumType, Grant, Operator, QualifiedName, Schema,
+    Sequence, Server, Trigger,
 };
 use crate::util::{optional_expressions_equal, partition_bounds_equal};
 
 use super::grants::{create_grants_for_new_object, diff_grants_for_object};
+use super::table_elements::{diff_check_constraint_lists, diff_index_lists};
 use super::{
     DiffOptions, DomainChanges, EnumValuePosition, GrantObjectKind, MigrationOp, OwnerObjectKind,
     SequenceChanges,
@@ -400,6 +402,24 @@ pub(super) fn diff_partitions(
                 ops.push(MigrationOp::DetachPartition(from_partition.clone()));
                 ops.push(MigrationOp::AttachPartition(to_partition.clone()));
             }
+            // A partition child is a relation in its own right: its partition-local
+            // indexes and CHECK constraints reconcile exactly like a table's, and
+            // independently of any bound/parent change above. The planner orders
+            // these ops relative to a simultaneous DETACH+ATTACH (pgmold-53bm).
+            let from_name = QualifiedName::new(&from_partition.schema, &from_partition.name);
+            let to_name = QualifiedName::new(&to_partition.schema, &to_partition.name);
+            ops.extend(diff_index_lists(
+                &from_name,
+                &to_name,
+                &from_partition.indexes,
+                &to_partition.indexes,
+            ));
+            ops.extend(diff_check_constraint_lists(
+                &from_name,
+                &to_name,
+                &from_partition.check_constraints,
+                &to_partition.check_constraints,
+            ));
         },
         |name, _val| MigrationOp::DropPartition(name.clone()),
         qualified_coords,
@@ -499,6 +519,46 @@ pub(super) fn diff_aggregates(
         |_val| Some(OwnerObjectKind::Aggregate),
         |val| &val.owner,
         |val| &val.grants,
+    );
+    ops
+}
+
+const NO_OWNER: Option<String> = None;
+
+pub(super) fn diff_operators(
+    from: &Schema,
+    to: &Schema,
+    options: &DiffOptions,
+) -> Vec<MigrationOp> {
+    let mut ops = Vec::new();
+    diff_objects(
+        &mut ops,
+        options,
+        &from.operators,
+        &to.operators,
+        |_key, op| MigrationOp::CreateOperator(op.clone()),
+        |ops, _key, from_op, to_op| {
+            if !from_op.semantically_equals(to_op) {
+                ops.push(MigrationOp::DropOperator {
+                    name: qualified_name(&from_op.schema, &from_op.name),
+                    args: from_op.args_string(),
+                });
+                ops.push(MigrationOp::CreateOperator(to_op.clone()));
+            }
+        },
+        |_key, op| MigrationOp::DropOperator {
+            name: qualified_name(&op.schema, &op.name),
+            args: op.args_string(),
+        },
+        |_key, op| ObjectCoords {
+            schema: op.schema.clone(),
+            name: op.name.clone(),
+            args: Some(op.args_string()),
+        },
+        None,
+        |_val| None,
+        |_val: &Operator| &NO_OWNER,
+        |_val| &[],
     );
     ops
 }
